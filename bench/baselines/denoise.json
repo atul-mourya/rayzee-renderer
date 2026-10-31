@@ -988,5 +988,35 @@
 		"ratio": 0.391863792175295,
 		"rawRmse": 0.019594862841205016,
 		"denoisedRmse": 0.0076785172601093726
+	},
+	"glass-tinted-light/nrd/1": {
+		"ratio": 0.30853646520515426,
+		"rawRmse": 0.06939198179185166,
+		"denoisedRmse": 0.02140995677563834
+	},
+	"glass-tinted-light/oidn/1": {
+		"ratio": 0.2150221063621555,
+		"rawRmse": 0.06939198179185166,
+		"denoisedRmse": 0.014920810089528284
+	},
+	"glass-tinted-light/oidn-tiled/1": {
+		"ratio": 0.2150221063621555,
+		"rawRmse": 0.06939198179185166,
+		"denoisedRmse": 0.014920810089528284
+	},
+	"glass-tinted-light/nrd/64": {
+		"ratio": 1,
+		"rawRmse": 0.006599588106851262,
+		"denoisedRmse": 0.006599588106851262
+	},
+	"glass-tinted-light/oidn/64": {
+		"ratio": 0.561869717134134,
+		"rawRmse": 0.006599588106851262,
+		"denoisedRmse": 0.003708108702798314
+	},
+	"glass-tinted-light/oidn-tiled/64": {
+		"ratio": 0.561869717134134,
+		"rawRmse": 0.006599588106851262,
+		"denoisedRmse": 0.003708108702798314
 	}
 }

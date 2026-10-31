@@ -87,6 +87,7 @@ import {
 	SHADOW_END,
 	REC709_LUMINANCE_COEFFICIENTS,
 	constructTBN,
+	passesLight,
 } from './Common.js';
 import { usesLightRadius } from './SceneResources.js';
 import { sampleEnvironment, sampleEnvironmentExact } from './Environment.js';
@@ -879,7 +880,7 @@ export const lightPick = ( u0, learned = null, variant = 'one' ) => {
 			If( weight.greaterThan( 0.0 ), () => {
 
 				const visibility = shadow( pickOf( 'origin' ), pickOf( 'direction' ), pickOf( 'distance' ) ).toVar();
-				if ( learned ) learned.record( pickOf( 'kind' ), visibility.greaterThan( 0.0 ) );
+				if ( learned ) learned.record( pickOf( 'kind' ), passesLight( visibility ) );
 				result.addAssign( pickOf( 'value' ).mul( visibility ).mul( select( isBest, float( 1.0 ), total.div( weight ) ) ) );
 
 			} );
@@ -1067,7 +1068,7 @@ const makeDirectLighting = ( throughSurfaces, picked = null ) => Fn( ( [
 
 					const visibility = shadow( lightOrigin, toSample.div( shadowDistance ), shadowDistance.mul( SHADOW_END ) );
 
-					If( visibility.greaterThan( 0.0 ).or( wantUnoccluded ), () => {
+					If( passesLight( visibility ).or( wantUnoccluded ), () => {
 
 						// Base contribution WITHOUT visibility; shadowed = base × visibility (identical to the
 						// pre-dual-sum math), unoccluded = base × 1 (shadow-catcher reference only).
@@ -1135,7 +1136,7 @@ const makeDirectLighting = ( throughSurfaces, picked = null ) => Fn( ( [
 				const shadowDistance = length( toLight ).toVar();
 				const visibility = shadow( hitOrigin, toLight.div( shadowDistance ), shadowDistance.mul( SHADOW_END ) );
 
-				If( visibility.greaterThan( 0.0 ).or( wantUnoccluded ), () => {
+				If( passesLight( visibility ).or( wantUnoccluded ), () => {
 
 					const lightFacing = max( float( 0.0 ), dot( brdfSampleDirection, light.normal ).negate() ).toVar();
 
@@ -1252,7 +1253,7 @@ const makeDirectLighting = ( throughSurfaces, picked = null ) => Fn( ( [
 
 					const visibility = shadow( originFor( back, lightShadowOrigin( direction ) ), direction, float( 1e20 ) );
 
-					If( visibility.greaterThan( 0.0 ).or( wantUnoccluded ), () => {
+					If( passesLight( visibility ).or( wantUnoccluded ), () => {
 
 						// Base contribution WITHOUT visibility (deterministic estimator; no stochastic scaling).
 						const baseContribution = skyLight();

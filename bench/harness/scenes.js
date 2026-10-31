@@ -1607,6 +1607,55 @@ SCENES.push( {
 	build: buildTranslucentPanel,
 } );
 
+// Light through coloured glass: an emitter over three thin panes — tinted by its base colour, by a volume's absorption
+// and by a colour map — onto a floor. The truth turns emissive NEE off, so that light arrives by refraction alone; NEE's
+// straight shadow rays through the panes, and their MIS with the refracted paths, must give the same colour and amount.
+SCENES.push( {
+	id: 'glass-tinted-light',
+	covers: 'light through coloured glass: shadow rays tinted per face by base colour and colour map and per channel by a volume\'s absorption, MIS with paths refracted to the emitter, held to refraction alone',
+	spp: 64,
+	truthSpp: 2048,
+	settings: { maxBounces: 4, enableEmissiveTriangleSampling: true, enableEnvironment: false },
+	truthSettings: { enableEmissiveTriangleSampling: false },
+	build: buildTintedLight,
+} );
+
+async function buildTintedLight( app ) {
+
+	await app.stages.pathTracer.environment.setMode( 'color' );
+
+	const scene = new Group();
+	const floor = new Mesh( new PlaneGeometry( 40, 40 ), new MeshPhysicalMaterial( { color: 0xcccccc, roughness: 1, metalness: 0 } ) );
+	floor.rotation.x = - Math.PI / 2;
+	scene.add( floor );
+
+	const light = new Mesh( new PlaneGeometry( 4, 2 ), new MeshPhysicalMaterial( {
+		color: 0x000000, emissive: 0xffffff, emissiveIntensity: 3, roughness: 1,
+	} ) );
+	light.rotation.x = Math.PI / 2;
+	light.position.y = 3;
+	scene.add( light );
+
+	const tints = [
+		{ color: new Color( 0.15, 0.85, 0.3 ) },
+		{ attenuationColor: new Color( 1, 0.5, 0.15 ), attenuationDistance: 0.05 },
+		{ map: makeCheckerAlbedo( 64, 4, [ 230, 40, 30 ], [ 40, 60, 230 ] ) },
+	];
+	tints.forEach( ( tint, i ) => {
+
+		const pane = new Mesh( new BoxGeometry( 1, 0.05, 1 ), new MeshPhysicalMaterial( {
+			roughness: 0, metalness: 0, transmission: 1, ior: 1.5, thickness: 0.05, ...tint,
+		} ) );
+		pane.position.set( ( i - 1 ) * 1.4, 1.2, 0 );
+		scene.add( pane );
+
+	} );
+
+	await app.loadObject3D( scene, 'glass-tinted-light' );
+	setCamera( app, [ 0, 2.4, 3.2 ], [ 0, 0.3, - 0.2 ] );
+
+}
+
 // ── Analytic area light ──────────────────────────────────────────
 // Irradiance on a plane from a parallel Lambertian rectangle of uniform radiance L is E = π·L·F,
 // F the configuration factor. rectCornerFactor is the textbook differential-element-under-a-corner

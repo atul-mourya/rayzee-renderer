@@ -283,6 +283,8 @@ your own copy of the image; textures you create are left as they are.
 
 A property a three.js material lacks falls back to `MATERIAL_DEFAULTS` (exported) — MeshPhysicalMaterial's own values, so a glTF metallic material gets IOR 1.5, not a guess derived from its metalness. Weights and roughnesses (metalness, roughness, transmission, opacity, clearcoat, sheen, iridescence, …) are clamped to [0, 1] on upload and on `setMaterialProperty`.
 
+Glass (`transmission`) colours the light that passes through it as Cycles' Principled BSDF does: a closed object takes its base colour (and map) once, each surface the square root of it, and its reflections stay untinted. Light reaching a surface through glass — its shadow — takes the same colour, and a volume's `attenuationColor` per channel.
+
 ## engine.environmentManager
 
 Environment maps, sky modes, and procedural generation.

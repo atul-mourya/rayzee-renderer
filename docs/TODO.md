@@ -27,20 +27,17 @@
   writes half its sun angle (10° → `angle` 5) though USD defines the full width, so its suns read half as soft.
 
 - [ ] `usePixelFreeze` is inert on 24155522.glb — bit-identical to uniform at 150 spp, nothing reaches `pixelFreezeThreshold` 0.02, so the shipping adaptive default saves nothing on real interiors
-- [ ] `thickness` is inert, so every transmissive surface is treated as a volume boundary. glTF uses `thicknessFactor == 0` to mean **thin-walled** — no refraction, tint once, attenuation ignored. A hollow thin-walled shell therefore tints baseColor at every interface crossed (4x on the Gelatinous Cube: blue 0.168^4 = 0.0008, renders black). Fix = branch on thickness, and re-add the Thickness control with a scene-relative range (three.js specifies it in local space x model scale), not the old 0..1 slider. gap-plan Phase 4.4.
-  **Proper fix on branch `feat/thin-glass` (ee108cf9, not merged) — merge it rather than redoing this:** thickness 0 is a
+- [ ] `thickness` is inert, so every transmissive surface is treated as a volume boundary. glTF uses `thicknessFactor == 0` to mean **thin-walled** — no refraction, tint once, attenuation ignored. A hollow thin-walled shell therefore tints at every interface crossed (√ baseColor each since 11.16, as Cycles: 4 crossings on the Gelatinous Cube give blue 0.168² = 0.028; before, 0.168⁴ = 0.0008 and it rendered black). Fix = branch on thickness, and re-add the Thickness control with a scene-relative range (three.js specifies it in local space x model scale), not the old 0..1 slider. gap-plan Phase 4.4.
+  **Proper fix on branch `feat/thin-glass` (ee108cf9, not merged) — merge it rather than redoing this** (it predates the
+  11.16 glass colour: its sheet tint and shadow-ray branch need the colour transmittance and `transmissionTint`): thickness 0 is a
   thin sheet (no bend, no medium, both faces' Fresnel 2R / (1 + R)) in the glass path, the opaque path's transmission
   lobe and shadow rays; importers mark solid glass with thickness 1; the app gets a "Thin" switch. Changes how glTF
   glass without a volume renders (it stops refracting).
 - [ ] (low priority) OIDN made 150-spp renders slightly worse than raw (2026-08, before oidn-web 0.5.0 — re-measure). Defaults stop at 30–60 spp, so only raised caps hit it. Fix if real: fade OIDN out as the image converges.
 - [ ] NRD is still worse than raw at 4–16 spp on several scenes (2026-10-14, after the 1-spp fix): alpha-cutout 1.57 / 2.21, sheen 1.13 / 1.38, clearcoat 1.05 / 1.35, shadow-catcher 1.24 / 1.37, iridescence 1.08, anisotropy 1.04 (4 / 16 spp). `bench:denoise`'s `sppLadder [1, 64]` never measures them: add a 4 or 16 rung.
 - [ ] NRD treats a whole emissive material as an emitter (never blurred), so a surface with a mostly-black emissive map is left noisy; a one-pixel ring can still leak at a non-black emitter's edge (needs per-sample emission, no free G-buffer lane).
-- [ ] Shadow rays through glass ignore its tint (Junk Shop's "Furniture" looks black but passes white light).
-- [ ] Glass reflections take the base colour: `handleTransmission` tints reflection and refraction alike, while glTF
-  (KHR_materials_transmission) and Cycles tint only the light that goes through. Coloured glass would get white
-  reflections; changes how coloured glass renders. Not why coloured glass reads darker than Cycles, though: Poly Haven's
-  GlasswareWhiskeySet002 (smooth glass, amber whiskey) renders its whiskey darker and redder than Cycles 5.1 under the
-  same sky and camera (centre 0.191 against 0.202), and untinted reflections move it only to 0.194.
+- [ ] Shadow rays cross glass in a straight line (coloured since 11.16, see `docs/design/SHADING.md` → Light through
+  glass): within ~1 % of refraction for panes, but a thick block lands ±7 % off, as the light really bends through it.
 - [ ] Rough, dense, part-transmissive glass still reads 0.97–0.98 in a closed white furnace (T 0.5, IOR 1.5, roughness
   0.7–1; 1.00 to roughness 0.2, and 0.999 at IOR 1.01). Before the part-transmission fix it read 0.46–0.80. Not the
   straight shadow rays' missing (n1/n2)²: giving them it read 1.11 / 1.05 / 1.01 at roughness 0 / 0.5 / 1.

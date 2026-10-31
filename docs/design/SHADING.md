@@ -91,7 +91,7 @@ the shadow terminator, shadow-ray picking, sized lights and fog. CLAUDE.md keeps
 - **Transmission map** — transmission = factor × the map's R (linear bucket, albedo UV transform). Shade folds it in
   `applyExtensionMaps`; shadow rays read it too (`traceShadowRay`), compiled in only while some material has one
   (`transmissionMaps` in the build context, `MaterialDataManager.hasTransmissionMaps()`).
-  `tests/gpu/transmissionMapShadow.test.js`. ⚠️ `SceneProcessor` adopts every per-type texture list through
+  `tests/gpu/glassShadow.test.js`. ⚠️ `SceneProcessor` adopts every per-type texture list through
   `_adoptTextureLists` (`TEXTURE_LISTS`): a list kept from an earlier extraction drops that map type after
   `rebuildMaterials()`.
 - **Glass** (`handleTransmission` → `sampleDielectric`, `shaders/MaterialTransmission.js`) — each crossing draws a facet
@@ -118,6 +118,30 @@ the shadow terminator, shadow-ray picking, sized lights and fog. CLAUDE.md keeps
   the whole material, transmission lobe included. Not found yet: rough, dense, part-transmissive glass in a closed
   furnace still reads 0.97–0.98 at roughness 0.7–1 (IOR 1.5; at IOR 1.01, 0.999); giving the straight shadow rays
   radiance's (n1/n2)² does not explain it (1.11 smooth, 1.01 at roughness 1).
+  **Colour**: only the light that goes through takes the base colour, and each crossing takes its square root
+  (`transmissionTint`, Common.js), so a way in and out of a closed object takes the colour once — Cycles' Principled BSDF
+  (`sqrt( clamped_base_color )` as the refraction tint, reflection untinted), which glTF leaves open ("a coloured,
+  transparent foil"). Until 11.16 every crossing took the whole colour and reflections were tinted too: a pane showed the
+  colour squared, Poly Haven's whiskey set (amber liquid in glass, each crossed twice) rendered dark red-brown where Cycles
+  shows amber (image mean 3.8 % under Cycles 5.1; now 0.7 % under). Every crossing goes through it: the crossing itself,
+  the opaque path's stand-in transmission lobe (`LightsIndirect`), shadow rays and the OIDN guide's see-through tint
+  (`featCarry`).
+- **Light through glass** (`traceShadowRay`, path integrator) — a shadow ray crosses glass in a straight line, as V-Ray's
+  and Arnold's "glass affects shadows" do, and returns a colour: each face multiplies it by (1 − F) × transmission × the
+  crossing's tint (base colour and its map at the hit), and a volume by its absorption per channel, so NEE carries what a
+  camera path through the same glass carries. Its partner, a path refracted through the glass to an emitter, is weighed
+  from the last opaque scatter: Shade's MIS ray length runs on across a refraction as across an alpha skip (`keepsLine`;
+  the bidirectional integrator keeps its own, and its strategies still stop at glass, `traceShadowRayRefractiveOpaque`).
+  Until 11.16 the shadow ray carried a number — base colour ignored, absorption averaged over the channels — and the
+  emitter's density was measured from the glass: under a green pane the floor took red and blue at 2.6–3.3× what gets
+  through, and light from an emitter through a clear pane read 13 % bright. Held to the same scene with emissive NEE off
+  (light through the glass by refraction alone, Cycles' only way): thin panes of any colour within ~1 % (clear −0.9 %: the
+  inner reflections a straight ray skips), an absorbing pane the same; a 0.3-thick block ±7 % (straight rays do not bend).
+  That reference against Cycles 5.1 (same scene, 16k samples): every channel under every pane within 0.1–0.9 %.
+  Compiled in only while some material transmits (`glass` in the build context, `MaterialDataManager.hasTransmission()`;
+  an edit to `transmission` rebuilds): otherwise shadow rays carry a number and Shade leaves the glass crossing and its
+  tint out. Carrying a colour everywhere cost 24155522.glb (no glass) +2.5 % Shade; gated, +0.17 %, inside the runs'
+  spread. `tests/gpu/glassShadow.test.js`; `glass-tinted-light` gates it.
 - **Displacement** (`shaders/Displacement.js`) — three.js's meaning: height = map × `displacementScale` + `displacementBias`,
   scene units, along the normal (packed at 49 and 51). No tessellation: Shade marches the height field from the base hit
   (a step per 4 texels crossed, 8–64 for camera rays, 16 for bounces) and shades with the marched UV and the field's slope

@@ -13,6 +13,7 @@
  * @property {?Node} alphaShadows - int uniform, 1 = shadow rays test texture alpha; null = never
  * @property {?Object<string, boolean>} materialLayers - the MATERIAL_LAYERS some material uses; null = all of them
  * @property {boolean} [lightRadius] - some point or spot light has a radius (path tracing only); false = all are points
+ * @property {boolean} [glass] - some material transmits; false = shadow rays never cross glass, and carry a number, not a colour
  * @property {boolean} [transmissionMaps] - some material has a transmission map; false = shadow rays never sample one
  * @property {boolean} [clearcoatNormals] - some coated material has a normal or bump map; false = every coat follows N
  * @property {?Object} [fog] - the fog's uniforms ( density, color, anisotropy, boxMin, boxMax, falloff, floor ) while it has a density
@@ -62,6 +63,13 @@ export function materialLayers( builder ) {
 export function usesLightRadius( builder ) {
 
 	return builder.context[ KEY ]?.lightRadius ?? true;
+
+}
+
+/** Whether the kernel being built has shadow rays cross glass, carrying its colour. Outside a scene kernel (a test) it does. */
+export function usesGlass( builder ) {
+
+	return builder.context[ KEY ]?.glass ?? true;
 
 }
 

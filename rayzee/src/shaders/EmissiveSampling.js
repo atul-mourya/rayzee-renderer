@@ -29,7 +29,7 @@ import {
 import {
 	MIN_PDF, getDatafromStorageBuffer, powerHeuristic, MATERIAL_SLOTS, MATERIAL_SLOT,
 	computeDotProductsAniso, instanceRows, instanceNormalToWorld, instancePointToWorld,
-	unpackTriangleNormal, triangleRow, SHADOW_END
+	unpackTriangleNormal, triangleRow, SHADOW_END, passesLight,
 } from './Common.js';
 import { TRI_MATERIAL_MASK } from '../scene/BufferLayout.js';
 import { getRandomSample1D, getRandomSample2D } from './Random.js';
@@ -691,7 +691,7 @@ const calculateEmissiveTriangleContributionDebug = Fn( ( [
 			const shadowDist = length( toSample ).toVar();
 			const visibility = traceShadowRayFn( rayOrigin, toSample.div( shadowDist ), shadowDist.mul( SHADOW_END ) );
 
-			If( visibility.greaterThan( 0.0 ), () => {
+			If( passesLight( visibility ), () => {
 
 				// Share H + dot products between BRDF eval and PDF (computeDotProducts
 				// would otherwise run twice with identical inputs).

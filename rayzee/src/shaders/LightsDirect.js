@@ -2,7 +2,7 @@
 // Direct lighting calculations including shadow ray tracing
 // and contribution calculations for all light types.
 
-import { sceneResources, usesTransmissionMaps } from './SceneResources.js';
+import { sceneResources, usesGlass, usesTransmissionMaps } from './SceneResources.js';
 import {
 	Fn,
 	float,
@@ -31,7 +31,7 @@ import { Ray, ShadowMaterial, HitInfo } from './Struct.js';
 import {
 	REC709_LUMINANCE_COEFFICIENTS, getShadowMaterial, instanceRows,
 	instanceFaceNormalToWorld, triangleRow, shadowFlagsSettle, offsetRayOrigin,
-	getDatafromStorageBuffer, MATERIAL_SLOT, MATERIAL_SLOTS,
+	getDatafromStorageBuffer, MATERIAL_SLOT, MATERIAL_SLOTS, transmissionTint,
 } from './Common.js';
 import { fresnelDielectric } from './Fresnel.js';
 import { calculateBeerLawAbsorption } from './MaterialTransmission.js';
@@ -42,6 +42,8 @@ import { fogTransmittance } from './Fog.js';
 // SHADOW RAY TRACING
 // ================================================================================
 
+// The light that gets through, as a colour: glass tints it as a camera path through it is tinted. Where glass blocks
+// (`refractiveBlocks`) nothing is coloured, so the result is a float; in a scene without glass a number carries it.
 // Note: traverseBVH is passed as a parameter to avoid circular dependency
 const makeTraceShadowRay = ( refractiveBlocks ) => Fn( ( [
 	origin, dir, maxDist,
@@ -53,8 +55,11 @@ const makeTraceShadowRay = ( refractiveBlocks ) => Fn( ( [
 ], builder ) => {
 
 	const { alphaShadows, shadowAlbedoMaps, linearBuckets, fog } = sceneResources( builder );
-	const transmissionMaps = ! refractiveBlocks && usesTransmissionMaps( builder );
-	const transmittance = float( 1.0 ).toVar();
+	const glass = ! refractiveBlocks && usesGlass( builder );
+	const transmissionMaps = glass && usesTransmissionMaps( builder );
+	const transmittance = ( glass ? vec3( 1.0 ) : float( 1.0 ) ).toVar();
+	const block = () => transmittance.assign( glass ? vec3( 0.0 ) : float( 0.0 ) );
+	const faint = () => ( glass ? max( transmittance.x, max( transmittance.y, transmittance.z ) ) : transmittance ).lessThan( 1e-4 );
 	const rayOrigin = origin.toVar();
 	const remainingDist = float( maxDist ).toVar();
 	// As values: the loop below is the first reader of `dir`, and an expression read there first is zero after it.
@@ -86,7 +91,7 @@ const makeTraceShadowRay = ( refractiveBlocks ) => Fn( ( [
 		const flags = triangleRow( triangleBuffer, shadowHit.triangleIndex, 4 ).z;
 		If( shadowFlagsSettle( flags, alphaShadows ), () => {
 
-			transmittance.assign( 0.0 );
+			block();
 			Break();
 
 		} );
@@ -149,9 +154,9 @@ const makeTraceShadowRay = ( refractiveBlocks ) => Fn( ( [
 				const blendAlpha = clamp( shadowMaterial.color.a.mul( shadowMaterial.opacity ).mul( texAlpha ), 0.0, 1.0 );
 				transmittance.mulAssign( float( 1.0 ).sub( blendAlpha ) );
 
-				If( transmittance.lessThan( 1e-4 ), () => {
+				If( faint(), () => {
 
-					transmittance.assign( 0.0 );
+					block();
 					Break();
 
 				} );
@@ -172,9 +177,9 @@ const makeTraceShadowRay = ( refractiveBlocks ) => Fn( ( [
 			rayOrigin.assign( shadowHit.hitPoint.add( dir.mul( alphaEps ) ) );
 			remainingDist.subAssign( shadowHit.dst.add( alphaEps ) );
 
-		} ).ElseIf( shadowMaterial.transmission.greaterThan( 0.0 ), refractiveBlocks ? () => {
+		} ).ElseIf( shadowMaterial.transmission.greaterThan( 0.0 ), ! glass ? () => {
 
-			transmittance.assign( 0.0 );
+			block();
 			Break();
 
 		} : () => {
@@ -218,25 +223,31 @@ const makeTraceShadowRay = ( refractiveBlocks ) => Fn( ( [
 			If( entering.not().and( shadowMaterial.attenuationDistance.greaterThan( 0.0 ) ), () => {
 
 				const dist = length( shadowHit.hitPoint.sub( rayOrigin ) );
-				const absorption = calculateBeerLawAbsorption(
+				transmittance.mulAssign( calculateBeerLawAbsorption(
 					shadowMaterial.attenuationColor,
 					shadowMaterial.attenuationDistance,
 					dist,
-				);
-				transmittance.mulAssign( absorption.x.add( absorption.y ).add( absorption.z ).div( 3.0 ) );
+				) );
+
+			} );
+
+			// Each face tints the light by the base colour and its map, as it tints a camera path's refraction.
+			const tint = getDatafromStorageBuffer( materialBuffer, shadowHit.materialIndex, int( MATERIAL_SLOT.COLOR_METALNESS ), int( MATERIAL_SLOTS ) ).rgb.toVar();
+			if ( shadowAlbedoMaps ) If( shadowMaterial.albedoMapIndex.greaterThanEqual( int( 0 ) ), () => {
+
+				tint.mulAssign( sampleBucket( shadowAlbedoMaps, shadowMaterial.albedoMapIndex, hitTextureUV() ).rgb );
 
 			} );
 
 			// Shadow rays go straight through, so both faces see the outside-in angle and eta.
 			const fresnel = fresnelDielectric( abs( dot( dir, N ) ), max( shadowMaterial.ior, 1.0 ) );
 
-			const matTransmittance = float( 1.0 ).sub( fresnel ).mul( transmission );
-			transmittance.mulAssign( matTransmittance );
+			transmittance.mulAssign( transmissionTint( tint ).mul( float( 1.0 ).sub( fresnel ).mul( transmission ) ) );
 
 			// Early exit if almost no light passes through
-			If( transmittance.lessThan( 1e-4 ), () => {
+			If( faint(), () => {
 
-				transmittance.assign( 0.0 );
+				block();
 				Break();
 
 			} );
@@ -251,9 +262,9 @@ const makeTraceShadowRay = ( refractiveBlocks ) => Fn( ( [
 			// Handle transparent materials
 			transmittance.mulAssign( float( 1.0 ).sub( shadowMaterial.opacity ) );
 
-			If( transmittance.lessThan( 1e-4 ), () => {
+			If( faint(), () => {
 
-				transmittance.assign( 0.0 );
+				block();
 				Break();
 
 			} );
@@ -266,14 +277,15 @@ const makeTraceShadowRay = ( refractiveBlocks ) => Fn( ( [
 		} ).Else( () => {
 
 			// Fully opaque object blocks shadow ray
-			transmittance.assign( 0.0 );
+			block();
 			Break();
 
 		} );
 
 	} );
 
-	return fog ? transmittance.mul( fogTransmittance( fog, fogSegment.from, fogSegment.dir, fogSegment.length ) ) : transmittance;
+	const light = fog ? transmittance.mul( fogTransmittance( fog, fogSegment.from, fogSegment.dir, fogSegment.length ) ) : transmittance;
+	return refractiveBlocks || glass ? light : vec3( light );
 
 } );
 

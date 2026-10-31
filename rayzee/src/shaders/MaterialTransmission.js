@@ -4,13 +4,13 @@
 import { Fn, wgslFn, vec3, float, int, bool as tslBool, If, select, abs, dot, reflect, refract, max, mix, clamp, exp, sqrt, normalize } from 'three/tsl';
 
 import { struct } from './Struct.js';
-import { EPSILON, MIN_ROUGHNESS, MIN_PDF, constructTBN } from './Common.js';
+import { EPSILON, MIN_ROUGHNESS, MIN_PDF, constructTBN, transmissionTint } from './Common.js';
 import { fresnelDielectric } from './Fresnel.js';
 import { DistributionGGX, dielectricInterfaceAlbedo } from './MaterialProperties.js';
 import { ImportanceSampleGGX, sampleGGXVNDF } from './MaterialSampling.js';
 import { getRandomSample1D, getRandomSample2D, pcgHash } from './Random.js';
 import { handleSubsurfaceEntry, SubsurfaceEntryResult } from './Subsurface.js';
-import { materialLayers } from './SceneResources.js';
+import { materialLayers, usesGlass } from './SceneResources.js';
 
 // ================================================================================
 // STRUCTS (local to transmission)
@@ -358,13 +358,14 @@ export const handleTransmission = Fn( ( [
 
 	result.direction.assign( crossing.direction );
 	result.didReflect.assign( crossing.didReflect );
-	result.throughput.assign( material.color.xyz.mul( crossing.weight ) );
+	result.throughput.assign( vec3( crossing.weight ) );
 
 	If( crossing.didReflect.not(), () => {
 
-		// Radiance scales by (n1/n2)² into the other medium's solid angle (it cancels over a way in and out). Volume
-		// absorption is applied along the path inside, from the medium stack.
-		result.throughput.mulAssign( colorWeight.mul( n1.mul( n1 ).div( max( n2.mul( n2 ), EPSILON ) ) ) );
+		// Only the light that goes through takes the glass's colour (glTF, Cycles). Radiance scales by (n1/n2)² into the
+		// other medium's solid angle (it cancels over a way in and out). Volume absorption is applied along the path
+		// inside, from the medium stack.
+		result.throughput.mulAssign( transmissionTint( material.color.xyz ).mul( colorWeight ).mul( n1.mul( n1 ).div( max( n2.mul( n2 ), EPSILON ) ) ) );
 		result.pathWavelength.assign( wavelength );
 
 	} );
@@ -459,7 +460,7 @@ export const handleMaterialTransparency = Fn( ( [
 
 		} );
 
-		If( handled.not().and( material.transmission.greaterThan( 0.0 ) ).and( transmissiveTraversals.greaterThan( int( 0 ) ) ), () => {
+		if ( usesGlass( builder ) ) If( handled.not().and( material.transmission.greaterThan( 0.0 ) ).and( transmissiveTraversals.greaterThan( int( 0 ) ) ), () => {
 
 			// Only apply transmission with probability equal to the transmission value
 			If( transmissionRand.lessThan( material.transmission ), () => {

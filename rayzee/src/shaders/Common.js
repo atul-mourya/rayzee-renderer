@@ -1,4 +1,4 @@
-import { Fn, wgslFn, float, vec2, vec3, vec4, uvec2, uvec4, int, uint, mat3, If, max, dot, clamp, select, bool as tslBool } from 'three/tsl';
+import { Fn, wgslFn, float, vec2, vec3, vec4, uvec2, uvec4, int, uint, mat3, If, max, dot, clamp, select, sqrt, bool as tslBool } from 'three/tsl';
 
 import {
 	AnisoFrame,
@@ -628,6 +628,12 @@ export const getShadowMaterial = Fn( ( [ materialIndex, materialBuffer ] ) => {
 	} );
 
 } );
+
+/** What one glass crossing tints the light by: √ base colour, so a way in and out takes the colour once (Cycles). */
+export const transmissionTint = ( color ) => sqrt( clamp( color, vec3( 0.0 ), vec3( 1.0 ) ) );
+
+/** Whether a shadow ray's transmittance, a colour, lets any light through. */
+export const passesLight = ( transmittance ) => transmittance.x.add( transmittance.y ).add( transmittance.z ).greaterThan( 0.0 );
 
 // ================================================================================
 // INSTANCE TRANSFORMS

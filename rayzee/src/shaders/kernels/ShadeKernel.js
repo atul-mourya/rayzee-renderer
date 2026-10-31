@@ -16,7 +16,7 @@ import {
 } from 'three/tsl';
 
 import { sampleEnvironment, groundProjectedEnvDir, sampleEnvironmentExact, environmentPdfExact } from '../Environment.js';
-import { getMaterial, powerHeuristic, balanceHeuristic, classifyMaterial, REC709_LUMINANCE_COEFFICIENTS, PI_INV, EPSILON, diffuseGroundMaterial, offsetRayOrigin, SHADOW_END, triangleRow, MIN_ROUGHNESS, MIN_PDF } from '../Common.js';
+import { getMaterial, powerHeuristic, balanceHeuristic, classifyMaterial, REC709_LUMINANCE_COEFFICIENTS, PI_INV, EPSILON, diffuseGroundMaterial, offsetRayOrigin, SHADOW_END, triangleRow, MIN_ROUGHNESS, MIN_PDF, passesLight, transmissionTint } from '../Common.js';
 import { cosineWeightedSample } from '../MaterialSampling.js';
 import { sampleAllMaterialTextures, processAnisotropyMap, applyExtensionMaps, getTransformedUV, triangleUVTangent, perturbNormal } from '../TextureSampling.js';
 import { evaluateMaterialResponse } from '../MaterialEvaluation.js';
@@ -1261,9 +1261,13 @@ export function buildShadeKernel( params ) {
 
 				} ).Else( () => {
 
-					// smooth glass: DEFER — tint by the glass colour (matches the transmission throughput,
-					// which multiplies material.color at both reflect and refract; achromatic eta²/Fr excluded).
-					featCarry.mulAssign( clamp( albedo, vec3( 0.0 ), vec3( 1.0 ) ) );
+					// smooth glass: DEFER — tint by the glass colour where the light went through, as the transmission
+					// throughput does (achromatic eta²/Fr excluded).
+					If( interaction.didReflect.not(), () => {
+
+						featCarry.mulAssign( transmissionTint( albedo ) );
+
+					} );
 
 				} );
 
@@ -1464,9 +1468,11 @@ export function buildShadeKernel( params ) {
 				} );
 
 			} );
-			// Alpha skip keeps the direction, so the MIS origin is recoverable: accumulate the segment.
-			// Any redirection (refraction/reflection/SSS) breaks the line — reset.
-			const misRayT = select( interaction.isAlphaSkip, readMisRayT( rayBufferRW, rayID ).add( hitDist ), float( 0.0 ) );
+			// Alpha skip keeps the direction, so the MIS origin is recoverable: accumulate the segment. So does a refraction
+			// for the path integrator, whose emitter NEE crosses glass in a straight line from that origin (a pane leaves the
+			// ray parallel). Any other redirection breaks the line — reset.
+			const keepsLine = bdpt ? interaction.isAlphaSkip : interaction.isAlphaSkip.or( interaction.isTransmissive.and( interaction.didReflect.not() ) );
+			const misRayT = select( keepsLine, readMisRayT( rayBufferRW, rayID ).add( hitDist ), float( 0.0 ) );
 			writeRayOriginMeta( rayBufferRW, rayID, newOrigin, cameraDepth, sssSteps, transparentCount, misRayT );
 			writeRayDirFlags( rayBufferRW, rayID, newDir, flags );
 			// Free bounce: preserve prevBouncePdf (megakernel keeps the last opaque-scatter pdf across
@@ -2267,7 +2273,7 @@ export function buildShadeKernel( params ) {
 									rayOrigin, toSample.div( shadowDist ), shadowDist.mul( SHADOW_END ),
 								);
 
-								If( visibility.greaterThan( 0.0 ), () => {
+								If( passesLight( visibility ), () => {
 
 									const brdfVal = evaluateMaterialResponse( V, emissiveSample.direction, N, material );
 									const bPdf = calculateMaterialPDF( V, emissiveSample.direction, N, material );

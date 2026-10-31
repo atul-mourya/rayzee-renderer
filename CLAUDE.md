@@ -500,7 +500,14 @@ bench gates and measurements.
   Fresnel at that facet picks reflection or refraction, weight G2 / G1(V) over the interface's albedo
   (`dielectricInterfaceAlbedo`, the DFG LUT's B/A); a draw on the wrong side of N ends the path. When transmission's
   lottery declines, Shade sets `material.transmission` to 0 so the opaque base is itself (it lost (1 − T) twice).
-  ⚠️ Change the glass sampler, rerun `npm run bench:lut`; `furnace-glass-*` gate it.
+  Only refraction takes the base colour, √ of it a crossing (`transmissionTint`: a way in and out takes it once, as in
+  Cycles); reflections stay the light's. ⚠️ Change the glass sampler, rerun `npm run bench:lut`; `furnace-glass-*` gate it.
+- **Light through glass**: `traceShadowRay` crosses glass straight and returns a **colour** (`transmissionTint` of base
+  colour × map per face, absorption per channel); `traceShadowRayRefractiveOpaque` (bidirectional) stays a float. A path
+  refracted to an emitter is MIS-weighed from the last opaque scatter: the MIS ray length runs on across a refraction
+  (path integrator only). Thin panes match refraction alone within ~1 %, thick blocks ±7 %. Compiled in only while some
+  material transmits (`usesGlass`, like the material layers): otherwise shadow rays carry a float. `glass-tinted-light`
+  gates it.
 - **Transmission map**: factor × the map's R, in Shade and in shadow rays. ⚠️ `SceneProcessor` adopts every per-type
   texture list through `_adoptTextureLists` (`TEXTURE_LISTS`): a list kept from an earlier extraction drops that map
   type after `rebuildMaterials()`.

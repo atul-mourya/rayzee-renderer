@@ -416,6 +416,25 @@ describe( 'MaterialDataManager', () => {
 
 	} );
 
+	it( 'knows whether shadow rays cross glass, and says so when an edit makes a material transmit', () => {
+
+		const manager = new MaterialDataManager( null );
+		const data = new Float32Array( 2 * F );
+		packMaterial( data, 0, { color: [ 0.2, 0.8, 0.3 ] } );
+		packMaterial( data, F, {} );
+		manager.setMaterialData( data );
+		expect( manager.hasTransmission() ).toBe( false );
+
+		let changed = 0;
+		manager.callbacks.onMaterialFeaturesChanged = () => changed ++;
+		manager.updateMaterialProperty( 1, 'roughness', 0.3 );
+		expect( changed ).toBe( 0 );
+		manager.updateMaterialProperty( 1, 'transmission', 0.5 );
+		expect( changed ).toBe( 1 );
+		expect( manager.hasTransmission() ).toBe( true );
+
+	} );
+
 	it( 'knows whether a coat can lean apart from its base', () => {
 
 		const manager = new MaterialDataManager( null );

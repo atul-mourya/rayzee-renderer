@@ -13,7 +13,8 @@
 import { Fn, float, vec3, int, max, dot, If, select } from 'three/tsl';
 
 import { IndirectLightingResult } from './LightsCore.js';
-import { MIN_PDF } from './Common.js';
+import { MIN_PDF, transmissionTint } from './Common.js';
+import { usesGlass } from './SceneResources.js';
 import { getRandomSample2D } from './Random.js';
 import { cosineWeightedSample } from './MaterialSampling.js';
 
@@ -36,7 +37,7 @@ export const calculateIndirectLighting = Fn( ( [
 	isDiffuseTransmission,
 	rngState,
 	pixelCoord, resolution, frame, dimBase,
-] ) => {
+], builder ) => {
 
 	// Initialize result
 	const r_direction = vec3( 0.0 ).toVar();
@@ -70,12 +71,9 @@ export const calculateIndirectLighting = Fn( ( [
 		r_combinedPdf.assign( pdf );
 
 		// The reflection BRDF eval is invalid below the surface, so refraction carries the
-		// sampler's own tint (material.color × colorWeight), mirroring handleTransmission.
-		r_throughput.assign( select(
-			isTransmission,
-			material.color.xyz.mul( brdfSampleColorWeight ),
-			brdfSampleValue.mul( NoL ).div( pdf ),
-		) );
+		// sampler's own tint (the crossing's × colorWeight), mirroring handleTransmission.
+		const reflected = brdfSampleValue.mul( NoL ).div( pdf );
+		r_throughput.assign( usesGlass( builder ) ? select( isTransmission, transmissionTint( material.color.xyz ).mul( brdfSampleColorWeight ), reflected ) : reflected );
 
 	} );
 

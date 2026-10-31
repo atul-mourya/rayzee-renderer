@@ -360,6 +360,16 @@ export class MaterialDataManager {
 
 	}
 
+	/** Whether some material transmits: only then do shadow rays cross glass. */
+	hasTransmission() {
+
+		const data = this.materialStorageAttr?.array;
+		if ( ! data ) return false;
+		for ( let i = 0; i < this.materialCount; i ++ ) if ( data[ i * M.FLOATS_PER_MATERIAL + M.TRANSMISSION ] > 0 ) return true;
+		return false;
+
+	}
+
 	/** Whether some material has a transmission map: only then do shadow rays sample one. */
 	hasTransmissionMaps() {
 
@@ -596,8 +606,8 @@ export class MaterialDataManager {
 
 		}
 
-		// A material layer is compiled in only while some material uses it.
-		if ( MATERIAL_LAYERS.includes( property ) ) this.callbacks.onMaterialFeaturesChanged?.();
+		// A material layer, and glass in shadow rays, is compiled in only while some material uses it.
+		if ( MATERIAL_LAYERS.includes( property ) || property === 'transmission' ) this.callbacks.onMaterialFeaturesChanged?.();
 
 		this._notifyReset();
 

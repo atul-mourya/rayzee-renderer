@@ -1136,5 +1136,26 @@
 			"samples": 64
 		},
 		"rmseVsTruth": 0.019594862841205016
+	},
+	"glass-tinted-light": {
+		"truth": {
+			"meanR": 0.16862833136771638,
+			"meanG": 0.194180909017855,
+			"meanB": 0.1977518566532135,
+			"meanLuminance": 0.18900625342870908,
+			"maxLuminance": 0.5529166948467493,
+			"nonFinite": 0,
+			"samples": 2048
+		},
+		"golden": {
+			"meanR": 0.1689114689310831,
+			"meanG": 0.19381173341954194,
+			"meanB": 0.19765136119816273,
+			"meanLuminance": 0.1887951583149151,
+			"maxLuminance": 0.5529166948467493,
+			"nonFinite": 0,
+			"samples": 64
+		},
+		"rmseVsTruth": 0.006599588106851262
 	}
 }
