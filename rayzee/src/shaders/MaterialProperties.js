@@ -1,4 +1,4 @@
-import { Fn, texture, float, vec2, vec3, If, dot, max, min, sqrt, cos, exp, mix, clamp, smoothstep, floor } from 'three/tsl';
+import { Fn, texture, float, vec2, vec3, If, dot, max, min, sqrt, cos, exp, mix, clamp, smoothstep, floor, select } from 'three/tsl';
 import { ClampToEdgeWrapping, DataTexture, FloatType, LinearFilter, RGBAFormat } from 'three';
 
 import { BRDFWeights, MaterialCache, MaterialClassification, DFGResult, BaseFresnel } from './Struct.js';
@@ -149,7 +149,9 @@ export const VisibilityGGXSmithCorrelated = Fn( ( [ NoV, NoL, roughness ] ) => {
 // so E = f0·(R - S) + f90·S where S is the albedo of s. S depends on eta, so blocks 1.. of the
 // table hold it in DFG_DIELECTRIC_SLICES slices uniform in r0 = (eta - 1)/(eta + 1) up to
 // DFG_R0_MAX, neighbouring pairs side by side (R = slice k, G = slice k + 1) so one fetch
-// interpolates. Interpolation between slices is within 0.0012 of a direct integral.
+// interpolates. Interpolation between slices is within 0.0012 of a direct integral. B and A of the
+// block holding slice k as R carry a rough dielectric interface's albedo at that slice (sampleDielectric:
+// entering, then leaving), the last slice's in one block more.
 //
 // This replaces Karis's analytic split-sum polynomial. That polynomial is a fit for a DIFFERENT
 // integral (the split-sum IBL approximation) and is simply not the albedo of the BSDF integrated
@@ -164,7 +166,7 @@ export const VisibilityGGXSmithCorrelated = Fn( ( [ NoV, NoL, roughness ] ) => {
 // 262k-sample reference. Regenerate with `npm run bench:lut` if a lobe or its sampler changes —
 // the table is only valid for the exact BRDF/sampler pair it was integrated from, and drifting out
 // of calibration is exactly the failure this replaced.
-const DFG_LUT_BLOCKS = DFG_DIELECTRIC_SLICES; // block 0 + one per neighbouring slice pair
+const DFG_LUT_BLOCKS = DFG_DIELECTRIC_SLICES + 1; // block 0, one per neighbouring slice pair, the last slice's interface
 
 const _dfgLutTexture = new DataTexture( DFG_LUT_DATA, DFG_LUT_SIZE * DFG_LUT_BLOCKS, DFG_LUT_SIZE, RGBAFormat, FloatType );
 _dfgLutTexture.minFilter = LinearFilter;
@@ -233,6 +235,23 @@ export const evaluateSpecularDFG = Fn( ( [ f0, f90, eta, F0m, metalness, iridF, 
 	const E_total = clamp( E_ss.mul( compensation ), vec3( 0.0 ), vec3( 1.0 ) );
 
 	return DFGResult( { compensation, E_total } );
+
+} );
+
+// Directional albedo of a rough dielectric interface as sampleDielectric draws it — reflection, plus refraction's share
+// of the light (radiance's (n1/n2)² aside) — at eta = n2 / n1, entering (eta > 1) or leaving (eta < 1).
+export const dielectricInterfaceAlbedo = Fn( ( [ NoV, roughness, eta ] ) => {
+
+	const leaving = eta.lessThan( 1.0 );
+	const n = select( leaving, float( 1.0 ).div( eta ), eta );
+	const t = clamp( n.sub( 1.0 ).div( n.add( 1.0 ) ).div( DFG_R0_MAX ), 0.0, 1.0 ).mul( DFG_DIELECTRIC_SLICES - 1 ).toVar();
+	const k = min( floor( t ), float( DFG_DIELECTRIC_SLICES - 2 ) ).toVar();
+	const E = mix(
+		dfgLutNode.sample( dfgLutUV( roughness, NoV, k.add( 1.0 ) ) ).ba,
+		dfgLutNode.sample( dfgLutUV( roughness, NoV, k.add( 2.0 ) ) ).ba,
+		t.sub( k ),
+	);
+	return max( select( leaving, E.y, E.x ), 0.05 );
 
 } );
 

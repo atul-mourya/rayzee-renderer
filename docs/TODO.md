@@ -4,7 +4,6 @@
 - remove all hacks on rectarealight parsing and treat all the incoming serailized data. getting difference between placeholder arealight vs arealight coming with usd files
 -  the Moana lava rocks render bright red. The scene file itself sets them to red, and their real colour comes from a texture format (Ptex) the pbrt loader doesn't read yet.
 -  dont reload the same model using query param. instead provide a save button with autosave option. on reload load the default. users can open using file menu
--   Rough glass too bright
 -   result page to show hrd when available
 -   Fast compilation on windows devices
 
@@ -37,6 +36,14 @@
 - [ ] NRD is still worse than raw at 4–16 spp on several scenes (2026-10-14, after the 1-spp fix): alpha-cutout 1.57 / 2.21, sheen 1.13 / 1.38, clearcoat 1.05 / 1.35, shadow-catcher 1.24 / 1.37, iridescence 1.08, anisotropy 1.04 (4 / 16 spp). `bench:denoise`'s `sppLadder [1, 64]` never measures them: add a 4 or 16 rung.
 - [ ] NRD treats a whole emissive material as an emitter (never blurred), so a surface with a mostly-black emissive map is left noisy; a one-pixel ring can still leak at a non-black emitter's edge (needs per-sample emission, no free G-buffer lane).
 - [ ] Shadow rays through glass ignore its tint (Junk Shop's "Furniture" looks black but passes white light).
+- [ ] Glass reflections take the base colour: `handleTransmission` tints reflection and refraction alike, while glTF
+  (KHR_materials_transmission) and Cycles tint only the light that goes through. Coloured glass would get white
+  reflections; changes how coloured glass renders. Not why coloured glass reads darker than Cycles, though: Poly Haven's
+  GlasswareWhiskeySet002 (smooth glass, amber whiskey) renders its whiskey darker and redder than Cycles 5.1 under the
+  same sky and camera (centre 0.191 against 0.202), and untinted reflections move it only to 0.194.
+- [ ] Rough, dense, part-transmissive glass still reads 0.97–0.98 in a closed white furnace (T 0.5, IOR 1.5, roughness
+  0.7–1; 1.00 to roughness 0.2, and 0.999 at IOR 1.01). Before the part-transmission fix it read 0.46–0.80. Not the
+  straight shadow rays' missing (n1/n2)²: giving them it read 1.11 / 1.05 / 1.01 at roughness 0 / 0.5 / 1.
 - [ ] Extension maps (transmission, clearcoat, sheen, …) are read on the base-colour map's UV transform (the coat's normal map on the base normal map's, or its own when there is none) and the first UV set; glTF gives each its own `texCoord` and `KHR_texture_transform`.
 - [ ] OIDN's guide jumps from "see through" to "this surface" at a hard step (pure metal: roughness 0.049). Cycles' smooth ramp was tried (2026-08) and lost on 9 of 10 `bench:denoise` OIDN tests; a retry must keep one surface per pixel.
 - [ ] Fluted glass (24233846.glb): firefly threshold, bounce counts and LED brightness change nothing — don't retry. The leftover noise is the LED-lit cabinet seen through the glass; it needs ReSTIR DI or a radiance cache (neither built).

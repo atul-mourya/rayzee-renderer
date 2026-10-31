@@ -1,7 +1,7 @@
 # Materials and shading
 
 How the path tracer's materials and shading work inside: material defaults, Fresnel, exact mirrors, diffuse
-transmission and roughness, clear-coat normals, material layers, transmission maps, displacement, ray spawn points,
+transmission and roughness, clear-coat normals, material layers, transmission maps, glass, displacement, ray spawn points,
 the shadow terminator, shadow-ray picking, sized lights and fog. CLAUDE.md keeps the rules.
 
 - **Material defaults** — `MATERIAL_DEFAULTS` (`EngineDefaults.js`) is the only fallback for a
@@ -94,6 +94,30 @@ the shadow terminator, shadow-ray picking, sized lights and fog. CLAUDE.md keeps
   `tests/gpu/transmissionMapShadow.test.js`. ⚠️ `SceneProcessor` adopts every per-type texture list through
   `_adoptTextureLists` (`TEXTURE_LISTS`): a list kept from an earlier extraction drops that map type after
   `rebuildMaterials()`.
+- **Glass** (`handleTransmission` → `sampleDielectric`, `shaders/MaterialTransmission.js`) — each crossing draws a facet
+  from the normals V sees (VNDF), the exact Fresnel at that facet picks reflection or refraction, and either weighs
+  G2 / G1(V) (height-correlated Smith), 0 where it lands on the wrong side of N, which ends the path. The weight is
+  divided by the interface's albedo — reflection plus refraction's light, radiance's (n1/n2)² aside — so the light the
+  facets trade among themselves comes back: `dielectricInterfaceAlbedo` reads it from the DFG LUT, B entering and A
+  leaving in the block of each IOR slice, the last slice's in one block more (`npm run bench:lut`; interpolation between
+  slices within 0.0014). At or below `MIN_ROUGHNESS` the facet is N and the weight 1. A dispersive glass draws (or keeps)
+  the path's wavelength first, so Fresnel and refraction both use its IOR; only a crossing locks it.
+  Until 11.16 a rough "reflection" was a refraction left off the medium stack, so it left the glass with an unpaired
+  ×(n1/n2)², and neither masking nor the facet's Fresnel was weighed: the white furnace read 1.029 at roughness 0.1 and
+  0.68 at 1 for IOR 1.5, 1.56 and 0.41 for 2.4, and rough glass showed no reflections at all. Now 0.997–1.002 at every
+  roughness for IOR 1.33 and 1.5, 0.999–1.006 for 2.4 given the crossings to let trapped light out. Against Cycles 5.1
+  (glass spheres under a sky lit by height alone): roughness 0.1 within 0.1 %, 0.3 within 1.4 %; rougher, Cycles is
+  brighter, but its multiscatter glass reads up to 1.20 in its own white furnace (1.13 / 1.20 centre / rim at
+  roughness 1). `tests/gpu/dielectricInterface.test.js` holds each crossing's energy (within 2 % over the table's grid),
+  its sides, the smooth split, and where the light goes against Walter's BSDF written out, bin by bin;
+  `furnace-glass-rough`, `furnace-glass-rougher` and `furnace-glass-dense-rough` gate it.
+  **Part transmission**: transmission's lottery (chance T) picks the glass; when it declines, Shade sets
+  `material.transmission` to 0 and the opaque base shades as itself. It used to keep T, so the diffuse lost (1 − T) a
+  second time and a stand-in transmission lobe was drawn as well: T 0.5 read 0.46–0.80 in the white furnace, now
+  1.00 for smooth to roughness 0.2. With its crossings spent (`transmissiveBounces`) the opaque path still stands in for
+  the whole material, transmission lobe included. Not found yet: rough, dense, part-transmissive glass in a closed
+  furnace still reads 0.97–0.98 at roughness 0.7–1 (IOR 1.5; at IOR 1.01, 0.999); giving the straight shadow rays
+  radiance's (n1/n2)² does not explain it (1.11 smooth, 1.01 at roughness 1).
 - **Displacement** (`shaders/Displacement.js`) — three.js's meaning: height = map × `displacementScale` + `displacementBias`,
   scene units, along the normal (packed at 49 and 51). No tessellation: Shade marches the height field from the base hit
   (a step per 4 texels crossed, 8–64 for camera rays, 16 for bounces) and shades with the marched UV and the field's slope

@@ -1479,6 +1479,41 @@ SCENES.push( {
 	},
 } );
 
+// Rough glass. Each crossing draws a facet, lets that facet's Fresnel choose reflection or refraction, weighs facet
+// masking and divides out the interface's albedo. Before, a rough "reflection" was a refraction left off the medium stack,
+// and neither masking nor the facet's Fresnel was weighed: 1.026 here at 0.2, 0.68 at 1, and 1.53 for eta 2.4. Dense
+// glass traps light inside, so it gets the crossings to let it out.
+for ( const [ id, roughness, ior, crossings ] of [
+	[ 'furnace-glass-rough', 0.2, 1.5, 32 ],
+	[ 'furnace-glass-rougher', 1, 1.5, 32 ],
+	[ 'furnace-glass-dense-rough', 0.2, 2.4, 128 ],
+] ) {
+
+	SCENES.push( {
+		id,
+		covers: `white furnace — a rough dielectric interface, roughness ${roughness}, IOR ${ior}`,
+		spp: 128,
+		truthSpp: 512,
+		settings: { maxBounces: 8, transmissiveBounces: crossings, enableEnvironment: true, environmentIntensity: 1 },
+		furnaceRadiance: 1.0,
+		async build( app ) {
+
+			const env = app.stages.pathTracer.environment;
+			env.envParams.solidSkyColor = new Color( 0xffffff );
+			await env.setMode( 'color' );
+
+			const group = new Group();
+			group.add( new Mesh( new SphereGeometry( 2, 96, 96 ), new MeshPhysicalMaterial( {
+				color: 0xffffff, roughness, metalness: 0, transmission: 1, ior, thickness: 1,
+			} ) ) );
+			await app.loadObject3D( group, id );
+			setCamera( app, [ 0, 0, 2.6 ], [ 0, 0, 0 ] );
+
+		},
+	} );
+
+}
+
 // Diffuse transmission (KHR_materials_diffuse_transmission): light crosses a closed sphere's surface diffusely, in and
 // out many times. Albedo 1 on both sides under a uniform sky makes the equilibrium radiance the sky's for any split,
 // so energy the transmission lobe, NEE through the surface or their MIS gains or loses reads here.

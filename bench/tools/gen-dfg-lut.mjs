@@ -25,6 +25,12 @@
  * Following the lobe matters: a uniform hemisphere quadrature under-resolves the narrow lobe at
  * low roughness badly enough to report E ≈ 0.04 where the truth is ≈ 1.
  *
+ * B and A of those blocks hold a rough dielectric interface's albedo at slice k (B entering, eta;
+ * A leaving, 1/eta), the last slice's in one block more: what sampleDielectric (MaterialTransmission.js)
+ * divides by. It is the expectation of that sampler's own weight — VNDF facet, exact Fresnel at the
+ * facet picking reflection or refraction, G2 / G1(V), 0 on the wrong side of N — counting refraction
+ * as light, not radiance (no (n1/n2)²).
+ *
  * THE TABLE IS ONLY VALID FOR THE BRDF/SAMPLER PAIR IT WAS INTEGRATED FROM — height-correlated
  * Smith GGX (VisibilityGGXSmithCorrelated) sampled by sampleGGXVNDF, α = roughness². Change
  * either and this must be re-run, or the compensation silently drifts back out of calibration.
@@ -65,6 +71,30 @@ function dielectricWeight( c, eta ) {
 
 }
 
+// Smith's Λ for GGX, the shader's smithLambda.
+const smithLambda = ( c, a2 ) => ( Math.sqrt( a2 + ( 1 - a2 ) * c * c ) / c - 1 ) / 2;
+
+// The weight sampleDielectric expects at one facet, reflection and refraction taken by their Fresnel shares.
+function interfaceWeight( Vx, Vz, hx, hz, VoH, eta, a2, lambdaV ) {
+
+	const F = fresnelDielectric( VoH, eta );
+	const g = ( NoL ) => ( 1 + lambdaV ) / ( 1 + lambdaV + smithLambda( Math.max( Math.abs( NoL ), 1e-4 ), a2 ) );
+	let w = 0;
+	const NoLr = 2 * VoH * hz - Vz;
+	if ( NoLr > 0 ) w += F * g( NoLr );
+	if ( F < 1 ) {
+
+		const e = 1 / eta;
+		const k = 1 - e * e * ( 1 - VoH * VoH );
+		const NoLt = - e * Vz + ( e * VoH - Math.sqrt( k ) ) * hz;
+		if ( NoLt < 0 ) w += ( 1 - F ) * g( NoLt );
+
+	}
+
+	return w;
+
+}
+
 function albedo( NoV, roughness, etas = [] ) {
 
 	const a = roughness * roughness;
@@ -78,6 +108,9 @@ function albedo( NoV, roughness, etas = [] ) {
 
 	let full = 0, bias = 0;
 	const dielectric = new Float64Array( etas.length );
+	const entering = new Float64Array( etas.length );
+	const leaving = new Float64Array( etas.length );
+	const lambdaV = smithLambda( NoV, a2 );
 
 	for ( let i = 0; i < SQRT_SAMPLES; i ++ ) {
 
@@ -105,6 +138,13 @@ function albedo( NoV, roughness, etas = [] ) {
 			hx /= hl; hy /= hl; hz /= hl;
 
 			const VoH = hx * Vx + hz * Vz;
+			for ( let k = 0; k < etas.length; k ++ ) {
+
+				entering[ k ] += interfaceWeight( Vx, Vz, hx, hz, VoH, etas[ k ], a2, lambdaV );
+				leaving[ k ] += interfaceWeight( Vx, Vz, hx, hz, VoH, 1 / etas[ k ], a2, lambdaV );
+
+			}
+
 			const NoL = 2 * VoH * hz - Vz;
 			if ( NoL <= 0 ) continue;
 
@@ -121,7 +161,7 @@ function albedo( NoV, roughness, etas = [] ) {
 	}
 
 	const n = SQRT_SAMPLES * SQRT_SAMPLES;
-	return [ full / n, bias / n, Array.from( dielectric, v => v / n ) ];
+	return [ full / n, bias / n, Array.from( dielectric, v => v / n ), Array.from( entering, v => v / n ), Array.from( leaving, v => v / n ) ];
 
 }
 
@@ -175,20 +215,28 @@ for ( let i = 0; i < N; i ++ ) {
 	const NoV = Math.max( i / ( N - 1 ), 0.02 );        // NoV = 0 is degenerate
 	const base = [];
 	const slices = [];
+	const interfaces = [];
 
 	for ( let j = 0; j < N; j ++ ) {
 
 		const roughness = Math.max( j / ( N - 1 ), 0.001 );
-		const [ full, bias, dielectric ] = albedo( NoV, roughness, etas );
+		const [ full, bias, dielectric, entering, leaving ] = albedo( NoV, roughness, etas );
 		base.push( full.toFixed( 4 ), sheenAlbedo( NoV, j / ( N - 1 ) ).toFixed( 4 ), bias.toFixed( 4 ), '1.0000' );
 		slices.push( dielectric );
+		interfaces.push( [ entering, leaving ] );
 
 	}
 
 	const cells = [ ...base ];
-	for ( let k = 0; k < DIELECTRIC_SLICES - 1; k ++ ) {
+	for ( let k = 0; k < DIELECTRIC_SLICES; k ++ ) {
 
-		for ( let j = 0; j < N; j ++ ) cells.push( slices[ j ][ k ].toFixed( 4 ), slices[ j ][ k + 1 ].toFixed( 4 ), '1.0000', '1.0000' );
+		const next = Math.min( k + 1, DIELECTRIC_SLICES - 1 );
+		for ( let j = 0; j < N; j ++ ) {
+
+			const [ entering, leaving ] = interfaces[ j ];
+			cells.push( slices[ j ][ k ].toFixed( 4 ), slices[ j ][ next ].toFixed( 4 ), entering[ k ].toFixed( 4 ), leaving[ k ].toFixed( 4 ) );
+
+		}
 
 	}
 
@@ -217,6 +265,23 @@ for ( let i = 0; i < N; i ++ ) {
 	}
 
 	process.stderr.write( `slice interpolation: worst |error| ${worst.toFixed( 5 )} (absolute, in albedo)\n` );
+
+	let worstInterface = 0;
+	for ( const eta of check ) {
+
+		const t = Math.min( ( eta - 1 ) / ( eta + 1 ) / R0_MAX, 1 ) * ( DIELECTRIC_SLICES - 1 );
+		const k = Math.min( Math.floor( t ), DIELECTRIC_SLICES - 2 );
+		const f = t - k;
+		for ( const [ NoV, roughness ] of [ [ 0.2, 0.1 ], [ 0.5, 0.4 ], [ 0.8, 0.8 ], [ 1.0, 0.3 ] ] ) {
+
+			const [ , , , entering, leaving ] = albedo( NoV, roughness, [ etas[ k ], etas[ k + 1 ], eta ] );
+			for ( const E of [ entering, leaving ] ) worstInterface = Math.max( worstInterface, Math.abs( E[ 0 ] + ( E[ 1 ] - E[ 0 ] ) * f - E[ 2 ] ) );
+
+		}
+
+	}
+
+	process.stderr.write( `interface slice interpolation: worst |error| ${worstInterface.toFixed( 5 )}\n` );
 
 }
 

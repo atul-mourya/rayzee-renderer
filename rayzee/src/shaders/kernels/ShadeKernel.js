@@ -1375,6 +1375,15 @@ export function buildShadeKernel( params ) {
 
 			throughput.mulAssign( interaction.throughput );
 
+			// A rough crossing drawn to the wrong side of the surface carries nothing on.
+			If( interaction.isTransmissive.and( max( throughput.x, max( throughput.y, throughput.z ) ).lessThanEqual( 0.0 ) ), () => {
+
+				commitDeferredAux( select( dot( N, direction.negate() ).lessThan( 0.0 ), N.negate(), N ) );
+				terminatePath();
+				Return();
+
+			} );
+
 			// Importance, unlike radiance, is not rescaled by refraction.
 			if ( bdpt ) If( isLight.and( interaction.isTransmissive.or( interaction.isSubsurface ) ).and( interaction.didReflect.not() ), () => {
 
@@ -1475,6 +1484,15 @@ export function buildShadeKernel( params ) {
 			} );
 			persistRng();
 			Return();
+
+		} );
+
+		// With crossings left, transmission's own lottery chose the opaque base, so that is what shades here; its diffuse
+		// share must not lose transmission's part a second time. Out of crossings the opaque path stands in for the
+		// whole material, its transmission lobe included.
+		If( transTraversals.greaterThan( int( 0 ) ), () => {
+
+			material.transmission.assign( 0.0 );
 
 		} );
 

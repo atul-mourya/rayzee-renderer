@@ -1,13 +1,13 @@
 // Material Transmission & Refraction - Ported from material_transmission.fs
 // Handles both volumetric transmission AND opacity-based transparency
 
-import { Fn, wgslFn, vec3, float, int, bool as tslBool, If, select, abs, dot, reflect, refract, max, mix, clamp, exp } from 'three/tsl';
+import { Fn, wgslFn, vec3, float, int, bool as tslBool, If, select, abs, dot, reflect, refract, max, mix, clamp, exp, sqrt, normalize } from 'three/tsl';
 
 import { struct } from './Struct.js';
-import { EPSILON, MIN_ROUGHNESS, MIN_PDF } from './Common.js';
+import { EPSILON, MIN_ROUGHNESS, MIN_PDF, constructTBN } from './Common.js';
 import { fresnelDielectric } from './Fresnel.js';
-import { DistributionGGX } from './MaterialProperties.js';
-import { ImportanceSampleGGX } from './MaterialSampling.js';
+import { DistributionGGX, dielectricInterfaceAlbedo } from './MaterialProperties.js';
+import { ImportanceSampleGGX, sampleGGXVNDF } from './MaterialSampling.js';
 import { getRandomSample1D, getRandomSample2D, pcgHash } from './Random.js';
 import { handleSubsurfaceEntry, SubsurfaceEntryResult } from './Subsurface.js';
 import { materialLayers } from './SceneResources.js';
@@ -117,6 +117,33 @@ const sampleWavelengthForDispersion = Fn( ( [ baseIOR, dispersionStrength, rando
 
 } );
 
+// The glass's IOR along the path: at the wavelength the path locked, else at one drawn here, whose tint applies once and
+// whose wavelength the path keeps only if it crosses.
+const pathIOR = Fn( ( [ ior, dispersion, pathWavelength, rngState, pixelCoord, resolution, frame, dimBase ] ) => {
+
+	const result = SpectralSample( { wavelength: pathWavelength, ior, colorWeight: vec3( 1.0 ) } ).toVar();
+
+	If( dispersion.greaterThan( 0.0 ), () => {
+
+		If( pathWavelength.greaterThan( 0.0 ), () => {
+
+			result.ior.assign( iorFromWavelength( ior, dispersion, pathWavelength ) );
+
+		} ).Else( () => {
+
+			const drawn = SpectralSample.wrap( sampleWavelengthForDispersion( ior, dispersion, getRandomSample1D( pixelCoord, int( 0 ), dimBase.add( int( 5 ) ), rngState, resolution, frame ) ) );
+			result.ior.assign( drawn.ior );
+			result.colorWeight.assign( drawn.colorWeight );
+			result.wavelength.assign( drawn.wavelength );
+
+		} );
+
+	} );
+
+	return result;
+
+} );
+
 // ================================================================================
 // ABSORPTION
 // ================================================================================
@@ -135,6 +162,7 @@ export const calculateBeerLawAbsorption = /*@__PURE__*/ wgslFn( `
 // MICROFACET TRANSMISSION
 // ================================================================================
 
+// The opaque path's transmission lobe: a refraction about a GGX facet (a reflection under total internal reflection).
 export const sampleMicrofacetTransmission = Fn( ( [
 	V, N, ior, roughness, entering, dispersion, xi, rngState, pathWavelength,
 	pixelCoord, resolution, frame, dimBase,
@@ -150,6 +178,18 @@ export const sampleMicrofacetTransmission = Fn( ( [
 		pathWavelength: pathWavelength,
 	} ).toVar();
 
+	const glassIOR = ior.toVar();
+	if ( layers.dispersion ) {
+
+		const glass = SpectralSample.wrap( pathIOR( ior, dispersion, pathWavelength, rngState, pixelCoord, resolution, frame, dimBase ) );
+		glassIOR.assign( glass.ior );
+		result.colorWeight.assign( glass.colorWeight );
+		result.pathWavelength.assign( glass.wavelength );
+
+	}
+
+	const etaRatio = select( entering, float( 1.0 ).div( glassIOR ), glassIOR ).toVar();
+
 	const microfacet = () => {
 
 		// Use minimum roughness to avoid numerical issues for rough surfaces
@@ -159,33 +199,7 @@ export const sampleMicrofacetTransmission = Fn( ( [
 		const H = ImportanceSampleGGX( { N, roughness: transmissionRoughness, Xi: xi } ).toVar();
 		result.halfVector.assign( H );
 
-		// Compute IOR ratio
-		const etaRatio = select( entering, float( 1.0 ).div( ior ), ior ).toVar();
-
-		// Reuse the path's locked wavelength if any; else sample a new one and tint once.
-		if ( layers.dispersion ) If( dispersion.greaterThan( 0.0 ), () => {
-
-			If( pathWavelength.greaterThan( 0.0 ), () => {
-
-				const lockedIOR = iorFromWavelength( ior, dispersion, pathWavelength );
-				etaRatio.assign( select( entering, float( 1.0 ).div( lockedIOR ), lockedIOR ) );
-
-			} ).Else( () => {
-
-				const spectralSample = SpectralSample.wrap( sampleWavelengthForDispersion( ior, dispersion, getRandomSample1D( pixelCoord, int( 0 ), dimBase.add( int( 5 ) ), rngState, resolution, frame ) ) );
-				etaRatio.assign( select( entering, float( 1.0 ).div( spectralSample.ior ), spectralSample.ior ) );
-				result.colorWeight.assign( spectralSample.colorWeight );
-				result.pathWavelength.assign( spectralSample.wavelength );
-
-			} );
-
-		} );
-
-		// Compute refracted direction using the sampled half-vector. HoV and NoH
-		// are needed by both the TIR and the transmission PDF branches below, so
-		// hoist them once here (VoH == HoV — same dot product). DistributionGGX D
-		// is also identical between the two branches (calculateGGXPDF builds the
-		// same D internally for the TIR branch), so share it too.
+		// HoV and NoH serve both the TIR and the refraction density, as does D.
 		const HoV = clamp( dot( H, V ), 0.001, 1.0 ).toVar();
 		const NoH = clamp( dot( N, H ), 0.001, 1.0 ).toVar();
 		const D = DistributionGGX( NoH, transmissionRoughness ).toVar();
@@ -225,25 +239,6 @@ export const sampleMicrofacetTransmission = Fn( ( [
 	else If( roughness.lessThanEqual( 0.05 ).and( dispersion.greaterThan( 0.0 ) ), () => {
 
 		result.halfVector.assign( N );
-		result.didReflect.assign( false );
-
-		const eta = ior;
-		const etaRatio = select( entering, float( 1.0 ).div( eta ), eta ).toVar();
-
-		// Reuse the path's locked wavelength if any; else sample a new one and tint once.
-		If( pathWavelength.greaterThan( 0.0 ), () => {
-
-			const lockedIOR = iorFromWavelength( ior, dispersion, pathWavelength );
-			etaRatio.assign( select( entering, float( 1.0 ).div( lockedIOR ), lockedIOR ) );
-
-		} ).Else( () => {
-
-			const spectralSample = SpectralSample.wrap( sampleWavelengthForDispersion( ior, dispersion, getRandomSample1D( pixelCoord, int( 0 ), dimBase.add( int( 5 ) ), rngState, resolution, frame ) ) );
-			etaRatio.assign( select( entering, float( 1.0 ).div( spectralSample.ior ), spectralSample.ior ) );
-			result.colorWeight.assign( spectralSample.colorWeight );
-			result.pathWavelength.assign( spectralSample.wavelength );
-
-		} );
 
 		// Perfect refraction using surface normal
 		const refractDir = refract( V.negate(), N, etaRatio ).toVar();
@@ -253,18 +248,69 @@ export const sampleMicrofacetTransmission = Fn( ( [
 
 			result.direction.assign( reflect( V.negate(), N ) );
 			result.didReflect.assign( true );
-			result.pdf.assign( 1.0 );
 
 		} ).Else( () => {
 
 			result.direction.assign( refractDir );
-			result.pdf.assign( 1.0 );
 
 		} );
+
+		result.pdf.assign( 1.0 );
 
 	} ).Else( microfacet );
 
 	return result;
+
+} );
+
+// ================================================================================
+// DIELECTRIC INTERFACE
+// ================================================================================
+
+export const DielectricSample = struct( {
+	direction: 'vec3',
+	didReflect: 'bool',
+	weight: 'float', // what the drawn lobe carries over its chance; 0 when it leaves on the wrong side of N
+} );
+
+// Smith's Λ for GGX at |cos θ| = c, with α² = a2.
+const smithLambda = ( c, a2 ) => sqrt( a2.add( float( 1.0 ).sub( a2 ).mul( c.mul( c ) ) ) ).div( c ).sub( 1.0 ).mul( 0.5 );
+
+// One crossing of a dielectric interface, eta = n2 / n1 with N on V's side (Walter et al. 2007, facets drawn from the
+// normals V sees, Heitz 2018). The exact Fresnel at the drawn facet picks reflection or refraction, which then weighs
+// G2 / G1(V) — 0 if it ends on the wrong side of N — over the interface's albedo, giving back the light the facets
+// trade among themselves. At or below MIN_ROUGHNESS the facet is N itself and the weight 1.
+export const sampleDielectric = Fn( ( [ V, N, eta, roughness, xi, pick ] ) => {
+
+	const rough = roughness.greaterThan( MIN_ROUGHNESS ).toVar();
+	const NoV = max( dot( N, V ), 1e-4 ).toVar();
+	const H = N.toVar();
+
+	If( rough, () => {
+
+		// A shading normal can lean past V; the facets are then drawn as for a grazing V.
+		const TBN = constructTBN( { N } ).toVar();
+		const localV = TBN.transpose().mul( V );
+		H.assign( TBN.mul( sampleGGXVNDF( { V: normalize( vec3( localV.xy, NoV ) ), roughness, Xi: xi } ) ) );
+
+	} );
+
+	const didReflect = pick.lessThan( fresnelDielectric( dot( V, H ), eta ) ).toVar();
+	const direction = select( didReflect, reflect( V.negate(), H ), refract( V.negate(), H, float( 1.0 ).div( eta ) ) ).toVar();
+	const weight = float( 1.0 ).toVar();
+
+	If( rough, () => {
+
+		const NoL = dot( N, direction ).toVar();
+		const alpha = roughness.mul( roughness );
+		const a2 = alpha.mul( alpha ).toVar();
+		const g1 = smithLambda( NoV, a2 ).add( 1.0 ).toVar();
+		const g2 = g1.add( smithLambda( max( abs( NoL ), 1e-4 ), a2 ) );
+		weight.assign( select( NoL.greaterThan( 0.0 ).equal( didReflect ), g1.div( g2 ).div( dielectricInterfaceAlbedo( NoV, roughness, eta ) ), float( 0.0 ) ) );
+
+	} );
+
+	return DielectricSample( { direction, didReflect, weight } );
 
 } );
 
@@ -276,7 +322,7 @@ export const handleTransmission = Fn( ( [
 	rayDir, normal, material, entering, rngState,
 	pixelCoord, resolution, frame, dimBase,
 	currentMediumIOR, previousMediumIOR, pathWavelength,
-] ) => {
+], builder ) => {
 
 	const result = TransmissionResult( {
 		direction: vec3( 0.0 ),
@@ -285,115 +331,41 @@ export const handleTransmission = Fn( ( [
 		pathWavelength: pathWavelength,
 	} ).toVar();
 
-	// Setup surface normal based on ray direction
 	const N = select( entering, normal, normal.negate() ).toVar();
 	const V = rayDir.negate().toVar();
 
-	// Calculate IOR transition using precomputed medium stack values
-	// Entering: n1 = current medium IOR (where ray is), n2 = material IOR (where ray goes)
-	// Exiting: n1 = material IOR (where ray is), n2 = previous medium IOR (where ray returns to)
-	const n1 = select( entering, currentMediumIOR, material.ior ).toVar();
-	const n2 = select( entering, material.ior, previousMediumIOR ).toVar();
+	const glassIOR = material.ior.toVar();
+	const colorWeight = vec3( 1.0 ).toVar();
+	const wavelength = pathWavelength.toVar();
+	if ( materialLayers( builder ).dispersion ) {
 
-	// Calculate basic reflection/refraction parameters
-	const cosThetaI = abs( dot( N, rayDir ) );
-	const sinThetaT2 = n1.mul( n1 ).div( n2.mul( n2 ) ).mul( float( 1.0 ).sub( cosThetaI.mul( cosThetaI ) ) );
-	const totalInternalReflection = sinThetaT2.greaterThan( 1.0 ).toVar();
+		const glass = SpectralSample.wrap( pathIOR( material.ior, material.dispersion, pathWavelength, rngState, pixelCoord, resolution, frame, dimBase ) );
+		glassIOR.assign( glass.ior );
+		colorWeight.assign( glass.colorWeight );
+		wavelength.assign( glass.wavelength );
 
-	const Fr = fresnelDielectric( cosThetaI, n2.div( n1 ) ).toVar();
+	}
 
-	const reflectProb = float( 0.0 ).toVar();
+	// Entering, the ray goes from the medium it is in into the glass; leaving, from the glass into the one around it.
+	const n1 = select( entering, currentMediumIOR, glassIOR ).toVar();
+	const n2 = select( entering, glassIOR, previousMediumIOR ).toVar();
 
-	If( totalInternalReflection, () => {
+	const crossing = DielectricSample.wrap( sampleDielectric(
+		V, N, n2.div( n1 ), material.roughness,
+		getRandomSample2D( pixelCoord, int( 0 ), dimBase.add( int( 4 ) ), rngState, resolution, frame ),
+		getRandomSample1D( pixelCoord, int( 0 ), dimBase.add( int( 4 ) ), rngState, resolution, frame ),
+	) );
 
-		reflectProb.assign( 1.0 );
+	result.direction.assign( crossing.direction );
+	result.didReflect.assign( crossing.didReflect );
+	result.throughput.assign( material.color.xyz.mul( crossing.weight ) );
 
-	} ).Else( () => {
+	If( crossing.didReflect.not(), () => {
 
-		// Pure Fresnel reflection probability for dielectrics
-		// The outer code (handleMaterialTransparency) already handles the transmission probability
-		// split, so inside handleTransmission we only need Fresnel-based reflect/transmit decisions
-		const dielectricReflect = Fr;
-		// For metals: mostly reflect regardless of transmission setting
-		const metallicReflect = float( 0.95 );
-
-		// Clamped here, not under total internal reflection: the reflected weight divides by it.
-		reflectProb.assign( clamp( mix( dielectricReflect, metallicReflect, material.metalness ), 0.05, 0.95 ) );
-
-	} );
-
-	// Force reflection if TIR, otherwise probabilistically choose
-	const doReflect = totalInternalReflection.or( getRandomSample1D( pixelCoord, int( 0 ), dimBase.add( int( 4 ) ), rngState, resolution, frame ).lessThan( reflectProb ) ).toVar();
-	result.didReflect.assign( doReflect );
-
-	// Choose random sample for microfacet sampling
-	const xi = getRandomSample2D( pixelCoord, int( 0 ), dimBase.add( int( 4 ) ), rngState, resolution, frame ).toVar();
-
-	If( doReflect, () => {
-
-		// Reflection at a transmissive surface — no wavelength locking
-		If( material.roughness.greaterThan( 0.05 ), () => {
-
-			const mtResult = MicrofacetTransmissionResult.wrap( sampleMicrofacetTransmission( V, N, material.ior, material.roughness, entering, float( 0.0 ), xi, rngState, float( 0.0 ), pixelCoord, resolution, frame, dimBase ) );
-			result.direction.assign( mtResult.direction );
-
-		} ).Else( () => {
-
-			result.direction.assign( reflect( rayDir, N ) );
-
-		} );
-
-		// Energy-conserving reflection: Fresnel-weighted with PDF compensation
-		result.throughput.assign( material.color.xyz.mul( Fr ).div( max( reflectProb, 0.05 ) ) );
-
-	} ).Else( () => {
-
-		// Transmission/refraction path
-		If( material.roughness.greaterThan( 0.05 ).or( material.dispersion.greaterThan( 0.0 ) ), () => {
-
-			const mtResult = MicrofacetTransmissionResult.wrap( sampleMicrofacetTransmission( V, N, material.ior, material.roughness, entering, material.dispersion, xi, rngState, pathWavelength, pixelCoord, resolution, frame, dimBase ) );
-			result.pathWavelength.assign( mtResult.pathWavelength );
-
-			If( mtResult.didReflect, () => {
-
-				// TIR during intended transmission: compensate for selection probability
-				result.direction.assign( mtResult.direction );
-				result.didReflect.assign( true );
-				result.throughput.assign( material.color.xyz.div( max( float( 1.0 ).sub( reflectProb ), 0.05 ) ) );
-
-			} ).Else( () => {
-
-				result.direction.assign( mtResult.direction );
-				result.throughput.assign( mtResult.colorWeight );
-
-			} );
-
-		} ).Else( () => {
-
-			// Simple refraction for completely smooth, non-dispersive surfaces
-			result.direction.assign( refract( rayDir, N, n1.div( n2 ) ) );
-			result.throughput.assign( vec3( 1.0 ) );
-
-		} );
-
-		// Common transmission calculations
-		If( result.didReflect.not(), () => {
-
-			// Apply material color for transmission
-			result.throughput.mulAssign( material.color.xyz );
-
-			// Non-symmetric transport correction: radiance scales by (n1/n2)² at refractive interface
-			// due to solid angle compression/expansion (cancels for round-trip enter+exit paths)
-			result.throughput.mulAssign( n1.mul( n1 ).div( max( n2.mul( n2 ), EPSILON ) ) );
-
-			// KHR_materials_volume absorption is applied per-bounce in PathTracerCore based
-			// on the actual ray path length inside the medium (driven by the medium stack).
-			// No entry-point thickness approximation here — that would double-count.
-
-			// Fresnel transmission factor with PDF compensation
-			result.throughput.mulAssign( float( 1.0 ).sub( Fr ).div( max( float( 1.0 ).sub( reflectProb ), 0.05 ) ) );
-
-		} );
+		// Radiance scales by (n1/n2)² into the other medium's solid angle (it cancels over a way in and out). Volume
+		// absorption is applied along the path inside, from the medium stack.
+		result.throughput.mulAssign( colorWeight.mul( n1.mul( n1 ).div( max( n2.mul( n2 ), EPSILON ) ) ) );
+		result.pathWavelength.assign( wavelength );
 
 	} );
 
