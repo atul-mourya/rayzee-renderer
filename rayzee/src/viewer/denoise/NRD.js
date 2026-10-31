@@ -208,15 +208,15 @@ export class NRD extends RenderStage {
 		this._snTexNode = new TextureNode();
 		this._motionTexNode = new TextureNode();
 
-		// Each deferred StorageTexture read needs its OWN sampled placeholder: TSL shares texture bindings
-		// by uuid, so nodes sharing EmptyTexture collapse into one binding that reads whatever bound last.
-		this._placeholders = new Map();
+		// Deferred StorageTexture reads share one sampled placeholder; non-mergeable, each keeps its own binding.
+		this._placeholder = new DataTexture( new Float32Array( 4 ), 1, 1, RGBAFormat, FloatType );
+		this._placeholder.needsUpdate = true;
+		this._readNodes = [];
 		const readNode = () => {
 
-			const placeholder = new DataTexture( new Float32Array( 4 ), 1, 1, RGBAFormat, FloatType );
-			placeholder.needsUpdate = true;
-			const node = new TextureNode( placeholder );
-			this._placeholders.set( node, placeholder );
+			const node = new TextureNode( this._placeholder );
+			node.mergeable = false;
+			this._readNodes.push( node );
 			return node;
 
 		};
@@ -1415,15 +1415,9 @@ export class NRD extends RenderStage {
 		for ( const n of [
 			this._colorTexNode, this._albedoTexNode, this._ndTexNode, this._snTexNode, this._motionTexNode,
 		] ) n?.dispose();
-		// The read nodes are exactly the placeholder map's keys.
-		for ( const [ node, placeholder ] of this._placeholders ) {
-
-			node.dispose();
-			placeholder.dispose();
-
-		}
-
-		this._placeholders.clear();
+		for ( const node of this._readNodes ) node.dispose();
+		this._readNodes.length = 0;
+		this._placeholder.dispose();
 
 	}
 

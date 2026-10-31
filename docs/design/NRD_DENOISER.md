@@ -198,7 +198,8 @@ other two scenes are where it beat ASVGF.
 
 A TSL detail that cost a day here: uniform texture bindings are shared by texture uuid, so several
 `TextureNode`s that all hold the shared `EmptyTexture` at compile time collapse into one binding and
-every read returns whichever texture was bound last. Each deferred read node in this stage therefore
-owns a 1×1 placeholder (`readNode()` in the constructor). Symptoms were a chroma-collapsed image
-(the blur pass reading the per-pixel data texture as its colour signal) and history that never
-accumulated (the temporal pass reading colour as previous-frame geometry), with no error anywhere.
+every read returns whichever texture was bound last. Each deferred read node in this stage is therefore
+non-mergeable (`mergeable = false`, three r187), which keys its binding by the node, and all of them share one
+1×1 placeholder (`readNode()` in the constructor); before r187 each owned a placeholder of its own.
+Symptoms were a chroma-collapsed image (the blur pass reading the per-pixel data texture as its colour signal)
+and history that never accumulated (the temporal pass reading colour as previous-frame geometry), with no error anywhere.
