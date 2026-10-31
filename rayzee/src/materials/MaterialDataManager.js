@@ -64,6 +64,8 @@ const SCALAR_PROPERTY_OFFSETS = {
 	specularIntensity: M.SPECULAR_INTENSITY,
 	iridescence: M.IRIDESCENCE,
 	iridescenceIOR: M.IRIDESCENCE_IOR,
+	iridescenceThicknessMinimum: M.IRIDESCENCE_THICKNESS_RANGE,
+	iridescenceThicknessMaximum: M.IRIDESCENCE_THICKNESS_RANGE + 1,
 	subsurface: M.SUBSURFACE,
 	subsurfaceRadiusScale: M.SUBSURFACE_RADIUS_SCALE,
 	subsurfaceAnisotropy: M.SUBSURFACE_ANISOTROPY,
@@ -513,6 +515,8 @@ export class MaterialDataManager {
 				}
 
 				break;
+			case 'iridescenceThicknessMinimum': data[ stride + M.IRIDESCENCE_THICKNESS_RANGE ] = value; break;
+			case 'iridescenceThicknessMaximum': data[ stride + M.IRIDESCENCE_THICKNESS_RANGE + 1 ] = value; break;
 			case 'clearcoat': data[ stride + M.CLEARCOAT ] = value; break;
 			case 'clearcoatRoughness': data[ stride + M.CLEARCOAT_ROUGHNESS ] = value; break;
 			case 'clearcoatNormalScale': data[ stride + M.CLEARCOAT_NORMAL_SCALE ] = value?.x ?? value; break;

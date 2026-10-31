@@ -388,7 +388,12 @@ export const useMaterialStore = create( ( set, get ) => ( {
 	},
 	handleIridescenceChange: val => get().updateMaterialProperty( 'iridescence', val[ 0 ] ),
 	handleIridescenceIORChange: val => get().updateMaterialProperty( 'iridescenceIOR', val[ 0 ] ),
-	handleIridescenceThicknessRangeChange: val => get().updateMaterialProperty( 'iridescenceThicknessRange', val ),
+	handleIridescenceThicknessRangeChange: val => {
+
+		get().updateMaterialProperty( 'iridescenceThicknessMinimum', val[ 0 ] );
+		get().updateMaterialProperty( 'iridescenceThicknessMaximum', val[ 1 ] );
+
+	},
 	handleNormalScaleChange: val => {
 
 		const value = Array.isArray( val ) ? val[ 0 ] : val;
@@ -623,7 +628,9 @@ export const useMaterialStore = create( ( set, get ) => ( {
 					},
 					smartDefaults: enabled ? {
 						iridescenceIOR: { value: 1.3, condition: () => obj.material.iridescenceIOR === 1.0 },
-						iridescenceThicknessRange: { value: [ 100, 400 ], condition: () => obj.material.iridescenceThicknessRange?.[ 0 ] === 0 }
+						// Maximum first: both test the minimum, which the next entry sets.
+						iridescenceThicknessMaximum: { value: 400, condition: () => obj.material.iridescenceThicknessMinimum === 0 },
+						iridescenceThicknessMinimum: { value: 100, condition: () => obj.material.iridescenceThicknessMinimum === 0 }
 					} : {}
 				},
 				sheen: {

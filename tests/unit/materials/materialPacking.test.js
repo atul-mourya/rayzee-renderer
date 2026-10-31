@@ -282,6 +282,17 @@ describe( 'createMaterialObject', () => {
 
 	} );
 
+	it( 'reads the thin-film thickness from its two numbers, never three\'s deprecated range getter', () => {
+
+		const getter = vi.spyOn( MeshPhysicalMaterial.prototype, 'iridescenceThicknessRange', 'get' );
+		const material = new MeshPhysicalMaterial( { iridescence: 1, iridescenceThicknessMinimum: 50, iridescenceThicknessMaximum: 600 } );
+
+		expect( new GeometryExtractor().createMaterialObject( material ).iridescenceThicknessRange ).toEqual( [ 50, 600 ] );
+		expect( getter ).not.toHaveBeenCalled();
+		getter.mockRestore();
+
+	} );
+
 } );
 
 describe( 'MaterialDataManager', () => {
@@ -365,6 +376,19 @@ describe( 'MaterialDataManager', () => {
 		expect( data[ M.CLEARCOAT ] ).toBe( 1 );
 		expect( data[ M.SHEEN ] ).toBe( 0 );
 		expect( data[ M.IOR ] ).toBe( 3 );
+
+	} );
+
+	it( 'edits the thin-film thickness by three\'s names as well as by the range', () => {
+
+		const manager = managerWith( new GeometryExtractor() );
+		manager.updateMaterialProperty( 0, 'iridescenceThicknessRange', [ 100, 400 ] );
+		manager.updateMaterialProperty( 0, 'iridescenceThicknessMinimum', 50 );
+		manager.updateMaterialProperty( 0, 'iridescenceThicknessMaximum', 600 );
+
+		const data = manager.materialStorageAttr.array;
+		expect( [ data[ M.IRIDESCENCE_THICKNESS_RANGE ], data[ M.IRIDESCENCE_THICKNESS_RANGE + 1 ] ] ).toEqual( [ 50, 600 ] );
+		expect( manager.getMaterialProperty( 0, 'iridescenceThicknessMaximum' ) ).toBe( 600 );
 
 	} );
 

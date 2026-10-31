@@ -39,3 +39,24 @@ describe( 'KernelManager.setDispatchForCount', () => {
 	} );
 
 } );
+
+describe( 'KernelManager.dispatch', () => {
+
+	it( 'sizes a kernel from the GPU\'s counts on the node itself, and puts its grid back', () => {
+
+		const calls = [];
+		const km = new KernelManager( { compute: ( ...args ) => calls.push( [ args.length, args[ 0 ].dispatchSize ] ) } );
+		const node = { workgroupSize: [ 64, 1, 1 ], dispatchSize: [ 8, 1, 1 ] };
+		const counts = { isIndirectStorageBufferAttribute: true };
+		km.register( 'k', node );
+		km.setIndirect( [ 'k' ], counts );
+		km.dispatch( 'k' );
+		km.setIndirect( [ 'k' ], null );
+		km.dispatch( 'k' );
+		// r187 throws on a second argument for a node with a grid of its own.
+		expect( calls ).toEqual( [[ 1, counts ], [ 1, [ 8, 1, 1 ]]] );
+		expect( node.dispatchSize ).toEqual( [ 8, 1, 1 ] );
+
+	} );
+
+} );

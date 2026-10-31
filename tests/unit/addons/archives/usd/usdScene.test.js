@@ -416,7 +416,7 @@ ${extra}` ), 'wood.png': '', 'rough.png': '', 'normal.png': '', 'leather.png': '
 		expect( [ material.metalness, material.roughness, material.ior, material.diffuseRoughness ] ).toEqual( [ 0.25, 0.35, 1.45, 0.6 ] );
 		expect( [ material.clearcoat, material.clearcoatRoughness ] ).toEqual( [ 0.5, 0.1 ] );
 		expect( [ material.sheen, ...material.sheenColor.toArray() ] ).toEqual( [ 1, 1, 0, 0 ] );
-		expect( [ material.iridescence, ...material.iridescenceThicknessRange ] ).toEqual( [ 1, 300, 300 ] );
+		expect( [ material.iridescence, material.iridescenceThicknessMinimum, material.iridescenceThicknessMaximum ] ).toEqual( [ 1, 300, 300 ] );
 		expect( [ ...material.emissive.toArray(), material.emissiveIntensity ] ).toEqual( [ 1, 0.5, 0.25, 2 ] );
 		expect( [ material.transmission, ...material.attenuationColor.toArray(), material.attenuationDistance ] ).toEqual( [ 1, 0.5, 1, 1, 2 ] );
 		expect( [ material.subsurface, material.subsurfaceRadiusScale, ...material.subsurfaceRadius ] ).toEqual( [ 0.5, 0.1, 1, 0.2, 0.1 ] );

@@ -620,34 +620,34 @@
 		"denoisedRmse": 0.04378542962408696
 	},
 	"rough-diffuse/nrd/1": {
-		"ratio": 0.8087709716596153,
+		"ratio": 0.8087709186497641,
 		"rawRmse": 0.03599397898452669,
-		"denoisedRmse": 0.029110885357211427
+		"denoisedRmse": 0.029110883449175957
 	},
 	"rough-diffuse/oidn/1": {
-		"ratio": 0.23573415966293967,
+		"ratio": 0.23574477636466706,
 		"rawRmse": 0.03599397898452669,
-		"denoisedRmse": 0.00848501038884291
+		"denoisedRmse": 0.008485392526181771
 	},
 	"rough-diffuse/oidn-tiled/1": {
-		"ratio": 0.23573415966293967,
+		"ratio": 0.23574477636466706,
 		"rawRmse": 0.03599397898452669,
-		"denoisedRmse": 0.00848501038884291
+		"denoisedRmse": 0.008485392526181771
 	},
 	"rough-diffuse/nrd/64": {
 		"ratio": 1,
-		"rawRmse": 0.002179269833755998,
-		"denoisedRmse": 0.002179269833755998
+		"rawRmse": 0.002179251561906118,
+		"denoisedRmse": 0.002179251561906118
 	},
 	"rough-diffuse/oidn/64": {
-		"ratio": 0.7449379117848921,
-		"rawRmse": 0.002179269833755998,
-		"denoisedRmse": 0.001623420719174002
+		"ratio": 0.7457044636931618,
+		"rawRmse": 0.002179251561906118,
+		"denoisedRmse": 0.001625077617223687
 	},
 	"rough-diffuse/oidn-tiled/64": {
-		"ratio": 0.7449379117848921,
-		"rawRmse": 0.002179269833755998,
-		"denoisedRmse": 0.001623420719174002
+		"ratio": 0.7457044636931618,
+		"rawRmse": 0.002179251561906118,
+		"denoisedRmse": 0.001625077617223687
 	},
 	"furnace-rough-diffuse/nrd/1": {
 		"ratio": 0.011337788853085895,

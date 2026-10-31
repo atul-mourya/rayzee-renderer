@@ -24,7 +24,7 @@ A real-time WebGPU path tracing engine built on Three.js. Framework-agnostic —
 npm install rayzee three
 ```
 
-`three` (>=0.186.0) is a required peer dependency.
+`three` (>=0.187.0) is a required peer dependency.
 
 ## Quick start
 

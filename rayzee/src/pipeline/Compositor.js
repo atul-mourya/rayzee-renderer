@@ -19,8 +19,8 @@ import { getViewTransform } from '../color/ViewTransforms.js';
  * and Three.js applies it inside the tone-mapping branch of the output pass
  * (so it has no effect when `renderer.toneMapping === NoToneMapping`).
  */
-// The canvas's sRGB encoding undone, extended past 1 and mirrored below 0 as the HDR canvas uses it. mix by step, not
-// select: a TSL select takes one condition, so a vector one decoded every channel by the first's branch.
+// The canvas's sRGB encoding undone, extended past 1 and mirrored below 0 as the HDR canvas uses it. mix by step:
+// before r187 a TSL select decoded every channel by a vector condition's first branch.
 const decodeExtendedSRGB = c => {
 
 	const a = c.abs();

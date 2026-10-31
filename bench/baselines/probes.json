@@ -910,15 +910,15 @@
 			"samples": 2048
 		},
 		"golden": {
-			"meanR": 0.31305157669089567,
-			"meanG": 0.23816722535622148,
-			"meanB": 0.22153712933038605,
-			"meanLuminance": 0.2528869455169114,
+			"meanR": 0.3130515766044937,
+			"meanG": 0.23816722533354096,
+			"meanB": 0.22153712925552327,
+			"meanLuminance": 0.2528869454769167,
 			"maxLuminance": 1.4501486177444458,
 			"nonFinite": 0,
 			"samples": 64
 		},
-		"rmseVsTruth": 0.002179269833755998
+		"rmseVsTruth": 0.002179251561906118
 	},
 	"furnace-rough-diffuse": {
 		"truth": {

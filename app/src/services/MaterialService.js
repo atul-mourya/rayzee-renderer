@@ -169,7 +169,8 @@ export class MaterialService {
 		// Iridescence properties
 		ensureAndSet( threeMaterial, 'iridescence', completeMaterial.iridescence );
 		ensureAndSet( threeMaterial, 'iridescenceIOR', completeMaterial.iridescenceIOR );
-		ensureAndSet( threeMaterial, 'iridescenceThicknessRange', completeMaterial.iridescenceThicknessRange );
+		ensureAndSet( threeMaterial, 'iridescenceThicknessMinimum', completeMaterial.iridescenceThicknessRange[ 0 ] );
+		ensureAndSet( threeMaterial, 'iridescenceThicknessMaximum', completeMaterial.iridescenceThicknessRange[ 1 ] );
 
 		// Subsurface scattering (custom props; MeshPhysicalMaterial has none)
 		ensureAndSet( threeMaterial, 'subsurface', completeMaterial.subsurface );

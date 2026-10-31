@@ -1211,6 +1211,11 @@ export class GeometryExtractor {
 		const textures = resolveMaterialTextures( material );
 		const sources = {};
 
+		// three's iridescenceThicknessRange is a deprecated getter that warns; read its two numbers instead.
+		const read = ( key ) => key === 'iridescenceThicknessRange' && material.iridescenceThicknessMinimum !== undefined
+			? [ material.iridescenceThicknessMinimum, material.iridescenceThicknessMaximum ]
+			: material[ key ];
+
 		const pick = ( key ) => {
 
 			if ( legacyMapping[ key ] !== undefined ) {
@@ -1220,10 +1225,11 @@ export class GeometryExtractor {
 
 			}
 
-			if ( material[ key ] !== undefined && material[ key ] !== null ) {
+			const value = read( key );
+			if ( value !== undefined && value !== null ) {
 
 				sources[ key ] = MATERIAL_VALUE_SOURCE.MATERIAL;
-				return material[ key ];
+				return value;
 
 			}
 

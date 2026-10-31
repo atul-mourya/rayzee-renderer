@@ -641,8 +641,8 @@ function bakeView( { source, display, view, look, context, canvas = null, size =
 /** The TSL half of the table: the same shaper and the same six tetrahedra, as a node graph. */
 function buildTslNode( { texture, size, minEv, maxEv, curve = null, linear = false, clip = null, pre = null } ) {
 
-	// A linear table's light, encoded after the lookup with the canvas's extended curve. mix by step, not select: a TSL
-	// select takes one condition, so a vector one followed its first channel (green on magenta came out 0.055).
+	// A linear table's light, encoded after the lookup with the canvas's extended curve. mix by step: before r187 a TSL
+	// select followed a vector condition's first channel (green on magenta came out 0.055).
 	const encode = v => {
 
 		const a = v.abs();

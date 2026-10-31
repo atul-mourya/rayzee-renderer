@@ -1107,9 +1107,9 @@ because `controls.update()` re-aims the camera at the target every frame. A held
 13. **Partial storage uploads**: three.js uploads an attribute whole only when its `updateRanges` is empty — any pending `addUpdateRange` cuts a later `needsUpdate = true` down to that range. Full uploads therefore clear ranges first (`PathTracerStage._updateStorageBuffer`). Without that, the TLAS-leaf range a visibility patch leaves at load swallowed the refit that followed it (`refit-deform` read +16.6 %).
 14. **No module-level shader state**: a TSL function's body runs when its kernel *compiles* (often the first dispatch), not when the JS builds the graph, so a module variable is read from whichever renderer or stage set it last. Per-renderer resources (material buckets, shadow albedo maps, gobo/IES textures, the alpha-shadow switch) ride in the kernel's build context instead: `withSceneResources( kernelCall, resources )` at the root, `sceneResources( builder )` in a function body (`shaders/SceneResources.js`). A kernel that reads them without the context throws. `bench:node -- --core` runs the core beside the full engine to hold this. Colour management stays page-wide by design (one OCIO runtime).
 15. **Pass values, not expressions, into a Fn that loops**: an argument expression is generated where the Fn first reads it. If that read sits in a `Loop` after a `Break()` that can fire first, every later read sees zero. The bidirectional emitter-hit weight passed `origin.sub( … )` to `calculateLightBVHPdf`; a one-node light tree left the walk before reading it, so the pdf was measured from the world origin (+6 % on a grazing-lit floor, since the integrator landed). `.toVar()` the argument.
-16. **A TSL `select` takes one condition**: `ConditionalNode` builds it as a `bool`, so a `vec3` condition follows its first
-   channel. A view's encode picked the power curve for every channel of magenta and showed green 0.055 where 0 belongs. Per
-   channel, `mix( a, b, step( edge, x ) )`; hand-written WGSL `select` is per channel.
+16. **A TSL `select` is per channel only from three r187** (#34425): before it, `ConditionalNode` built a vector condition
+   as one `bool` that followed its first channel, and a view's encode showed green 0.055 on magenta where 0 belongs. The
+   colour encodes keep `mix( a, b, step( edge, x ) )`, per channel on any version.
 17. **A TSL branch callback returns nothing**: `If( c, () => v.assign( x ) )` hands back the assign node, which
    `ConditionalNode` reads as a return value — it warns "Return statement used in an inline 'Fn()'" and comments a
    `return` out. Give every `If`/`Else` callback a block body.
@@ -1120,4 +1120,5 @@ because `controls.update()` re-aims the camera at the target every frame. A held
    frame id, per-frame counters) once for each frame drawn: the render loop, `renderFrames`, `renderUntilComplete`,
    the video export, `_presentDisplay`, the overlay's `begin()`, the picture view. ⚠️ A new place that draws outside
    those takes the step first: the selection outline renders once per frame id, and `getKernelGPUTimings` reads the
-   newest frame's passes. It reaches into `renderer._animation`: re-check on each three.js upgrade.
+   newest frame's passes. It reaches into `renderer._animation`: re-check on each three.js upgrade. ⚠️ r187 starts the
+   loop from every `render()` and `compute()`, so `initWithoutFrameLoop` also blanks the instance's `start()`.

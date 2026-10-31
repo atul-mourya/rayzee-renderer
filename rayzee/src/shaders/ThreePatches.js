@@ -7,13 +7,10 @@
  * loop) and `initTimestampQuery` (enlarges the stats-gl timestamp query pool so
  * the wavefront tracer's high per-frame compute-pass count doesn't overflow it).
  *
- * Also overrides `ContextNode.prototype.setup` to undo an r186 codegen regression
- * (§3) — that one is temporary and goes away at r187.
- *
  * Exports `gpuOnlyStorageAttribute()`, a storage attribute with no CPU backing array.
  */
 
-import { ContextNode, StorageInstancedBufferAttribute, WebGPUBackend } from 'three/webgpu';
+import { StorageInstancedBufferAttribute, WebGPUBackend } from 'three/webgpu';
 
 // ---------------------------------------------------------------------------
 // 1. WGSL global-variable promotion patch (compute-only)
@@ -96,7 +93,7 @@ const _origCreateStorageAttribute = WebGPUBackend.prototype.createStorageAttribu
 
 WebGPUBackend.prototype.createStorageAttribute = function ( attribute ) {
 
-	const bufferAttribute = this.attributeUtils._getBufferAttribute( attribute );
+	const bufferAttribute = this.getBufferAttribute( attribute );
 	if ( ! bufferAttribute.isGPUOnly ) return _origCreateStorageAttribute.call( this, attribute );
 
 	const data = this.get( bufferAttribute );
@@ -198,7 +195,7 @@ const _origUpdateAttribute = WebGPUBackend.prototype.updateAttribute;
 
 WebGPUBackend.prototype.updateAttribute = function ( attribute ) {
 
-	if ( this.attributeUtils._getBufferAttribute( attribute ).isGPUOnly ) return;
+	if ( this.getBufferAttribute( attribute ).isGPUOnly ) return;
 	return _origUpdateAttribute.call( this, attribute );
 
 };
@@ -275,32 +272,5 @@ WebGPUBackend.prototype.initTimestampQuery = function ( type, uid, descriptor ) 
 	// invalid. Drop it so the pass is cleanly untimed.
 	const tw = descriptor.timestampWrites;
 	if ( tw && tw.beginningOfPassWriteIndex == null ) descriptor.timestampWrites = undefined;
-
-};
-
-// ---------------------------------------------------------------------------
-// 3. r186 ContextNode.setup regression — DELETE WHEN THE three DEP REACHES r187
-// ---------------------------------------------------------------------------
-// r186 (#34251) made `ContextNode.setup()` return the node it had just built.
-// Returning it stores the child's output node in the context node's own
-// properties, so `Node.build()` then re-builds it generically OUTSIDE the
-// context. `Loop()` wraps its body in a context (`fnCall.context({ nodeLoop })`),
-// so every loop-heavy kernel is evaluated against the wrong one — measured on our
-// corpus as 63x energy on furnace-clearcoat, 5.8x on furnace-sheen and NaN in the
-// SSS random walk, all while the WGSL compiled without a single error.
-//
-// Upstream reverted it in #34531 (merged 2026-09-11, on dev, ships in r187); this
-// body is that revert verbatim, and is also what r185 shipped, so it stays correct
-// if the dep is rolled back. Verified: with it, all 27 quality scenes pass and the
-// numbers are identical to r185. Drop this section and the `ContextNode` import
-// once the dep is r187+.
-
-ContextNode.prototype.setup = function ( builder ) {
-
-	const previousContext = builder.addContext( this.value );
-
-	this.node.build( builder );
-
-	builder.setContext( previousContext );
 
 };

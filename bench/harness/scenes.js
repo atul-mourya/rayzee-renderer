@@ -410,7 +410,7 @@ function makeDispersionRow() {
 
 /**
  * Thin-film iridescence. With no thickness map the shader reads the RANGE'S MAX, so the sweep
- * is over `iridescenceThicknessRange[ 1 ]` — varying the min would change nothing. The first
+ * is over `iridescenceThicknessMaximum` — varying the minimum would change nothing. The first
  * sphere sits at iridescence 0 because `iridescence === 0` selects a separate fast path in the
  * material response, and covering only the enabled side would leave that one untested.
  */
@@ -436,7 +436,7 @@ function makeIridescenceRow() {
 			metalness: spec.metalness,
 			iridescence: spec.iridescence,
 			iridescenceIOR: spec.ior,
-			iridescenceThicknessRange: [ 100, spec.thickness ],
+			iridescenceThicknessMaximum: spec.thickness,
 		} ) );
 		mesh.position.set( ( index - ( specs.length - 1 ) / 2 ) * 1.85, 0, 0 );
 		group.add( mesh );
@@ -1268,7 +1268,7 @@ const FURNACE_MATERIALS = {
 	'furnace-sheen': { roughness: 0.6, metalness: 0, sheen: 1, sheenRoughness: 0.4, sheenColor: 0xffffff },
 	'furnace-iridescence': {
 		roughness: 0.3, metalness: 0,
-		iridescence: 1, iridescenceIOR: 1.3, iridescenceThicknessRange: [ 100, 400 ],
+		iridescence: 1, iridescenceIOR: 1.3, iridescenceThicknessMinimum: 100, iridescenceThicknessMaximum: 400,
 	},
 
 	// EON returns what Oren–Nayar loses between facets: alone, and under a specular layer's energy split.

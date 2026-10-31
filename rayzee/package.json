@@ -60,7 +60,7 @@
     "prepublishOnly": "npm run build"
   },
   "peerDependencies": {
-    "three": ">=0.186.0"
+    "three": ">=0.187.0"
   },
   "optionalDependencies": {
     "oidn-webgpu": ">=0.6.0",

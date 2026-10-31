@@ -22,8 +22,9 @@ export async function readPixels( renderer, target, width, height, index = 0 ) {
 
 	const data = await renderer.readRenderTargetPixelsAsync( target, 0, 0, width, height, index );
 	const row = width * 4;
+	// r187 (#34851) returns rows already packed; r186 left the padding in.
+	if ( data.length === row * height ) return data;
 	const stride = Math.ceil( row * data.BYTES_PER_ELEMENT / 256 ) * 256 / data.BYTES_PER_ELEMENT;
-	if ( stride === row ) return data;
 
 	const tight = new data.constructor( row * height );
 	for ( let y = 0; y < height; y ++ ) tight.set( data.subarray( y * stride, y * stride + row ), y * row );

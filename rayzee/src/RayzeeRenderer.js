@@ -71,6 +71,9 @@ async function initWithoutFrameLoop( renderer, headless ) {
 	}
 
 	renderer._animation.stop();
+	// r187 (#35278) starts the loop again from every render() and compute(): only takeFrameStep starts it now.
+	renderer._animation.start = () => {};
+
 	return renderer;
 
 }
@@ -81,7 +84,7 @@ export function takeFrameStep( renderer ) {
 	const animation = renderer?._animation;
 	if ( ! animation || animation._requestId !== null ) return;
 	// start() takes the step at once and asks for the next frame, which stop() cancels.
-	animation.start();
+	Object.getPrototypeOf( animation ).start.call( animation );
 	animation.stop();
 
 }
@@ -106,12 +109,12 @@ export async function createRendererOnDevice( device, parameters ) {
 /**
  * Disposes a renderer without leaking it.
  *
- * Three.js 0.184–0.186: `Renderer.dispose()` does not remove the 'resize' listener
+ * Three.js 0.184–0.187: `Renderer.dispose()` does not remove the 'resize' listener
  * it installs on `_canvasTarget`. The bound handler closes over the renderer,
  * pinning the entire WebGPU graph (Backend, Nodes, Bindings, Pipelines, GPUDevice,
  * every TSL node) alive indefinitely — confirmed via heap-snapshot retainer
  * analysis. See `Renderer.js` (attach in the constructor, still absent from
- * `dispose()` in r186). Re-check on every upgrade; drop this when upstream fixes it.
+ * `dispose()` in r187). Re-check on every upgrade; drop this when upstream fixes it.
  *
  * Renderers constructed with an external `device` do not destroy it here; three
  * only destroys a device it created itself.
@@ -131,9 +134,12 @@ export function disposeRenderer( renderer ) {
 
 	// r186+ `dispose()` is async and settles once the backend is torn down; anything that
 	// measures memory straight afterwards has to await the returned promise.
-	const disposed = renderer.dispose();
-	renderer._canvasTarget = null;
-	return disposed;
+	// r187's dispose() frees the canvas target after an await, so it is let go only once that settles.
+	return Promise.resolve( renderer.dispose() ).finally( () => {
+
+		renderer._canvasTarget = null;
+
+	} );
 
 }
 

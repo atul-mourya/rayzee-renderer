@@ -2026,7 +2026,7 @@ export class USDSceneReader {
 			const thickness = await num( 'thin_film_thickness', 0.5 ) * 1000;
 			mat.iridescence = Math.min( 1, film );
 			mat.iridescenceIOR = await num( 'thin_film_ior', 1.4 );
-			mat.iridescenceThicknessRange = [ thickness, thickness ];
+			mat.iridescenceThicknessMinimum = mat.iridescenceThicknessMaximum = thickness;
 
 		}
 
@@ -2127,7 +2127,7 @@ export class USDSceneReader {
 
 			mat.iridescence = 1;
 			mat.iridescenceIOR = await num( 'thin_film_IOR', 1.5 );
-			mat.iridescenceThicknessRange = [ film, film ];
+			mat.iridescenceThicknessMinimum = mat.iridescenceThicknessMaximum = film;
 
 		}
 
@@ -2193,7 +2193,7 @@ export class USDSceneReader {
 			const thickness = await num( 'iridescence_thickness', 100 );
 			mat.iridescence = iridescence;
 			mat.iridescenceIOR = await num( 'iridescence_ior', 1.3 );
-			mat.iridescenceThicknessRange = [ thickness, thickness ];
+			mat.iridescenceThicknessMinimum = mat.iridescenceThicknessMaximum = thickness;
 
 		}
 

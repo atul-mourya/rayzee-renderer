@@ -157,12 +157,29 @@ export class KernelManager {
 		}
 
 		const timingEntry = this.timing.get( name );
-		const size = this._indirect.get( name ) ?? null;
+		const indirect = this._indirect.get( name );
+		// r187 throws on a dispatch size passed to compute() for a node with its own grid: the GPU's counts ride on the node.
+		const grid = node.dispatchSize;
+		if ( indirect ) node.dispatchSize = indirect;
+
+		try {
+
+			this._compute( name, node, timingEntry );
+
+		} finally {
+
+			node.dispatchSize = grid;
+
+		}
+
+	}
+
+	_compute( name, node, timingEntry ) {
 
 		if ( timingEntry && ! timingEntry.compiledOnce ) {
 
 			const t0 = performance.now();
-			this.renderer.compute( node, size );
+			this.renderer.compute( node );
 			const t1 = performance.now();
 			timingEntry.compiledOnce = true;
 			timingEntry.lastDispatchMs = t1 - t0;
@@ -171,7 +188,7 @@ export class KernelManager {
 		} else if ( this.profiling ) {
 
 			const t0 = performance.now();
-			this.renderer.compute( node, size );
+			this.renderer.compute( node );
 			const t1 = performance.now();
 			let p = this.profile.get( name );
 			if ( ! p ) {
@@ -186,7 +203,7 @@ export class KernelManager {
 
 		} else {
 
-			this.renderer.compute( node, size );
+			this.renderer.compute( node );
 
 		}
 

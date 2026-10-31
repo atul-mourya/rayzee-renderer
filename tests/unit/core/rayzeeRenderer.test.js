@@ -47,15 +47,23 @@ afterEach( () => {
 
 describe( 'disposeRenderer', () => {
 
-	it( 'removes the canvas-target resize listener three.js leaves behind, and hands back its teardown', () => {
+	it( 'removes the canvas-target resize listener three.js leaves behind, and hands back its teardown', async () => {
 
-		const torn = Promise.resolve( 'gone' );
 		const target = { removeEventListener: vi.fn() };
 		const onResize = () => {};
 
-		const renderer = { _canvasTarget: target, _onCanvasTargetResize: onResize, dispose: () => torn };
+		let seen;
+		// r187's dispose() reaches the canvas target after an await.
+		const renderer = { _canvasTarget: target, _onCanvasTargetResize: onResize, async dispose() {
 
-		expect( disposeRenderer( renderer ) ).toBe( torn );
+			await null;
+			seen = this._canvasTarget;
+			return 'gone';
+
+		} };
+
+		await expect( disposeRenderer( renderer ) ).resolves.toBe( 'gone' );
+		expect( seen ).toBe( target );
 		expect( target.removeEventListener ).toHaveBeenCalledWith( 'resize', onResize );
 		expect( renderer._canvasTarget ).toBeNull();
 		expect( disposeRenderer( null ) ).toBeUndefined();
