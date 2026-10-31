@@ -750,34 +750,34 @@
 		"denoisedRmse": 0.0048560577269702344
 	},
 	"fog-shafts/nrd/1": {
-		"ratio": 0.5865956975265468,
-		"rawRmse": 0.11505218685430287,
-		"denoisedRmse": 0.06748911779975439
+		"ratio": 0.5873103647840295,
+		"rawRmse": 0.11586767956265057,
+		"denoisedRmse": 0.06805028915061935
 	},
 	"fog-shafts/oidn/1": {
-		"ratio": 0.3682233862049515,
-		"rawRmse": 0.11505218685430287,
-		"denoisedRmse": 0.04236490583377621
+		"ratio": 0.36596593569511326,
+		"rawRmse": 0.11586767956265057,
+		"denoisedRmse": 0.04240362376796697
 	},
 	"fog-shafts/oidn-tiled/1": {
-		"ratio": 0.3682233862049515,
-		"rawRmse": 0.11505218685430287,
-		"denoisedRmse": 0.04236490583377621
+		"ratio": 0.36596593569511326,
+		"rawRmse": 0.11586767956265057,
+		"denoisedRmse": 0.04240362376796697
 	},
 	"fog-shafts/nrd/64": {
 		"ratio": 1,
-		"rawRmse": 0.02327788071939189,
-		"denoisedRmse": 0.02327788071939189
+		"rawRmse": 0.023214155556079804,
+		"denoisedRmse": 0.023214155556079804
 	},
 	"fog-shafts/oidn/64": {
-		"ratio": 0.249891975589854,
-		"rawRmse": 0.02327788071939189,
-		"denoisedRmse": 0.005816955600513811
+		"ratio": 0.24999718294318515,
+		"rawRmse": 0.023214155556079804,
+		"denoisedRmse": 0.005803473493424841
 	},
 	"fog-shafts/oidn-tiled/64": {
-		"ratio": 0.249891975589854,
-		"rawRmse": 0.02327788071939189,
-		"denoisedRmse": 0.005816955600513811
+		"ratio": 0.24999718294318515,
+		"rawRmse": 0.023214155556079804,
+		"denoisedRmse": 0.005803473493424841
 	},
 	"furnace-glass-rough/nrd/1": {
 		"ratio": 0.05966377491771549,
@@ -898,5 +898,95 @@
 		"ratio": 0.69061799257661,
 		"rawRmse": 0.027774758717524082,
 		"denoisedRmse": 0.01918174810979618
+	},
+	"fog-height-furnace/nrd/1": {
+		"ratio": 0.8109137709824361,
+		"rawRmse": 0.10788673818139896,
+		"denoisedRmse": 0.087486841697673
+	},
+	"fog-height-furnace/oidn/1": {
+		"ratio": 0.4403051801077279,
+		"rawRmse": 0.10788673818139896,
+		"denoisedRmse": 0.047503089686196154
+	},
+	"fog-height-furnace/oidn-tiled/1": {
+		"ratio": 0.4403051801077279,
+		"rawRmse": 0.10788673818139896,
+		"denoisedRmse": 0.047503089686196154
+	},
+	"fog-height-furnace/nrd/64": {
+		"ratio": 1,
+		"rawRmse": 0.013284499774003426,
+		"denoisedRmse": 0.013284499774003426
+	},
+	"fog-height-furnace/oidn/64": {
+		"ratio": 0.46359740425059653,
+		"rawRmse": 0.013284499774003426,
+		"denoisedRmse": 0.006158659611995625
+	},
+	"fog-height-furnace/oidn-tiled/64": {
+		"ratio": 0.46359740425059653,
+		"rawRmse": 0.013284499774003426,
+		"denoisedRmse": 0.006158659611995625
+	},
+	"fog-height/nrd/1": {
+		"ratio": 0.9803957624006162,
+		"rawRmse": 0.1166050913588379,
+		"denoisedRmse": 0.11431913744254138
+	},
+	"fog-height/oidn/1": {
+		"ratio": 0.9469687259684791,
+		"rawRmse": 0.1166050913588379,
+		"denoisedRmse": 0.11042137480551684
+	},
+	"fog-height/oidn-tiled/1": {
+		"ratio": 0.9469687259684791,
+		"rawRmse": 0.1166050913588379,
+		"denoisedRmse": 0.11042137480551684
+	},
+	"fog-height/nrd/64": {
+		"ratio": 1,
+		"rawRmse": 0.012725463195743128,
+		"denoisedRmse": 0.012725463195743128
+	},
+	"fog-height/oidn/64": {
+		"ratio": 0.39568642202792825,
+		"rawRmse": 0.012725463195743128,
+		"denoisedRmse": 0.005035293000571684
+	},
+	"fog-height/oidn-tiled/64": {
+		"ratio": 0.39568642202792825,
+		"rawRmse": 0.012725463195743128,
+		"denoisedRmse": 0.005035293000571684
+	},
+	"fog-glow/nrd/1": {
+		"ratio": 0.8452664921296074,
+		"rawRmse": 0.10498554631204214,
+		"denoisedRmse": 0.0887407644554903
+	},
+	"fog-glow/oidn/1": {
+		"ratio": 0.7555703268937825,
+		"rawRmse": 0.10498554631204214,
+		"denoisedRmse": 0.07932396354611201
+	},
+	"fog-glow/oidn-tiled/1": {
+		"ratio": 0.7555703268937825,
+		"rawRmse": 0.10498554631204214,
+		"denoisedRmse": 0.07932396354611201
+	},
+	"fog-glow/nrd/64": {
+		"ratio": 1,
+		"rawRmse": 0.019594862841205016,
+		"denoisedRmse": 0.019594862841205016
+	},
+	"fog-glow/oidn/64": {
+		"ratio": 0.391863792175295,
+		"rawRmse": 0.019594862841205016,
+		"denoisedRmse": 0.0076785172601093726
+	},
+	"fog-glow/oidn-tiled/64": {
+		"ratio": 0.391863792175295,
+		"rawRmse": 0.019594862841205016,
+		"denoisedRmse": 0.0076785172601093726
 	}
 }

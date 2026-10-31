@@ -277,6 +277,8 @@ export class UniformManager {
 		u( 'fogDensity', DEFAULT_STATE.fogDensity, 'float' );
 		u( 'fogColor', new Color( 1, 1, 1 ), 'color' );
 		u( 'fogAnisotropy', DEFAULT_STATE.fogAnisotropy, 'float' );
+		u( 'fogHeightFalloff', DEFAULT_STATE.fogHeightFalloff, 'float' );
+		u( 'fogFloor', 0, 'float' );
 		u( 'fogBoxMin', new Vector3(), 'vec3' );
 		u( 'fogBoxMax', new Vector3(), 'vec3' );
 

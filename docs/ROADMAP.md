@@ -39,6 +39,7 @@
 - [ ] **Volumetric Rendering & Atmosphere**
   - [x] Volumetric absorption in transmission (attenuation colour and distance, nested media)
   - [x] Fog and homogeneous participating media (a box of haze lit by every light, the sky and sun from outside it)
+  - [x] Height fog: haze thinning with height into a ground mist, sampled exactly
   - [ ] Heterogeneous volume rendering (clouds, smoke)
   - [x] Atmospheric scattering with multiple scattering (the physical sky: spectral, clear sky)
   - [ ] Participating media with anisotropic scattering

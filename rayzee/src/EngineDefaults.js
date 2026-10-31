@@ -65,6 +65,8 @@ export const ENGINE_DEFAULTS = deepFreeze( {
 	fogColor: '#ffffff', // what it scatters; the rest of what it stops is absorbed
 	fogAnisotropy: 0, // −0.95…0.95; above 0 it scatters forward, which brightens light shafts seen toward the light
 	fogBounds: null, // { min: [x,y,z], max: [x,y,z] }; null fills the loaded models' bounds
+	fogHeightFalloff: 0, // per scene unit: above `fogFloor` the density falls as e^(−falloff · height); 0 is even fog
+	fogFloor: null, // the height the falloff starts from, full density below it; null is the loaded models' floor
 
 	// Camera
 	cameraProjection: 'perspective', // 'perspective' | 'orthographic' | 'equirectangular'

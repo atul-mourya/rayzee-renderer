@@ -26,6 +26,7 @@ import { getRandomSample1D, getRandomSample2D } from './Random.js';
 import {
 	EmissiveSample,
 	EmissiveSampleIndexed,
+	EmissiveSampleAnySide,
 	sampleTriangle,
 	interpolateNormal,
 	fetchTriangleData,
@@ -36,6 +37,7 @@ import {
 	sphericalTriangleSolidAngle,
 	triangleArea,
 	SphericalTriangleSampleResult,
+	sampleTriangleAnySide,
 } from './EmissiveSampling.js';
 
 // Number of TSL structs / layout constants
@@ -95,6 +97,14 @@ const lbvhNodeImportance = Fn( ( [ nMin, power, nMax, coneAxis, cosThetaO, hitPo
 
 } );
 
+// Power over distance², the orientation cone left out: for a point drawn from either side (sampleTriangleAnySide).
+const lbvhNodeReach = Fn( ( [ nMin, power, nMax, hitPoint ] ) => {
+
+	const toCenter = hitPoint.sub( nMin.add( nMax ).mul( 0.5 ) );
+	return power.div( max( max( dot( toCenter, toCenter ), float( 1e-12 ) ), length( nMax.sub( nMin ) ).mul( 0.5 ) ) );
+
+} );
+
 /**
  * Sample one emissive triangle using the Light BVH for spatially-aware importance sampling.
  *
@@ -106,7 +116,7 @@ const lbvhNodeImportance = Fn( ( [ nMin, power, nMax, coneAxis, cosThetaO, hitPo
  *
  * Returns an EmissiveSample struct.
  */
-const makeSampleLightBVHTriangle = ( indexed ) => Fn( ( [
+const makeSampleLightBVHTriangle = ( indexed, anySide = false ) => Fn( ( [
 	hitPoint, surfaceNormal,
 	rngState,
 	pixelCoord, resolution, frame, dimBase,
@@ -129,9 +139,9 @@ const makeSampleLightBVHTriangle = ( indexed ) => Fn( ( [
 		cosThetaLight: float( 0.0 ),
 		valid: false,
 	};
-	const result = ( indexed
-		? EmissiveSampleIndexed( { ...fields, triangleIndex: int( - 1 ), faceNormal: vec3( 0.0 ) } )
-		: EmissiveSample( fields ) ).toVar();
+	const result = ( anySide ? EmissiveSampleAnySide( { ...fields, triangleIndex: int( - 1 ), faceNormal: vec3( 0.0 ), instance: int( - 1 ) } )
+		: indexed ? EmissiveSampleIndexed( { ...fields, triangleIndex: int( - 1 ), faceNormal: vec3( 0.0 ) } )
+			: EmissiveSample( fields ) ).toVar();
 
 	// Accumulated selection PDF (product of per-level choice probabilities)
 	const selectionPdf = float( 1.0 ).toVar();
@@ -178,10 +188,16 @@ const makeSampleLightBVHTriangle = ( indexed ) => Fn( ( [
 
 		// Conty-Kulla importance: power × orientation-cone × inverse-square (shared with the MIS re-walk).
 		// d3 = [coneAxis, cosThetaO]; cosThetaO = -1 ⇒ whole-sphere cone (never culled by orientation).
-		const ld3 = lbvhBuffer.element( lBase.add( int( 3 ) ) );
-		const rd3 = lbvhBuffer.element( rBase.add( int( 3 ) ) );
-		const lImportance = lbvhNodeImportance( ld0.xyz, ld0.w, ld1.xyz, ld3.xyz, ld3.w, hitPoint );
-		const rImportance = lbvhNodeImportance( rd0.xyz, rd0.w, rd1.xyz, rd3.xyz, rd3.w, hitPoint );
+		const importance = ( b, d0, d1 ) => {
+
+			if ( anySide ) return lbvhNodeReach( d0.xyz, d0.w, d1.xyz, hitPoint );
+			const d3 = lbvhBuffer.element( b.add( int( 3 ) ) );
+			return lbvhNodeImportance( d0.xyz, d0.w, d1.xyz, d3.xyz, d3.w, hitPoint );
+
+		};
+
+		const lImportance = importance( lBase, ld0, ld1 );
+		const rImportance = importance( rBase, rd0, rd1 );
 		const totalImportance = lImportance.add( rImportance );
 
 		If( totalImportance.lessThanEqual( float( 0.0 ) ), () => {
@@ -273,8 +289,9 @@ const makeSampleLightBVHTriangle = ( indexed ) => Fn( ( [
 
 		const geoNormal = normalize( cross( triData.v1.sub( triData.v0 ), triData.v2.sub( triData.v0 ) ) );
 
+		if ( anySide ) sampleTriangleAnySide( { result, triData, xi, geoNormal, emission, selectionPdf, from: hitPoint, triangleIndex, instance: emissiveInstance } );
 		// Heuristic: spherical sampling for close/large triangles, area for far/small
-		If( useSphericalSampling( triData.v0, triData.v1, triData.v2, hitPoint ), () => {
+		else If( useSphericalSampling( triData.v0, triData.v1, triData.v2, hitPoint ), () => {
 
 			// ---- SPHERICAL TRIANGLE SAMPLING (Arvo 1995) ----
 			const sphResult = SphericalTriangleSampleResult.wrap(
@@ -374,6 +391,8 @@ const makeSampleLightBVHTriangle = ( indexed ) => Fn( ( [
 
 export const sampleLightBVHTriangle = /*@__PURE__*/ makeSampleLightBVHTriangle( false );
 export const sampleLightBVHTriangleIndexed = /*@__PURE__*/ makeSampleLightBVHTriangle( true );
+/** An indexed sample from either side, `pdf` over area (sampleTriangleAnySide). */
+export const sampleLightBVHTriangleAnySide = /*@__PURE__*/ makeSampleLightBVHTriangle( true, true );
 
 // ================================================================================
 // LIGHT-BVH MIS PDF (re-walk)

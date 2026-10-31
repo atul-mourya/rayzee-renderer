@@ -50,7 +50,7 @@ import {
 	sampleEmissiveTriangle, sampleEmissiveTriangleIndexed, fetchTriangleData, TriangleData,
 } from '../EmissiveSampling.js';
 import { sampleLightBVHTriangle, sampleLightBVHTriangleIndexed, calculateLightBVHPdf } from '../LightBVHSampling.js';
-import { fogSpan, henyeyGreenstein, fogSegmentLight, fogScatterLight, traceFogLight, FOG_DIM } from '../Fog.js';
+import { fogSpan, fogFreeFlight, henyeyGreenstein, fogSegmentLight, fogScatterLight, traceFogLight, FOG_DIM } from '../Fog.js';
 import {
 	Ray,
 	HitInfo,
@@ -448,8 +448,8 @@ export function buildShadeKernel( params ) {
 
 		} );
 
-		// Fog, outside glass and subsurface media: each segment takes the point and spot lights; a free flight ending before
-		// the hit (or the sky) is a scatter, which takes the other lights and continues along a phase-function draw.
+		// Fog, outside glass and subsurface media: each segment takes the point and spot lights and the emitters; a free flight
+		// ending before the hit (or the sky) is a scatter, which takes the other lights and continues along a phase-function draw.
 		if ( fog ) If( int( readMediumStack( rayBufferRW, rayID ).stackDepth ).equal( 0 ), () => {
 
 			const span = fogSpan( origin, direction, min( hitDist, float( 1e30 ) ), fog.boxMin, fog.boxMax ).toVar();
@@ -466,7 +466,7 @@ export function buildShadeKernel( params ) {
 
 				const sample1D = ( d ) => getRandomSample1D( _pixelCoord, int( 0 ), dimBase.add( int( d ) ), rngState, resolution, frame );
 				const sample2D = ( d ) => getRandomSample2D( _pixelCoord, int( 0 ), dimBase.add( int( d ) ), rngState, resolution, frame );
-				const t = span.x.sub( log( float( 1.0 ).sub( sample1D( FOG_DIM.DISTANCE ) ) ).div( fog.density ) ).toVar();
+				const t = fogFreeFlight( fog, origin, direction, span.x, span.y, log( float( 1.0 ).sub( sample1D( FOG_DIM.DISTANCE ) ) ).negate() ).toVar();
 				const scatters = t.lessThan( span.y ).toVar();
 				// Past the bounce budget only emission is wanted: neither a segment's light nor a scatter is seen.
 				const emissionOnly = flags.bitAnd( uint( RAY_FLAG.EMISSION_ONLY ) ).notEqual( uint( 0 ) );
@@ -475,6 +475,12 @@ export function buildShadeKernel( params ) {
 				const scatterPoint = origin.add( direction.mul( t ) ).toVar();
 				const segment = fogSegmentLight( {
 					enabled: emissionOnly.not(), origin, dir: direction, near: span.x, far: span.y, g: fog.anisotropy, fog, lamps, sample1D, sample2D,
+					emitters: useEmissiveNEE ? {
+						enabled: enableEmissiveTriangleSampling.equal( int( 1 ) ).and( emissiveTriangleCount.greaterThan( int( 0 ) ) ),
+						rngState, samplerArgs: [ _pixelCoord, resolution, frame, dimBase ],
+						lightBVHNodeCount, lightBuffer, vec4Offset: emissiveVec4Offset, count: emissiveTriangleCount, totalPower: emissiveTotalPower,
+						triangleBuffer, bvhBuffer, boost: emissiveBoost, pdf: emissiveNEEPdf,
+					} : null,
 				} );
 				const scatter = fogScatterLight( {
 					enabled: scatters, p: scatterPoint, dir: direction, g: fog.anisotropy, fog, sample1D, sample2D, lamps,
@@ -483,14 +489,8 @@ export function buildShadeKernel( params ) {
 						texture: envTexture, intensity: environmentIntensity,
 					},
 					sun: { hasSun, direction: sunDirection, radiance: sunRadiance, params: sunParams },
-					emitters: useEmissiveNEE ? {
-						enabled: enableEmissiveTriangleSampling.equal( int( 1 ) ).and( emissiveTriangleCount.greaterThan( int( 0 ) ) ),
-						rngState, samplerArgs: [ _pixelCoord, resolution, frame, dimBase ],
-						lightBVHNodeCount, lightBuffer, vec4Offset: emissiveVec4Offset, count: emissiveTriangleCount, totalPower: emissiveTotalPower,
-						triangleBuffer, bvhBuffer, boost: emissiveBoost,
-					} : null,
 				} );
-				const light = traceFogLight( [ segment, ...scatter.direct ], scatter.emitter,
+				const light = traceFogLight( [ segment, ...scatter ],
 					( from, L, maxDist ) => traceShadowRay( from, L, maxDist, traverseBVHShadow, bvhBuffer, triangleBuffer, materialBuffer ),
 					picksLights ? shadowRays : null, picksLights ? sample1D( FOG_DIM.SHADOW_PICK ) : null );
 				const giScale = select( bounceIndex.greaterThan( 0 ), globalIlluminationIntensity, float( 1.0 ) );

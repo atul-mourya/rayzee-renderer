@@ -1815,6 +1815,7 @@ export class PathTracer extends PathTracerStage {
 			clearcoatNormals: this._compiledClearcoatNormals = this._clearcoatNormalsNeeded(),
 			fog: this._fogNeeded() ? {
 				density: this.fogDensity, color: this.fogColor, anisotropy: this.fogAnisotropy, boxMin: this.fogBoxMin, boxMax: this.fogBoxMax,
+				falloff: this.fogHeightFalloff, floor: this.fogFloor,
 			} : null,
 		};
 		this._compiledFog = resources.fog !== null;

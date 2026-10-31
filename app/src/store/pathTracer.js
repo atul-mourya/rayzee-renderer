@@ -71,22 +71,35 @@ const applySunPath = ( set, get ) => {
 
 };
 
-// Thickness is the share of light crossing the models' longest side the haze stops, the same at any scene scale. A room
-// seen from inside is filled to its bounds; an object seen from outside gets a cube holding the camera too, as a box
+// Where the haze has thinned to half, as a share of the models' height above their floor.
+const FOG_HALF_HEIGHT = { low: 0.25, ground: 0.06 };
+
+// Thickness is the share of light crossing the models' longest side the haze stops, the same at any scene scale. Lying
+// low, the same haze gathers toward the floor: as much of it stands over each spot of the floor as when it is even. A
+// room seen from inside is filled to its bounds; an object seen from outside gets a cube holding the camera too, as a box
 // looked into shows its edges.
-const fogVolume = ( thickness, app ) => {
+const fogVolume = ( thickness, height, app ) => {
 
 	const box = app.getModelBounds();
-	if ( box.isEmpty() ) return { density: 0, bounds: null };
+	if ( box.isEmpty() ) return { density: 0, bounds: null, falloff: 0 };
 	const size = box.getSize( new THREE.Vector3() );
 	const span = Math.max( size.x, size.y, size.z );
-	const density = span > 0 ? - Math.log( 1 - 0.95 * Math.min( Math.max( thickness, 0 ), 1 ) ) / span : 0;
+	let density = span > 0 ? - Math.log( 1 - 0.95 * Math.min( Math.max( thickness, 0 ), 1 ) ) / span : 0;
+	let falloff = 0;
+	if ( FOG_HALF_HEIGHT[ height ] && span > 0 ) {
+
+		const rise = Math.max( size.y, span * 0.05 );
+		falloff = Math.LN2 / ( FOG_HALF_HEIGHT[ height ] * rise );
+		density *= falloff * rise / ( 1 - Math.exp( - falloff * rise ) );
+
+	}
+
 	const camera = app.camera?.position;
-	if ( ! camera || box.containsPoint( camera ) ) return { density, bounds: null };
+	if ( ! camera || box.containsPoint( camera ) ) return { density, bounds: null, falloff };
 
 	const center = box.getCenter( new THREE.Vector3() );
 	const half = Math.max( span, 3 * center.distanceTo( camera ) );
-	return { density, bounds: { min: center.clone().subScalar( half ).toArray(), max: center.clone().addScalar( half ).toArray() } };
+	return { density, bounds: { min: center.clone().subScalar( half ).toArray(), max: center.clone().addScalar( half ).toArray() }, falloff };
 
 };
 
@@ -932,15 +945,23 @@ export const usePathTracerStore = create( ( set, get ) => ( {
 
 	},
 
+	handleFogHeightChange: val => {
+
+		set( { fogHeight: val } );
+		get()._applyFog();
+
+	},
+
 	// Also after a model loads: the density follows the models' size.
 	_applyFog: () => {
 
 		const app = getApp();
 		if ( ! app ) return;
 		const s = get();
-		const volume = s.fog ? fogVolume( s.fogThickness, app ) : { density: 0, bounds: null };
+		const volume = s.fog ? fogVolume( s.fogThickness, s.fogHeight, app ) : { density: 0, bounds: null, falloff: 0 };
 		app.settings.set( 'fogColor', s.fogColor );
 		app.settings.set( 'fogAnisotropy', s.fogAnisotropy );
+		app.settings.set( 'fogHeightFalloff', volume.falloff );
 		app.settings.set( 'fogBounds', volume.bounds );
 		app.settings.set( 'fogDensity', volume.density );
 

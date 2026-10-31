@@ -1236,27 +1236,36 @@ describe( 'scene bounds', () => {
 
 		const model = boxAt( 3 );
 		model.userData.__rayzeeSceneObject = true;
-		const values = { fogDensity: 0, fogBounds: null };
+		const values = { fogDensity: 0, fogBounds: null, fogFloor: null };
 		const setUniform = vi.fn();
 		const app = core( { meshScene: new Scene().add( model ), settings: { get: ( key ) => values[ key ] }, stages: { pathTracer: { setUniform } } } );
+		const sent = () => Object.fromEntries( setUniform.mock.calls.map( ( [ name, v ] ) => [ name, v?.toArray ? v.toArray() : v ] ) );
 
 		app._applyFogBounds();
 		expect( setUniform ).not.toHaveBeenCalled();
 
+		// The falloff starts from the models' floor.
 		values.fogDensity = 0.1;
 		app._applyFogBounds();
-		expect( setUniform.mock.calls.map( ( [ name, v ] ) => [ name, v.toArray() ] ) ).toEqual( [[ 'fogBoxMin', [ - 1, 2, - 1 ]], [ 'fogBoxMax', [ 1, 4, 1 ]]] );
+		expect( sent() ).toEqual( { fogBoxMin: [ - 1, 2, - 1 ], fogBoxMax: [ 1, 4, 1 ], fogFloor: 2 } );
 
+		// A host's box, and its floor; the models' floor stays the falloff's while the host names none.
 		setUniform.mockClear();
 		values.fogBounds = { min: [ 0, 0, 0 ], max: [ 10, 5, 10 ] };
 		app._applyFogBounds();
-		expect( setUniform.mock.calls[ 1 ][ 1 ].toArray() ).toEqual( [ 10, 5, 10 ] );
+		expect( sent() ).toEqual( { fogBoxMin: [ 0, 0, 0 ], fogBoxMax: [ 10, 5, 10 ], fogFloor: 2 } );
+		setUniform.mockClear();
+		values.fogFloor = 0.5;
+		app._applyFogBounds();
+		expect( sent().fogFloor ).toBe( 0.5 );
 
+		// Nothing loaded: an empty box, its floor at the box's.
 		setUniform.mockClear();
 		values.fogBounds = null;
+		values.fogFloor = null;
 		app.meshScene = new Scene();
 		app._applyFogBounds();
-		expect( setUniform.mock.calls.map( ( [ , v ] ) => v.toArray() ) ).toEqual( [[ 0, 0, 0 ], [ 0, 0, 0 ]] );
+		expect( sent() ).toEqual( { fogBoxMin: [ 0, 0, 0 ], fogBoxMax: [ 0, 0, 0 ], fogFloor: 0 } );
 
 	} );
 

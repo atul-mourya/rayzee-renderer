@@ -997,15 +997,15 @@
 			"samples": 2048
 		},
 		"golden": {
-			"meanR": 0.10712159809662403,
-			"meanG": 0.0648347215450964,
-			"meanB": 0.045160347197159,
-			"meanLuminance": 0.07240442167202954,
-			"maxLuminance": 6.971024274635314,
+			"meanR": 0.10709629731834092,
+			"meanG": 0.06483892479746034,
+			"meanB": 0.045169397469394024,
+			"meanLuminance": 0.07240270232231398,
+			"maxLuminance": 6.926974484491348,
 			"nonFinite": 0,
 			"samples": 64
 		},
-		"rmseVsTruth": 0.02327788071939189
+		"rmseVsTruth": 0.023214155556079804
 	},
 	"furnace-glass-rough": {
 		"furnaceRatio": 0.9986238911424152,
@@ -1072,5 +1072,69 @@
 			"samples": 128
 		},
 		"rmseVsTruth": 0.003073153641876942
+	},
+	"fog-height-furnace": {
+		"furnaceRatio": 1.0002747489870671,
+		"truth": {
+			"meanR": 1.0000618591002421,
+			"meanG": 1.0000618591002421,
+			"meanB": 1.0000618591002421,
+			"meanLuminance": 1.0000618591002421,
+			"maxLuminance": 3.880226612091064,
+			"nonFinite": 0,
+			"samples": 512
+		},
+		"golden": {
+			"meanR": 1.0002747489870671,
+			"meanG": 1.0002747489870671,
+			"meanB": 1.0002747489870671,
+			"meanLuminance": 1.0002747489870671,
+			"maxLuminance": 12.483522415161133,
+			"nonFinite": 0,
+			"samples": 128
+		},
+		"rmseVsTruth": 0.009255195021787267
+	},
+	"fog-height": {
+		"truth": {
+			"meanR": 0.22363747274323487,
+			"meanG": 0.40773563205561913,
+			"meanB": 0.5077739238843151,
+			"meanLuminance": 0.375819128055836,
+			"maxLuminance": 1.0746656746387482,
+			"nonFinite": 0,
+			"samples": 2048
+		},
+		"golden": {
+			"meanR": 0.22368761357631683,
+			"meanG": 0.4077859998491249,
+			"meanB": 0.5078471922845438,
+			"meanLuminance": 0.37587110102136473,
+			"maxLuminance": 1.1449675423383712,
+			"nonFinite": 0,
+			"samples": 64
+		},
+		"rmseVsTruth": 0.012725463195743128
+	},
+	"fog-glow": {
+		"truth": {
+			"meanR": 0.07028431333833396,
+			"meanG": 0.06020335684469558,
+			"meanB": 0.057807052917688395,
+			"meanLuminance": 0.06217355505171313,
+			"maxLuminance": 24.456004948806765,
+			"nonFinite": 0,
+			"samples": 2048
+		},
+		"golden": {
+			"meanR": 0.07012251714272821,
+			"meanG": 0.06010493230664338,
+			"meanB": 0.05774687919895882,
+			"meanLuminance": 0.06206441940842058,
+			"maxLuminance": 25.63907527618408,
+			"nonFinite": 0,
+			"samples": 64
+		},
+		"rmseVsTruth": 0.019594862841205016
 	}
 }

@@ -149,6 +149,7 @@ const PathTracerTab = () => {
 		fogThickness,
 		fogColor,
 		fogAnisotropy,
+		fogHeight,
 		// Environment Mode
 		environmentMode,
 		solidSkyColor,
@@ -205,6 +206,7 @@ const PathTracerTab = () => {
 		handleFogThicknessChange,
 		handleFogColorChange,
 		handleFogAnisotropyChange,
+		handleFogHeightChange,
 		// Environment Mode Handlers
 		handleEnvironmentModeChange,
 		handleSolidSkyColorChange,
@@ -406,6 +408,19 @@ const PathTracerTab = () => {
 						</Row>
 						<Row>
 							<Slider label={"Glow Toward Light"} tip="How much brighter the haze looks when you face the light, as sunbeams do. 0 looks the same from every side." min={0} max={0.9} step={0.01} value={[ fogAnisotropy ]} onValueChange={handleFogAnisotropyChange} />
+						</Row>
+						<Row>
+							<span className="opacity-50 text-xs truncate" title="Where the haze sits: evenly everywhere, thinning toward the top, or as a mist along the ground. The amount stays the same.">Height</span>
+							<Select value={fogHeight} onValueChange={handleFogHeightChange}>
+								<SelectTrigger className="max-w-32 h-5 rounded-full">
+									<SelectValue />
+								</SelectTrigger>
+								<SelectContent>
+									<SelectItem value="everywhere">Everywhere</SelectItem>
+									<SelectItem value="low">Low</SelectItem>
+									<SelectItem value="ground">Ground</SelectItem>
+								</SelectContent>
+							</Select>
 						</Row>
 					</>
 				)}

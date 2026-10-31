@@ -1,12 +1,13 @@
 /**
- * The fog's pieces on the GPU: the box span a ray spends inside it, and the Henyey–Greenstein phase function the scatter
- * direction is drawn from — the draw and the density Shade weighs it with must be one distribution, or MIS is biased.
+ * The fog's pieces on the GPU: the box span a ray spends inside it, the Henyey–Greenstein phase function the scatter
+ * direction is drawn from — the draw and the density Shade weighs it with must be one distribution, or MIS is biased —
+ * and the closed-form optical depth and free flight of fog thinning with height, held to a numerical integral.
  */
 
 import { afterAll, beforeAll, expect, it } from 'vitest';
-import { float, vec2, vec3, normalize, dot } from 'three/tsl';
+import { float, vec2, vec3, vec4, normalize, dot } from 'three/tsl';
 import { describeGPU, createRenderer, evaluate } from './gpu.js';
-import { fogSpan, henyeyGreenstein } from '@/core/shaders/Fog.js';
+import { fogSpan, henyeyGreenstein, fogOpticalDepth, fogFreeFlight } from '@/core/shaders/Fog.js';
 import { sampleHenyeyGreenstein } from '@/core/shaders/Subsurface.js';
 
 const N = 1 << 16;
@@ -100,6 +101,97 @@ describeGPU( 'fog', () => {
 			}
 
 		} );
+
+	} );
+
+	// Rays at heights oy + t · dy through fog of `density` below `floor` and density · e^(−falloff · h) at h above it.
+	const heightRays = ( count ) => {
+
+		let seed = 7;
+		const rand = () => ( ( seed = ( seed * 1664525 + 1013904223 ) >>> 0 ) / 4294967296 );
+		const ray = new Float32Array( count * 4 ), medium = new Float32Array( count * 4 );
+		const falloffs = [ 0, 0.1, 1, 4, 20 ];
+		for ( let i = 0; i < count; i ++ ) {
+
+			const dy = [ 0, 1e-7, - 1e-7, 1, - 1 ][ i % 5 ] || ( rand() * 2 - 1 );
+			const a = rand();
+			ray.set( [ rand() * 5 - 2, dy, a, a + rand() * 6 ], i * 4 );
+			// The variate's tail reaches past most spans, so both outcomes of the free flight are drawn.
+			medium.set( [ 0.05 + rand() * 3, falloffs[ Math.floor( i / 5 ) % falloffs.length ], rand() * 2 - 1, - Math.log( 1 - rand() ) * 2 ], i * 4 );
+
+		}
+
+		return { ray, medium };
+
+	};
+
+	const cpuDepth = ( [ oy, dy, a, b ], [ density, falloff, floor ] ) => {
+
+		const steps = 20000, h = ( b - a ) / steps;
+		const rho = ( t ) => density * Math.exp( - falloff * Math.max( oy + dy * t - floor, 0 ) );
+		let sum = rho( a ) + rho( b );
+		for ( let k = 1; k < steps; k ++ ) sum += rho( a + k * h ) * ( k % 2 ? 4 : 2 );
+		return sum * h / 3;
+
+	};
+
+	it( 'integrates fog thinning with height in closed form, and inverts it for the free flight', async () => {
+
+		const N = 2000;
+		const { ray, medium } = heightRays( N );
+		const out = new Float32Array( await evaluate( renderer, N, { r: [ ray, 'vec4' ], m: [ medium, 'vec4' ] }, 'vec2', ( { r, m } ) => {
+
+			const fog = { density: m.x, falloff: m.y, floor: m.z };
+			const origin = vec3( 0, r.x, 0 ), dir = vec3( 0, r.y, 0 );
+			return vec2( fogOpticalDepth( fog, origin, dir, r.z, r.w ), fogFreeFlight( fog, origin, dir, r.z, r.w, m.w ) );
+
+		} ) );
+
+		let scattered = 0;
+		for ( let i = 0; i < N; i ++ ) {
+
+			const r = Array.from( ray.subarray( i * 4, i * 4 + 4 ) ), m = Array.from( medium.subarray( i * 4, i * 4 + 4 ) );
+			const depth = cpuDepth( r, m );
+			expect( Math.abs( out[ i * 2 ] - depth ) ).toBeLessThanOrEqual( 2e-4 * depth + 1e-7 );
+
+			// The flight lands where the depth from the start reaches the variate, or past the span when it holds less.
+			const [ , , a, b ] = r, t = out[ i * 2 + 1 ], xi = m[ 3 ];
+			if ( xi < depth * ( 1 - 1e-3 ) ) {
+
+				scattered ++;
+				expect( t ).toBeGreaterThanOrEqual( a - 1e-5 );
+				expect( t ).toBeLessThan( b );
+				expect( Math.abs( cpuDepth( [ r[ 0 ], r[ 1 ], a, t ], m ) - xi ) ).toBeLessThanOrEqual( 1e-3 * xi + 1e-5 );
+
+			} else if ( xi > depth * ( 1 + 1e-3 ) ) expect( t ).toBeGreaterThanOrEqual( b );
+
+		}
+
+		expect( scattered ).toBeGreaterThan( N / 4 );
+		expect( scattered ).toBeLessThan( N * 3 / 4 );
+
+	} );
+
+	it( 'keeps even fog exactly as a homogeneous medium computes it', async () => {
+
+		const N = 256;
+		const { ray, medium } = heightRays( N );
+		for ( let i = 0; i < N; i ++ ) medium[ i * 4 + 1 ] = 0;
+		const out = new Float32Array( await evaluate( renderer, N, { r: [ ray, 'vec4' ], m: [ medium, 'vec4' ] }, 'vec4', ( { r, m } ) => {
+
+			const fog = { density: m.x, falloff: m.y, floor: m.z };
+			const origin = vec3( 0, r.x, 0 ), dir = vec3( 0, r.y, 0 );
+			return vec4( fogOpticalDepth( fog, origin, dir, r.z, r.w ), fogFreeFlight( fog, origin, dir, r.z, r.w, m.w ),
+				m.x.mul( r.w.sub( r.z ) ), r.z.add( m.w.div( m.x ) ) );
+
+		} ) );
+
+		for ( let i = 0; i < N; i ++ ) {
+
+			expect( out[ i * 4 ] ).toBe( out[ i * 4 + 2 ] );
+			expect( out[ i * 4 + 1 ] ).toBe( out[ i * 4 + 3 ] );
+
+		}
 
 	} );
 

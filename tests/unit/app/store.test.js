@@ -671,4 +671,32 @@ describe( 'Fog', () => {
 
 	} );
 
+	it( 'gathers the same haze toward the floor when it lies low', async () => {
+
+		const app = fogApp( 6 ); // 3 high
+		( await import( '@/lib/appProxy.js' ) ).__setMockApp( app );
+		const state = () => store.usePathTracerStore.getState();
+		state().handleFogThicknessChange( [ 0.5 ] );
+		state().handleFogChange( true );
+		const even = app.values.get( 'fogDensity' );
+		expect( app.values.get( 'fogHeightFalloff' ) ).toBe( 0 );
+
+		for ( const [ height, share ] of [[ 'low', 0.25 ], [ 'ground', 0.06 ]] ) {
+
+			state().handleFogHeightChange( height );
+			const falloff = app.values.get( 'fogHeightFalloff' ), density = app.values.get( 'fogDensity' );
+			// Half the density at that share of the models' height, and as much haze over the floor as when even.
+			expect( Math.exp( - falloff * share * 3 ) ).toBeCloseTo( 0.5, 6 );
+			expect( density * ( 1 - Math.exp( - falloff * 3 ) ) / falloff ).toBeCloseTo( even * 3, 6 );
+
+		}
+
+		state().handleFogHeightChange( 'everywhere' );
+		expect( app.values.get( 'fogHeightFalloff' ) ).toBe( 0 );
+		expect( app.values.get( 'fogDensity' ) ).toBe( even );
+		state().handleFogChange( false );
+		expect( app.values.get( 'fogHeightFalloff' ) ).toBe( 0 );
+
+	} );
+
 } );

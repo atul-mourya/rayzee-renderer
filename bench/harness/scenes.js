@@ -2203,6 +2203,110 @@ SCENES.push( {
 	},
 } );
 
+// The white furnace again, its fog thinning with height above a floor inside the box: the free flight, the shadow rays'
+// transmittance and the phase draw must agree on one density field, or the furnace drifts from 1.
+SCENES.push( {
+	id: 'fog-height-furnace',
+	covers: 'white furnace — fog thinning with height: the closed-form free flight and transmittance across the floor',
+	spp: 128,
+	truthSpp: 512,
+	settings: {
+		maxBounces: 64, enableEnvironment: true, environmentIntensity: 1,
+		fogDensity: 1.2, fogColor: '#ffffff', fogAnisotropy: 0.3, fogBounds: { min: [ - 3, - 3, - 3 ], max: [ 3, 3, 3 ] },
+		fogHeightFalloff: 1.5, fogFloor: - 0.5,
+	},
+	furnaceRadiance: 1.0,
+	async build( app ) {
+
+		const env = app.stages.pathTracer.environment;
+		env.envParams.solidSkyColor = new Color( 0xffffff );
+		await env.setMode( 'color' );
+
+		const group = new Group();
+		group.add( new Mesh( new SphereGeometry( 0.8, 96, 48 ), new MeshPhysicalMaterial( { color: 0xffffff, roughness: 1.0, metalness: 0 } ) ) );
+		await app.loadObject3D( group, 'fog-height-furnace' );
+		setCamera( app, [ 0, 0.4, 2.2 ], [ 0, 0, 0 ] );
+
+	},
+} );
+
+// Mist lying on the ground: a low sun and the sky over pillars on a slab, the fog dense at the slab and thin a pillar's
+// height up, so the pillars' tops stand clear of it.
+SCENES.push( {
+	id: 'fog-height',
+	covers: 'fog thinning with height: low mist lit by the sun and sky, the floor taken from the models',
+	spp: 64,
+	truthSpp: 2048,
+	settings: {
+		maxBounces: 4, enableEnvironment: true, environmentIntensity: 1,
+		fogDensity: 0.6, fogColor: '#f4f7ff', fogAnisotropy: 0.6, fogBounds: null, fogHeightFalloff: 2.5, fogFloor: null,
+	},
+	async build( app ) {
+
+		await setGradientSky( app );
+		const scene = new Group();
+		const stone = new MeshPhysicalMaterial( { color: 0xb8b0a4, roughness: 0.8, metalness: 0 } );
+		const slab = new Mesh( new BoxGeometry( 16, 0.2, 16 ), new MeshPhysicalMaterial( { color: 0x5d6b4a, roughness: 0.9, metalness: 0 } ) );
+		slab.position.y = - 0.1;
+		scene.add( slab );
+		for ( const [ x, z, h ] of [[ - 2.5, - 2, 3 ], [ 0, - 3.5, 2.2 ], [ 2.4, - 1.5, 2.6 ], [ - 0.8, 0.5, 1.4 ], [ 1.2, 1.8, 1.0 ]] ) {
+
+			const pillar = new Mesh( new BoxGeometry( 0.6, h, 0.6 ), stone );
+			pillar.position.set( x, h / 2, z );
+			scene.add( pillar );
+
+		}
+
+		const sun = new DirectionalLight( 0xffe2b8, sunLux( 4 ) );
+		sun.position.set( - 8, 2.5, - 6 );
+		scene.add( sun, sun.target );
+		await app.loadObject3D( scene, 'fog-height' );
+		setCamera( app, [ 0.5, 1.3, 7.5 ], [ 0, 0.9, - 1 ] );
+
+	},
+} );
+
+// Fog lit by emitters alone: a small bright ball and a panel facing down, emitting from its lower side only, in a dark
+// corner. The fog's emitter light is drawn along each segment, from either side of an emitter; leaving out the sides a
+// segment's reference point faces away from, or mis-pairing it with the phase draw's MIS weight, shows here as bias.
+SCENES.push( {
+	id: 'fog-glow',
+	covers: 'fog lit by emitters only: the equiangular emitter light along fog segments, its MIS with the phase draw, one-sided emitters',
+	spp: 64,
+	truthSpp: 2048,
+	settings: {
+		maxBounces: 4, enableEnvironment: false, enableEmissiveTriangleSampling: true,
+		fogDensity: 0.35, fogColor: '#ffffff', fogAnisotropy: 0.3, fogBounds: null,
+	},
+	async build( app ) {
+
+		const corner = new Group();
+		const grey = new MeshPhysicalMaterial( { color: 0x9a9a9a, roughness: 0.9, metalness: 0 } );
+		const slab = ( w, h, d, x, y, z ) => {
+
+			const mesh = new Mesh( new BoxGeometry( w, h, d ), grey );
+			mesh.position.set( x, y, z );
+			corner.add( mesh );
+
+		};
+
+		slab( 6, 0.2, 6, 0, - 0.1, 0 );
+		slab( 6, 2.8, 0.2, 0, 1.4, - 3.1 );
+		slab( 0.2, 2.8, 6, - 3.1, 1.4, 0 );
+
+		const ball = new Mesh( new SphereGeometry( 0.05, 32, 16 ), new MeshPhysicalMaterial( { color: 0x000000, emissive: 0xffc080, emissiveIntensity: 150 } ) );
+		ball.position.set( 0.3, 0.7, - 0.5 );
+		const panel = new Mesh( new PlaneGeometry( 0.8, 0.8 ), new MeshPhysicalMaterial( { color: 0x000000, emissive: 0xbfd8ff, emissiveIntensity: 6, side: FrontSide } ) );
+		panel.rotation.x = Math.PI / 2;
+		panel.position.set( - 1.2, 1.8, - 1.6 );
+		corner.add( ball, panel );
+
+		await app.loadObject3D( corner, 'fog-glow' );
+		setCamera( app, [ 1.8, 1.2, 3.0 ], [ - 0.3, 0.9, - 0.8 ] );
+
+	},
+} );
+
 export function getScene( id ) {
 
 	const scene = SCENES.find( ( s ) => s.id === id );

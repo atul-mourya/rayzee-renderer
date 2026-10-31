@@ -70,6 +70,22 @@ export const EmissiveSampleIndexed = struct( {
 	faceNormal: 'vec3', // winding normal
 } );
 
+// EmissiveSampleIndexed plus the triangle's TLAS leaf, `pdf` over area (sampleTriangleAnySide).
+export const EmissiveSampleAnySide = struct( {
+	position: 'vec3',
+	normal: 'vec3',
+	emission: 'vec3',
+	direction: 'vec3',
+	distance: 'float',
+	pdf: 'float',
+	area: 'float',
+	cosThetaLight: 'float',
+	valid: 'bool',
+	triangleIndex: 'int',
+	faceNormal: 'vec3',
+	instance: 'int',
+} );
+
 const EmissiveContributionResult = struct( {
 	contribution: 'vec3',
 	hasEmissive: 'bool',
@@ -284,6 +300,33 @@ export const interpolateNormal = Fn( ( [ n0, n1, n2, xi ] ) => {
 
 } );
 
+/**
+ * A point drawn uniformly over a picked triangle into an indexed sample, `pdf` its density over area. Either side and any
+ * orientation: a fog segment draws from a reference point that is not where the light arrives, so nothing it could
+ * light may be left out.
+ */
+export const sampleTriangleAnySide = ( { result, triData, xi, geoNormal, emission, selectionPdf, from, triangleIndex, instance } ) => {
+
+	const position = sampleTriangle( triData.v0, triData.v1, triData.v2, xi ).toVar();
+	const toEmissive = position.sub( from ).toVar();
+	const dist = length( toEmissive ).toVar();
+	const dir = toEmissive.div( max( dist, 1e-20 ) ).toVar();
+	result.position.assign( position );
+	result.normal.assign( interpolateNormal( triData.n0, triData.n1, triData.n2, xi ) );
+	result.emission.assign( emission );
+	result.direction.assign( dir );
+	result.distance.assign( dist );
+	const trueArea = triangleArea( triData.v0, triData.v1, triData.v2 ).toVar();
+	result.pdf.assign( selectionPdf.div( max( trueArea, 1e-10 ) ) );
+	result.area.assign( trueArea );
+	result.cosThetaLight.assign( abs( dot( dir, geoNormal ) ) );
+	result.valid.assign( selectionPdf.greaterThan( 0.0 ).and( trueArea.greaterThan( 0.0 ) ) );
+	result.triangleIndex.assign( triangleIndex );
+	result.faceNormal.assign( geoNormal );
+	result.instance.assign( instance );
+
+};
+
 // Check if a material is emissive
 export const isEmissive = Fn( ( [ material ] ) => {
 
@@ -427,7 +470,7 @@ export const binarySearchCDF = Fn( ( [ emissiveTriangleBuffer, emissiveOffset, e
 // Sample from emissive triangle index using CDF importance sampling.
 // `emissiveTriangleBuffer` may be the shared packed light buffer; `emissiveVec4Offset`
 // gives the vec4 offset where emissive entries begin.
-const makeSampleEmissiveTriangle = ( indexed ) => Fn( ( [
+const makeSampleEmissiveTriangle = ( indexed, anySide = false ) => Fn( ( [
 	hitPoint, surfaceNormal,
 	rngState,
 	pixelCoord, resolution, frame, dimBase,
@@ -448,9 +491,9 @@ const makeSampleEmissiveTriangle = ( indexed ) => Fn( ( [
 		cosThetaLight: float( 0.0 ),
 		valid: false,
 	};
-	const result = ( indexed
-		? EmissiveSampleIndexed( { ...fields, triangleIndex: int( - 1 ), faceNormal: vec3( 0.0 ) } )
-		: EmissiveSample( fields ) ).toVar();
+	const result = ( anySide ? EmissiveSampleAnySide( { ...fields, triangleIndex: int( - 1 ), faceNormal: vec3( 0.0 ), instance: int( - 1 ) } )
+		: indexed ? EmissiveSampleIndexed( { ...fields, triangleIndex: int( - 1 ), faceNormal: vec3( 0.0 ) } )
+			: EmissiveSample( fields ) ).toVar();
 
 	// Check if we have emissive triangles
 	If( emissiveTriangleCount.greaterThan( int( 0 ) ), () => {
@@ -480,8 +523,12 @@ const makeSampleEmissiveTriangle = ( indexed ) => Fn( ( [
 
 		const geoNormal = normalize( cross( triData.v1.sub( triData.v0 ), triData.v2.sub( triData.v0 ) ) );
 
+		if ( anySide ) sampleTriangleAnySide( {
+			result, triData, xi, geoNormal, emission, selectionPdf: samplePower.div( max( emissiveTotalPower, float( 1e-10 ) ) ),
+			from: hitPoint, triangleIndex, instance: emissiveInstance,
+		} );
 		// Heuristic: spherical sampling for close/large triangles, area for far/small
-		If( useSphericalSampling( triData.v0, triData.v1, triData.v2, hitPoint ), () => {
+		else If( useSphericalSampling( triData.v0, triData.v1, triData.v2, hitPoint ), () => {
 
 			// ---- SPHERICAL TRIANGLE SAMPLING (Arvo 1995) ----
 			const sphResult = SphericalTriangleSampleResult.wrap(
@@ -582,6 +629,8 @@ const makeSampleEmissiveTriangle = ( indexed ) => Fn( ( [
 
 export const sampleEmissiveTriangle = /*@__PURE__*/ makeSampleEmissiveTriangle( false );
 export const sampleEmissiveTriangleIndexed = /*@__PURE__*/ makeSampleEmissiveTriangle( true );
+/** An indexed sample from either side, `pdf` over area (sampleTriangleAnySide). */
+export const sampleEmissiveTriangleAnySide = /*@__PURE__*/ makeSampleEmissiveTriangle( true, true );
 
 // ================================================================================
 // EMISSIVE TRIANGLE DIRECT LIGHTING CONTRIBUTION

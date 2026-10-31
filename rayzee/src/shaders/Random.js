@@ -129,9 +129,12 @@ export const RandomPointInCircle = ( rngState ) => {
 //      +17  light vertex on that path    (ConnectKernel, bidirectional)
 //      +18  fog free-flight distance     (ShadeKernel)
 //      +19  fog's lamp pick              (Fog)
-//      +20  fog segment light: the lamp  (Fog)
+//      +20  fog segment light: the lamp or the emitters (Fog)
 //      +21  fog segment light: the point (Fog)
 //      +22  fog's picked shadow ray      (Fog, setting shadowRays)
+//      +23  fog segment emitters: reference point (Fog)
+//      +25  fog segment emitters: the triangle    (EmissiveSampling / LightBVHSampling, from base +24)
+//   2D +27  fog segment emitters: the point on it (EmissiveSampling / LightBVHSampling, from base +24)
 //
 // A fog scatter ends its bounce before any surface work, so its light samples reuse the surface's NEE dimensions.
 //

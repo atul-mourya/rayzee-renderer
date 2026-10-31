@@ -527,15 +527,22 @@ bench gates and measurements.
   loses where a white sun and a blue sky are both in view — a sample carries one light's colour, not their mix.
 - **Light radius**: a point or spot light with `userData.radius` is lit as Cycles' Soft Falloff (NEE only), compiled in
   only while some light has one.
-- **Fog** (`shaders/Fog.js`; settings `fogDensity` per scene unit, `fogColor`, `fogAnisotropy`, `fogBounds`): a
-  homogeneous medium in a box, by default the models' bounds (`getModelBounds()`, no ground plane), so the sky and sun
-  light it from outside. Compiled in only while the density is above 0 (`PathTracer._fogNeeded()`), path integrator
-  only (else `setting.ignored`). Free flight in Shade before the miss branch; a scatter takes the lamps, sky, sun and
-  emitters MIS'd against the phase draw (`fogScatterLight`), point and spot lights come along every segment by
-  equiangular sampling (`fogSegmentLight`), and every shadow ray takes the fog's transmittance (`traceShadowRay` via
-  `SceneResources.fog`). ⚠️ The fog's shadow rays go through one call site (`traceFogLight`): each `traceShadowRay`
-  call inlines the whole BVH walk. The app turns its Thickness into a density by the models' longest side, and gives an
-  object seen from outside a cube around it and the camera (a box seen from outside shows its edges).
+- **Fog** (`shaders/Fog.js`; settings `fogDensity` per scene unit, `fogColor`, `fogAnisotropy`, `fogBounds`,
+  `fogHeightFalloff`, `fogFloor`): a medium in a box, by default the models' bounds (`getModelBounds()`, no ground
+  plane), so the sky and sun light it from outside; even, or thinning as e^(−falloff · h) above `fogFloor` (default
+  the models' floor) with a closed-form optical depth and free flight (`fogOpticalDepth`, `fogFreeFlight`; falloff 0
+  takes the homogeneous expressions exactly). Compiled in only while the density is above 0
+  (`PathTracer._fogNeeded()`), path integrator only (else `setting.ignored`). Free flight in Shade before the miss
+  branch; a scatter takes the lights, sky and sun MIS'd against the phase draw (`fogScatterLight`), point and spot
+  lights and the emitters share one light along every segment, picked per segment and drawn equiangularly
+  (`fogSegmentLight`), and every shadow ray takes the fog's transmittance (`traceShadowRay` via `SceneResources.fog`).
+  ⚠️ The fog's shadow rays go through one call site (`traceFogLight`): each `traceShadowRay` call inlines the whole
+  BVH walk. ⚠️ A segment's emitter point is drawn from a reference point in the span, so from either side
+  (`sampleLightBVHTriangleAnySide`): drawn as surface NEE draws, the sides facing away from the reference were left to
+  the phase draw at a weight below 1 (−1 %). The app turns its Thickness into a density by the models' longest side,
+  its Height (Everywhere / Low / Ground) into a falloff halving the density at 25 % / 6 % of the models' height with
+  the same haze over each spot of the floor, and gives an object seen from outside a cube around it and the camera (a
+  box seen from outside shows its edges).
 - ⚠️ `bench:ab` read +7–9 % on identical code for two scenes on one day: net any A/B of a self-run.
 
 ### State-Engine Synchronization Pattern

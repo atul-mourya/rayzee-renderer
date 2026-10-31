@@ -38,6 +38,8 @@ const SETTING_ROUTES = {
 	fogColor: { handler: 'handleFogColor', reset: true },
 	fogAnisotropy: { handler: 'handleFogAnisotropy', reset: true },
 	fogBounds: { handler: 'handleFogBounds', reset: true },
+	fogHeightFalloff: { handler: 'handleFogHeightFalloff', reset: true },
+	fogFloor: { handler: 'handleFogBounds', reset: true },
 	globalIlluminationIntensity: { uniform: 'globalIlluminationIntensity', reset: true },
 	panoramaLevelHorizon: { uniform: 'panoLevelHorizon', reset: true },
 	enableDOF: { uniform: 'enableDOF', reset: true },
@@ -260,6 +262,12 @@ export class RenderSettings extends EventDispatcher {
 			},
 
 			handleFogBounds: () => onFogBounds?.(),
+
+			handleFogHeightFalloff: ( value ) => {
+
+				stages.pathTracer?.setUniform( 'fogHeightFalloff', Math.max( Number( value ) || 0, 0 ) );
+
+			},
 
 			handleExposure: ( value ) => {
 

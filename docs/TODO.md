@@ -84,9 +84,12 @@
 
 - [ ] Introduce Sequenced HRDIs - https://mattepaint.com/gallery/hdri/skies/
 - [ ] **Fog and light shafts** ROADMAP: "Fog and homogeneous participating media", "Volumetric lighting and shadows";
-  - [ ] Follow-ups: equiangular sampling for small emitters (a tiny bright emissive ball still speckles its halo);
-    fog inside glass; height falloff / heterogeneous media; the shadow catcher ignores fog; bidirectional integrators
-    render without it (record `setting.ignored`)
+  - [ ] Follow-ups: fog inside glass; density varying other than with height (noise, VDB); the shadow catcher ignores
+    fog; the bidirectional integrators render without it (they record `setting.ignored`). Height falloff and emitters
+    lit along each segment are done (2026-10-31, see `docs/design/SHADING.md` → Fog).
+  - [ ] A bright speckle remains wherever a bounced ray passes close to a small bright emitter in fog: the segment's
+    light from one point of it goes as 1 / (the ray's distance from that point). Drawing the point with the segment in
+    view (Cycles' light tree takes a segment) would soften it.
 - [ ] Lens flare
 - [ ] Cone Tracing
 - [ ] Clouds for the physical sky

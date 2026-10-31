@@ -40,6 +40,8 @@ Key settings:
 | `fogColor` | `string` | '#ffffff' | The colour the fog scatters (its albedo); the rest of what it stops is absorbed |
 | `fogAnisotropy` | `number` | 0 | Henyey–Greenstein `g`, −0.95…0.95: above 0 the fog scatters forward, so beams look brighter facing the light |
 | `fogBounds` | `{min, max}` \| `null` | null | The box the fog fills, as `{ min: [x, y, z], max: [x, y, z] }`; `null` fills the loaded models' bounds (`getModelBounds()`) |
+| `fogHeightFalloff` | `number` | 0 | Per scene unit: above `fogFloor` the density falls as `e^(−falloff · height)`, so the fog lies low; `0` is even fog |
+| `fogFloor` | `number` \| `null` | null | The height the falloff starts from, full density below it; `null` is the loaded models' floor |
 | `transmissiveBounces` | `number` | 5 | Max bounces for transmissive materials |
 | `maxSubsurfaceSteps` | `number` | 8 | Max random-walk steps for subsurface scattering (raised to 64 by `configureForMode('production')`) |
 | `enableAlphaShadows` | `boolean` | false | Alpha-tested shadow rays (enabled by `configureForMode('production')`) |
@@ -72,9 +74,9 @@ See `ENGINE_DEFAULTS` for the full list with default values — every key in it 
 
 ## Fog
 
-A homogeneous haze in a box, lit by everything in the scene — the sky and the sun from outside it too, so light coming
-through a window shows as a beam. Path integrator only: under `'bidirectional'` or `'vcm'` it is left out and
-`setting.ignored` is recorded.
+A haze in a box, lit by everything in the scene — the sky and the sun from outside it too, so light coming through a
+window shows as a beam. Even, or thinning with height into a mist that lies on the ground. Path integrator only: under
+`'bidirectional'` or `'vcm'` it is left out and `setting.ignored` is recorded.
 
 ```js
 engine.settings.setMany({ fogDensity: 0.1, fogColor: '#fff4e6', fogAnisotropy: 0.4 })
@@ -86,11 +88,21 @@ engine.settings.setMany({ fogDensity: 0.1, fogColor: '#fff4e6', fogAnisotropy: 0
   right for a room seen from inside. Seen from outside, a box shows its edges: give an object a `fogBounds` that holds
   the camera too. The app does this itself — a room is filled to its bounds, an object gets a cube around it and the
   camera.
-- **Lights.** Point and spot lights light the fog along every ray through it (equiangular sampling), so a spot's cone
-  converges quickly; the sun, the sky, rect lights and glowing surfaces light it at scatter points, weighed against the
-  phase function. With `shadowRays` `'two'` or `'one'` the fog traces as few shadow rays as a surface does.
+- **Height.** `fogHeightFalloff` thins the fog above `fogFloor` (by default the models' floor): the density halves every
+  `0.693 / falloff` units up, and below the floor it stays at `fogDensity`. A room 3 units high with a falloff of `0.77`
+  keeps a tenth of its floor's density at the ceiling. Changing it needs no shader rebuild.
+
+  ```js
+  engine.settings.setMany({ fogDensity: 0.5, fogHeightFalloff: 2 })   // mist lying on the ground
+  ```
+
+- **Lights.** Point and spot lights, and glowing surfaces while `enableEmissiveTriangleSampling` is on, light the fog
+  along every ray through it (equiangular sampling), so a spot's cone and the halo of a small bright bulb converge
+  quickly; the sun, the sky and rect lights light it at scatter points, weighed against the phase function. With
+  `shadowRays` `'two'` or `'one'` the fog traces as few shadow rays as a surface does.
 - **Cost.** Turning it on rebuilds the shaders once. On a sunlit room with a spot light and a glowing ball it took
   about half again the GPU time a sample (M-series, 512²); off, every shader is exactly as without the feature.
+  Thinning with height costs nothing measurable.
 - Fog is not drawn inside glass or subsurface objects, and the ground-plane shadow catcher ignores it.
 
 ## Rendering Modes

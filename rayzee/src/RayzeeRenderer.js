@@ -2572,17 +2572,23 @@ export class RayzeeRenderer extends EventDispatcher {
 
 	}
 
-	/** Sends the box fog fills to the path tracer: the host's `fogBounds`, else the models'. Measured only while there is fog. */
+	/**
+	 * Sends the box fog fills to the path tracer, the host's `fogBounds` else the models', and the floor its falloff starts
+	 * from, the host's `fogFloor` else the models' floor. Measured only while there is fog.
+	 */
 	_applyFogBounds() {
 
 		const pathTracer = this.stages?.pathTracer;
 		if ( ! pathTracer || ! ( this.settings.get( 'fogDensity' ) > 0 ) ) return;
 
 		const bounds = this.settings.get( 'fogBounds' );
-		const box = bounds ? new Box3().setFromArray( [ ...bounds.min, ...bounds.max ] ) : this.getModelBounds();
+		const models = this.getModelBounds();
+		const box = bounds ? new Box3().setFromArray( [ ...bounds.min, ...bounds.max ] ) : models.clone();
 		if ( box.isEmpty() ) box.set( box.min.set( 0, 0, 0 ), box.max.set( 0, 0, 0 ) );
+		const floor = this.settings.get( 'fogFloor' );
 		pathTracer.setUniform( 'fogBoxMin', box.min );
 		pathTracer.setUniform( 'fogBoxMax', box.max );
+		pathTracer.setUniform( 'fogFloor', Number.isFinite( floor ) ? floor : models.isEmpty() ? box.min.y : models.min.y );
 
 	}
 
