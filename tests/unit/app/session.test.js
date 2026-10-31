@@ -226,8 +226,8 @@ describe( 'sessions', () => {
 	it( 'reopens a catalog model from where the catalog has it now', async () => {
 
 		const app = fakeApp( storage );
-		await openSource( app, { kind: 'url', url: 'https://old.cdn/x.glb', catalog: 'Cornell Box 1' }, { pickFile: vi.fn() } );
-		expect( app.loadModel.mock.calls[ 0 ][ 0 ] ).toMatch( /CornellBox1\.glb$/ );
+		await openSource( app, { kind: 'url', url: 'https://old.cdn/x.glb', catalog: 'Cornell Box' }, { pickFile: vi.fn() } );
+		expect( app.loadModel.mock.calls[ 0 ][ 0 ] ).toMatch( /cornell_box_extended\.glb$/ );
 
 		await openSource( app, { kind: 'url', url: 'https://s.test/x.zip', filename: 'x.zip', cacheKey: 'sketchfab:1:gltf' }, { pickFile: vi.fn() } );
 		expect( app.loadFile ).toHaveBeenCalledWith( 'https://s.test/x.zip', { filename: 'x.zip', cacheKey: 'sketchfab:1:gltf' } );
