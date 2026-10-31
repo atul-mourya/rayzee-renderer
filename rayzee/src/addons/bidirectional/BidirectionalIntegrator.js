@@ -10,7 +10,7 @@ import { uniform, uniformArray, texture, storage, uint } from 'three/tsl';
 import { DataTexture, FloatType, RedFormat, Vector3 } from 'three';
 import { gpuOnlyStorageAttribute } from '../../shaders/ThreePatches.js';
 import { LIGHT_FLOATS } from '../../pathtracer/UniformManager.js';
-import { HIT_STRIDE_BIDIRECTIONAL, LIGHT_VERTEX_STRIDE, freeStorageAttribute } from '../../pathtracer/PackedRayBuffer.js';
+import { HIT_STRIDE_BIDIRECTIONAL, LIGHT_VERTEX_STRIDE } from '../../pathtracer/PackedRayBuffer.js';
 import { ENERGY_SCALE } from '../../pathtracer/QueueManager.js';
 import { CAMERA_PROJECTION_IDS } from '../../EngineDefaults.js';
 import { BVH_MAX_INDEX, BVH_LEAF_MARKERS, CLUSTER_COUNT_SHIFT, CLUSTER_COPY_HIDDEN } from '../../scene/BufferLayout.js';
@@ -159,7 +159,7 @@ export class BidirectionalIntegrator {
 		// Light tracing's image: a u32 per channel per pixel, fixed point (LightSplatKernel).
 		if ( ! this._splatAttr || this._splatAttr.count < maxPixels * 3 ) {
 
-			freeStorageAttribute( this.pt.renderer, this._splatAttr );
+			this._splatAttr?.dispose();
 			this._splatAttr = gpuOnlyStorageAttribute( maxPixels * 3, 1, Uint32Array );
 
 		}
@@ -168,7 +168,7 @@ export class BidirectionalIntegrator {
 		const hashSize = this.merging ? 2 ** Math.ceil( Math.log2( Math.max( this._lightCacheSlots, 1024 ) ) ) : 0;
 		if ( this._mergeHeadAttr?.count !== hashSize ) {
 
-			freeStorageAttribute( this.pt.renderer, this._mergeHeadAttr );
+			this._mergeHeadAttr?.dispose();
 			this._mergeHeadAttr = hashSize > 0 ? gpuOnlyStorageAttribute( hashSize, 1, Uint32Array ) : null;
 
 		}
@@ -418,9 +418,9 @@ export class BidirectionalIntegrator {
 	/** Frees its buffers; the path tracer calls it when another integrator is chosen, and on dispose. */
 	dispose() {
 
-		freeStorageAttribute( this.pt.renderer, this._splatAttr );
+		this._splatAttr?.dispose();
 		this._splatAttr = null;
-		freeStorageAttribute( this.pt.renderer, this._mergeHeadAttr );
+		this._mergeHeadAttr?.dispose();
 		this._mergeHeadAttr = null;
 		this._disposeLightGuide();
 
@@ -760,7 +760,7 @@ export class BidirectionalIntegrator {
 
 	_disposeLightGuide() {
 
-		freeStorageAttribute( this.pt.renderer, this._guideBuildAttr );
+		this._guideBuildAttr?.dispose();
 		this._guideTexture?.dispose();
 		this._guideTexture = this._guideBuildAttr = null;
 		this.uniforms.guideTexture = null;

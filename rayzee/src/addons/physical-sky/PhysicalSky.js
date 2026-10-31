@@ -6,7 +6,6 @@ import { StorageInstancedBufferAttribute } from 'three/webgpu';
 import { storage, uniform } from 'three/tsl';
 
 import { gpuOnlyStorageAttribute } from '../../shaders/ThreePatches.js';
-import { freeStorageAttribute } from '../../pathtracer/PackedRayBuffer.js';
 import {
 	TRANSMITTANCE_W, TRANSMITTANCE_H, MS_MU_S, MS_H, MS_BANDS, MS_SECTORS, MS_CELLS, MS_VIEW_MU, MS_VIEW_PHI, MS_VIEWS, IRRADIANCE_SIZE, SKY_COLUMNS,
 	buildTransmittanceKernel, buildIncomingKernel, buildScatterKernel, buildIrradianceKernel, buildSkyViewKernels,
@@ -295,10 +294,10 @@ export class PhysicalSky {
 
 	}
 
-	dispose( renderer = null ) {
+	dispose() {
 
 		for ( const k of Object.values( this._kernels ?? {} ).flat() ) k.dispose();
-		for ( const a of Object.values( this._attrs ?? {} ) ) freeStorageAttribute( renderer, a );
+		for ( const a of Object.values( this._attrs ?? {} ) ) a.dispose();
 		this._kernels = null;
 		this._attrs = null;
 		this._texture.dispose();

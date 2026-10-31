@@ -19,7 +19,7 @@ describeGPU( 'light vertex cache', () => {
 
 	it( 'keeps every field of a record, apart from its neighbours, and dates path lengths by frame', async () => {
 
-		const pb = new PackedRayBuffer( PATHS, null, SLOTS );
+		const pb = new PackedRayBuffer( PATHS, SLOTS );
 		const hit = pb.hitBuffer.rw;
 		const out = instancedArray( SLOTS * 4, 'vec4' );
 

@@ -9,7 +9,7 @@ import { IndirectStorageBufferAttribute } from 'three/webgpu';
 import { gpuOnlyStorageAttribute } from '../shaders/ThreePatches.js';
 import { PathTracerStage } from './PathTracerStage.js';
 import {
-	PackedRayBuffer, GBUFFER_STRIDE, RAY_STRIDE, HIT_STRIDE, freeStorageAttribute,
+	PackedRayBuffer, GBUFFER_STRIDE, RAY_STRIDE, HIT_STRIDE,
 } from './PackedRayBuffer.js';
 import { QueueManager, COUNTER, ENERGY_SCALE } from './QueueManager.js';
 import { VRAMTracker } from '../memory/VRAMTracker.js';
@@ -1591,7 +1591,7 @@ export class PathTracer extends PathTracerStage {
 		const lightVertices = this._integrator?.lightVertices ?? 0;
 		if ( ! this._packedBuffers ) {
 
-			this._packedBuffers = new PackedRayBuffer( B, this.renderer, lightVertices );
+			this._packedBuffers = new PackedRayBuffer( B, lightVertices );
 
 		} else {
 
@@ -1618,15 +1618,15 @@ export class PathTracer extends PathTracerStage {
 		if ( ! this._m2Attr || this._m2Attr.count < maxPixels ) {
 
 			// Tier-1 convergence: per-pixel running mean of luminance² (Welford second moment), read+written by FinalWrite.
-			freeStorageAttribute( this.renderer, this._m2Attr );
+			this._m2Attr?.dispose();
 			this._m2Attr = gpuOnlyStorageAttribute( maxPixels, 1 );
 
 			// Tier-2: per-pixel freeze-candidate streak. FinalWrite writes (RW), buildActivePixels reads (RO).
-			freeStorageAttribute( this.renderer, this._streakAttr );
+			this._streakAttr?.dispose();
 			this._streakAttr = gpuOnlyStorageAttribute( maxPixels, 1, Uint32Array );
 
 			// Tier-2: dilated frozen mask (1 = skip). buildActivePixels writes; active-list + FinalWrite read → race-free.
-			freeStorageAttribute( this.renderer, this._frozenMaskAttr );
+			this._frozenMaskAttr?.dispose();
 			this._frozenMaskAttr = gpuOnlyStorageAttribute( maxPixels, 1, Uint32Array );
 
 		}
@@ -1641,7 +1641,7 @@ export class PathTracer extends PathTracerStage {
 
 		if ( ! this._queueManager ) {
 
-			this._queueManager = new QueueManager( this._packedBuffers.capacity, this.renderer );
+			this._queueManager = new QueueManager( this._packedBuffers.capacity );
 
 		} else {
 
@@ -2187,7 +2187,7 @@ export class PathTracer extends PathTracerStage {
 		this._kernelManager?.dispose();
 		this._m2Attr?.dispose?.();
 		this._streakAttr?.dispose?.();
-		for ( const sizes of this._bounceSizes ?? [] ) freeStorageAttribute( this.renderer, sizes );
+		for ( const sizes of this._bounceSizes ?? [] ) sizes?.dispose();
 		this._bounceSizes = null;
 		this._frozenMaskAttr?.dispose?.();
 		for ( const integrator of this._integratorInstances.values() ) integrator.dispose();

@@ -55,7 +55,7 @@ describeGPU( 'physical sky', () => {
 		expect( Math.abs( Math.atan2( brightest[ 0 ], brightest[ 2 ] ) - Math.atan2( sun[ 0 ], sun[ 2 ] ) ) ).toBeLessThan( degrees( 1.5 ) );
 		expect( Math.asin( brightest[ 1 ] ) ).toBeGreaterThan( degrees( 30 - 6 ) );
 		expect( Math.asin( brightest[ 1 ] ) ).toBeLessThan( degrees( 30 + 1 ) );
-		sky.dispose( renderer );
+		sky.dispose();
 
 	} );
 
@@ -79,7 +79,7 @@ describeGPU( 'physical sky', () => {
 
 		}
 
-		sky.dispose( renderer );
+		sky.dispose();
 
 	} );
 
@@ -111,7 +111,7 @@ describeGPU( 'physical sky', () => {
 
 		}
 
-		sky.dispose( renderer );
+		sky.dispose();
 
 	}, 120000 );
 
@@ -126,7 +126,7 @@ describeGPU( 'physical sky', () => {
 
 		}
 
-		sky.dispose( renderer );
+		sky.dispose();
 
 	} );
 
@@ -168,7 +168,7 @@ describeGPU( 'physical sky', () => {
 
 		}
 
-		sky.dispose( renderer );
+		sky.dispose();
 
 	} );
 

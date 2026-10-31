@@ -5,7 +5,6 @@
 import { storage } from 'three/tsl';
 import { StorageInstancedBufferAttribute } from 'three/webgpu';
 import { gpuOnlyStorageAttribute } from '../shaders/ThreePatches.js';
-import { freeStorageAttribute } from './PackedRayBuffer.js';
 import { createLogger, fmt } from '../Logger.js';
 
 const log = createLogger( 'gpu' );
@@ -74,9 +73,8 @@ export class QueueManager {
 	/**
 	 * @param {number} maxRays - Maximum number of rays (typically width * height)
 	 */
-	constructor( maxRays = 0, renderer = null ) {
+	constructor( maxRays = 0 ) {
 
-		this._renderer = renderer;
 		this.capacity = 0;
 		this.counters = null;
 		this._visibilityTable = false;
@@ -161,7 +159,7 @@ export class QueueManager {
 		if ( this._visibilityTable === !! enabled ) return;
 		this._visibilityTable = !! enabled;
 		if ( ! this._countersAttr ) return;
-		freeStorageAttribute( this._renderer, this._countersAttr );
+		this._countersAttr?.dispose();
 		this._allocateCounters();
 
 	}
@@ -175,7 +173,7 @@ export class QueueManager {
 	ensureCurveBands( bands ) {
 
 		if ( bands <= this.curveBands ) return;
-		freeStorageAttribute( this._renderer, this._bounceCountsAttr );
+		this._bounceCountsAttr?.dispose();
 		this.curveBands = bands;
 		this._bounceCountsAttr = new StorageInstancedBufferAttribute( new Uint32Array( this.pixelCountOffset( bands ) ), 1 );
 		this.bounceCounts = storage( this._bounceCountsAttr, 'uint' );
@@ -282,12 +280,12 @@ export class QueueManager {
 	dispose() {
 
 		// Free the GPU buffers before dropping the node references (nulling alone leaks them).
-		freeStorageAttribute( this._renderer, this._countersAttr );
-		freeStorageAttribute( this._renderer, this._bounceCountsAttr );
-		freeStorageAttribute( this._renderer, this._attrA );
-		freeStorageAttribute( this._renderer, this._attrB );
-		freeStorageAttribute( this._renderer, this._sortAttr );
-		freeStorageAttribute( this._renderer, this._sortGlobalHistAttr );
+		this._countersAttr?.dispose();
+		this._bounceCountsAttr?.dispose();
+		this._attrA?.dispose();
+		this._attrB?.dispose();
+		this._sortAttr?.dispose();
+		this._sortGlobalHistAttr?.dispose();
 		this._countersAttr = this._bounceCountsAttr = null;
 		this._attrA = this._attrB = this._sortAttr = this._sortGlobalHistAttr = null;
 

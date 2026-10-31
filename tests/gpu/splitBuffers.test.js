@@ -26,7 +26,7 @@ vi.mock( '@/core/bvh/ReinsertionOptimizer.js', () => ( {
 
 import { BVHBuilder } from '@/core/bvh/BVHBuilder.js';
 import { foldLeaves } from '@/core/bvh/BVHLeafFold.js';
-import { StorageParts } from '@/core/shaders/ThreePatches.js';
+import { StorageParts, gpuOnlyStorageAttribute } from '@/core/shaders/ThreePatches.js';
 import { splitStorage } from '@/core/shaders/Common.js';
 import { traverseBVH, traverseBVHShadow } from '@/core/shaders/BVHTraversal.js';
 import { Ray } from '@/core/shaders/Struct.js';
@@ -231,6 +231,29 @@ describeGPU( 'BVH and triangles split over buffers', () => {
 		};
 		parts.write( backend, 350, new Uint32Array( 40 ), 0, 40 );
 		expect( writes ).toEqual( [[ 0, 350 * 4, 0, 10 ], [ 1, 0, 10, 30 ]] );
+
+	} );
+
+	it( 'frees a storage buffer, GPU-only or not, through its own dispose()', async () => {
+
+		const n = 64;
+		const plain = new StorageInstancedBufferAttribute( new Float32Array( n ), 1 );
+		const gpuOnly = gpuOnlyStorageAttribute( n, 1 );
+		renderer.compute( Fn( () => {
+
+			storage( plain, 'float', n ).element( instanceIndex ).assign( 1 );
+			storage( gpuOnly, 'float', n ).element( instanceIndex ).assign( 2 );
+
+		} )().compute( n ) );
+		expect( new Float32Array( await renderer.getArrayBufferAsync( gpuOnly ) )[ 5 ] ).toBe( 2 );
+
+		for ( const attr of [ plain, gpuOnly ] ) {
+
+			expect( renderer.backend.has( attr ) ).toBe( true );
+			attr.dispose();
+			expect( renderer.backend.has( attr ) ).toBe( false );
+
+		}
 
 	} );
 

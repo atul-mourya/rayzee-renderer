@@ -5,7 +5,6 @@ import { Ray, HitInfo, RayTracingMaterial, UVCache } from '../Struct.js';
 import { traverseBVH } from '../BVHTraversal.js';
 import { cameraRayOf, cameraRayUniforms, cameraClipDistance } from '../CameraRay.js';
 import { getMaterial, offsetRayOrigin } from '../Common.js';
-import { freeStorageAttribute } from '../../pathtracer/PackedRayBuffer.js';
 import { KernelManager } from '../../pathtracer/KernelManager.js';
 import { computeUVCache, processAlbedo, buildBucketTextureNodes } from '../TextureSampling.js';
 import { withSceneResources } from '../SceneResources.js';
@@ -70,7 +69,7 @@ export class DepthPass {
 		} finally {
 
 			kernel.dispose();
-			freeStorageAttribute( this.renderer, attribute );
+			attribute?.dispose();
 			for ( const node of [ ...resources.srgbBuckets, ...resources.linearBuckets ] ) {
 
 				if ( ! owned.includes( node.value ) ) node.value.dispose();

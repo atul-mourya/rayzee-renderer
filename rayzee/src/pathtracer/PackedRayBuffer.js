@@ -62,27 +62,16 @@ let _gBufferBase = 0;
 
 const soa = ( id, slot ) => ( slot === 0 ? id : id.add( slot * _cap ) );
 
-// Free a compute storage attribute's GPU buffer. Nulling the JS reference alone leaks it —
-// these attributes hang off no geometry, so nothing triggers the renderer's attribute cleanup.
-// Deleting from the renderer's attribute map calls backend.destroyAttribute(). Guarded no-op
-// when the attribute was never uploaded or no renderer was provided (e.g. unit tests).
-export function freeStorageAttribute( renderer, attr ) {
-
-	if ( attr ) renderer?._attributes?.delete?.( attr );
-
-}
-
 export class PackedRayBuffer {
 
 	// `capacity` is the exact paths-in-flight budget B (Blender-style path pool). It is DECOUPLED from
 	// image resolution and fixed for the device — the image is streamed through the pool in row bands
 	// (see docs/internal/specs/wavefront-chunked-pool.md), so the SoA stride _cap never changes with
 	// resolution and the wavefront kernels are built once (no resize-triggered WGSL regen).
-	constructor( capacity = 0, renderer = null, lightVertices = 0 ) {
+	constructor( capacity = 0, lightVertices = 0 ) {
 
 		this.capacity = 0;
 		this.lightVertices = 0;
-		this._renderer = renderer;
 		this._attrs = {};
 
 		// Each: { rw: StorageBufferNode, ro: StorageBufferNode } over one shared GPU buffer.
@@ -145,8 +134,8 @@ export class PackedRayBuffer {
 
 	dispose() {
 
-		freeStorageAttribute( this._renderer, this._attrs.ray );
-		freeStorageAttribute( this._renderer, this._attrs.hit );
+		this._attrs.ray?.dispose();
+		this._attrs.hit?.dispose();
 		this._attrs = {};
 		this.rayBuffer = null;
 		this.hitBuffer = null;

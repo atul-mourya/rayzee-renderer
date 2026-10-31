@@ -21,19 +21,25 @@ function perspective() {
 
 }
 
+function disposals( ...attrs ) {
+
+	const disposed = [];
+	for ( const attr of attrs ) attr.addEventListener( 'dispose', () => void disposed.push( attr ) );
+	return disposed;
+
+}
+
 function pathTracer( { camera = perspective(), width = 64, height = 32, ...extra } = {} ) {
 
 	const dispatched = [];
 	const sized = [];
-	const freed = [];
 	const lists = {};
 	for ( const type of [ 'directional', 'area', 'point', 'spot' ] ) lists[ `${type}LightsBufferNode` ] = { array: new Float32Array( CAPACITY * LIGHT_FLOATS[ type ] ) };
 
 	return {
 		dispatched,
 		sized,
-		freed,
-		renderer: { _attributes: { delete: ( attr ) => void freed.push( attr ) } },
+		renderer: {},
 		...lists,
 		numDirectionalLights: { value: 0 }, numAreaLights: { value: 0 }, numPointLights: { value: 0 }, numSpotLights: { value: 0 },
 		enableEnvironment: { value: 1 },
@@ -531,6 +537,7 @@ describe( 'its buffers', () => {
 		expect( bd.gpuResources() ).toBeNull();
 		bd.allocate( 100 );
 		const splat = bd._splatAttr;
+		const disposed = disposals( splat );
 		expect( splat.count ).toBe( 300 );
 		expect( bd.gpuResources() ).toEqual( [ splat ] );
 
@@ -538,7 +545,7 @@ describe( 'its buffers', () => {
 		expect( bd._splatAttr ).toBe( splat );
 		bd.allocate( 200 );
 		expect( bd._splatAttr.count ).toBe( 600 );
-		expect( pt.freed ).toContain( splat );
+		expect( disposed ).toContain( splat );
 
 	} );
 
@@ -557,11 +564,12 @@ describe( 'its buffers', () => {
 		expect( bd._mergeHeadAttr.count ).toBe( 1024 );
 
 		const head = bd._mergeHeadAttr;
+		const disposed = disposals( head );
 		bd.select( 'bidirectional' );
 		bd.allocate( 16 );
 		expect( bd._mergeHeadAttr ).toBeNull();
 		expect( bd.uniforms.hashMask.value ).toBe( 0 );
-		expect( pt.freed ).toContain( head );
+		expect( disposed ).toContain( head );
 
 	} );
 
@@ -587,12 +595,13 @@ describe( 'its buffers', () => {
 		bd.select( 'vcm' );
 		bd.allocate( 16 );
 		const held = [ bd._splatAttr, bd._mergeHeadAttr, bd._guideBuildAttr ];
+		const freed = disposals( ...held );
 		const texture = bd._guideTexture;
 		const disposed = vi.spyOn( texture, 'dispose' );
 
 		bd.dispose();
 
-		expect( pt.freed ).toEqual( expect.arrayContaining( held ) );
+		expect( freed ).toEqual( expect.arrayContaining( held ) );
 		expect( disposed ).toHaveBeenCalledOnce();
 		expect( bd.gpuResources() ).toBeNull();
 		expect( bd.uniforms.guideTexture ).toBeNull();

@@ -788,7 +788,7 @@ export class EnvironmentManager {
 	_releaseSky() {
 
 		if ( ! this.physicalSky ) return;
-		this.physicalSky.dispose( this.renderer );
+		this.physicalSky.dispose();
 		this.physicalSky = null;
 		this._sun = null;
 		this.refreshSun();
@@ -847,7 +847,7 @@ export class EnvironmentManager {
 
 		this.callbacks = {};
 		this._settleSky();
-		this.physicalSky?.dispose( this.renderer );
+		this.physicalSky?.dispose();
 		this.physicalSky = null;
 		this.simpleSkyRenderer = null;
 		this._sun = null;
