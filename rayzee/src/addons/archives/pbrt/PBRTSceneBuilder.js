@@ -112,7 +112,7 @@ const DEFAULT_CURVE_SIDES = { flat: 1, ribbon: 1, cylinder: 2 };
 const DEFAULT_CURVE_TOLERANCE = 0.05;
 
 /** Bumped whenever the same scene files build a different graph, so a stored graph is not reused. */
-export const PBRT_BUILD_REVISION = 18;
+export const PBRT_BUILD_REVISION = 19;
 
 function samePlacements( a, b ) {
 
@@ -515,6 +515,33 @@ export function cloneMaterial( material ) {
 
 }
 
+// Materials a ray crosses, which can take the medium on a surface's other side by turning it over.
+const TURNABLE_MATERIALS = new Set( [ 'dielectric', 'interface', 'none', '' ] );
+
+// The surface facing the other way: normals negated and triangles rewound, on attributes of its own where they change
+// (the geometry may be shared).
+function turnedOver( geometry ) {
+
+	const out = new BufferGeometry();
+	for ( const name in geometry.attributes ) out.setAttribute( name, geometry.getAttribute( name ) );
+	const normal = geometry.getAttribute( 'normal' );
+	if ( normal ) out.setAttribute( 'normal', new BufferAttribute( normal.array.map( ( v ) => - v ), normal.itemSize, normal.normalized ) );
+	const src = geometry.index?.array ?? null;
+	const index = new Uint32Array( src ? src.length : geometry.getAttribute( 'position' ).count );
+	for ( let t = 0; t + 2 < index.length; t += 3 ) {
+
+		index[ t ] = src ? src[ t ] : t;
+		index[ t + 1 ] = src ? src[ t + 2 ] : t + 2;
+		index[ t + 2 ] = src ? src[ t + 1 ] : t + 1;
+
+	}
+
+	out.setIndex( new Uint32BufferAttribute( index, 1 ) );
+	out.userData = { ...geometry.userData };
+	return out;
+
+}
+
 // pbrt's shape alpha as the engine's blend mode: a ray passes with chance 1 − α, shadow rays too.
 function translucent( material, alpha ) {
 
@@ -628,6 +655,7 @@ export class PBRTSceneBuilder {
 		this._heldImages = new Map(); // source -> its hold: images a bake read, held until the build ends
 		this._termCache = new Map(); // texture name + channels -> Promise<{rgb}|{layer, tint?}|null>
 		this._mediumMaterials = new Map(); // material -> Map(medium name -> material with its attenuation)
+		this._mediumWarnings = new Set();
 		this._alphaMaterials = new Map(); // material -> Map(alpha texture name or #value -> Promise<material>)
 		this._mappings = new Map(); // texture name -> its textureMapping()
 		this._oneUVSets = new WeakMap(); // material -> itself, or its maps read in one uv set
@@ -1457,7 +1485,8 @@ export class PBRTSceneBuilder {
 
 		// A shape's parameters are all read before the first await; its `alpha`, by its material.
 		const read = () => this._shapeGeometry( shape );
-		const geometry = await ( this._usage ? this._usage.translate( shape.params, `Shape ${shape.type}`, read, 'alpha' ) : read() );
+		let geometry = await ( this._usage ? this._usage.translate( shape.params, `Shape ${shape.type}`, read, 'alpha' ) : read() );
+		if ( geometry && this._shapeMedium( shape )?.flip ) geometry = turnedOver( geometry );
 		return geometry && shape.areaLight && ! pBool( shape.areaLight.params, 'twosided', false ) ? this._facingEmission( shape, geometry ) : geometry;
 
 	}
@@ -1825,7 +1854,8 @@ export class PBRTSceneBuilder {
 	async _getMaterial( shape ) {
 
 		let material = await this._surfaceMaterial( shape );
-		if ( shape.interior ) material = await this._inMedium( material, shape.interior );
+		const medium = this._shapeMedium( shape );
+		if ( medium ) material = await this._inMedium( material, medium.name, medium.flip );
 		if ( shape.params.alpha ) material = await this._withAlpha( material, shape.params.alpha );
 		return this._oneUVSet( material );
 
@@ -2042,29 +2072,78 @@ export class PBRTSceneBuilder {
 	}
 
 	/**
-	 * Glass filled with a homogeneous medium: what passes straight through it (σt = σa + σs) becomes Beer–Lambert
-	 * attenuation, since the engine traces no scattering inside a solid. A medium in an opaque shape changes nothing.
+	 * The medium a shape's surface puts on its inside, where the engine keeps a volume. pbrt names one for each side and
+	 * the ray takes the medium of the side it goes into. A surface with its medium outside only (glass round a liquid:
+	 * "" "Tea") turns over — normals and winding (`turnedOver`), and eta inverted — so the medium is inside and every
+	 * crossing bends as before. Null where the surface changes no medium.
+	 * @returns {{ name: string, flip: boolean }|null}
 	 * @private
 	 */
-	async _inMedium( material, name ) {
+	_shapeMedium( shape ) {
+
+		const { interior, exterior } = shape;
+		if ( ! interior && ! exterior ) return null;
+		const once = ( msg ) => {
+
+			if ( this._mediumWarnings.has( msg ) ) return;
+			this._mediumWarnings.add( msg );
+			this.warn( msg );
+
+		};
+
+		if ( interior === exterior ) {
+
+			once( `medium "${interior}" on both sides of a surface: a medium filling space is not supported` );
+			return null;
+
+		}
+
+		if ( interior ) {
+
+			if ( exterior ) once( `medium "${exterior}" outside a surface with "${interior}" inside: only the inside is kept` );
+			return { name: interior, flip: false };
+
+		}
+
+		if ( ! TURNABLE_MATERIALS.has( shape.material?.type ?? 'diffuse' ) ) {
+
+			once( `medium "${exterior}" outside a ${shape.material?.type ?? 'diffuse'} surface is not supported` );
+			return null;
+
+		}
+
+		return { name: exterior, flip: true };
+
+	}
+
+	/**
+	 * Glass filled with a homogeneous medium: what passes straight through it (σt = σa + σs) becomes Beer–Lambert
+	 * attenuation, since the engine traces no scattering inside a solid. A medium in an opaque shape changes nothing.
+	 * `flip`: the surface was turned over, so its eta is inverted.
+	 * @private
+	 */
+	async _inMedium( material, name, flip ) {
 
 		if ( ! ( material.transmission > 0 ) ) return material;
 		let byName = this._mediumMaterials.get( material );
 		if ( ! byName ) this._mediumMaterials.set( material, byName = new Map() );
-		if ( ! byName.has( name ) ) byName.set( name, this._attenuated( material, name ) );
-		return byName.get( name );
+		const key = `${flip ? 1 : 0}${name}`;
+		if ( ! byName.has( key ) ) byName.set( key, this._attenuated( material, name, flip ) );
+		return byName.get( key );
 
 	}
 
-	async _attenuated( material, name ) {
+	async _attenuated( material, name, flip ) {
 
+		const turned = flip ? cloneMaterial( material ) : null;
+		if ( turned ) turned.ior = 1 / material.ior;
 		const params = this.ir.media?.get( name );
 		const type = params && pString( params, 'type', '' );
 		this._usage?.open( params, `MakeNamedMedium ${type}`, 'type' );
 		if ( type !== 'homogeneous' ) {
 
 			this.warn( params ? `medium "${name}" (${type}) is not supported — "${name}" glass left clear` : `medium "${name}" not defined` );
-			return material;
+			return turned ? this._dedupeMaterial( turned ) : material;
 
 		}
 
@@ -2081,9 +2160,9 @@ export class PBRTSceneBuilder {
 		const scale = pFloat( params, 'scale', 1 );
 		const sigma = [ 0, 1, 2 ].map( ( c ) => ( a[ c ] + s[ c ] ) * scale );
 		const max = Math.max( ...sigma );
-		if ( ! ( max > 0 ) ) return material;
+		if ( ! ( max > 0 ) ) return turned ? this._dedupeMaterial( turned ) : material;
 
-		const variant = cloneMaterial( material );
+		const variant = turned ?? cloneMaterial( material );
 		variant.attenuationDistance = 1 / max;
 		variant.attenuationColor.setRGB( ...sigma.map( ( v ) => Math.exp( - v / max ) ) );
 		return this._dedupeMaterial( variant );

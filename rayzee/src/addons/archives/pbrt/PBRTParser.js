@@ -15,7 +15,7 @@
  *   camera: { type, params, cameraToWorld:number[16] } | null,
  *   namedMaterials: Map<name, { type, params }>,
  *   namedTextures:  Map<name, { dataType, class, params, ctm? }>,  (ctm: where a position mapping was declared)
- *   shapes: [ { type, params, ctm, ctmEnd?, material, areaLight, reverseOrientation } ],
+ *   shapes: [ { type, params, ctm, ctmEnd?, material, areaLight, reverseOrientation, interior, exterior } ],
  *   lights: [ { type, params, ctm } ],
  *   instances: Map<name, { name, count, matrices, matricesEnd? }>,
  *   objects: Map<name, shapes[]>,
@@ -219,7 +219,7 @@ export class PBRTParser {
 		this.activeTransform = BOTH;
 		this._ctmSource = null;
 		this._ctmValue = null;
-		this.state = { material: null, areaLight: null, reverseOrientation: false, interior: null };
+		this.state = { material: null, areaLight: null, reverseOrientation: false, interior: null, exterior: null };
 		this.attributeStack = [];
 		this.transformStack = [];
 		this.coordSystems = new Map();
@@ -372,7 +372,8 @@ export class PBRTParser {
 			material: this.state.material,
 			areaLight: this.state.areaLight,
 			reverseOrientation: this.state.reverseOrientation,
-			interior: this.state.interior
+			interior: this.state.interior,
+			exterior: this.state.exterior
 		} );
 
 	}
@@ -384,7 +385,7 @@ export class PBRTParser {
 		this.ctm = s.ctm;
 		this.ctmEnd = s.ctmEnd;
 		this.activeTransform = s.activeTransform;
-		this.state = { material: s.material, areaLight: s.areaLight, reverseOrientation: s.reverseOrientation, interior: s.interior };
+		this.state = { material: s.material, areaLight: s.areaLight, reverseOrientation: s.reverseOrientation, interior: s.interior, exterior: s.exterior };
 
 	}
 
@@ -758,7 +759,7 @@ export class PBRTParser {
 				this.ctm = M.identity();
 				this.ctmEnd = null;
 				this.activeTransform = BOTH;
-				this.state = { material: null, areaLight: null, reverseOrientation: false, interior: null };
+				this.state = { material: null, areaLight: null, reverseOrientation: false, interior: null, exterior: null };
 				break;
 			case 'WorldEnd': break; // legacy v3
 
@@ -814,10 +815,11 @@ export class PBRTParser {
 
 			case 'MediumInterface': {
 
-				// "interior" "exterior"; a single name is both. Only the interior colours a shape.
+				// "interior" "exterior"; a single name is both.
 				const interior = this._peek()?.type === TokenType.STRING ? this._next().value : '';
-				if ( this._peek()?.type === TokenType.STRING ) this._next();
+				const exterior = this._peek()?.type === TokenType.STRING ? this._next().value : interior;
 				this.state.interior = interior || null;
+				this.state.exterior = exterior || null;
 				break;
 
 			}
@@ -908,7 +910,8 @@ export class PBRTParser {
 					material: this.state.material,
 					areaLight: this.state.areaLight,
 					reverseOrientation: this.state.reverseOrientation,
-					interior: this.state.interior
+					interior: this.state.interior,
+					exterior: this.state.exterior
 				};
 				const end = this.currentObject === null ? this._ctmEndSnapshot() : null;
 				if ( end ) shape.ctmEnd = end;
@@ -1032,7 +1035,7 @@ export class PBRTParser {
 
 		if ( ! this.instanceIncludes || this.currentObject !== null ) return null;
 		if ( this.ctmEnd !== null || this.activeTransform !== BOTH || this.state.areaLight ) return null;
-		return `${dir}\0${path}\0${this._stateId( this.state.material )}\0${this.state.reverseOrientation}\0${this.state.interior}`;
+		return `${dir}\0${path}\0${this._stateId( this.state.material )}\0${this.state.reverseOrientation}\0${this.state.interior}\0${this.state.exterior}`;
 
 	}
 
@@ -1055,7 +1058,8 @@ export class PBRTParser {
 			transforms: this.transformStack.length,
 			material: this.state.material,
 			reverseOrientation: this.state.reverseOrientation,
-			interior: this.state.interior
+			interior: this.state.interior,
+			exterior: this.state.exterior
 		};
 
 	}
@@ -1066,7 +1070,7 @@ export class PBRTParser {
 			sameMatrix( this.ctm, before.ctm ) && this.attributeStack.length === before.attributes &&
 			this.transformStack.length === before.transforms && this.state.material === before.material &&
 			this.state.areaLight === null && this.state.reverseOrientation === before.reverseOrientation &&
-			this.state.interior === before.interior;
+			this.state.interior === before.interior && this.state.exterior === before.exterior;
 
 	}
 

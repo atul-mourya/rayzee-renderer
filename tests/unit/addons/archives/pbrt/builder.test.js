@@ -878,6 +878,65 @@ describe( 'PBRT scene builder: pbrt-v4 fidelity', () => {
 
 	} );
 
+	it( 'gives pbrt materials a relative IOR', async () => {
+
+		const { meshes } = await meshesOf( `
+			Material "dielectric" "float eta" 1.13
+			Shape "trianglemesh" ${TRI}
+			Material "diffuse"
+			Shape "trianglemesh" ${TRI}
+		` );
+
+		expect( meshes.map( ( m ) => [ m.material.ior, m.material.relativeIOR ] ) ).toEqual( [[ 1.13, true ], [ 1.5, true ]] );
+
+	} );
+
+	it( 'turns over glass with its medium outside, so the medium is inside and every crossing bends as before', async () => {
+
+		const { meshes } = await meshesOf( `
+			MakeNamedMedium "tea" "string type" "homogeneous" "rgb sigma_a" [ 0.1 0.2 0.4 ] "rgb sigma_s" [ 0 0 0 ]
+			Material "dielectric" "float eta" 1.13
+			AttributeBegin
+				MediumInterface "" "tea"
+				Shape "trianglemesh" ${TRI} "normal N" [ 0 0 1  0 0 1  0 0 1 ]
+			AttributeEnd
+			Shape "trianglemesh" ${TRI} "normal N" [ 0 0 1  0 0 1  0 0 1 ]
+		` );
+
+		const [ turned, plain ] = meshes;
+		expect( turned.material.ior ).toBeCloseTo( 1 / 1.13, 6 );
+		expect( turned.material.attenuationDistance ).toBeCloseTo( 2.5, 6 );
+		expect( plain.material.ior ).toBe( 1.13 );
+		expect( plain.material.attenuationDistance ).toBe( Infinity );
+
+		const facing = ( mesh ) => {
+
+			const g = mesh.geometry, p = g.getAttribute( 'position' ), [ a, b, c ] = g.index ? g.index.array : [ 0, 1, 2 ];
+			const v = ( i ) => new Vector3().fromBufferAttribute( p, i );
+			const winding = new Vector3().crossVectors( v( b ).sub( v( a ) ), v( c ).sub( v( a ) ) ).z;
+			return [ Math.sign( winding ), Math.sign( g.getAttribute( 'normal' ).getZ( a ) ) ];
+
+		};
+
+		expect( facing( turned ) ).toEqual( [ - 1, - 1 ] );
+		expect( facing( plain ) ).toEqual( [ 1, 1 ] );
+
+	} );
+
+	it( 'leaves a surface with the same medium on both sides clear, and says so', async () => {
+
+		const { meshes, warnings } = await meshesOf( `
+			MakeNamedMedium "fog" "string type" "homogeneous" "rgb sigma_a" [ 1 1 1 ]
+			Material "dielectric"
+			MediumInterface "fog"
+			Shape "trianglemesh" ${TRI}
+		` );
+
+		expect( meshes[ 0 ].material.attenuationDistance ).toBe( Infinity );
+		expect( warnings.filter( ( w ) => /fog/.test( w ) ) ).toHaveLength( 1 );
+
+	} );
+
 	it( 'bakes a mix texture whose amount is an image', async () => {
 
 		const { meshes, warnings } = await meshesOf( `

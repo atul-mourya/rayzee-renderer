@@ -88,8 +88,12 @@ subtree per element, and the whole thing rarely fits: Moana is 29 GB unpacked.
   `sigma_s`, or a `reflectance` inverted through the dipole at `mfp`); a sampled spectral `eta` (dielectric, subsurface)
   is read at 550 nm between its samples (`pEta`; pbrt traces it per wavelength; read as its first wavelength it gave
   crown's gems an IOR of 200); `normalmap` loads linear, a float image converted to 8 bits (`eightBit`: a material
-  map takes only 8-bit texels). Glass whose `MediumInterface` interior is a homogeneous medium gets Beer–Lambert
-  attenuation from σa + σs (no scattering inside). `diffusetransmission` is the engine's diffuse transmission lobe.
+  map takes only 8-bit texels). Every pbrt material has a relative IOR (`relativeIOR`, docs/design/SHADING.md), as pbrt
+  reads eta. Glass whose `MediumInterface` interior is a homogeneous medium gets Beer–Lambert attenuation from σa + σs
+  (no scattering inside). Glass with its medium outside only (Teapot (full)'s glass–tea wall, `"" "Tea"`) is turned
+  over — normals negated, triangles rewound (`turnedOver`), eta inverted — so the medium is its inside and every
+  crossing bends as before (`_shapeMedium`). A medium on both sides keeps the inside one; the same medium on both sides
+  (a medium filling space) is not supported, reported once. `diffusetransmission` is the engine's diffuse transmission lobe.
   `displacement` (pbrt-v4's bump map, a height in scene units) becomes a bump map with a `bumpDistance` (`_heightMap`):
   `scale` textures with a constant factor fold into the distance, sign included (contemporary-bathroom's floor is
   −0.05), and the image's range is stretched over the map's 8 bits, the distance taking it (a bump reads only height

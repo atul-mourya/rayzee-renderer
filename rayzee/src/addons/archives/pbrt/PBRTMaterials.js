@@ -383,6 +383,8 @@ export async function buildMaterial( def, ctx ) {
 	const params = def?.params || {};
 	ctx.trackParams?.( params, `Material ${type}`, 'type' );
 	const mat = new MeshPhysicalMaterial( { side: DoubleSide, roughness: 1, metalness: 0 } );
+	// pbrt's eta is the surface's own ratio, inside over outside.
+	mat.relativeIOR = true;
 
 	const setColor = ( rgb ) => {
 

@@ -224,6 +224,20 @@ describe( 'PBRT parser', () => {
 
 	} );
 
+	it( 'records the exterior medium too; a single name is both sides', async () => {
+
+		const ir = await parsePBRT( `
+			WorldBegin
+			MediumInterface "" "tea"
+			Shape "sphere"
+			MediumInterface "fog"
+			Shape "sphere"
+		` );
+
+		expect( ir.shapes.map( ( s ) => [ s.interior, s.exterior ] ) ).toEqual( [[ null, 'tea' ], [ 'fog', 'fog' ]] );
+
+	} );
+
 	it( 'warns on unknown directives without desyncing', async () => {
 
 		const ir = await parsePBRT( `
