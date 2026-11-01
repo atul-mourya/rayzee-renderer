@@ -6,11 +6,21 @@
 -  dont reload the same model using query param. instead provide a save button with autosave option. on reload load the default. users can open using file menu
 -   result page to show hrd when available
 -   Fast compilation on windows devices
+-   pbrt camera all info parsing
+-   pbrt folliage
 
 ### MVP
 - [ ] dynamic max stack in bvhtraversal
 - [ ] https://github.com/DennisSmolek/Fsr3 - branch already created
 - [ ] tiled output for lower vram — Blender Cycles-style render-region tiling; VRAM-bounded 4K/8K final render + video. See docs/internal/specs/wavefront-tiled-output.md
+
+### pbrt: read but not used (audit of the 26 catalog scenes, 2026-11-01)
+- [ ] `sceneMetadata.render` (bounces, samples, film size, integrator) is applied by nothing; the canvas keeps its own aspect, so framing differs from 16:9 previews
+- [ ] PixelFilter (triangle, radius 1; 25 scenes) — engine uses its own pixel reconstruction
+- [ ] diffusetransmission with a textured `transmittance` → 0.5 (living rooms' curtains)
+- [ ] volpath `regularize` (BMW), sppm `radius` (Cornell Caustic)
+- [ ] conductor `k` reported ignored though the named-metal table covers it (report it as approximated)
+- [ ] Not read, not in the catalog: spherical / realistic cameras (spherical becomes perspective), perspective `screenwindow`, `frameaspectratio`, shutter (motion blur), Film white balance / sensor / `cropwindow` / `maxcomponentvalue`, CameraMedium and space-filling media, non-homogeneous media, scattering inside media (σs folds into absorption)
 
 ### UX issue
 - Because Diffuse Roughness is only built into the renderer when a material uses it, the first move of its slider off 0 makes the renderer rebuild, so the picture stalls for a few seconds.
