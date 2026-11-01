@@ -397,12 +397,22 @@ export class CameraManager extends EventDispatcher {
 
 		} else {
 
+			// An imported camera orbits what it looks at: the focus distance is the default 0.8 right after a load.
 			const forward = new Vector3( 0, 0, - 1 ).applyQuaternion( source.quaternion );
-			this.controls.target.copy( this.camera.position ).addScaledVector( forward, focusDistance || 5.0 );
+			this.controls.target.copy( this.camera.position ).addScaledVector( forward, this._viewedDepth() ?? ( focusDistance || 5.0 ) );
 
 		}
 
 		this.controls.update();
+
+	}
+
+	/** Depth of the surface at the centre of the view; null when nothing is there. @private */
+	_viewedDepth() {
+
+		const hit = this.interactionManager?.pickSurface( 0, 0 );
+		const depth = hit ? viewDepth( hit.point, this.camera ) : 0;
+		return depth > 0 ? depth : null;
 
 	}
 

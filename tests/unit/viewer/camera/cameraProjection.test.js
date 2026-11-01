@@ -264,6 +264,30 @@ describe( 'CameraManager reset view', () => {
 
 	} );
 
+	it( 'orbits an imported camera around the surface at the centre of its view', () => {
+
+		const { cm } = manager();
+		const pickSurface = vi.fn( () => ( { point: new Vector3( 0.5, 2, - 3 ) } ) );
+		cm.setInteractionManager( { pickSurface } );
+		const lens = new PerspectiveCamera( 40, 1, 0.1, 100 );
+		lens.position.set( 0, 2, 9 );
+		lens.lookAt( 0, 2, 0 );
+		lens.updateMatrixWorld();
+		cm.setCameras( [ cm.camera, lens ] );
+		cm.switchCamera( 1 );
+
+		expect( pickSurface ).toHaveBeenCalledWith( 0, 0 );
+		// 12 deep along the view, whatever the hit's offset across it.
+		expect( cm.controls.target.distanceTo( new Vector3( 0, 2, - 3 ) ) ).toBeLessThan( 1e-9 );
+		expect( cm.camera.position.distanceTo( lens.position ) ).toBeLessThan( 1e-9 );
+
+		// Nothing there (open sky): the focus distance, as before.
+		pickSurface.mockReturnValue( null );
+		cm.resetView();
+		expect( cm.controls.target.distanceTo( new Vector3( 0, 2, 4 ) ) ).toBeLessThan( 1e-9 );
+
+	} );
+
 	it( 'orbits a saved camera around the target it was saved with', () => {
 
 		const { cm } = manager();
