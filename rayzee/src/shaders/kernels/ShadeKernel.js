@@ -111,7 +111,7 @@ export function buildShadeKernel( params ) {
 		spotLightsBuffer, numSpotLights,
 		maxBounceCount, maxSubsurfaceSteps,
 		maxTransparentBounces, // guard on alpha-skip depth; counter in ORIGIN_META.w
-		currentBounce, // loop iteration = path length (advances on free bounces); drives RR/firefly/giScale
+		currentBounce, // loop iteration = path length (advances on free bounces); drives firefly/giScale
 		transparentBackground, backgroundIntensity, backgroundColor, backgroundBlurriness, backgroundBlurSamples, showBackground,
 		globalIlluminationIntensity,
 		cameraProjectionMatrix, cameraViewMatrix,
@@ -308,7 +308,7 @@ export function buildShadeKernel( params ) {
 
 		// per-ray camera-bounce depth — advances ONLY on opaque scatter (free bounces don't); drives termination (maxBounces). Megakernel: effectiveBounces.
 		const cameraDepth = readPathBounces( rayBufferRW, rayID ).toVar();
-		// path length = loop iteration (advances every bounce incl. transmissive/SSS); drives RR/firefly/giScale/MIS. Megakernel: loop counter i.
+		// path length = loop iteration (advances every bounce incl. transmissive/SSS); drives firefly/giScale/MIS. Megakernel: loop counter i.
 		const bounceIndex = int( currentBounce ).toVar();
 		const sssSteps = readSssSteps( rayBufferRW, rayID ).toVar();
 		const transparentCount = readTransparentCount( rayBufferRW, rayID ).toVar();
@@ -514,7 +514,7 @@ export function buildShadeKernel( params ) {
 					const newDir = sampleHenyeyGreenstein( direction, fog.anisotropy, sample2D( FOG_DIM.DIRECTION ) ).toVar();
 					const phasePdf = henyeyGreenstein( dot( direction, newDir ), fog.anisotropy ).toVar();
 
-					If( bounceIndex.greaterThanEqual( int( 3 ) ), () => {
+					If( cameraDepth.greaterThanEqual( int( 3 ) ), () => {
 
 						const survive = clamp( max( max( throughput.x, throughput.y ), throughput.z ), 0.05, 1.0 ).toVar();
 						If( sample1D( 3 ).greaterThan( survive ), stop );
@@ -2441,12 +2441,11 @@ export function buildShadeKernel( params ) {
 
 		}
 
-		// Adaptive Russian roulette (gap #7) — material-importance + throughput + env-direction aware, replacing
-		// the flat clamp(maxThroughput,0.05,0.95). depth = bounceIndex (path length, per gap #4); rayDirection =
-		// the continuation dir (bounceDir) for env-facing importance. Returns survival prob (compensated) or 0 to
-		// terminate. Subsumes the old compensated low-throughput kill (#12). Unbiased; just terminates smarter.
+		// Adaptive Russian roulette (gap #7): survival prob (compensated) or 0 to terminate. Its depth is cameraDepth, so
+		// glass, alpha and subsurface crossings are free here as for maxBounces: on path length a wall seen through a
+		// bottle (four crossings) met it at its first hit and went black.
 		const rrSurvival = handleRussianRoulette(
-			bounceIndex, throughput, mc, bounceDir, rngState,
+			cameraDepth, throughput, mc, bounceDir, rngState,
 			_pixelCoord, resolution, frame, dimBase,
 			enableEnvironmentLight,
 		).toVar();

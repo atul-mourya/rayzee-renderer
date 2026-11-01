@@ -52,15 +52,15 @@
 			"samples": 2048
 		},
 		"golden": {
-			"meanR": 0.10590859221927929,
-			"meanG": 0.277783282133214,
-			"meanB": 0.4700084578971655,
-			"meanLuminance": 0.2551213807476697,
-			"maxLuminance": 0.5414175534844399,
+			"meanR": 0.10590863511318105,
+			"meanG": 0.277784077254978,
+			"meanB": 0.47001094964934964,
+			"meanLuminance": 0.25512213844250653,
+			"maxLuminance": 0.5419290197044611,
 			"nonFinite": 0,
 			"samples": 96
 		},
-		"rmseVsTruth": 0.002783988233646647
+		"rmseVsTruth": 0.002662156835687865
 	},
 	"spheres-procedural-sky": {
 		"truth": {
@@ -94,15 +94,15 @@
 			"samples": 1024
 		},
 		"golden": {
-			"meanR": 0.07326328029419216,
-			"meanG": 0.165062422093456,
-			"meanB": 0.2299569490030393,
-			"meanLuminance": 0.15023130938980667,
+			"meanR": 0.07326371434221812,
+			"meanG": 0.1650613871660198,
+			"meanB": 0.22995792353523825,
+			"meanLuminance": 0.15023073184953892,
 			"maxLuminance": 0.47288331663310523,
 			"nonFinite": 0,
 			"samples": 96
 		},
-		"rmseVsTruth": 0.007588651676835718
+		"rmseVsTruth": 0.007530253758193464
 	},
 	"anisotropy-brushed": {
 		"truth": {
@@ -199,15 +199,15 @@
 			"samples": 1024
 		},
 		"golden": {
-			"meanR": 0.08760440458429031,
-			"meanG": 0.21459254574975262,
-			"meanB": 0.30166621114813097,
-			"meanLuminance": 0.1938815855797369,
-			"maxLuminance": 0.5443766621649265,
+			"meanR": 0.0876033534307723,
+			"meanG": 0.2145900971133159,
+			"meanB": 0.3016595503091821,
+			"meanLuminance": 0.1938791299271475,
+			"maxLuminance": 0.5545192863166333,
 			"nonFinite": 0,
 			"samples": 96
 		},
-		"rmseVsTruth": 0.009571240618735087
+		"rmseVsTruth": 0.009505066448490652
 	},
 	"iridescence-thinfilm": {
 		"truth": {
@@ -283,15 +283,15 @@
 			"samples": 2048
 		},
 		"golden": {
-			"meanR": 0.7970926284402537,
-			"meanG": 0.8546129557385598,
-			"meanB": 0.8481855449136901,
-			"meanLuminance": 0.8419200750933867,
+			"meanR": 0.7971031082804529,
+			"meanG": 0.8546192659381973,
+			"meanB": 0.8481857167205362,
+			"meanLuminance": 0.8419268285666492,
 			"maxLuminance": 1.8002013721466061,
 			"nonFinite": 0,
 			"samples": 64
 		},
-		"rmseVsTruth": 0.005418498462078553
+		"rmseVsTruth": 0.005411693578674833
 	},
 	"furnace-diffuse": {
 		"truth": {
@@ -697,15 +697,15 @@
 			"samples": 2048
 		},
 		"golden": {
-			"meanR": 0.30468055147522755,
-			"meanG": 0.35678636681824494,
-			"meanB": 0.3425797546553618,
-			"meanLuminance": 0.3446829530782146,
+			"meanR": 0.30467651708875465,
+			"meanG": 0.3567816491738407,
+			"meanB": 0.3425721299048493,
+			"meanLuminance": 0.3446781708013958,
 			"maxLuminance": 39.99999999999999,
 			"nonFinite": 0,
 			"samples": 64
 		},
-		"rmseVsTruth": 0.010928539957103522
+		"rmseVsTruth": 0.010545762593312191
 	},
 	"lamps-bidirectional": {
 		"truth": {
@@ -739,15 +739,15 @@
 			"samples": 2048
 		},
 		"golden": {
-			"meanR": 0.28362735890906876,
-			"meanG": 0.2706700674196121,
-			"meanB": 0.23941494190352053,
-			"meanLuminance": 0.27116816752792106,
+			"meanR": 0.28366742566702996,
+			"meanG": 0.2705893828746291,
+			"meanB": 0.23937981652282048,
+			"meanLuminance": 0.27111644408160657,
 			"maxLuminance": 318.05507300415036,
 			"nonFinite": 0,
 			"samples": 64
 		},
-		"rmseVsTruth": 0.027774758717524082
+		"rmseVsTruth": 0.02758520195276748
 	},
 	"mirror-caustic-vcm": {
 		"truth": {
@@ -760,15 +760,15 @@
 			"samples": 1024
 		},
 		"golden": {
-			"meanR": 0.20614968130177608,
-			"meanG": 0.29219829228775324,
-			"meanB": 0.34979141323708746,
-			"meanLuminance": 0.27806258092477204,
-			"maxLuminance": 4.304179048538208,
+			"meanR": 0.20613743735099574,
+			"meanG": 0.2922054194441955,
+			"meanB": 0.349794199565341,
+			"meanLuminance": 0.27806527637602224,
+			"maxLuminance": 4.324049311923981,
 			"nonFinite": 0,
 			"samples": 64
 		},
-		"rmseVsTruth": 0.007271208977571958
+		"rmseVsTruth": 0.007122310043772778
 	},
 	"furnace-diffuse-transmission": {
 		"truth": {
@@ -888,16 +888,16 @@
 			"samples": 512
 		},
 		"golden": {
-			"meanR": 0.9999086055859152,
-			"meanG": 0.9999086055859152,
-			"meanB": 0.9999086055859152,
-			"meanLuminance": 0.9999086055859152,
-			"maxLuminance": 1.1654845476150513,
+			"meanR": 0.9998983959858379,
+			"meanG": 0.9998983959858379,
+			"meanB": 0.9998983959858379,
+			"meanLuminance": 0.9998983959858379,
+			"maxLuminance": 1,
 			"nonFinite": 0,
 			"samples": 128
 		},
-		"rmseVsTruth": 0.0004771010039577507,
-		"furnaceRatio": 0.9999086055859152
+		"rmseVsTruth": 0.00038448822588984713,
+		"furnaceRatio": 0.9998983959858379
 	},
 	"rough-diffuse": {
 		"truth": {
@@ -1008,7 +1008,7 @@
 		"rmseVsTruth": 0.023214155556079804
 	},
 	"furnace-glass-rough": {
-		"furnaceRatio": 0.9986238911424152,
+		"furnaceRatio": 0.9985751956119202,
 		"truth": {
 			"meanR": 0.9985741189548207,
 			"meanG": 0.9985741189548207,
@@ -1019,15 +1019,15 @@
 			"samples": 512
 		},
 		"golden": {
-			"meanR": 0.9986238911424152,
-			"meanG": 0.9986238911424152,
-			"meanB": 0.9986238911424152,
-			"meanLuminance": 0.9986238911424152,
-			"maxLuminance": 6.391328811645508,
+			"meanR": 0.9985751956119202,
+			"meanG": 0.9985751956119202,
+			"meanB": 0.9985751956119202,
+			"meanLuminance": 0.9985751956119202,
+			"maxLuminance": 1.0135140419006348,
 			"nonFinite": 0,
 			"samples": 128
 		},
-		"rmseVsTruth": 0.0023362256163791317
+		"rmseVsTruth": 0.0019277838360709993
 	},
 	"furnace-glass-rougher": {
 		"furnaceRatio": 0.9982211432143231,
@@ -1052,7 +1052,7 @@
 		"rmseVsTruth": 0.01348479168298278
 	},
 	"furnace-glass-dense-rough": {
-		"furnaceRatio": 0.9968597160686841,
+		"furnaceRatio": 0.9969271655099874,
 		"truth": {
 			"meanR": 0.9968714538099448,
 			"meanG": 0.9968714538099448,
@@ -1063,15 +1063,15 @@
 			"samples": 512
 		},
 		"golden": {
-			"meanR": 0.9968597160686841,
-			"meanG": 0.9968597160686841,
-			"meanB": 0.9968597160686841,
-			"meanLuminance": 0.9968597160686841,
-			"maxLuminance": 1.910760760307312,
+			"meanR": 0.9969271655099874,
+			"meanG": 0.9969271655099874,
+			"meanB": 0.9969271655099874,
+			"meanLuminance": 0.9969271655099874,
+			"maxLuminance": 1.083056926727295,
 			"nonFinite": 0,
 			"samples": 128
 		},
-		"rmseVsTruth": 0.003073153641876942
+		"rmseVsTruth": 0.0028804525270975864
 	},
 	"fog-height-furnace": {
 		"furnaceRatio": 1.0002747489870671,
@@ -1148,14 +1148,14 @@
 			"samples": 2048
 		},
 		"golden": {
-			"meanR": 0.1689114689310831,
-			"meanG": 0.19381173341954194,
-			"meanB": 0.19765136119816273,
-			"meanLuminance": 0.1887951583149151,
+			"meanR": 0.16890169269987543,
+			"meanG": 0.19380771865976487,
+			"meanB": 0.19765359937183313,
+			"meanLuminance": 0.1887903701281059,
 			"maxLuminance": 0.5529166948467493,
 			"nonFinite": 0,
 			"samples": 64
 		},
-		"rmseVsTruth": 0.006599588106851262
+		"rmseVsTruth": 0.006264372981309605
 	}
 }
