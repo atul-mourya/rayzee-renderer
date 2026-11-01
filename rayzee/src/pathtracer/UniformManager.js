@@ -253,6 +253,7 @@ export class UniformManager {
 		// Aux MRT epoch, separate from the colour's so the denoiser can be enabled mid-render.
 		u( 'auxAccumulationAlpha', 1.0, 'float' );
 		ub( 'hasPreviousAux', false );
+		u( 'auxSamples', 0, 'uint' ); // the epoch's samples so far: a pixel whose guide count matches was never marked
 
 		// Environment
 		u( 'environmentIntensity', DEFAULT_STATE.environmentIntensity, 'float' );

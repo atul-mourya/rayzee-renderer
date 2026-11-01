@@ -66,6 +66,7 @@ export const RAY_FLAG = {
 	LIGHT_PATH: 1 << 21, // bit 21: bidirectional light subpath (traced from an emitter, gathers nothing)
 	LIGHT_EMITTED: 1 << 22, // bit 22: light subpath not yet past its first interaction (its MIS start is still open)
 	EMISSION_ONLY: 1 << 23, // bit 23: camera ray past its last bounce, traced only for the light it hits
+	AUX_UNLIKELY: 1 << 24, // bit 24: the deferred aux guide took glass's less likely branch; its commit stays out of the guide average
 };
 
 export class QueueManager {

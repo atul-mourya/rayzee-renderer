@@ -11,13 +11,13 @@
  */
 
 import {
-	Fn, wgslFn, float, vec2, vec4, int, uint, uvec2,
+	Fn, wgslFn, float, vec2, vec4, int, uint, uvec2, bool as tslBool,
 	If, mix, select, texture, textureStore, length,
 	localId, workgroupId, instanceIndex, atomicAdd,
 } from 'three/tsl';
 
 import {
-	readRayRadiance, readGBuffer, gbDecodeNormalDepth, gbDecodeAlbedo, gbDecodeHitDist,
+	readRayRadiance, readGBuffer, gbDecodeNormalDepth, gbDecodeAlbedo, gbDecodeHitDist, gbDecodeUnlikely,
 } from '../../pathtracer/PackedRayBuffer.js';
 import { COUNTER } from '../../pathtracer/QueueManager.js';
 import { luminance } from '../Common.js';
@@ -39,6 +39,19 @@ const nanInfToRed = /*@__PURE__*/ wgslFn( `
 	}
 ` );
 
+/**
+ * How this frame's guide sample enters a pixel's average, which holds only samples not marked `unlikely` (glass's less
+ * likely branch). An unlikely sample stays out once a likely one has come (`keepPrev`); until then unlikely ones stand
+ * in, and the first likely one replaces them (`replace`). A pixel never marked has `prevCount === auxSamples` and keeps
+ * the epoch's alpha, so it averages exactly as before. Plain JS inliner: returns nodes.
+ */
+export const guideWeights = ( unlikely, prevCount, auxSamples, auxAccumulationAlpha ) => ( {
+	keepPrev: unlikely.and( prevCount.greaterThan( uint( 0 ) ) ),
+	replace: unlikely.not().and( prevCount.equal( uint( 0 ) ) ),
+	alpha: select( unlikely.or( prevCount.equal( auxSamples ) ), auxAccumulationAlpha, float( 1.0 ).div( float( prevCount.add( uint( 1 ) ) ) ) ),
+	count: select( unlikely, prevCount, prevCount.add( uint( 1 ) ) ),
+} );
+
 export function buildFinalWriteKernel( params ) {
 
 	const {
@@ -48,6 +61,9 @@ export function buildFinalWriteKernel( params ) {
 		enableAccumulation, hasPreviousAccumulated, accumulationAlpha, cameraIsMoving,
 		// Aux MRT accumulates on its own epoch; hasPreviousAux=0 → write it verbatim instead of mixing.
 		hasPreviousAux, auxAccumulationAlpha,
+		// The guide averages only samples not marked unlikely (glass's less likely branch): auxCountRW holds each pixel's
+		// count of those, auxSamples the epoch's sample count, which a pixel never marked has reached.
+		auxCountRW, auxSamples,
 		prevAccumTexture, prevAlbedoTexture, prevNormalDepthTexture,
 		renderWidth,
 		chunkRowBase, chunkRows, // row band offset (global first row) + row count for this chunk
@@ -108,12 +124,16 @@ export function buildFinalWriteKernel( params ) {
 			const finalAlbedo = vec4( 0.0 ).xyz.toVar();
 			// Albedo .w carries the hit distance — OIDN reads albedo as 3 channels, so it is free.
 			const finalHitDist = float( 0.0 ).toVar();
+			const unlikely = tslBool( false ).toVar();
+			const guideCount = uint( 0 ).toVar();
 			if ( gBuffer ) If( auxOn, () => {
 
 				const gbuf = readGBuffer( gBufferRO, rayID );
 				finalNormalDepth.assign( gbDecodeNormalDepth( gbuf ) );
 				finalAlbedo.assign( vec4( gbDecodeAlbedo( gbuf ), 0.0 ).xyz );
 				finalHitDist.assign( gbDecodeHitDist( gbuf ) );
+				unlikely.assign( gbDecodeUnlikely( gbuf ) );
+				guideCount.assign( select( unlikely, uint( 0 ), uint( 1 ) ) );
 
 			} );
 
@@ -130,9 +150,17 @@ export function buildFinalWriteKernel( params ) {
 				finalColor.assign( select( wasFrozen, prevAccumSample.xyz, mix( prevAccumSample.xyz, sampleColor.xyz, accumulationAlpha ) ) );
 				if ( gBuffer ) If( auxOn.and( hasPreviousAux ), () => {
 
-					// Albedo averages cleanly (it's a colour); so does the normalized hit distance in .w.
+					// Albedo averages cleanly (it's a colour); so does the normalized hit distance in .w. The guide
+					// (albedo, normal) averages likely samples only (guideWeights).
 					const prevAlbedoSample = texture( prevAlbedoTexture, prevUV, 0 ).toVar();
-					finalAlbedo.assign( mix( prevAlbedoSample.xyz, finalAlbedo, auxAccumulationAlpha ) );
+					const prevCount = auxCountRW.element( pixelId ).toVar();
+					const weights = guideWeights( unlikely, prevCount, auxSamples, auxAccumulationAlpha );
+					const keepPrev = weights.keepPrev.toVar();
+					const replace = weights.replace.toVar();
+					const guideAlpha = weights.alpha.toVar();
+					guideCount.assign( weights.count );
+					finalAlbedo.assign( select( keepPrev, prevAlbedoSample.xyz,
+						select( replace, finalAlbedo, mix( prevAlbedoSample.xyz, finalAlbedo, guideAlpha ) ) ) );
 					finalHitDist.assign( mix( prevAlbedoSample.w, finalHitDist, auxAccumulationAlpha ) );
 
 					// NORMAL: by default keep this frame's POINT-SAMPLED normal — it varies with the bump,
@@ -144,12 +172,16 @@ export function buildFinalWriteKernel( params ) {
 					// Depth (.w) stays this frame's value; guard the degenerate near-zero mean (opposing normals).
 					If( cleanAuxNormalOn, () => {
 
-						const prevN = texture( prevNormalDepthTexture, prevUV, 0 ).xyz.mul( 2.0 ).sub( 1.0 );
+						const prevN = texture( prevNormalDepthTexture, prevUV, 0 ).xyz.mul( 2.0 ).sub( 1.0 ).toVar();
 						const curN = finalNormalDepth.xyz.mul( 2.0 ).sub( 1.0 ).toVar();
-						const mixedN = mix( prevN, curN, auxAccumulationAlpha ).toVar();
+						const mixedN = mix( prevN, curN, guideAlpha ).toVar();
 						const len = length( mixedN );
-						const avgN = select( len.greaterThan( 1e-4 ), mixedN.div( len ), curN );
+						const avgN = select( keepPrev, prevN, select( replace.or( len.lessThanEqual( 1e-4 ) ), curN, mixedN.div( len ) ) );
 						finalNormalDepth.assign( vec4( avgN.mul( 0.5 ).add( 0.5 ), finalNormalDepth.w ) );
+
+					} ).ElseIf( keepPrev, () => {
+
+						finalNormalDepth.assign( vec4( texture( prevNormalDepthTexture, prevUV, 0 ).xyz, finalNormalDepth.w ) );
 
 					} );
 
@@ -159,6 +191,7 @@ export function buildFinalWriteKernel( params ) {
 						finalAlbedo.assign( prevAlbedoSample.xyz );
 						finalHitDist.assign( prevAlbedoSample.w );
 						finalNormalDepth.assign( texture( prevNormalDepthTexture, prevUV, 0 ) );
+						guideCount.assign( prevCount );
 
 					} );
 
@@ -273,6 +306,7 @@ export function buildFinalWriteKernel( params ) {
 
 				textureStore( writeNDTex, uintCoord, finalNormalDepth ).toWriteOnly();
 				textureStore( writeAlbedoTex, uintCoord, vec4( finalAlbedo, finalHitDist ) ).toWriteOnly();
+				auxCountRW.element( pixelId ).assign( guideCount );
 
 			} );
 

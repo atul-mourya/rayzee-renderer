@@ -36,6 +36,7 @@ function checkpointOf( samples ) {
 		m2: new Float32Array( [ 0.25 ] ),
 		streak: new Uint32Array( [ 3, 4 ] ),
 		frozenMask: new Uint32Array( [ 0xffffffff ] ),
+		auxCount: new Uint32Array( [ 5, 7 ] ),
 	};
 
 }
@@ -110,7 +111,7 @@ describe( 'still render checkpoints', () => {
 
 		const { checkpoint } = await readStillCheckpoint( storage, found.key );
 		const expected = checkpointOf( 32 );
-		for ( const field of [ 'color', 'normalDepth', 'm2', 'streak', 'frozenMask' ] ) expect( checkpoint[ field ] ).toEqual( expected[ field ] );
+		for ( const field of [ 'color', 'normalDepth', 'm2', 'streak', 'frozenMask', 'auxCount' ] ) expect( checkpoint[ field ] ).toEqual( expected[ field ] );
 		expect( checkpoint.albedo ).toBeNull();
 		expect( checkpoint.frame ).toBe( 7 );
 

@@ -764,6 +764,11 @@ environment's exact table (`environment/EnvironmentExactTable.js`) serves both i
   `renderToBuffer`'s sRGB readback (float texture input, alpha kept). `tests/gpu/toneMapParity.test.js` checks the two on
   Dawn in Node, and `bench:upscale` again in Chrome before anything else. Its `output: 'planar'` mode feeds the
   AI upscaler's network float planes encoded with a 2.2 power, not the sRGB curve — what the upscaler always used.
+- **The guide behind smooth glass follows its likelier branch**: a path that took the other one is flagged
+  `RAY_FLAG.AUX_UNLIKELY` and FinalWrite averages the guide over unflagged samples per pixel (`guideWeights`). Following
+  the sampled branch speckled the guide behind thick glass and the clean-guide OIDN models kept the speckle. See "Render
+  Targets & Output Semantics" in docs/design/PATH_TRACER_SHADER_ARCHITECTURE.md. ⚠️ Not the noisy-guide model instead:
+  it fixed the glass but erased fabric weave on 24155522.glb (9 % worse).
 - **OIDN sees the frame inside a 16 px mirrored border** (`OIDN_BORDER`, `oidnInputSize()`), each side then rounded
   up to 16. At the network's own boundary — its zero padding, or oidn-webgpu repeating the edge pixel up to a
   multiple of 16 — the outer pixels came out worse than not denoising at all. Outer 3 px against a 2048-spp

@@ -8,7 +8,7 @@
 
 import {
 	storage, uintBitsToFloat, floatBitsToUint, vec2, vec3, vec4, uvec4, uint, int, float, clamp,
-	packSnorm2x16, packUnorm2x16, unpackSnorm2x16, unpackUnorm2x16, select, floor, log2, exp2, max,
+	packSnorm2x16, packUnorm2x16, unpackSnorm2x16, unpackUnorm2x16, select, floor, log2, exp2, max, abs,
 } from 'three/tsl';
 import { gpuOnlyStorageAttribute } from '../shaders/ThreePatches.js';
 import { packNormalOct, unpackTriangleNormal } from '../shaders/Common.js';
@@ -166,20 +166,23 @@ export const readRayPdf = ( buf, id ) =>
 export const readRayRadiance = ( buf, id ) =>
 	buf.element( soa( id, RAY.RADIANCE_ALPHA ) );
 
-// ── Per-pixel G-buffer (first-hit MRT). 2 uvec4/pixel (AoS), pack2x16 lanes. ──
+// ── Per-pixel G-buffer (first-hit MRT). 1 uvec4/pixel (AoS), pack2x16 lanes. ──
 // normal: raw unit vec3; depth: linear [0,1]; albedo: vec3 [0,1]. Packed values live in u32 lanes
 // verbatim (no f32 bitcast) so NaN-range bit patterns (snorm ±1 → 0x7FFF) survive store/load intact.
 // One uvec4 per pixel (stride 1); AoS base = pixelIndex * GBUFFER_STRIDE.
 const gbLane = ( pixelIndex ) => uint( pixelIndex ).mul( GBUFFER_STRIDE ).add( _gBufferBase );
 
-// hitDist = null keeps the lane's current normHitDist.
-export const writeGBuffer = ( buf, pixelIndex, normal, depth, albedo, hitDist = null ) => {
+// hitDist = null keeps the lane's current normHitDist. `unlikely` (a bool node) marks a guide whose path took glass's
+// less likely branch: FinalWrite leaves it out of the average. It rides as the sign of the depth, which is never
+// negative; the floor keeps the sign of a depth that would round to 0.
+export const writeGBuffer = ( buf, pixelIndex, normal, depth, albedo, hitDist = null, unlikely = null ) => {
 
 	const lane = gbLane( pixelIndex );
 	const h = hitDist === null ? unpackUnorm2x16( buf.element( lane ).w ).y : float( hitDist );
+	const d = unlikely === null ? depth : select( unlikely, max( depth, 1 / 16384 ).negate(), depth );
 	return buf.element( lane ).assign( uvec4(
 		packSnorm2x16( vec2( normal.x, normal.y ) ),
-		packSnorm2x16( vec2( normal.z, depth ) ),
+		packSnorm2x16( vec2( normal.z, d ) ),
 		packUnorm2x16( vec2( albedo.x, albedo.y ) ),
 		packUnorm2x16( vec2( albedo.z, h ) ),
 	) );
@@ -206,9 +209,12 @@ export const gbDecodeNormalDepth = ( packed ) => {
 
 	const nxy = unpackSnorm2x16( packed.x );
 	const nzd = unpackSnorm2x16( packed.y );
-	return vec4( vec3( nxy.x, nxy.y, nzd.x ).mul( 0.5 ).add( 0.5 ), nzd.y );
+	return vec4( vec3( nxy.x, nxy.y, nzd.x ).mul( 0.5 ).add( 0.5 ), abs( nzd.y ) );
 
 };
+
+// Whether writeGBuffer was told the guide is `unlikely`.
+export const gbDecodeUnlikely = ( packed ) => unpackSnorm2x16( packed.y ).y.lessThan( 0.0 );
 
 export const gbDecodeAlbedo = ( packed ) =>
 	vec3( unpackUnorm2x16( packed.z ), unpackUnorm2x16( packed.w ).x );

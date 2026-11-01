@@ -15,6 +15,7 @@ const FILES = {
 	m2: [ 'm2.f32', Float32Array ],
 	streak: [ 'streak.u32', Uint32Array ],
 	frozenMask: [ 'frozen.u32', Uint32Array ],
+	auxCount: [ 'auxCount.u32', Uint32Array ],
 };
 
 const jobsArea = storage => storage?.area( APP_AREAS.JOBS ) ?? null;
@@ -157,8 +158,8 @@ export class StillCheckpointer {
 			if ( ! checkpoint || this.id !== id ) return false;
 			const { record } = await captureSession( app );
 
-			const { color, normalDepth, albedo, m2, streak, frozenMask, ...rest } = checkpoint;
-			const arrays = { color, normalDepth, albedo, m2, streak, frozenMask };
+			const { color, normalDepth, albedo, m2, streak, frozenMask, auxCount, ...rest } = checkpoint;
+			const arrays = { color, normalDepth, albedo, m2, streak, frozenMask, auxCount };
 			const bytes = Object.values( arrays ).reduce( ( n, a ) => n + ( a?.byteLength ?? 0 ), 0 );
 			const slot = this._slot ^ 1;
 			const job = {

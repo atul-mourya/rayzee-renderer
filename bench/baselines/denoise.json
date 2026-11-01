@@ -15,9 +15,9 @@
 		"denoisedRmse": 0.02664353916336284
 	},
 	"glass-transmission/oidn/64": {
-		"ratio": 0.7867497630436218,
+		"ratio": 0.6978913893695587,
 		"rawRmse": 0.0032182495390410035,
-		"denoisedRmse": 0.0025319570622557544
+		"denoisedRmse": 0.002245988642139268
 	},
 	"subsurface-marble/oidn/1": {
 		"ratio": 0.1584601462781706,
@@ -35,9 +35,9 @@
 		"denoisedRmse": 0.034996893556576904
 	},
 	"dispersion-glass/oidn/64": {
-		"ratio": 0.549927777145403,
+		"ratio": 0.54944341703964,
 		"rawRmse": 0.011711826713332074,
-		"denoisedRmse": 0.006440658830774858
+		"denoisedRmse": 0.00643498608914931
 	},
 	"alpha-cutout/oidn/1": {
 		"ratio": 0.40793909585366833,
@@ -75,9 +75,9 @@
 		"denoisedRmse": 0.02664353916336284
 	},
 	"glass-transmission/oidn-tiled/64": {
-		"ratio": 0.7867497630436218,
+		"ratio": 0.6978913893695587,
 		"rawRmse": 0.0032182495390410035,
-		"denoisedRmse": 0.0025319570622557544
+		"denoisedRmse": 0.002245988642139268
 	},
 	"textured-normalmap/oidn-tiled/1": {
 		"ratio": 0.5036089067681239,
@@ -560,9 +560,9 @@
 		"denoisedRmse": 0.034996893556576904
 	},
 	"dispersion-glass/oidn-tiled/64": {
-		"ratio": 0.549927777145403,
+		"ratio": 0.54944341703964,
 		"rawRmse": 0.011711826713332074,
-		"denoisedRmse": 0.006440658830774858
+		"denoisedRmse": 0.00643498608914931
 	},
 	"alpha-cutout/oidn-tiled/1": {
 		"ratio": 0.40793909585366833,
@@ -890,14 +890,14 @@
 		"denoisedRmse": 0.02758520195276748
 	},
 	"sky-bidirectional/oidn/64": {
-		"ratio": 0.6895865705425778,
+		"ratio": 0.6662991155309202,
 		"rawRmse": 0.02758520195276748,
-		"denoisedRmse": 0.019022384812333346
+		"denoisedRmse": 0.018379995662870786
 	},
 	"sky-bidirectional/oidn-tiled/64": {
-		"ratio": 0.6895865705425778,
+		"ratio": 0.6662991155309202,
 		"rawRmse": 0.02758520195276748,
-		"denoisedRmse": 0.019022384812333346
+		"denoisedRmse": 0.018379995662870786
 	},
 	"fog-height-furnace/nrd/1": {
 		"ratio": 0.8109137709824361,
@@ -1010,13 +1010,13 @@
 		"denoisedRmse": 0.006264372981309605
 	},
 	"glass-tinted-light/oidn/64": {
-		"ratio": 0.5530727779582915,
+		"ratio": 0.5464716615695541,
 		"rawRmse": 0.006264372981309605,
-		"denoisedRmse": 0.0034646541669397673
+		"denoisedRmse": 0.0034233023117876808
 	},
 	"glass-tinted-light/oidn-tiled/64": {
-		"ratio": 0.5530727779582915,
+		"ratio": 0.5464716615695541,
 		"rawRmse": 0.006264372981309605,
-		"denoisedRmse": 0.0034646541669397673
+		"denoisedRmse": 0.0034233023117876808
 	}
 }

@@ -43,6 +43,7 @@ import {
 import { sunRadianceToward, sampleSunDisc } from '../Sun.js';
 import { regularizePathContribution, generateSampledDirection, computeNDCDepth, handleRussianRoulette, DELTA_PDF } from '../PathTracerCore.js';
 import { evaluateSpecularDFG, baseFresnelParams } from '../MaterialProperties.js';
+import { fresnelDielectric } from '../Fresnel.js';
 import { sampleClearcoat, ClearcoatResult } from '../Clearcoat.js';
 import { refineDisplacedIntersection, DisplacementResult } from '../Displacement.js';
 import {
@@ -247,6 +248,8 @@ export function buildShadeKernel( params ) {
 		const rayID = activeIndicesRO.element( threadIdx );
 
 		const flags = readRayBounceFlags( rayBufferRW, rayID ).toVar();
+		// The deferred guide took glass's less likely branch: its commit is marked so FinalWrite leaves it out.
+		const guideUnlikely = () => flags.bitAnd( uint( RAY_FLAG.AUX_UNLIKELY ) ).notEqual( uint( 0 ) );
 
 		If( flags.bitAnd( uint( RAY_FLAG.ACTIVE ) ).equal( uint( 0 ) ), () => {
 
@@ -506,7 +509,7 @@ export function buildShadeKernel( params ) {
 						const depth = select( bounceIndex.equal( 0 ),
 							computeNDCDepth( { worldPos: scatterPoint, cameraProjectionMatrix, cameraViewMatrix } ),
 							gbDecodeNormalDepth( readGBuffer( gBufferRW, pixelIndex ) ).w );
-						writeGBuffer( gBufferRW, pixelIndex, direction.negate(), depth, clamp( fog.color.mul( featCarry ), vec3( 0.0 ), vec3( 1.0 ) ) );
+						writeGBuffer( gBufferRW, pixelIndex, direction.negate(), depth, clamp( fog.color.mul( featCarry ), vec3( 0.0 ), vec3( 1.0 ) ), null, guideUnlikely() );
 						flags.assign( flags.bitOr( uint( RAY_FLAG.AUX_LOCKED ) ) );
 
 					} );
@@ -770,7 +773,7 @@ export function buildShadeKernel( params ) {
 				.and( flags.bitAnd( uint( RAY_FLAG.REDIRECTED ) ).notEqual( uint( 0 ) ) ), () => {
 
 				const gPrev = readGBuffer( gBufferRW, pixelIndex );
-				writeGBuffer( gBufferRW, pixelIndex, normalize( direction ), gbDecodeNormalDepth( gPrev ).w, clamp( escapedAuxAlbedo.mul( featCarry ), vec3( 0.0 ), vec3( 1.0 ) ) );
+				writeGBuffer( gBufferRW, pixelIndex, normalize( direction ), gbDecodeNormalDepth( gPrev ).w, clamp( escapedAuxAlbedo.mul( featCarry ), vec3( 0.0 ), vec3( 1.0 ) ), null, guideUnlikely() );
 
 			} );
 
@@ -1162,7 +1165,7 @@ export function buildShadeKernel( params ) {
 			if ( aux ) If( aux.and( flags.bitAnd( uint( RAY_FLAG.AUX_LOCKED ) ).equal( uint( 0 ) ) ), () => {
 
 				const primaryDepth = gbDecodeNormalDepth( readGBuffer( gBufferRW, pixelIndex ) ).w;
-				writeGBuffer( gBufferRW, pixelIndex, normal, primaryDepth, clamp( albedo.mul( featPrefix ), vec3( 0.0 ), vec3( 1.0 ) ) );
+				writeGBuffer( gBufferRW, pixelIndex, normal, primaryDepth, clamp( albedo.mul( featPrefix ), vec3( 0.0 ), vec3( 1.0 ) ), null, guideUnlikely() );
 
 			} );
 
@@ -1244,7 +1247,7 @@ export function buildShadeKernel( params ) {
 			let auxCases = If( material.alphaMode.equal( int( 2 ) ), () => {
 
 				// BLEND: deterministic own-surface commit on BOTH stochastic skip + shade frames (no flicker).
-				writeGBuffer( gBufferRW, pixelIndex, Nff, primaryDepth, auxAlbedo );
+				writeGBuffer( gBufferRW, pixelIndex, Nff, primaryDepth, auxAlbedo, null, guideUnlikely() );
 				flags.assign( flags.bitOr( uint( RAY_FLAG.AUX_LOCKED ) ) );
 
 			} ).ElseIf( interaction.isAlphaSkip, () => {
@@ -1255,7 +1258,7 @@ export function buildShadeKernel( params ) {
 			if ( layers.subsurface ) auxCases = auxCases.ElseIf( interaction.isSubsurface, () => {
 
 				// SSS boundary: force-commit the skin surface as diffuse.
-				writeGBuffer( gBufferRW, pixelIndex, Nff, primaryDepth, auxAlbedo );
+				writeGBuffer( gBufferRW, pixelIndex, Nff, primaryDepth, auxAlbedo, null, guideUnlikely() );
 				flags.assign( flags.bitOr( uint( RAY_FLAG.AUX_LOCKED ) ) );
 
 			} );
@@ -1264,7 +1267,7 @@ export function buildShadeKernel( params ) {
 				If( auxCommit.or( material.dispersion.greaterThan( 0.0 ) ), () => {
 
 					// frosted / rough / dispersive glass: commit its own surface (deterministic per frame).
-					writeGBuffer( gBufferRW, pixelIndex, Nff, primaryDepth, auxAlbedo );
+					writeGBuffer( gBufferRW, pixelIndex, Nff, primaryDepth, auxAlbedo, null, guideUnlikely() );
 					flags.assign( flags.bitOr( uint( RAY_FLAG.AUX_LOCKED ) ) );
 
 				} ).Else( () => {
@@ -1274,6 +1277,16 @@ export function buildShadeKernel( params ) {
 					If( interaction.didReflect.not(), () => {
 
 						featCarry.mulAssign( transmissionTint( albedo ) );
+
+					} );
+					// The guide behind glass follows its likelier branch only (NVIDIA's primary surface replacement): a
+					// sample sent the other way is marked, as one random pick of the two speckled the guide.
+					const crossN = select( entering, N, N.negate() );
+					const reflectsMostly = fresnelDielectric( dot( direction.negate(), crossN ),
+						select( entering, material.ior.div( currentMediumIOR ), previousMediumIOR.div( material.ior ) ) ).greaterThan( 0.5 );
+					If( interaction.didReflect.notEqual( reflectsMostly ), () => {
+
+						flags.assign( flags.bitOr( uint( RAY_FLAG.AUX_UNLIKELY ) ) );
 
 					} );
 
@@ -1506,6 +1519,13 @@ export function buildShadeKernel( params ) {
 		// whole material, its transmission lobe included.
 		If( transTraversals.greaterThan( int( 0 ) ), () => {
 
+			// The guide deferring through mostly-clear glass that drew its opaque base took the less likely branch.
+			if ( aux ) If( aux.and( auxCommit.not() ).and( material.transmission.greaterThan( 0.5 ) )
+				.and( flags.bitAnd( uint( RAY_FLAG.AUX_LOCKED ) ).equal( uint( 0 ) ) ), () => {
+
+				flags.assign( flags.bitOr( uint( RAY_FLAG.AUX_UNLIKELY ) ) );
+
+			} );
 			material.transmission.assign( 0.0 );
 
 		} );
@@ -1726,7 +1746,7 @@ export function buildShadeKernel( params ) {
 			If( auxCommit, () => {
 
 				// diffuse / glossy / rough-metal: commit the surface guide, tinted by the see-through prefix.
-				writeGBuffer( gBufferRW, pixelIndex, N, primaryDepth, clamp( albedo.mul( featPrefix ), vec3( 0.0 ), vec3( 1.0 ) ) );
+				writeGBuffer( gBufferRW, pixelIndex, N, primaryDepth, clamp( albedo.mul( featPrefix ), vec3( 0.0 ), vec3( 1.0 ) ), null, guideUnlikely() );
 				flags.assign( flags.bitOr( uint( RAY_FLAG.AUX_LOCKED ) ) );
 
 			} ).Else( () => {

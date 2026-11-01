@@ -155,6 +155,16 @@ textures[2] = gAlbedo      // Albedo (RGB) + hit distance (a) — denoiser input
 
 The aux data is staged in a **G-buffer** of one half-packed `uvec4` per path slot (`GBUFFER_STRIDE = 1`), the hit buffer's last region, written and read within the same band. Generate seeds each slot with normal +Z, depth 1 and black albedo. Shade writes the primary hit's NDC depth at bounce 0; normal and albedo are committed at the first surface diffuse enough to guide a denoiser, deferring through smooth mirrors and glass, and the path is then flagged `RAY_FLAG.AUX_LOCKED`. FinalWrite decodes the slot (`gbDecodeNormalDepth`, `gbDecodeAlbedo`, `gbDecodeHitDist`).
 
+Behind smooth glass the guide follows the likelier branch only, as NVIDIA's primary surface replacement does: a path that
+reflects where glass mostly transmits (or the reverse, by the Fresnel term at the surface normal), or that draws the opaque
+base of mostly-clear glass, is flagged `RAY_FLAG.AUX_UNLIKELY`, and its commit carries the mark as the depth's sign
+(`writeGBuffer( …, unlikely )`, `gbDecodeUnlikely`). FinalWrite averages the guide over unmarked samples only, counting
+them per pixel (`_auxCountAttr`, `guideWeights`): marked samples stand in until the first unmarked one replaces them,
+and a pixel never marked keeps the epoch's alpha, so it averages exactly as before. Following the sampled branch instead
+speckled the guide behind thick glass (each sample picks a branch at each of its crossings), and OIDN's clean-guide models
+kept the speckle in the picture: on the pbrt living room's tumblers at 30 spp the denoised error fell 16 % (0.081 → 0.069, the same
+as a 512-spp guide gives), unchanged elsewhere; `glass-transmission`'s 64-spp denoise 0.00253 → 0.00225.
+
 `gAlbedo.a` holds a hit distance only while a stage has asked for it: NRD calls `pathTracer.requestOutput( 'hitDistance', { encode } )`, and Shade then writes `encode( distance, viewZ )` at camera depth 1 — the first bounce's segment plus any alpha-skip run. The request is compiled into Shade (the kernels rebuild before the next frame); Shade holds no NRD code. Otherwise the lane is 0.
 
 ---

@@ -69,6 +69,7 @@ export class PathTracer extends PathTracerStage {
 		// Tier-2 dilation: per-pixel frozen mask (1=skip), written race-free in buildActivePixels; a frozen pixel
 		// stays active if any 8-neighbour is still active (Cycles box-filter) to avoid hard frozen/active seams.
 		this._frozenMaskAttr = null;
+		this._auxCountAttr = null; // per pixel: the samples the aux guide averages (not marked unlikely)
 		this.builtReserve = null; // the reserved render size the per-pixel buffers were built at (none before the first build)
 		this._convDebugSource = null; // memoized handle set for the Compositor's convergence overlay
 		this._dilateFrozenUniform = uniform( 1, 'int' ); // 1 = dilate (default); 0 = plain per-pixel freeze
@@ -221,6 +222,7 @@ export class PathTracer extends PathTracerStage {
 			if ( this._m2Attr ) a.push( this._m2Attr );
 			if ( this._streakAttr ) a.push( this._streakAttr );
 			if ( this._frozenMaskAttr ) a.push( this._frozenMaskAttr );
+			if ( this._auxCountAttr ) a.push( this._auxCountAttr );
 			return a.length ? a : null;
 
 		} );
@@ -827,10 +829,11 @@ export class PathTracer extends PathTracerStage {
 			readBuffer( this._m2Attr, Float32Array ),
 			readBuffer( this._streakAttr, Uint32Array ),
 			readBuffer( this._frozenMaskAttr, Uint32Array ),
+			aux ? readBuffer( this._auxCountAttr, Uint32Array ) : null,
 		];
-		const [ color, normalDepth, albedo, m2, streak, frozenMask ] = await Promise.all( reads );
+		const [ color, normalDepth, albedo, m2, streak, frozenMask, auxCount ] = await Promise.all( reads );
 
-		return { width, height, state, color, normalDepth, albedo, m2, streak, frozenMask };
+		return { width, height, state, color, normalDepth, albedo, m2, streak, frozenMask, auxCount };
 
 	}
 
@@ -871,6 +874,8 @@ export class PathTracer extends PathTracerStage {
 		writeBuffer( this._m2Attr, checkpoint.m2 );
 		writeBuffer( this._streakAttr, checkpoint.streak );
 		writeBuffer( this._frozenMaskAttr, checkpoint.frozenMask );
+		// A checkpoint from before the guide count: every sample counted.
+		if ( checkpoint.normalDepth ) writeBuffer( this._auxCountAttr, checkpoint.auxCount ?? new Uint32Array( width * height ).fill( state.auxSamples ) );
 
 		this.frameCount = state.frameCount;
 		this.frame.value = state.frameCount;
@@ -1103,6 +1108,7 @@ export class PathTracer extends PathTracerStage {
 
 		this.hasPreviousAux.value = mixes ? 1 : 0;
 		this.auxAccumulationAlpha.value = mixes ? 1 / ( this._auxSamples + 1 ) : 1.0;
+		this.auxSamples.value = mixes ? this._auxSamples : 0;
 
 		return mixes;
 
@@ -1630,6 +1636,10 @@ export class PathTracer extends PathTracerStage {
 			this._frozenMaskAttr?.dispose();
 			this._frozenMaskAttr = gpuOnlyStorageAttribute( maxPixels, 1, Uint32Array );
 
+			// Samples the aux guide averages per pixel (those not marked unlikely), read+written by FinalWrite.
+			this._auxCountAttr?.dispose();
+			this._auxCountAttr = gpuOnlyStorageAttribute( maxPixels, 1, Uint32Array );
+
 		}
 
 		this._integrator?.allocate( maxPixels );
@@ -1639,6 +1649,7 @@ export class PathTracer extends PathTracerStage {
 		const streakRO = storage( this._streakAttr, 'uint' ).toReadOnly();
 		const frozenMaskRW = storage( this._frozenMaskAttr, 'uint' );
 		const frozenMaskRO = storage( this._frozenMaskAttr, 'uint' ).toReadOnly();
+		const auxCountRW = storage( this._auxCountAttr, 'uint' );
 
 		if ( ! this._queueManager ) {
 
@@ -2038,6 +2049,8 @@ export class PathTracer extends PathTracerStage {
 			accumulationAlpha: this.accumulationAlpha,
 			hasPreviousAux: this.hasPreviousAux,
 			auxAccumulationAlpha: this.auxAccumulationAlpha,
+			auxCountRW,
+			auxSamples: this.auxSamples,
 			cameraIsMoving: this.cameraIsMoving,
 			prevAccumTexture: prevColor,
 			prevAlbedoTexture: prevAlbedo,
@@ -2192,6 +2205,7 @@ export class PathTracer extends PathTracerStage {
 		for ( const sizes of this._bounceSizes ?? [] ) sizes?.dispose();
 		this._bounceSizes = null;
 		this._frozenMaskAttr?.dispose?.();
+		this._auxCountAttr?.dispose?.();
 		for ( const integrator of this._integratorInstances.values() ) integrator.dispose();
 		this._integratorInstances.clear();
 		this._integrator = null;
@@ -2201,6 +2215,7 @@ export class PathTracer extends PathTracerStage {
 		this._m2Attr = null;
 		this._streakAttr = null;
 		this._frozenMaskAttr = null;
+		this._auxCountAttr = null;
 		this._convDebugSource = null;
 		this._wavefrontReady = false;
 		this._kernelGeneration ++;
