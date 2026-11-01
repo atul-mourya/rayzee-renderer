@@ -1,4 +1,5 @@
 import { getApp } from '@/lib/appProxy';
+import { isArchiveUrl } from '@/lib/archives';
 
 /**
  * Service class for handling asset loading operations
@@ -30,7 +31,7 @@ export class AssetLoaderService {
 
 		try {
 
-			await app.loadExampleModels( modelIndex, modelFiles );
+			await ( isArchiveUrl( modelFile.url ) ? app.loadFile( modelFile.url ) : app.loadExampleModels( modelIndex, modelFiles ) );
 			return {
 				success: true,
 				modelName: modelFile.name,

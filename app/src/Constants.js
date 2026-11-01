@@ -159,44 +159,52 @@ export const CAMERA_PRESETS = {
 	}
 };
 
-// glTF Research Scenes v1.1.0 (github.com/ErfanMo77/gltf-research-scenes), extended variants, mirrored on the CDN
+// Benedikt Bitterli's pbrt-v4 scenes (BMW M6: mmp/pbrt-v4-scenes) repacked on the CDN; Classroom 2 has no pbrt original
+const PBRT_SCENES_URL = `${ASSETS_BASE_URL}/models/pbrt-scenes`;
 const RESEARCH_SCENES_URL = `${ASSETS_BASE_URL}/models/gltf-research-scenes`;
-const researchScene = ( name, id, file, label ) => ( {
+const BITTERLI_RESOURCES = 'https://benedikt-bitterli.me/resources/';
+const pbrtScene = ( name, id, label, redirection = BITTERLI_RESOURCES ) => ( {
 	name,
-	url: `${RESEARCH_SCENES_URL}/${file}.glb`,
+	url: `${PBRT_SCENES_URL}/${id}.zip`,
 	preview: `${RESEARCH_SCENES_URL}/webp/${id}.webp`,
 	label,
-	redirection: `https://github.com/ErfanMo77/gltf-research-scenes/tree/main/scenes/${id}`,
+	redirection,
 } );
 
 export const MODEL_FILES = [
-	researchScene( "Bathroom", 			"bathroom", 			"bathroom_extended", 			"“Contemporary Bathroom” by Mareck · CC0" ),
-	researchScene( "Bathroom 2", 		"bathroom2", 			"bathroom2_extended", 			"“Salle de bain” by nacimus · CC BY 3.0" ),
-	researchScene( "BMW M6", 			"bmw-m6", 				"bmw_m6_extended", 				"“BMW M6 2006” by tyrant monkey · CC0" ),
-	researchScene( "Breakfast Room", 	"breakfast-room", 		"breakfast_room_extended", 		"“The Breakfast Room” by Wig42 · CC BY 3.0" ),
-	researchScene( "Classroom", 		"classroom", 			"classroom_extended", 			"“Japanese Classroom” by NovaZeeke · CC BY 3.0" ),
-	researchScene( "Classroom 2", 		"classroom2", 			"classroom2", 					"“Classroom” by Christophe Seux · CC0" ),
-	researchScene( "Coffee Maker", 		"coffee-maker", 		"coffee_maker_extended", 		"“Coffee Maker” by cekuhnen · CC BY 3.0" ),
-	researchScene( "Cornell Box", 		"cornell-box", 			"cornell_box_extended", 		"“Cornell Box” by Benedikt Bitterli · CC0" ),
-	researchScene( "Cornell Caustic", 	"cornell-caustic", 		"cornell_caustic_extended", 	"“Water Caustic” by Benedikt Bitterli · CC0" ),
-	researchScene( "Dragon Statue", 	"dragon", 				"dragon_extended", 				"“Dragon” by Delatronic · CC BY 3.0" ),
-	researchScene( "Glass of Water", 	"glass-of-water", 		"glass_of_water_extended", 		"“Glass of Water” by aXel · CC0" ),
-	researchScene( "House", 			"house", 				"house_extended", 				"“Victorian Style House” by MrChimp2313 · CC0" ),
-	researchScene( "Kitchen", 			"kitchen", 				"kitchen_extended", 			"“Country Kitchen” by Jay-Artist · CC BY 3.0" ),
-	researchScene( "Lamp", 				"lamp", 				"lamp_extended", 				"“Little Lamp” by UP3D · CC0" ),
-	researchScene( "Living Room", 		"living-room", 			"living_room_extended", 		"“The Grey & White Room” by Wig42 · CC BY 3.0" ),
-	researchScene( "Living Room 2", 	"living-room-2", 		"living_room_2_extended", 		"“The White Room” by Jay-Artist · CC BY 3.0" ),
-	researchScene( "Material Testball", "material-testball", 	"material_testball_extended", 	"“Material Test Ball” by Benedikt Bitterli · CC0" ),
-	researchScene( "Modern Hall", 		"modern-hall", 			"modern_hall_extended", 		"“Modern Hall” by NewSee2l035 · CC BY 3.0" ),
-	researchScene( "Pontiac GTO", 		"pontiac-gto", 			"pontiac_gto_extended", 		"“Pontiac GTO 67” by thecali · CC0" ),
-	researchScene( "Spaceship", 		"spaceship", 			"spaceship_extended", 			"“4060.b Spaceship” by thecali · CC0" ),
-	researchScene( "Staircase", 		"staircase", 			"staircase_extended", 			"“The Wooden Staircase” by Wig42 · CC BY 3.0" ),
-	researchScene( "Teapot", 			"teapot", 				"teapot_extended", 				"“Utah Teapot” by Benedikt Bitterli · CC0" ),
-	researchScene( "Teapot Full", 		"teapot-full", 			"teapot_full_extended", 		"“Utah Teapot (full)” by Benedikt Bitterli · CC0" ),
-	researchScene( "Veach Ajar", 		"veach-ajar", 			"veach_ajar_extended", 			"“Veach, Ajar” by Benedikt Bitterli · CC0" ),
-	researchScene( "Veach Bidir", 		"veach-bidir", 			"veach_bidir_extended", 		"“Veach, Bidir Room” by Benedikt Bitterli · CC0" ),
-	researchScene( "Veach MIS", 		"veach-mis", 			"veach_mis_extended", 			"“Veach, MIS” by Benedikt Bitterli · CC0" ),
-	researchScene( "Vintage Car", 		"vintage-car", 			"vintage_car_extended", 		"“Old vintage car” by piopis · CC0" ),
+	pbrtScene( "Bathroom", 				"bathroom", 			"“Contemporary Bathroom” by Mareck · CC0" ),
+	pbrtScene( "Bathroom 2", 			"bathroom2", 			"“Salle de bain” by nacimus · CC BY 3.0" ),
+	pbrtScene( "BMW M6", 				"bmw-m6", 				"“BMW M6 2006” by tyrant monkey · CC0", 'https://github.com/mmp/pbrt-v4-scenes/tree/master/bmw-m6' ),
+	pbrtScene( "Breakfast Room", 		"breakfast-room", 		"“The Breakfast Room” by Wig42 · CC BY 3.0" ),
+	pbrtScene( "Classroom", 			"classroom", 			"“Japanese Classroom” by NovaZeeke · CC BY 3.0" ),
+	{
+		name: "Classroom 2",
+		url: `${RESEARCH_SCENES_URL}/classroom2.glb`,
+		preview: `${RESEARCH_SCENES_URL}/webp/classroom2.webp`,
+		label: "“Classroom” by Christophe Seux · CC0",
+		redirection: 'https://github.com/ErfanMo77/gltf-research-scenes/tree/main/scenes/classroom2',
+	},
+	pbrtScene( "Coffee Maker", 			"coffee-maker", 		"“Coffee Maker” by cekuhnen · CC BY 3.0" ),
+	pbrtScene( "Cornell Box", 			"cornell-box", 			"“Cornell Box” by Benedikt Bitterli · CC0" ),
+	pbrtScene( "Cornell Caustic", 		"cornell-caustic", 		"“Water Caustic” by Benedikt Bitterli · CC0" ),
+	pbrtScene( "Dragon Statue", 		"dragon", 				"“Dragon” by Delatronic · CC BY 3.0" ),
+	pbrtScene( "Glass of Water", 		"glass-of-water", 		"“Glass of Water” by aXel · CC0" ),
+	pbrtScene( "House", 				"house", 				"“Victorian Style House” by MrChimp2313 · CC0" ),
+	pbrtScene( "Kitchen", 				"kitchen", 				"“Country Kitchen” by Jay-Artist · CC BY 3.0" ),
+	pbrtScene( "Lamp", 					"lamp", 				"“Little Lamp” by UP3D · CC0" ),
+	pbrtScene( "Living Room", 			"living-room", 			"“The Grey & White Room” by Wig42 · CC BY 3.0" ),
+	pbrtScene( "Living Room 2", 		"living-room-2", 		"“The White Room” by Jay-Artist · CC BY 3.0" ),
+	pbrtScene( "Material Testball", 	"material-testball", 	"“Material Test Ball” by Benedikt Bitterli · CC0" ),
+	pbrtScene( "Modern Hall", 			"modern-hall", 			"“Modern Hall” by NewSee2l035 · CC BY 3.0" ),
+	pbrtScene( "Pontiac GTO", 			"pontiac-gto", 			"“Pontiac GTO 67” by thecali · CC0" ),
+	pbrtScene( "Spaceship", 			"spaceship", 			"“4060.b Spaceship” by thecali · CC0" ),
+	pbrtScene( "Staircase", 			"staircase", 			"“The Wooden Staircase” by Wig42 · CC BY 3.0" ),
+	pbrtScene( "Teapot", 				"teapot", 				"“Utah Teapot” by Benedikt Bitterli · CC0" ),
+	pbrtScene( "Teapot Full", 			"teapot-full", 			"“Utah Teapot (full)” by Benedikt Bitterli · CC0" ),
+	pbrtScene( "Veach Ajar", 			"veach-ajar", 			"“Veach, Ajar” by Benedikt Bitterli · CC0" ),
+	pbrtScene( "Veach Bidir", 			"veach-bidir", 			"“Veach, Bidir Room” by Benedikt Bitterli · CC0" ),
+	pbrtScene( "Veach MIS", 			"veach-mis", 			"“Veach, MIS” by Benedikt Bitterli · CC0" ),
+	pbrtScene( "Vintage Car", 			"vintage-car", 			"“Old vintage car” by piopis · CC0" ),
 ];
 
 const tagPriority = {

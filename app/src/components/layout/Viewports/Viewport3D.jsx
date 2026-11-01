@@ -291,7 +291,8 @@ const Viewport3D = forwardRef( ( { viewportMode = "preview" }, _ref ) => {
 					} else {
 
 						const { MODEL_FILES } = await import( '@/Constants' );
-						await app.loadExampleModels( DEFAULT_STATE.model, MODEL_FILES );
+						const { url } = MODEL_FILES[ DEFAULT_STATE.model ];
+						await ( isArchiveUrl( url ) ? app.loadFile( url ) : app.loadExampleModels( DEFAULT_STATE.model, MODEL_FILES ) );
 
 					}
 

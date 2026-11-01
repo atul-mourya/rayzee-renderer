@@ -5,6 +5,7 @@ import { ItemsCatalog } from '@/components/ui/items-catalog';
 import { MODEL_FILES } from '@/Constants';
 import { useAssetsStore } from '@/store';
 import { useAssetLoader } from '@/hooks/useAssetLoader';
+import { isArchiveUrl } from '@/lib/archives';
 import SketchfabBrowser from './SketchfabBrowser';
 
 const ModelsTab = () => {
@@ -31,6 +32,8 @@ const ModelsTab = () => {
 			label: 'Add',
 			variant: 'secondary',
 			icon: <Plus size={12} />,
+			// Appending reads glTF only; a pbrt archive is a whole scene.
+			disabled: ( item ) => isArchiveUrl( item.url ),
 			onClick: async ( item ) => appendCatalogModel( MODEL_FILES.indexOf( item ).toString() ),
 		},
 	], [ loadModel, appendCatalogModel, setModel ] );
