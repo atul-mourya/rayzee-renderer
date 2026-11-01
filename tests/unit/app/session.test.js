@@ -227,7 +227,7 @@ describe( 'sessions', () => {
 
 		const app = fakeApp( storage );
 		await openSource( app, { kind: 'url', url: 'https://old.cdn/x.glb', catalog: 'Classroom 2' }, { pickFile: vi.fn() } );
-		expect( app.loadModel.mock.calls[ 0 ][ 0 ] ).toMatch( /classroom2\.glb$/ );
+		expect( app.loadModel.mock.calls[ 0 ][ 0 ] ).toMatch( /classroom2-lit\.glb$/ );
 
 		await openSource( app, { kind: 'url', url: 'https://old.cdn/cornell-box.zip', filename: 'cornell-box.zip', catalog: 'Cornell Box' }, { pickFile: vi.fn() } );
 		expect( app.loadFile ).toHaveBeenCalledWith( expect.stringMatching( /\/pbrt-scenes\/cornell-box\.zip$/ ), { filename: 'cornell-box.zip' } );

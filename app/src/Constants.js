@@ -180,8 +180,10 @@ export const MODEL_FILES = [
 	pbrtScene( "Breakfast Room", 		"breakfast-room", 		"“The Breakfast Room” by Wig42 · CC BY 3.0" ),
 	pbrtScene( "Classroom", 			"classroom", 			"“Japanese Classroom” by NovaZeeke · CC BY 3.0" ),
 	{
+		// The dataset's glTF plus what Blender's export dropped: classroom.blend's sun (strength 15, blackbody 5800 K) and
+		// corridor light, as KHR_lights_punctual.
 		name: "Classroom 2",
-		url: `${RESEARCH_SCENES_URL}/classroom2.glb`,
+		url: `${RESEARCH_SCENES_URL}/classroom2-lit.glb`,
 		preview: `${RESEARCH_SCENES_URL}/webp/classroom2.webp`,
 		label: "“Classroom” by Christophe Seux · CC0",
 		redirection: 'https://github.com/ErfanMo77/gltf-research-scenes/tree/main/scenes/classroom2',
