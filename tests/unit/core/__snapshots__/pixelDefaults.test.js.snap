@@ -90,6 +90,7 @@ exports[`defaults that shape pixels — a change here says how renders change in
     1,
   ],
   "attenuationDistance": Infinity,
+  "bumpDistance": 0,
   "bumpScale": 1,
   "clearcoat": 0,
   "clearcoatNormalScale": [

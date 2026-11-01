@@ -14,8 +14,9 @@ import {
 } from 'three';
 
 export const SCENE_GRAPH_FORMAT = 2;
-// Texture slots the engine reads off a material that three.js does not serialise.
+// What the engine reads off a material that three.js does not serialise.
 const ENGINE_TEXTURES = [ 'diffuseTransmissionMap', 'diffuseTransmissionColorMap' ];
+const ENGINE_VALUES = [ 'diffuseTransmission', 'diffuseRoughness', 'bumpDistance' ];
 export const ARCHIVE_PATH = '__rayzeeArchivePath';
 export const ARCHIVE_LOADER = '__rayzeeArchiveLoader';
 
@@ -170,8 +171,7 @@ function encodeMaterial( material, meta ) {
 	// MaterialLoader sets `reflectivity` after `ior`, and that setter rewrites ior with rounding.
 	if ( material.ior !== undefined ) json.exactIor = material.ior;
 	// Engine properties three.js does not know, so toJSON drops them.
-	if ( material.diffuseTransmission !== undefined ) json.diffuseTransmission = material.diffuseTransmission;
-	if ( material.diffuseRoughness !== undefined ) json.diffuseRoughness = material.diffuseRoughness;
+	for ( const key of ENGINE_VALUES ) if ( material[ key ] !== undefined ) json[ key ] = material[ key ];
 	for ( const key of ENGINE_TEXTURES ) if ( material[ key ]?.isTexture ) ( json.engineTextures ??= {} )[ key ] = material[ key ].uuid;
 	return json;
 
@@ -475,8 +475,7 @@ export async function decodeSceneGraph( manifest, data, { loadTexture } ) {
 		}
 
 		if ( json.exactIor !== undefined ) material.ior = json.exactIor;
-		if ( json.diffuseTransmission !== undefined ) material.diffuseTransmission = json.diffuseTransmission;
-		if ( json.diffuseRoughness !== undefined ) material.diffuseRoughness = json.diffuseRoughness;
+		for ( const key of ENGINE_VALUES ) if ( json[ key ] !== undefined ) material[ key ] = json[ key ];
 		for ( const [ key, uuid ] of Object.entries( json.engineTextures ?? {} ) ) if ( textures[ uuid ] ) material[ key ] = textures[ uuid ];
 		materials[ json.uuid ] = material;
 

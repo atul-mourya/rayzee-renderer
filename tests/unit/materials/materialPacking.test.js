@@ -66,7 +66,7 @@ function sentinel( k ) {
 		dispersion: v(), sheen: u(), sheenRoughness: u(), sheenColor: rgb(),
 		specularIntensity: u(), specularColor: rgb(),
 		iridescence: u(), iridescenceIOR: v(), iridescenceThicknessRange: [ v(), v() ],
-		bumpScale: v(), displacementScale: v(), displacementMap: v(), displacementBias: v(),
+		bumpScale: v(), bumpDistance: v(), displacementScale: v(), displacementMap: v(), displacementBias: v(),
 		mapMatrix: matrix(), normalMapMatrices: matrix(), roughnessMapMatrices: matrix(), metalnessMapMatrices: matrix(),
 		emissiveMapMatrices: matrix(), bumpMapMatrices: matrix(), displacementMapMatrices: matrix(), bumpMapSize: [ v(), v() ],
 		subsurfaceColor: rgb(), subsurface: u(), subsurfaceRadius: rgb(), subsurfaceRadiusScale: v(),
@@ -113,6 +113,7 @@ describe( 'packMaterial', () => {
 		expectAt( M.DISPLACEMENT_TRANSFORM + 7, mat.displacementMapMatrices[ 7 ] );
 		expectAt( M.BUMP_MAP_WIDTH, mat.bumpMapSize[ 0 ] );
 		expectAt( M.BUMP_MAP_HEIGHT, mat.bumpMapSize[ 1 ] );
+		expectAt( M.BUMP_DISTANCE, mat.bumpDistance );
 		expectAt( M.SUBSURFACE, mat.subsurface );
 		expectAt( M.SUBSURFACE_RADIUS + 2, mat.subsurfaceRadius[ 2 ] );
 		expectAt( M.ANISOTROPY_MAP_INDEX, mat.anisotropyMap );
@@ -133,7 +134,7 @@ describe( 'packMaterial', () => {
 
 		const a = packed( sentinel( 1 ) );
 		const b = packed( sentinel( 2 ) );
-		for ( let i = 0; i < F; i ++ ) expect( a[ i ], `float ${i} ignores its input` ).not.toBe( b[ i ] );
+		for ( let i = 0; i < F; i ++ ) if ( i !== M.SPARE ) expect( a[ i ], `float ${i} ignores its input` ).not.toBe( b[ i ] );
 
 	} );
 
@@ -438,6 +439,21 @@ describe( 'MaterialDataManager', () => {
 		packMaterial( data, F, { transmission: 1, transmissionMap: 0 } );
 		manager.setMaterialData( data );
 		expect( manager.hasTransmissionMaps() ).toBe( true );
+
+	} );
+
+	it( 'knows whether the kernels have a bump map to read', () => {
+
+		const manager = new MaterialDataManager( null );
+		const data = new Float32Array( 2 * F );
+		packMaterial( data, 0, { bumpDistance: 0.01 } );
+		packMaterial( data, F, {} );
+		manager.setMaterialData( data );
+		expect( manager.hasBumpMaps() ).toBe( false );
+
+		packMaterial( data, F, { bumpMap: 0 } );
+		manager.setMaterialData( data );
+		expect( manager.hasBumpMaps() ).toBe( true );
 
 	} );
 

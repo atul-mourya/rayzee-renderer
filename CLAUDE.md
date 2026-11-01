@@ -516,10 +516,12 @@ bench gates and measurements.
   march finds behind the base triangle is moved onto its plane: rays spawned below it all hit that triangle. ⚠️ Glass
   and subsurface: the relief is not geometry, so the triangle decides entering vs leaving, and only a reflection leaves
   from the relief; total internal reflection keeps chance 1.
-- **Bump maps** step one texel of the map as authored (`BUMP_MAP_WIDTH`/`HEIGHT`, the bump transform's unused third row,
-  written from `bumpMapSize` at extraction), never of the stored layer: packing stretches every layer to its array's
-  size, so a 512² wall map packed with 1024² maps rendered at half strength, and adding a texture to a scene changed
-  another's relief. ⚠️ A transform write skips that row (`updateTextureTransform`, elements 2 and 5).
+- **Bump maps**: with `bumpDistance` (scene units) the map is a height and the normal the bumped surface's own, over the
+  triangle's world-space UV axes (`triangleUVAxes`); without, three.js's `bumpScale`. Both tilt along the map's U and V,
+  and compile in only while some material has a bump map (`usesBumpMaps`). They step one texel of the map as authored
+  (`bumpMapSize`), never of the stored layer: packing stretches every layer to its array's size, so a 512² wall map packed
+  with 1024² maps rendered at half strength. ⚠️ Keep the normal-map frame inline: split into Fns passing a mat3 it cost
+  Shade 1–2 % where no map is used.
 - **Ray spawn points**: every ray leaving a surface starts at `offsetRayOrigin( p, n )` (`shaders/Common.js`), n the
   **facet** normal on the side the ray leaves. ⚠️ The hit record's `normal` is the interpolated one; the facet normal
   rides in its spare lane (`shaders/HitFacet.js`). ⚠️ Never a fixed distance; a shadow ray towards a sampled light point

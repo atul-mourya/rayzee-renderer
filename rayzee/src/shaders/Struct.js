@@ -118,6 +118,8 @@ export const RayTracingMaterial = struct( {
 	normalMapIndex: 'int',
 	bumpMapIndex: 'int',
 	bumpScale: 'float',
+	bumpDistance: 'float',
+	bumpMapSize: 'vec2', // as authored; 0 when unknown
 	displacementScale: 'float',
 	displacementBias: 'float',
 	metalnessMapIndex: 'int',

@@ -283,6 +283,12 @@ your own copy of the image; textures you create are left as they are.
 
 A property a three.js material lacks falls back to `MATERIAL_DEFAULTS` (exported) — MeshPhysicalMaterial's own values, so a glTF metallic material gets IOR 1.5, not a guess derived from its metalness. Weights and roughnesses (metalness, roughness, transmission, opacity, clearcoat, sheen, iridescence, …) are clamped to [0, 1] on upload and on `setMaterialProperty`.
 
+A bump map follows three.js's `bumpScale` unless the material has a `bumpDistance` (set it on the three.js material,
+which three.js's `clone()` does not copy, or with `setMaterialProperty`): then the map is a height, its 0 → 1 spanning
+that many scene units (negative presses it in), and the shading follows the bumped surface's own slope whatever the
+model's size or the map's repeat — pbrt's displacement and Cycles' Bump Distance. `bumpScale` is then ignored. Either
+way the bumps lean along the texture's U and V.
+
 Glass (`transmission`) colours the light that passes through it as Cycles' Principled BSDF does: a closed object takes its base colour (and map) once, each surface the square root of it, and its reflections stay untinted. Light reaching a surface through glass — its shadow — takes the same colour, and a volume's `attenuationColor` per channel.
 
 ## engine.environmentManager

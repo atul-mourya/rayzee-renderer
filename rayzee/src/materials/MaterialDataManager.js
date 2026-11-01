@@ -73,6 +73,7 @@ const SCALAR_PROPERTY_OFFSETS = {
 	anisotropyRotation: M.ANISOTROPY_ROTATION, // radians, unlike the degrees hosts usually show
 	diffuseTransmission: M.DIFFUSE_TRANSMISSION,
 	diffuseRoughness: M.DIFFUSE_ROUGHNESS,
+	bumpDistance: M.BUMP_DISTANCE,
 };
 
 export class MaterialDataManager {
@@ -372,6 +373,16 @@ export class MaterialDataManager {
 
 	}
 
+	/** Whether some material has a bump map: only then do the kernels read one. */
+	hasBumpMaps() {
+
+		const data = this.materialStorageAttr?.array;
+		if ( ! data ) return false;
+		for ( let i = 0; i < this.materialCount; i ++ ) if ( data[ i * M.FLOATS_PER_MATERIAL + M.BUMP_MAP_INDEX ] >= 0 ) return true;
+		return false;
+
+	}
+
 	/** Whether some material has a transmission map: only then do shadow rays sample one. */
 	hasTransmissionMaps() {
 
@@ -543,6 +554,7 @@ export class MaterialDataManager {
 
 				break;
 			case 'bumpScale': data[ stride + M.BUMP_SCALE ] = value; break;
+			case 'bumpDistance': data[ stride + M.BUMP_DISTANCE ] = value; break;
 			case 'displacementScale': data[ stride + M.DISPLACEMENT_SCALE ] = value; break;
 			case 'displacementBias': data[ stride + M.DISPLACEMENT_BIAS ] = value; break;
 			case 'subsurface': data[ stride + M.SUBSURFACE ] = value; break;
@@ -717,10 +729,10 @@ export class MaterialDataManager {
 		}
 
 		// 8 floats per slot (matrix elements[0..7]); element[8]=1 is GPU-reconstructed.
-		// Writing 9 would clobber the next transform slot's first element. The third row (2, 5) is not the transform's.
+		// Writing 9 would clobber the next transform slot's first element.
 		for ( let i = 0; i < 8; i ++ ) {
 
-			if ( i !== 2 && i !== 5 && stride + offset + i < data.length ) {
+			if ( stride + offset + i < data.length ) {
 
 				data[ stride + offset + i ] = transformMatrix[ i ];
 

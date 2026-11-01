@@ -16,6 +16,7 @@
  * @property {boolean} [glass] - some material transmits; false = shadow rays never cross glass, and carry a number, not a colour
  * @property {boolean} [transmissionMaps] - some material has a transmission map; false = shadow rays never sample one
  * @property {boolean} [clearcoatNormals] - some coated material has a normal or bump map; false = every coat follows N
+ * @property {boolean} [bumpMaps] - some material has a bump map; false = no shading reads one
  * @property {?Object} [fog] - the fog's uniforms ( density, color, anisotropy, boxMin, boxMax, falloff, floor ) while it has a density
  *   (path tracing only); every shadow ray takes its transmittance. null = no fog
  */
@@ -87,5 +88,12 @@ export function usesTransmissionMaps( builder ) {
 export function usesClearcoatNormals( builder ) {
 
 	return builder.context[ KEY ]?.clearcoatNormals ?? true;
+
+}
+
+/** Whether the kernel being built reads bump maps. Outside a scene kernel (a test) it does. */
+export function usesBumpMaps( builder ) {
+
+	return builder.context[ KEY ]?.bumpMaps ?? true;
 
 }

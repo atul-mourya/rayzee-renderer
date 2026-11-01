@@ -146,6 +146,20 @@ the shadow terminator, shadow-ray picking, sized lights and fog. CLAUDE.md keeps
   an edit to `transmission` rebuilds): otherwise shadow rays carry a number and Shade leaves the glass crossing and its
   tint out. Carrying a colour everywhere cost 24155522.glb (no glass) +2.5 % Shade; gated, +0.17 %, inside the runs'
   spread. `tests/gpu/glassShadow.test.js`; `glass-tinted-light` gates it.
+- **Bump maps** (`processBump`, `shaders/TextureSampling.js`) — two meanings. With `bumpDistance` (≠ 0; scene units,
+  world space) the map is a height, 0 → 1 spanning that distance, negative pressing it in — pbrt's `displacement` and
+  Cycles' Bump Distance — and the normal is the bumped surface's own: Mikkelsen's surface gradient,
+  normalize( |det| N − sign( det ) ( ∂h/∂u · ( dP/dv × N ) + ∂h/∂v · ( N × dP/du ) ) ), det = N · ( dP/du × dP/dv ), over
+  the triangle's world-space UV axes in the map's transformed UV space (`triangleUVAxes`: triangleUVTangent's frame with
+  its lengths kept). Its slope follows the surface's size and the map's repeat, and a mirrored UV leaves it alone.
+  Without one, three.js's `bumpScale`: the slope per texel times the scale, faded in by the scale up to 1. Both tilt along
+  the map's U and V; `bumpScale` used the arbitrary cross( up, N ) frame until 2026-11, so its bumps leaned a way that
+  depended on how the surface faced the world. Either takes its slope over one texel of the map as authored
+  (`bumpMapSize`, slot 34 beside `bumpDistance`, read only for a bump-mapped material). Compiled in only while some
+  material has a bump map (`bumpMaps` in the build context, `MaterialDataManager.hasBumpMaps()`): `lamps-bidirectional`
+  and `cornell-bidirectional` ran 4 % faster without it, the rest unchanged. ⚠️ The normal-map frame keeps its old shape
+  (inline helpers, no matrix passed between functions): as functions passing a mat3 it cost Shade 1.2–1.8 % in scenes
+  with no map at all. `tests/gpu/bump.test.js`, `tests/gpu/uvTangent.test.js`; no bench scene has a bump map.
 - **Displacement** (`shaders/Displacement.js`) — three.js's meaning: height = map × `displacementScale` + `displacementBias`,
   scene units, along the normal (packed at 49 and 51). No tessellation: Shade marches the height field from the base hit
   (a step per 4 texels crossed, 8–64 for camera rays, 16 for bounces) and shades with the marched UV and the field's slope

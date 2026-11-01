@@ -12,7 +12,7 @@ import {
 
 import { getMaterial, MIN_ROUGHNESS, REC709_LUMINANCE_COEFFICIENTS } from '../../shaders/Common.js';
 import { RayTracingMaterial, MaterialSamples, ExtMapResult } from '../../shaders/Struct.js';
-import { sampleAllMaterialTextures, processAnisotropyMap, applyExtensionMaps, getTransformedUV } from '../../shaders/TextureSampling.js';
+import { sampleAllMaterialTextures, processAnisotropyMap, applyExtensionMaps, getTransformedUV, NO_UV_AXES } from '../../shaders/TextureSampling.js';
 import { SAMPLER_DIM_AUX_BASE } from '../../shaders/Random.js';
 
 // 1D dimensions of a camera vertex's bounce block (Random.js budget) picking its connection.
@@ -157,7 +157,7 @@ export function resolveSurfaceMaterial( materialIndex, uv, N, materialBuffer ) {
 	material.bumpMapIndex.assign( int( - 1 ) );
 	material.displacementMapIndex.assign( int( - 1 ) );
 
-	const samples = MaterialSamples.wrap( sampleAllMaterialTextures( material, uv, N, vec4( 0.0 ) ) ).toVar();
+	const samples = MaterialSamples.wrap( sampleAllMaterialTextures( material, uv, N, vec4( 0.0 ), NO_UV_AXES ) ).toVar();
 	const rawRough = samples.roughness.toVar();
 
 	material.color.assign( samples.albedo );

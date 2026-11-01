@@ -7,7 +7,7 @@ import {
 	RayTracingMaterial,
 	ShadowMaterial,
 } from './Struct.js';
-import { usesClearcoatNormals } from './SceneResources.js';
+import { usesClearcoatNormals, usesBumpMaps } from './SceneResources.js';
 
 // Spawn point for a ray leaving a surface, Cycles' classic ray_offset: within 1 unit of the origin,
 // 1e-5 along n; beyond, 32 float ULPs per axis toward n. A fixed 1 mm let rays slip out of
@@ -442,6 +442,13 @@ export const getMaterial = Fn( ( [ materialIndex, materialBuffer ], builder ) =>
 
 	} );
 
+	const data34 = vec4( 0.0 ).toVar();
+	if ( usesBumpMaps( builder ) ) If( data9.g.greaterThanEqual( 0.0 ), () => {
+
+		data34.assign( getDatafromStorageBuffer( materialBuffer, materialIndex, int( S.BUMP ), int( MATERIAL_SLOTS ) ) );
+
+	} );
+
 	return RayTracingMaterial( {
 		color: vec4( data0.rgb, 1.0 ),
 		metalness: data0.a,
@@ -504,6 +511,8 @@ export const getMaterial = Fn( ( [ materialIndex, materialBuffer ], builder ) =>
 		depthWrite: int( data11.g ),
 		normalScale: vec2( data11.b, data11.b ),
 		bumpScale: data12.r,
+		bumpDistance: data34.r,
+		bumpMapSize: data34.gb,
 		displacementScale: data12.g,
 		displacementMapIndex: int( data12.b ),
 		displacementBias: data12.a,
@@ -559,6 +568,8 @@ export const diffuseGroundMaterial = Fn( () => {
 		normalMapIndex: int( - 1 ),
 		bumpMapIndex: int( - 1 ),
 		bumpScale: float( 1.0 ),
+		bumpDistance: float( 0.0 ),
+		bumpMapSize: vec2( 0.0 ),
 		displacementScale: float( 0.0 ),
 		displacementBias: float( 0.0 ),
 		metalnessMapIndex: int( - 1 ),

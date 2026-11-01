@@ -125,6 +125,8 @@ export const MATERIAL_DEFAULTS = deepFreeze( {
 	iridescenceThicknessRange: [ 100, 400 ],
 	normalScale: [ 1, 1 ],
 	bumpScale: 1,
+	// The height a bump map's 0 → 1 spans, in scene units (pbrt's displacement, Cycles' Bump Distance); 0 reads bumpScale.
+	bumpDistance: 0,
 	displacementScale: 1,
 	displacementBias: 0,
 	transparent: 0,

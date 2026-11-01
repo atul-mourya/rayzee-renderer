@@ -1,15 +1,15 @@
 /**
  * processBump: a bump map's slope is taken over one texel of the map as authored, so packing that stretches or shrinks
- * its layer (a larger bucket, the size cap) leaves the bump as strong as at its own size. A map stored at its own size
- * renders exactly as before.
+ * its layer (a larger bucket, the size cap) leaves the bump as strong as at its own size. With a bumpDistance the
+ * normal is the bumped surface's own, whatever the surface's size (a repeat shortens the axes: uvTangent.test.js);
+ * without, it tilts along the map's U and V.
  */
 
 import { afterAll, beforeAll, expect, it } from 'vitest';
 import { DataArrayTexture, DataTexture, DirectionalLight, LinearFilter, Mesh, MeshPhysicalMaterial, PlaneGeometry, RepeatWrapping, Scene } from 'three';
-import { int, float, vec3, vec4 } from 'three/tsl';
+import { int, float, vec2, vec3, vec4, mat3 } from 'three/tsl';
 import { describeGPU, createRenderer, evaluate } from './gpu.js';
-import { processBump, buildBucketTextureNodes } from '@/core/shaders/TextureSampling.js';
-import { arrayToMat3 } from '@/core/shaders/Common.js';
+import { processBump, buildBucketTextureNodes, NO_UV_AXES } from '@/core/shaders/TextureSampling.js';
 import { nodePlatform } from '@/core/node/NodePlatform.js';
 import { NodeWorker } from '@/core/node/NodeWorker.js';
 import { configurePlatform } from '@/core/Platform.js';
@@ -53,14 +53,13 @@ describeGPU( 'bump', () => {
 	const uvs = new Float32Array( 64 * 4 );
 	for ( let i = 0; i < 64; i ++ ) uvs.set( [ 0.2 + 0.4 * ( i % 8 ) / 8, 0.2 + 0.4 * Math.floor( i / 8 ) / 8, 0, 0 ], i * 4 );
 
-	// The shading normal on a z-up surface; `native` is the map's authored width × height, 0 × 0 when unknown.
-	const bump = async ( map, native, scale ) => new Float32Array( await evaluate( renderer, 64, { uv: [ uvs, 'vec4' ] }, 'vec4', ( { uv } ) => {
+	// The shading normal on a z-up surface; `native` is the map's authored width × height, 0 × 0 when unknown. `T`, `B`:
+	// the surface's dP/du and dP/dv.
+	const bump = async ( map, native, scale, { distance = 0, T = null, B = null } = {} ) => new Float32Array( await evaluate( renderer, 64, { uv: [ uvs, 'vec4' ] }, 'vec4', ( { uv } ) => {
 
-		const material = {
-			bumpMapIndex: int( 0 ), bumpScale: float( scale ),
-			bumpTransform: arrayToMat3( { data1: vec4( 1, 0, native[ 0 ], 0 ), data2: vec4( 1, native[ 1 ], 0, 0 ) } ),
-		};
-		return vec4( processBump( vec3( 0, 0, 1 ), material, { bumpUV: uv.xy } ), 0 );
+		const material = { bumpMapIndex: int( 0 ), bumpScale: float( scale ), bumpDistance: float( distance ), bumpMapSize: vec2( ...native ) };
+		const axes = T ? mat3( vec3( ...T ), vec3( ...B ), vec3( 0 ) ) : NO_UV_AXES;
+		return vec4( processBump( vec3( 0, 0, 1 ), material, { bumpUV: uv.xy }, axes ), 0 );
 
 	}, { linearBuckets: buildBucketTextureNodes( [ map ] ) } ) );
 
@@ -84,6 +83,44 @@ describeGPU( 'bump', () => {
 			// Stepping a stored texel instead halves the stretched map's slope.
 			const storedStep = await bump( stretched, [ 0, 0 ], scale );
 			expect( maxDifference( storedStep, asAuthored ) ).toBeGreaterThan( tilt * 0.3 );
+
+		}
+
+	} );
+
+	// The ramp rises 4/255 a texel, 256/255 over the map.
+	const RISE = 256 / 255;
+
+	it( 'gives a bumpDistance its true slope, however large the surface or mirrored its uv', async () => {
+
+		const map = ramp( NATIVE );
+		for ( const [ distance, L ] of [[ 0.01, 1 ], [ 0.05, 2 ], [ - 0.02, 0.5 ]] ) {
+
+			for ( const B of [[ 0, L, 0 ], [ 0, - L, 0 ]] ) {
+
+				const n = await bump( map, [ NATIVE, NATIVE ], 1, { distance, T: [ L, 0, 0 ], B } );
+				for ( let i = 0; i < 64; i ++ ) {
+
+					// Rising along +x by distance · RISE over L: the normal leans back by that slope.
+					expect( n[ i * 4 ] / n[ i * 4 + 2 ] ).toBeCloseTo( - distance * RISE / L, 5 );
+					expect( n[ i * 4 + 1 ] ).toBeCloseTo( 0, 6 );
+
+				}
+
+			}
+
+		}
+
+	} );
+
+	it( 'tilts a bumpScale along the map\'s U axis', async () => {
+
+		// U runs along +y: the ramp rises that way, so the normal leans to −y.
+		const n = await bump( ramp( NATIVE ), [ NATIVE, NATIVE ], 2, { T: [ 0, 1, 0 ], B: [ - 1, 0, 0 ] } );
+		for ( let i = 0; i < 64; i ++ ) {
+
+			expect( n[ i * 4 + 1 ] ).toBeLessThan( - 0.002 );
+			expect( n[ i * 4 ] ).toBeCloseTo( 0, 6 );
 
 		}
 

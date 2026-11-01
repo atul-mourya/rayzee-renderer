@@ -18,7 +18,7 @@ import {
 import { sampleEnvironment, groundProjectedEnvDir, sampleEnvironmentExact, environmentPdfExact } from '../Environment.js';
 import { getMaterial, powerHeuristic, balanceHeuristic, classifyMaterial, REC709_LUMINANCE_COEFFICIENTS, PI_INV, EPSILON, diffuseGroundMaterial, offsetRayOrigin, SHADOW_END, triangleRow, MIN_ROUGHNESS, MIN_PDF, passesLight, transmissionTint } from '../Common.js';
 import { cosineWeightedSample } from '../MaterialSampling.js';
-import { sampleAllMaterialTextures, processAnisotropyMap, applyExtensionMaps, getTransformedUV, triangleUVTangent, perturbNormal } from '../TextureSampling.js';
+import { sampleAllMaterialTextures, processAnisotropyMap, applyExtensionMaps, getTransformedUV, triangleUVTangent, triangleUVAxes, NO_UV_AXES, perturbNormal } from '../TextureSampling.js';
 import { evaluateMaterialResponse } from '../MaterialEvaluation.js';
 import {
 	calculateDirectLightingUnified, calculateDirectLightingThroughSurfaces, calculateMaterialPDF,
@@ -33,7 +33,7 @@ import { traverseBVHShadow, triangleSide, sideAccepts } from '../BVHTraversal.js
 import { visibilityCell } from '../LightVisibility.js';
 import { handleMaterialTransparency, MaterialInteractionResult } from '../MaterialTransmission.js';
 import { sampleChromaticCollision, sampleHenyeyGreenstein, subsurfaceCoefficients, CollisionSample, MediumCoeffs } from '../Subsurface.js';
-import { ALL_MATERIAL_LAYERS, usesClearcoatNormals } from '../SceneResources.js';
+import { ALL_MATERIAL_LAYERS, usesClearcoatNormals, usesBumpMaps } from '../SceneResources.js';
 import { calculateIndirectLighting } from '../LightsIndirect.js';
 import {
 	IndirectLightingResult, sampleCone, LightSample, DirectionalLight, AreaLight, PointLight, SpotLight,
@@ -1047,8 +1047,15 @@ export function buildShadeKernel( params ) {
 
 		} );
 
+		const bumpAxes = NO_UV_AXES.toVar();
+		if ( usesBumpMaps( builder ) ) If( material.bumpMapIndex.greaterThanEqual( int( 0 ) ), () => {
+
+			bumpAxes.assign( triangleUVAxes( triangleBuffer, int( hitTriIdx ), material.bumpTransform, bvhBuffer, hitInstance ) );
+
+		} );
+
 		const matSamples = MaterialSamples.wrap( sampleAllMaterialTextures(
-			material, samplingUV, N, uvTangent,
+			material, samplingUV, N, uvTangent, bumpAxes,
 		) ).toVar();
 
 		// DDFA: snapshot the UNCLAMPED roughness (before the min-0.05 clamp below) for the specular↔diffuse

@@ -8,7 +8,7 @@ import { Ray, HitInfo, RayTracingMaterial, UVCache } from '../../shaders/Struct.
 import { traverseBVH } from '../../shaders/BVHTraversal.js';
 import { cameraRayOf, cameraRayUniforms, cameraClipDistance } from '../../shaders/CameraRay.js';
 import { getMaterial } from '../../shaders/Common.js';
-import { computeUVCache, processNormal, processBump, processMetalnessRoughness, triangleUVTangent, buildBucketTextureNodes, refreshBucketTextureNodes } from '../../shaders/TextureSampling.js';
+import { computeUVCache, processNormal, processBump, processMetalnessRoughness, triangleUVTangent, triangleUVAxes, NO_UV_AXES, buildBucketTextureNodes, refreshBucketTextureNodes } from '../../shaders/TextureSampling.js';
 import { withSceneResources } from '../../shaders/SceneResources.js';
 
 /**
@@ -285,8 +285,15 @@ export class NormalDepth extends RenderStage {
 
 					} );
 
+					const bumpAxes = NO_UV_AXES.toVar();
+					If( material.bumpMapIndex.greaterThanEqual( int( 0 ) ), () => {
+
+						bumpAxes.assign( triangleUVAxes( triStorage, hit.triangleIndex, material.bumpTransform, bvhStorage, hit.instanceLeaf ) );
+
+					} );
+
 					const mapped = processNormal( hit.normal, material, uvCache, uvTangent ).toVar();
-					shadingNormal.assign( processBump( mapped, material, uvCache ) );
+					shadingNormal.assign( processBump( mapped, material, uvCache, bumpAxes ) );
 					// Same floor the Shade kernel applies before shading.
 					roughness.assign( processMetalnessRoughness( material, uvCache ).y.clamp( 0.05, 1.0 ) );
 					const emits = max( material.emissive.x, max( material.emissive.y, material.emissive.z ) ).mul( material.emissiveIntensity ).greaterThan( 0.0 );

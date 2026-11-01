@@ -1,5 +1,5 @@
-import { sceneResources, materialLayers } from './SceneResources.js';
-import { Fn, wgslFn, float, vec2, vec3, vec4, int, If, normalize, cross, dot, length, sign, abs, atan, mix, clamp, select, texture, textureSize, uintBitsToFloat } from 'three/tsl';
+import { sceneResources, materialLayers, usesBumpMaps } from './SceneResources.js';
+import { Fn, wgslFn, float, vec2, vec3, vec4, int, mat3, If, max, normalize, cross, dot, length, sign, abs, atan, mix, clamp, select, texture, textureSize, uintBitsToFloat } from 'three/tsl';
 import { DataArrayTexture, LinearFilter } from 'three';
 
 import {
@@ -357,27 +357,9 @@ const uvTransformInverse = /*@__PURE__*/ wgslFn( `
 	}
 ` );
 
-/**
- * Build the UV tangent for one triangle, as vec4( T.xyz, handedness ).
- *
- * Returned in the *transformed* UV space of `transform`, since that is the space the normal
- * map is sampled in — the inverse of the transform's 2x2 linear part maps dP/du back onto
- * dP/du'. A pure repeat/scale leaves the direction alone; a rotated transform does not.
- * w == 0 signals a degenerate parameterisation, which processNormal treats as "no frame".
- *
- * @param {Node} triangleBuffer packed triangle storage (8 vec4 stride)
- * @param {Node} triIndex       absolute triangle index
- * @param {Node} geometryNormal shading-space normal, for the handedness test
- * @param {Node} transform      the normal map's mat3 UV transform
- */
-/**
- * Tangent frame for a triangle, in world space.
- *
- * Positions are stored per instance in object space, so T and B come out in that space
- * and are carried across before they meet the world-space geometric normal — otherwise
- * the handedness test mixes two frames and normal maps light from the wrong side.
- */
-export const triangleUVTangent = Fn( ( [ triangleBuffer, triIndex, geometryNormal, transform, bvhBuffer, instanceLeaf ] ) => {
+// A triangle's edges and UV deltas; det = 0 for a degenerate parameterisation. Inline JS, not a Fn: the normal-map frame
+// split into Fns passing a mat3 cost Shade 1–2 % in scenes with no map at all.
+function triangleUVDeltas( triangleBuffer, triIndex ) {
 
 	const pA = uintBitsToFloat( triangleRow( triangleBuffer, triIndex, 0 ).xyz );
 	const e1 = uintBitsToFloat( triangleRow( triangleBuffer, triIndex, 1 ).xyz ).sub( pA );
@@ -388,7 +370,30 @@ export const triangleUVTangent = Fn( ( [ triangleBuffer, triIndex, geometryNorma
 	const d1 = uvAB.zw.sub( uvAB.xy );
 	const d2 = uvC.sub( uvAB.xy );
 
-	const det = d1.x.mul( d2.y ).sub( d1.y.mul( d2.x ) );
+	return { e1, e2, d1, d2, det: d1.x.mul( d2.y ).sub( d1.y.mul( d2.x ) ) };
+
+}
+
+/**
+ * Build the UV tangent for one triangle, as vec4( T.xyz, handedness ), in world space.
+ *
+ * Returned in the *transformed* UV space of `transform`, since that is the space the normal
+ * map is sampled in — the inverse of the transform's 2x2 linear part maps dP/du back onto
+ * dP/du'. A pure repeat/scale leaves the direction alone; a rotated transform does not.
+ * w == 0 signals a degenerate parameterisation, which processNormal treats as "no frame".
+ *
+ * Positions are stored per instance in object space, so T and B come out in that space
+ * and are carried across before they meet the world-space geometric normal — otherwise
+ * the handedness test mixes two frames and normal maps light from the wrong side.
+ *
+ * @param {Node} triangleBuffer packed triangle storage
+ * @param {Node} triIndex       absolute triangle index
+ * @param {Node} geometryNormal shading-space normal, for the handedness test
+ * @param {Node} transform      the normal map's mat3 UV transform
+ */
+export const triangleUVTangent = Fn( ( [ triangleBuffer, triIndex, geometryNormal, transform, bvhBuffer, instanceLeaf ] ) => {
+
+	const { e1, e2, d1, d2, det } = triangleUVDeltas( triangleBuffer, triIndex );
 	const result = vec4( 0.0 ).toVar();
 
 	If( abs( det ).greaterThan( 1e-12 ), () => {
@@ -430,23 +435,75 @@ export const triangleUVTangent = Fn( ( [ triangleBuffer, triIndex, geometryNorma
 
 } );
 
+/** Axes for a surface with no usable UV parameterisation. */
+export const NO_UV_AXES = /*@__PURE__*/ mat3( 0, 0, 0, 0, 0, 0, 0, 0, 0 );
+
 /**
- * The normal a normal map (packed linear-bucket index `mapIndex`, caller-guarded >= 0) gives `geometryNormal` at `uv`.
- *
- * `uvTangent` is vec4( T.xyz, handedness ); w == 0 means "no usable frame" (degenerate or
- * missing UVs) and falls back to the arbitrary cross(up, N) frame. A frame unrelated to the
- * texture's U axis rotates the whole perturbation: on a vertical fluted-glass panel the
- * arbitrary frame comes out 90 deg off, so the rib normals tilt up/down instead of across
- * the ribs.
+ * A triangle's UV axes in the map's transformed UV space (`transform`) and in world space, as mat3( dP/du, dP/dv, 0 ):
+ * unnormalised, so each length is the scene units one whole UV unit spans — a repeat shortens them. NO_UV_AXES for a
+ * degenerate parameterisation. triangleUVTangent's frame, lengths kept.
  */
-export const perturbNormal = Fn( ( [ geometryNormal, mapIndex, scale, uv, uvTangent ], builder ) => {
+export const triangleUVAxes = Fn( ( [ triangleBuffer, triIndex, transform, bvhBuffer, instanceLeaf ] ) => {
 
-	const { linearBuckets } = sceneResources( builder );
+	const { e1, e2, d1, d2, det } = triangleUVDeltas( triangleBuffer, triIndex );
+	const T = vec3( 0.0 ).toVar();
+	const B = vec3( 0.0 ).toVar();
 
-	const normalSample = sampleBucket( linearBuckets, mapIndex, uv );
-	const normalMap = normalSample.xyz.mul( 2.0 ).sub( 1.0 ).toVar();
-	normalMap.x.mulAssign( scale );
-	normalMap.y.assign( normalMap.y.negate().mul( scale ) );
+	If( abs( det ).greaterThan( 1e-12 ), () => {
+
+		const r = float( 1.0 ).div( det );
+		T.assign( e1.mul( d2.y ).sub( e2.mul( d1.y ) ).mul( r ) );
+		B.assign( e2.mul( d1.x ).sub( e1.mul( d2.x ) ).mul( r ) );
+
+		// The true inverse, lengths and all: uvTransformInverse over |det|.
+		const linear = abs( transform[ 0 ].x.mul( transform[ 1 ].y ).sub( transform[ 1 ].x.mul( transform[ 0 ].y ) ) );
+		const inv = uvTransformInverse( { t: transform } ).div( max( linear, 1e-12 ) ).toVar();
+		const Tt = T.mul( inv.x ).add( B.mul( inv.y ) ).toVar();
+
+		If( length( Tt ).greaterThan( 1e-12 ), () => {
+
+			B.assign( T.mul( inv.z ).add( B.mul( inv.w ) ) );
+			T.assign( Tt );
+
+		} );
+
+		If( instanceLeaf.greaterThanEqual( int( 0 ) ), () => {
+
+			const rows = instanceRows( bvhBuffer, instanceLeaf );
+			T.assign( instanceDirToWorld( { r0: rows[ 0 ].xyz, r1: rows[ 1 ].xyz, r2: rows[ 2 ].xyz, v: T } ) );
+			B.assign( instanceDirToWorld( { r0: rows[ 0 ].xyz, r1: rows[ 1 ].xyz, r2: rows[ 2 ].xyz, v: B } ) );
+
+		} );
+
+	} );
+
+	return mat3( T, B, vec3( 0.0 ) );
+
+} );
+
+/** vec4( normalize( dP/du ), handedness ) from UV axes; w == 0 means no usable frame. */
+export const uvTangentOf = Fn( ( [ axes, geometryNormal ] ) => {
+
+	const T = axes[ 0 ].toVar();
+	const result = vec4( 0.0 ).toVar();
+
+	If( length( T ).greaterThan( 1e-12 ), () => {
+
+		result.assign( vec4( normalize( T ), sign( dot( cross( geometryNormal, T ), axes[ 1 ] ) ) ) );
+
+	} );
+
+	return result;
+
+} );
+
+/**
+ * The frame a map tilts `geometryNormal` in: the map's U axis made perpendicular to N (the interpolated normal is not
+ * exactly triangle-planar), or the arbitrary cross( up, N ) frame where `uvTangent` (vec4( T.xyz, handedness )) has
+ * none. A frame unrelated to the texture's U axis rotates the whole tilt: on a vertical fluted-glass panel the arbitrary
+ * frame comes out 90 deg off, so the rib normals tilt up/down instead of across the ribs. Inline, as perturbNormal was.
+ */
+function tangentFrame( geometryNormal, uvTangent ) {
 
 	const tangent = vec3( 0.0 ).toVar();
 	const handedness = float( 1.0 ).toVar();
@@ -466,7 +523,21 @@ export const perturbNormal = Fn( ( [ geometryNormal, mapIndex, scale, uv, uvTang
 
 	} );
 
-	const bitangent = cross( geometryNormal, tangent ).mul( handedness );
+	return { tangent, bitangent: cross( geometryNormal, tangent ).mul( handedness ) };
+
+}
+
+/** The normal a normal map (packed linear-bucket index `mapIndex`, caller-guarded >= 0) gives `geometryNormal` at `uv`. */
+export const perturbNormal = Fn( ( [ geometryNormal, mapIndex, scale, uv, uvTangent ], builder ) => {
+
+	const { linearBuckets } = sceneResources( builder );
+
+	const normalSample = sampleBucket( linearBuckets, mapIndex, uv );
+	const normalMap = normalSample.xyz.mul( 2.0 ).sub( 1.0 ).toVar();
+	normalMap.x.mulAssign( scale );
+	normalMap.y.assign( normalMap.y.negate().mul( scale ) );
+
+	const { tangent, bitangent } = tangentFrame( geometryNormal, uvTangent );
 
 	return normalize(
 		tangent.mul( normalMap.x ).add( bitangent.mul( normalMap.y ) ).add( geometryNormal.mul( normalMap.z ) )
@@ -488,36 +559,61 @@ export const processNormal = Fn( ( [ geometryNormal, material, uvCache, uvTangen
 
 } );
 
-export const processBump = Fn( ( [ currentNormal, material, uvCache ], builder ) => {
+/**
+ * The normal a bump map gives `currentNormal`; `axes` are the surface's UV axes in the bump map's UV space (triangleUVAxes).
+ * The slope is taken over one texel of the map as authored, however packing stretched or shrank it: a 512² map in a
+ * 1024² array stepped one stored texel at half strength.
+ *
+ * With a `bumpDistance` the map is a height, 0 → 1 spanning that many scene units (negative presses it in), and the
+ * normal is the bumped surface's own: Mikkelsen's surface gradient over the axes, as Cycles' Bump node and pbrt's
+ * displacement take it. Without one, three.js's bumpScale: the slope per texel times the scale, faded in by the scale up
+ * to 1, tilted along the map's U and V.
+ */
+export const processBump = Fn( ( [ currentNormal, material, uvCache, axes ], builder ) => {
 
+	if ( ! usesBumpMaps( builder ) ) return currentNormal;
 	const { linearBuckets } = sceneResources( builder );
 
 	const result = currentNormal.toVar();
+	const physical = material.bumpDistance.notEqual( 0.0 );
 
-	If( material.bumpMapIndex.greaterThanEqual( int( 0 ) ).and( material.bumpScale.greaterThan( 0.0 ) ), () => {
+	If( material.bumpMapIndex.greaterThanEqual( int( 0 ) ).and( physical.or( material.bumpScale.greaterThan( 0.0 ) ) ), () => {
 
-		const bumpNormal = vec3( 0.0, 0.0, 1.0 ).toVar();
+		// Height change over one texel along U and V.
+		const slope = vec2( 0.0 ).toVar();
+		const texelSize = vec2( 1.0 ).toVar();
 		withBucket( linearBuckets, material.bumpMapIndex, ( node, layer ) => {
 
-			// One texel of the map as authored, however packing stretched or shrank it: a 512² map in a 1024² array
-			// stepped one stored texel at half strength. The stored size when unknown.
-			const native = vec2( material.bumpTransform[ 0 ].z, material.bumpTransform[ 1 ].z );
-			const texelSize = vec2( 1.0 ).div( select( native.x.greaterThan( 0.0 ), native, vec2( textureSize( node ) ) ) ).toVar();
+			const native = material.bumpMapSize;
+			texelSize.assign( vec2( 1.0 ).div( select( native.x.greaterThan( 0.0 ), native, vec2( textureSize( node ) ) ) ) );
 			const h_c = texture( node, uvCache.bumpUV ).depth( layer ).r;
 			const h_u = texture( node, vec2( uvCache.bumpUV.x.add( texelSize.x ), uvCache.bumpUV.y ) ).depth( layer ).r;
 			const h_v = texture( node, vec2( uvCache.bumpUV.x, uvCache.bumpUV.y.add( texelSize.y ) ) ).depth( layer ).r;
-			const gradient = vec2( h_u.sub( h_c ), h_v.sub( h_c ) ).mul( material.bumpScale );
-			bumpNormal.assign( normalize( vec3( gradient.x.negate(), gradient.y.negate(), 1.0 ) ) );
+			slope.assign( vec2( h_u.sub( h_c ), h_v.sub( h_c ) ) );
 
 		} );
 
-		// Build TBN matrix using current normal
-		const up = abs( currentNormal.z ).lessThan( 0.999 ).select( vec3( 0.0, 0.0, 1.0 ), vec3( 1.0, 0.0, 0.0 ) );
-		const tangent = normalize( cross( up, currentNormal ) );
-		const bitangent = cross( currentNormal, tangent );
+		If( physical, () => {
 
-		const perturbedNormal = tangent.mul( bumpNormal.x ).add( bitangent.mul( bumpNormal.y ) ).add( currentNormal.mul( bumpNormal.z ) );
-		result.assign( normalize( mix( currentNormal, perturbedNormal, clamp( material.bumpScale, 0.0, 1.0 ) ) ) );
+			const dHdUV = slope.div( texelSize ).mul( material.bumpDistance );
+			const R1 = cross( axes[ 1 ], currentNormal );
+			const R2 = cross( currentNormal, axes[ 0 ] );
+			const det = dot( axes[ 0 ], R1 ).toVar();
+
+			If( det.notEqual( 0.0 ), () => {
+
+				result.assign( normalize( currentNormal.mul( abs( det ) ).sub( R1.mul( dHdUV.x ).add( R2.mul( dHdUV.y ) ).mul( sign( det ) ) ) ) );
+
+			} );
+
+		} ).Else( () => {
+
+			const gradient = slope.mul( material.bumpScale );
+			const { tangent, bitangent } = tangentFrame( currentNormal, uvTangentOf( axes, currentNormal ) );
+			const tilted = normalize( tangent.mul( gradient.x.negate() ).add( bitangent.mul( gradient.y.negate() ) ).add( currentNormal ) );
+			result.assign( normalize( mix( currentNormal, tilted, clamp( material.bumpScale, 0.0, 1.0 ) ) ) );
+
+		} );
 
 	} );
 
@@ -673,7 +769,8 @@ const processEmissive = Fn( ( [ material, uvCache ], builder ) => {
 // MAIN BATCHED SAMPLING FUNCTION
 // ================================================================================
 
-export const sampleAllMaterialTextures = Fn( ( [ material, uv, geometryNormal, uvTangent ] ) => {
+// `uvTangent` frames the normal map (triangleUVTangent), `bumpAxes` the bump map (triangleUVAxes).
+export const sampleAllMaterialTextures = Fn( ( [ material, uv, geometryNormal, uvTangent, bumpAxes ] ) => {
 
 	const albedo = vec4( 0.0 ).toVar();
 	const emissive = vec3( 0.0 ).toVar();
@@ -702,7 +799,7 @@ export const sampleAllMaterialTextures = Fn( ( [ material, uv, geometryNormal, u
 		roughness.assign( metalRough.y );
 
 		const currentNormal = processNormal( geometryNormal, material, uvCache, uvTangent ).toVar();
-		normal.assign( processBump( currentNormal, material, uvCache ) );
+		normal.assign( processBump( currentNormal, material, uvCache, bumpAxes ) );
 
 		emissive.assign( processEmissive( material, uvCache ) );
 

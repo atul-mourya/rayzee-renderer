@@ -1,14 +1,15 @@
 /**
- * triangleUVTangent gives a triangle's tangent frame in the normal map's transformed UV space. The reference is the
- * frame of the transformed UVs themselves, worked out on the CPU. A mirrored transform (a flipped KHR_texture_transform)
- * or one turned past 90° reversed the frame before.
+ * triangleUVTangent gives a triangle's tangent frame in the normal map's transformed UV space, triangleUVAxes the same
+ * axes at their full length (a bump map's slope needs it). The reference is the frame of the transformed UVs themselves,
+ * worked out on the CPU. A mirrored transform (a flipped KHR_texture_transform) or one turned past 90° reversed the frame
+ * before.
  */
 
 import { afterAll, beforeAll, expect, it } from 'vitest';
 import { Matrix3 } from 'three';
-import { instanceIndex, instancedArray, int } from 'three/tsl';
+import { instanceIndex, instancedArray, int, vec4 } from 'three/tsl';
 import { describeGPU, createRenderer, evaluate } from './gpu.js';
-import { triangleUVTangent } from '@/core/shaders/TextureSampling.js';
+import { triangleUVTangent, triangleUVAxes } from '@/core/shaders/TextureSampling.js';
 import { arrayToMat3 } from '@/core/shaders/Common.js';
 
 const uvTransform = ( ox, oy, sx, sy, rotation ) => new Matrix3().setUvTransform( ox, oy, sx, sy, rotation, 0, 0 ).elements;
@@ -86,7 +87,7 @@ function buildCases() {
 		const face = normalize( cross( sub( positions[ 1 ], positions[ 0 ] ), sub( positions[ 2 ], positions[ 0 ] ) ) );
 		const N = k % 2 ? face.map( ( v ) => - v ) : face;
 		const { T, B } = frame( positions, uvs.map( ( uv ) => apply( e, uv ) ) );
-		cases.push( { name, e, positions, uvs, N, T: normalize( T ), w: Math.sign( dot( cross( N, T ), B ) ) } );
+		cases.push( { name, e, positions, uvs, N, axes: [ T, B ], T: normalize( T ), w: Math.sign( dot( cross( N, T ), B ) ) } );
 
 	}
 
@@ -100,9 +101,9 @@ describeGPU( 'UV tangent frame under a texture transform', () => {
 	beforeAll( async () => void ( renderer = await createRenderer() ) );
 	afterAll( () => renderer?.dispose() );
 
-	it( 'matches the frame of the transformed UVs, mirrored and turned transforms included', async () => {
+	// Each case's triangle in a store, its transform, normal and (no instance) leaf as data.
+	function inputs( cases ) {
 
-		const cases = buildCases();
 		const count = cases.length;
 
 		const geo = new Float32Array( count * 12 ), shade = new Float32Array( count * 8 );
@@ -124,8 +125,17 @@ describeGPU( 'UV tangent frame under a texture transform', () => {
 		// Not an instance: the leaf comes in as data, since a literal -1 folds into an out-of-bounds read of the BVH.
 		const bvh = instancedArray( new Float32Array( 16 ), 'vec4' );
 
-		const out = new Float32Array( await evaluate( renderer, count,
-			{ d1: [ d1, 'vec4' ], d2: [ d2, 'vec4' ], n: [ n, 'vec4' ], leaf: [ new Int32Array( count ).fill( - 1 ), 'int' ] }, 'vec4',
+		return { tris, bvh, data: { d1: [ d1, 'vec4' ], d2: [ d2, 'vec4' ], n: [ n, 'vec4' ], leaf: [ new Int32Array( count ).fill( - 1 ), 'int' ] } };
+
+	}
+
+	it( 'matches the frame of the transformed UVs, mirrored and turned transforms included', async () => {
+
+		const cases = buildCases();
+		const count = cases.length;
+		const { tris, bvh, data } = inputs( cases );
+
+		const out = new Float32Array( await evaluate( renderer, count, data, 'vec4',
 			( a ) => triangleUVTangent( tris, int( instanceIndex ), a.n.xyz, arrayToMat3( { data1: a.d1, data2: a.d2 } ), bvh, a.leaf ) ) );
 
 		const worst = {};
@@ -139,6 +149,31 @@ describeGPU( 'UV tangent frame under a texture transform', () => {
 		} );
 
 		for ( const [ name, angle ] of Object.entries( worst ) ) expect( angle, `${name} tangent, degrees` ).toBeLessThan( 0.01 );
+
+	} );
+
+	it( 'keeps the axes\' lengths: the scene units a whole unit of the transformed UVs spans', async () => {
+
+		const cases = buildCases();
+		const count = cases.length;
+		const { tris, bvh, data } = inputs( cases );
+		const axis = async ( column ) => new Float32Array( await evaluate( renderer, count, data, 'vec4', ( a ) =>
+			vec4( triangleUVAxes( tris, int( instanceIndex ), arrayToMat3( { data1: a.d1, data2: a.d2 } ), bvh, a.leaf )[ column ], 0 ) ) );
+		const got = [ await axis( 0 ), await axis( 1 ) ];
+
+		const worst = {};
+		cases.forEach( ( c, i ) => {
+
+			for ( let column = 0; column < 2; column ++ ) {
+
+				const want = c.axes[ column ];
+				const error = Math.hypot( ...sub( [ ...got[ column ].subarray( i * 4, i * 4 + 3 ) ], want ) ) / Math.hypot( ...want );
+				worst[ c.name ] = Math.max( worst[ c.name ] ?? 0, error );
+
+			}
+
+		} );
+		for ( const [ name, error ] of Object.entries( worst ) ) expect( error, `${name} relative error` ).toBeLessThan( 1e-4 );
 
 	} );
 

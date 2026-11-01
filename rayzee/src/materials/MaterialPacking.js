@@ -136,8 +136,6 @@ export function packMaterial( data, base, mat ) {
 
 	}
 
-	data[ base + M.BUMP_MAP_WIDTH ] = num( mat.bumpMapSize?.[ 0 ], 0 );
-	data[ base + M.BUMP_MAP_HEIGHT ] = num( mat.bumpMapSize?.[ 1 ], 0 );
 
 	writeTriple( data, base + M.SUBSURFACE_COLOR, mat.subsurfaceColor, D.subsurfaceColor );
 	u( M.SUBSURFACE, mat.subsurface, D.subsurface );
@@ -167,5 +165,10 @@ export function packMaterial( data, base, mat ) {
 	data[ base + M.CLEARCOAT_NORMAL_MAP_INDEX ] = mapIndex( mat.clearcoatNormalMap );
 	const coatScale = mat.clearcoatNormalScale;
 	s( M.CLEARCOAT_NORMAL_SCALE, typeof coatScale === 'number' ? coatScale : coatScale?.x ?? coatScale?.[ 0 ], D.clearcoatNormalScale[ 0 ] );
+
+	s( M.BUMP_DISTANCE, mat.bumpDistance, D.bumpDistance );
+	data[ base + M.BUMP_MAP_WIDTH ] = num( mat.bumpMapSize?.[ 0 ], 0 );
+	data[ base + M.BUMP_MAP_HEIGHT ] = num( mat.bumpMapSize?.[ 1 ], 0 );
+	data[ base + M.SPARE ] = 0;
 
 }

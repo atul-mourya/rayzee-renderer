@@ -461,6 +461,7 @@ export class PathTracer extends PathTracerStage {
 			if ( MATERIAL_LAYERS.some( ( layer ) => needed[ layer ] && ! this._compiledLayers?.[ layer ] ) ) this._outputsChanged = true;
 			if ( ! this._compiledGlass && this.materialData.hasTransmission() ) this._outputsChanged = true;
 			if ( ! this._compiledTransmissionMaps && this.materialData.hasTransmissionMaps() ) this._outputsChanged = true;
+			if ( ! this._compiledBumpMaps && this.materialData.hasBumpMaps() ) this._outputsChanged = true;
 			if ( ! this._compiledClearcoatNormals && this._clearcoatNormalsNeeded() ) this._outputsChanged = true;
 
 		}
@@ -1814,6 +1815,7 @@ export class PathTracer extends PathTracerStage {
 			lightRadius: this._compiledLightRadius = this._lightRadiusNeeded(),
 			glass: this._compiledGlass = this.materialData.hasTransmission(),
 			transmissionMaps: this._compiledTransmissionMaps = this.materialData.hasTransmissionMaps(),
+			bumpMaps: this._compiledBumpMaps = this.materialData.hasBumpMaps(),
 			clearcoatNormals: this._compiledClearcoatNormals = this._clearcoatNormalsNeeded(),
 			fog: this._fogNeeded() ? {
 				density: this.fogDensity, color: this.fogColor, anisotropy: this.fogAnisotropy, boxMin: this.fogBoxMin, boxMax: this.fogBoxMax,

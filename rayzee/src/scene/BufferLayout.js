@@ -118,8 +118,8 @@ export function unpackNormalOct( packed, out ) {
 // Shared between CPU writers (TextureCreator, MaterialDataManager) and GPU readers (Common.js getMaterial).
 export const MATERIAL_DATA_LAYOUT = {
 
-	SLOTS_PER_MATERIAL: 34, // vec4 slots per material
-	FLOATS_PER_MATERIAL: 136, // total floats per material (34 × 4)
+	SLOTS_PER_MATERIAL: 35, // vec4 slots per material
+	FLOATS_PER_MATERIAL: 140, // total floats per material (35 × 4)
 
 	// ── Flat float offsets (CPU side) ────────────────────────────────
 	// Used as: data[ materialIndex * FLOATS_PER_MATERIAL + offset ]
@@ -152,15 +152,13 @@ export const MATERIAL_DATA_LAYOUT = {
 	// Slot 12: bumpScale + displacementScale + displacementMapIndex + displacementBias
 	BUMP_SCALE: 48, DISPLACEMENT_SCALE: 49, DISPLACEMENT_MAP_INDEX: 50, DISPLACEMENT_BIAS: 51,
 
-	// ── Transform float offsets (8 floats each: 7 matrix values + 1 padding) ──
+	// ── Transform float offsets (8 floats each: Matrix3 elements 0–7; the GPU rebuilds the 9th) ──
 	ALBEDO_TRANSFORM: 52,
 	NORMAL_TRANSFORM: 60,
 	ROUGHNESS_TRANSFORM: 68,
 	METALNESS_TRANSFORM: 76,
 	EMISSIVE_TRANSFORM: 84,
 	BUMP_TRANSFORM: 92,
-	// The bump transform's third row, unused by any transform: the bump map's own width and height.
-	BUMP_MAP_WIDTH: 94, BUMP_MAP_HEIGHT: 97,
 	DISPLACEMENT_TRANSFORM: 100,
 
 	// ── Subsurface scattering (3 slots appended after transforms) ────
@@ -180,6 +178,9 @@ export const MATERIAL_DATA_LAYOUT = {
 	// map index and scale; read only for a material with diffuse transmission or a coat
 	DIFFUSE_TRANSMISSION_MAP_INDEX: 132, DIFFUSE_TRANSMISSION_COLOR_MAP_INDEX: 133,
 	CLEARCOAT_NORMAL_MAP_INDEX: 134, CLEARCOAT_NORMAL_SCALE: 135,
+	// Slot 34: bumpDistance + the bump map's own width and height + a lane nothing reads; read only for a bump-mapped
+	// material
+	BUMP_DISTANCE: 136, BUMP_MAP_WIDTH: 137, BUMP_MAP_HEIGHT: 138, SPARE: 139,
 
 	// ── Vec4 slot indices (GPU/TSL side) ─────────────────────────────
 	// Used with getDatafromStorageBuffer( buf, matIdx, int(slot), int(SLOTS_PER_MATERIAL) )
@@ -211,6 +212,7 @@ export const MATERIAL_DATA_LAYOUT = {
 		EXT_MAP_INDICES_B: 31, // sheenRoughness, iridescence, iridescenceThickness, specularIntensity map indices
 		EXT_MAP_INDICES_C: 32, // specularColor map index, diffuseTransmissionColor
 		EXT_MAP_INDICES_D: 33, // diffuseTransmission, diffuseTransmissionColor, clearcoatNormal map indices, clearcoatNormalScale
+		BUMP: 34, // bumpDistance, bump map width, height
 	},
 
 };
