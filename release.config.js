@@ -4,6 +4,10 @@ const config = {
 		[ '@semantic-release/commit-analyzer', {
 			preset: 'angular',
 			releaseRules: [
+				// Custom rules replace the defaults for every commit one of them matches, so without this a
+				// breaking note on a feat/fix/build commit was released by its type: 11.17.0 shipped the three r187
+				// requirement and four BREAKING CHANGE notes as a minor.
+				{ breaking: true, release: 'major' },
 				// Scope matching is case-sensitive and every docs commit in this repo writes
 				// it lowercase, so 'README' never matched anything.
 				{ type: 'docs', scope: 'readme', release: 'patch' },
