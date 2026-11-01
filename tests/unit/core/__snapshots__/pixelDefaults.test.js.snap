@@ -1,6 +1,6 @@
 // Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
-exports[`defaults that shape pixels — a change here is a BREAKING CHANGE > engine defaults 1`] = `
+exports[`defaults that shape pixels — a change here says how renders change in its commit > engine defaults 1`] = `
 {
   "adaptiveMinSamples": 8,
   "adaptiveStopFraction": 0.9,
@@ -78,7 +78,7 @@ exports[`defaults that shape pixels — a change here is a BREAKING CHANGE > eng
 }
 `;
 
-exports[`defaults that shape pixels — a change here is a BREAKING CHANGE > material defaults 1`] = `
+exports[`defaults that shape pixels — a change here says how renders change in its commit > material defaults 1`] = `
 {
   "alphaMode": 0,
   "alphaTest": 0,
@@ -166,7 +166,7 @@ exports[`defaults that shape pixels — a change here is a BREAKING CHANGE > mat
 }
 `;
 
-exports[`defaults that shape pixels — a change here is a BREAKING CHANGE > mode presets 1`] = `
+exports[`defaults that shape pixels — a change here says how renders change in its commit > mode presets 1`] = `
 {
   "interactive": {
     "adaptiveMinSamples": 8,
@@ -201,7 +201,7 @@ exports[`defaults that shape pixels — a change here is a BREAKING CHANGE > mod
 }
 `;
 
-exports[`defaults that shape pixels — a change here is a BREAKING CHANGE > starting sky and view 1`] = `
+exports[`defaults that shape pixels — a change here says how renders change in its commit > starting sky and view 1`] = `
 {
   "sky": {
     "skyAirDensity": 1,
@@ -219,7 +219,7 @@ exports[`defaults that shape pixels — a change here is a BREAKING CHANGE > sta
 }
 `;
 
-exports[`defaults that shape pixels — a change here is a BREAKING CHANGE > viewer piece defaults 1`] = `
+exports[`defaults that shape pixels — a change here says how renders change in its commit > viewer piece defaults 1`] = `
 {
   "autoExposure": {
     "autoExposure": false,

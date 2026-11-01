@@ -83,13 +83,14 @@ Use **conventional commits**. Every commit message and PR title **must** start w
 
 Optional scope: `feat(nrd):`, `fix(tsl):`, `refactor(pipeline):`, etc.
 
-**A change to default pixels is a breaking change.** Anything that changes what a render looks like
-when a host sets nothing — a default setting (the core's or a viewer piece's), a mode preset, light units,
-a sampling or BSDF change that moves the goldens — gets a `BREAKING CHANGE:` footer saying how default
-renders change, so semantic-release makes it a major. Farms pin a major to pin a look and calibrate
-against it; 7.28 → 9.1 moved their image by 29.5/255 with no breaking note. Two tripwires:
-`tests/unit/core/pixelDefaults.test.js` snapshots the defaults (core and viewer pieces) and presets (update with
-`-u`, then add the footer), and `bench:bless` names every golden that moved on the same GPU.
+**Breaking means a public API change, never a look.** Mark a commit breaking (`!` or a `BREAKING CHANGE:` footer,
+which makes semantic-release cut a major) only when it removes, renames or re-types an export, method, option, event
+or issue code, or changes a call's contract. A change to what renders look like when a host sets nothing — a default
+setting, a mode preset, light units, a sampling or BSDF change, an importer reading more of a file — is not: say how
+renders change in the commit body ("Renders change only for…"), and never write the words BREAKING CHANGE there (the
+release analyzer matches them anywhere). Two tripwires flag a look change: `tests/unit/core/pixelDefaults.test.js`
+snapshots the defaults (core and viewer pieces) and presets (update with `-u`), and `bench:bless` names every golden
+that moved on the same GPU.
 
 ## Monorepo Structure
 

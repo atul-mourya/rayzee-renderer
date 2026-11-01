@@ -835,7 +835,7 @@ async function main() {
 			if ( moved.length ) {
 
 				log( `\n${YELLOW}${moved.length} golden(s) moved on this GPU: ${moved.join( ', ' )}.${RESET}` );
-				log( `${YELLOW}The default render changed — say how in a BREAKING CHANGE footer on the commit (see CLAUDE.md).${RESET}` );
+				log( `${YELLOW}The default render changed — say how renders change in the commit body (see CLAUDE.md).${RESET}` );
 
 			}
 

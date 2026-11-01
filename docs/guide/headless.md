@@ -99,9 +99,9 @@ lockstep back off. Store it beside each render and "what made this?" has an answ
 again.
 
 **Pinning a look.** A change to what a render looks like when a host sets nothing — a default
-setting, a mode preset, light units — is released as a **major**, with the
-change described under BREAKING CHANGES in the release notes. Pin a major to pin a look; read the
-notes before moving to the next one.
+setting, a mode preset, light units — can ship in any release, and its release notes say how renders
+change. Pin an exact version to pin a look, and read the notes before moving to the next one. Major
+versions are kept for changes to the API.
 
 ### Running in Node
 

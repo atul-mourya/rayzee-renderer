@@ -1,9 +1,8 @@
 /**
  * A tripwire, not a spec. Everything here decides what a render looks like when a host sets
- * nothing, and hosts pin a major version to pin that look. When one of these fails on purpose:
- * update the snapshot (`npx vitest run -u`), and give the commit a `BREAKING CHANGE:` footer
- * saying how default renders change — the release is then a major. A host that re-blessed its
- * look against the old defaults found out by rendering; this is how it finds out from the notes.
+ * nothing. When one of these fails on purpose: update the snapshot (`npx vitest run -u`) and say
+ * in the commit body how default renders change, so a host calibrated against the old defaults
+ * finds out from the release notes, not by rendering. A look change is not breaking (CLAUDE.md).
  */
 import { describe, it, expect } from 'vitest';
 import {
@@ -16,7 +15,7 @@ import { AUTO_FOCUS_DEFAULTS } from '@/core/viewer/camera/CameraManager.js';
 import { SKY_DEFAULTS } from '@/core/environment/EnvironmentManager.js';
 import { DEFAULT_VIEW } from '@/core/color/ViewTransforms.js';
 
-describe( 'defaults that shape pixels — a change here is a BREAKING CHANGE', () => {
+describe( 'defaults that shape pixels — a change here says how renders change in its commit', () => {
 
 	it( 'viewer piece defaults', () => {
 

@@ -140,10 +140,12 @@ git commit -m "feat: add adaptive sampling quality presets"
 git commit -m "fix(tsl): resolve NaN in the clear-coat lobe"
 ```
 
-**A change to default pixels is a breaking change.** Anything that changes what a render looks like when a host sets
-nothing — a default setting (the core's or a viewer piece's), a mode preset, light units, a sampling or BSDF change that moves the
-bench's reference images — needs a `BREAKING CHANGE:` footer saying how default renders change, so the release is a
-new major version. `tests/unit/core/pixelDefaults.test.js` and `npm run bench:bless` both flag such a change.
+**Breaking means a public API change.** Mark a commit breaking (`!` or a `BREAKING CHANGE:` footer, which makes the
+release a new major version) only when it removes, renames or re-types an export, method, option, event or issue code,
+or changes a call's contract. A change to what renders look like when a host sets nothing — a default setting, a mode
+preset, light units, a sampling or BSDF change that moves the bench's reference images — is not: say how renders
+change in the commit body instead. `tests/unit/core/pixelDefaults.test.js` and `npm run bench:bless` both flag such a
+change.
 
 ### Review
 

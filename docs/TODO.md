@@ -106,7 +106,7 @@
     size; alpha cutouts keep level 0 or get alpha-preserving mips (MASK foliage thins at distance otherwise); light
     subpaths level 0.
   - **Risks:** Shade is near a register limit and the footprint needs the hit triangle's rows — measure in place
-    (`bench:kernels`). Changes default pixels: ship opt-in first, turn on in a major.
+    (`bench:kernels`). Changes default pixels: ship opt-in first, then turn on, saying how renders change.
 - [ ] Normal-dependent MIS compensation (Karlík et al. 2019, Eq. 13) — precompute 512 compensated env map CDFs indexed by surface normal for ~19% improvement over current normal-independent compensation on diffuse+HDR scenes
 - [ ] ReSTIR DI (Bitterli et al. 2020) — spatiotemporal resampling for many-light scenes
 - [ ] https://cloud.needle.tools/hdris FastHDR
