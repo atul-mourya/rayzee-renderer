@@ -256,11 +256,11 @@ export const dielectricInterfaceAlbedo = Fn( ( [ NoV, roughness, eta ] ) => {
 } );
 
 // KHR_materials_specular: the dielectric keeps specularColor off its grazing reflectance, and
-// specularIntensity scales both ends, so 0 removes the dielectric reflection entirely.
+// specularIntensity scales both ends, so 0 removes the dielectric reflection entirely. Metals ignore it (spec).
 export const baseFresnelParams = Fn( ( [ material, color ] ) => {
 
 	const f0 = min( dielectricF0( material.ior ).mul( material.specularColor ), vec3( 1.0 ) ).mul( material.specularIntensity );
-	const F0m = clamp( color.mul( material.specularIntensity ), vec3( 0.0 ), vec3( 1.0 ) );
+	const F0m = clamp( color, vec3( 0.0 ), vec3( 1.0 ) );
 
 	return BaseFresnel( {
 		f0,
@@ -467,7 +467,9 @@ export const calculateBRDFWeights = Fn( ( [ material, mc, cache ], builder ) => 
 
 	} );
 
-	const specular = baseSpecularWeight.mul( material.specularIntensity ).toVar();
+	// Only the dielectric share; exact at specularIntensity 1 and metalness 0.
+	const specularShare = material.specularIntensity.add( float( 1.0 ).sub( material.specularIntensity ).mul( material.metalness ) );
+	const specular = baseSpecularWeight.mul( specularShare ).toVar();
 	// (1 - transmission) is load-bearing: a fully transmissive dielectric has no diffuse lobe, and
 	// without this glass spent ~23 % of its samples proposing cosine directions whose BRDF value is
 	// ~0 while refraction went under-sampled. The old inline MIS weights in LightsSampling had this

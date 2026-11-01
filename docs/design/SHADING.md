@@ -17,8 +17,10 @@ the shadow terminator, shadow-ray picking, sized lights and fog. CLAUDE.md keeps
   shadows) uses the exact unpolarised Fresnel, `fresnelDielectric` in `shaders/Fresnel.js`, as Cycles
   does; metals and iridescence stay Schlick. The base keeps KHR_materials_specular's f0/f90 via
   `mix( f0, f90, dielectricFresnelWeight )` (`baseFresnelParams`), so specularIntensity 0 removes
-  the reflection. The DFG LUT holds that weight's albedo in 17 IOR slices beside the Schlick terms —
-  one texture, one extra fetch; regenerate with `npm run bench:lut` if a lobe or sampler changes.
+  the dielectric reflection. Metals ignore it, as the spec and three.js do, in Fresnel and in lobe
+  selection: scaled too, every converted pbrt metal (specular 0) rendered black. The DFG LUT holds
+  that weight's albedo in 17 IOR slices beside the Schlick terms — one texture, one extra fetch;
+  regenerate with `npm run bench:lut` if a lobe or sampler changes.
   ⚠️ `DistributionGGX` floors its denominator at 1e-30, not `EPSILON`: at `MIN_ROUGHNESS` the peak
   is ~1e-10, and a 1e-6 floor cut D 8000× while the sampler drew the true lobe (a smooth white
   dielectric read 1.10 in the furnace). `furnace-dielectric-smooth` gates it.

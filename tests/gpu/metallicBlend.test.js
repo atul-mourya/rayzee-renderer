@@ -31,7 +31,7 @@ const variates = ( () => {
 } )();
 
 // Directional albedo per channel at one view, from BSDF samples: mean of value·cos/pdf.
-async function albedo( renderer, { metalness, roughness, cosView } ) {
+async function albedo( renderer, { metalness, roughness, cosView, specularIntensity = 1 } ) {
 
 	const out = new Float32Array( await evaluate( renderer, COUNT, { xi: [ variates, 'vec4' ] }, 'vec4', ( a ) => {
 
@@ -41,6 +41,7 @@ async function albedo( renderer, { metalness, roughness, cosView } ) {
 		material.color.assign( vec4( 0.8, 0.6, 0.4, 1 ) );
 		material.roughness.assign( roughness );
 		material.metalness.assign( metalness );
+		material.specularIntensity.assign( specularIntensity );
 
 		const mc = MaterialClassification.wrap( classifyMaterial(
 			material.metalness, material.roughness, material.transmission,
@@ -83,6 +84,28 @@ describeGPU( 'partial metal', () => {
 			const blend = 0.4 * dielectric[ c ] + 0.6 * metal[ c ];
 			expect( partial[ c ] / blend, `channel ${c}` ).toBeGreaterThan( 0.96 );
 			expect( partial[ c ] / blend, `channel ${c}` ).toBeLessThan( 1.01 );
+
+		}
+
+	} );
+
+	// KHR_materials_specular is the dielectric's: a metal at specularIntensity 0 once rendered black.
+	it( 'leaves a metal its reflection at specularIntensity 0', async () => {
+
+		const view = { roughness: 0.3, cosView: 0.7 };
+		const [ metal, bareMetal, bareDielectric, barePartial ] = await Promise.all( [
+			{ metalness: 1 }, { metalness: 1, specularIntensity: 0 },
+			{ metalness: 0, specularIntensity: 0 }, { metalness: 0.6, specularIntensity: 0 },
+		].map( ( m ) => albedo( renderer, { ...view, ...m } ) ) );
+
+		for ( let c = 0; c < 3; c ++ ) {
+
+			expect( bareMetal[ c ] / metal[ c ], `channel ${c}` ).toBeCloseTo( 1, 5 );
+			// The dielectric does lose its reflection: Lambert alone, albedo = base colour.
+			expect( bareDielectric[ c ] / [ 0.8, 0.6, 0.4 ][ c ], `channel ${c}` ).toBeCloseTo( 1, 2 );
+			const blend = 0.4 * bareDielectric[ c ] + 0.6 * metal[ c ];
+			expect( barePartial[ c ] / blend, `channel ${c}` ).toBeGreaterThan( 0.96 );
+			expect( barePartial[ c ] / blend, `channel ${c}` ).toBeLessThan( 1.01 );
 
 		}
 
