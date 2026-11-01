@@ -174,7 +174,7 @@ describe( 'OverlayManager', () => {
 
 } );
 
-const camera = {};
+const camera = { matrixWorld: { determinant: () => 1 } };
 const sizeSource = { getBoundingClientRect: () => ( { width: 400, height: 300 } ) };
 
 function helper( layer, visible ) {
@@ -208,9 +208,9 @@ afterEach( () => {
 
 describe( 'OverlayManager scene layer', () => {
 
-	async function withSurface() {
+	async function withSurface( view = camera ) {
 
-		const manager = new OverlayManager( camera );
+		const manager = new OverlayManager( view );
 		await manager.initViewRenderer( { device: {}, sizeSource } );
 		const overlay = manager._viewOverlay;
 		return { manager, overlay, renderer: overlay.renderer };
@@ -285,6 +285,20 @@ describe( 'OverlayManager scene layer', () => {
 
 		manager.render();
 		expect( renderer.clear ).toHaveBeenCalledTimes( 2 );
+
+	} );
+
+	it( 'shows the layer flipped left to right under a mirrored camera, as the picture is', async () => {
+
+		const mirrored = { matrixWorld: { determinant: () => - 1 } };
+		const { manager, overlay } = await withSurface( mirrored );
+		manager.register( 'gizmo', helper( 'scene', true ) );
+		manager.render();
+		expect( overlay.canvas.style.transform ).toBe( 'scaleX(-1)' );
+
+		mirrored.matrixWorld.determinant = () => 1;
+		manager.render();
+		expect( overlay.canvas.style.transform ).toBe( '' );
 
 	} );
 

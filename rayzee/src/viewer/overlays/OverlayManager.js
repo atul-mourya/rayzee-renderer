@@ -2,6 +2,7 @@ import { TileHelper } from './TileHelper.js';
 import { OutlineHelper } from './OutlineHelper.js';
 import { ViewOverlayRenderer, createOverlayCanvas, viewPixelSize } from './ViewOverlayRenderer.js';
 import { createLogger } from '../../Logger.js';
+import { mirrorSign } from '../../scene/ViewCamera.js';
 import { EngineEvents } from '../../EngineEvents.js';
 
 const log = createLogger( 'overlay' );
@@ -325,6 +326,7 @@ export class OverlayManager {
 			if ( hasSceneOverlay || overlay.isVisible ) {
 
 				overlay.syncSize();
+				overlay.setMirrored( mirrorSign( this.camera ) < 0 );
 				// Doubles as the wipe of last frame's content when parking.
 				overlay.begin();
 				if ( hasSceneOverlay ) this._renderSceneLayer( overlay.renderer );

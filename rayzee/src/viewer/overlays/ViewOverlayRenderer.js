@@ -93,6 +93,7 @@ export class ViewOverlayRenderer {
 		// pays for it.
 		this.canvas = createOverlayCanvas( true );
 		this._visible = false;
+		this._mirrored = false;
 
 		/** @type {import('three/webgpu').WebGPURenderer|null} */
 		this.renderer = null;
@@ -161,6 +162,19 @@ export class ViewOverlayRenderer {
 		takeFrameStep( this.renderer );
 		this.renderer.setRenderTarget( null );
 		this.renderer.clear();
+
+	}
+
+	/**
+	 * Shows the layer flipped left to right, as a mirrored camera's picture is: three.js leaves the mirror out of its
+	 * view matrix, while picking keeps it (the camera's world matrix).
+	 */
+	setMirrored( mirrored ) {
+
+		if ( this._mirrored === mirrored ) return;
+
+		this._mirrored = mirrored;
+		this.canvas.style.transform = mirrored ? 'scaleX(-1)' : '';
 
 	}
 

@@ -1071,6 +1071,11 @@ never clips. ⚠️ Every camera-ray site honours it: Generate and Debug kernels
 from the camera), bidirectional light tracing (no splat in front of the plane, shadow ray ends on it, the skipped length
 rides in mis_ray_t), and picking / auto-focus (`raycaster.near`).
 
+**Mirrored cameras** (a negative world scale; pbrt's `LookAt` conversion makes one): three.js leaves the mirror out of
+`matrixWorldInverse`, so the path tracer's view matrix comes from `viewMatrixOf()` (`scene/ViewCamera.js`), the orbit
+and walk controls turn by `mirrorSign()`, picking keeps it (the world matrix), and the overlay layer is shown flipped
+(`ViewOverlayRenderer.setMirrored`). ⚠️ Anything else drawn by a three.js renderer from the live camera needs the same.
+
 **Orthographic** (`cameraProjection: 'orthographic'`, uniform id 2 in `CAMERA_PROJECTION_IDS`): rays are parallel and
 start on the camera's image plane (`cameraRayOrigin()` in `shaders/CameraRay.js`). The live camera is a `ViewCamera`
 (`scene/ViewCamera.js`), a PerspectiveCamera that switches its own projection, so every holder of it — both
