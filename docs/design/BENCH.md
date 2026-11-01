@@ -257,7 +257,7 @@ Each measurement renders **exactly one sample** and resolves the timestamp queri
 
 Perf runs with the **production dispatch heuristics active** (`setPerfMode`), unlike image comparison which needs them pinned off for reproducibility. Benchmarking with them off measures a configuration production never runs. The cost is that per-frame time becomes legitimately bimodal — dispatch sizing is readback-driven — so `cv` sits at 30–40 % even when throughput is rock stable.
 
-To gate, use `npm run bench:ab -- <ref>`. It checks the base ref out into a git worktree, serves both trees at once, drives both from **one browser**, and measures each scene in three alternating rounds per side.
+To gate, use `npm run bench:ab -- <ref>`. It checks the base ref out into a git worktree, serves both trees at once, drives both from **one browser**, and measures each scene in three alternating rounds per side. A worktree locking the packages this install has links to it; one locking others (a ref from before a dependency upgrade) gets an APFS clone of it with those packages from their lockfile tarballs, integrity checked (`installPackages`): v11.16.1 on three r186 failed to boot on r187's install.
 
 > **Bidirectional scenes are measured one side at a time.** Both sides holding a bidirectional scene's extra buffers
 > (~0.5 GB each) lost the WebGPU device on an Apple M-series machine (`caustic-bidirectional`). Before measuring a

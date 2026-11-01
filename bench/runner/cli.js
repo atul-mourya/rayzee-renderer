@@ -20,6 +20,7 @@
  */
 
 import { execFile } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -368,6 +369,47 @@ async function releasePair() {
 
 }
 
+/**
+ * node_modules is not copied into a worktree. A ref locking the packages this install has shares it (a symlink, no npm
+ * ci); one locking others — a release from before a dependency upgrade (v11.16.1 is on three r186, which r187's
+ * install cannot boot) — gets an APFS clone of it with each differing package from the tarball its lockfile names,
+ * checked against the lockfile's integrity.
+ */
+async function installPackages( worktree ) {
+
+	const install = path.join( PATHS.repoRoot, 'node_modules' );
+	const target = path.join( worktree, 'node_modules' );
+	const locked = async ( dir ) => JSON.parse( await fs.readFile( path.join( dir, 'package-lock.json' ), 'utf8' ) ).packages ?? {};
+	const [ ours, theirs ] = await Promise.all( [ locked( PATHS.repoRoot ), locked( worktree ) ] );
+	const differing = Object.entries( theirs ).filter( ( [ key, entry ] ) =>
+		key.startsWith( 'node_modules/' ) && ! entry.link && entry.integrity && entry.integrity !== ours[ key ]?.integrity );
+	if ( ! differing.length ) return fs.symlink( install, target, 'dir' );
+
+	log( `${DIM}  its own packages: ${differing.map( ( [ key, entry ] ) => `${key.slice( 13 )} ${entry.version}` ).join( ', ' )}${RESET}` );
+	await exec( 'cp', [ '-c', '-R', install, target ] );
+	// The clone's prebundled deps are this install's.
+	await fs.rm( path.join( target, '.vite' ), { recursive: true, force: true } );
+	const tarball = path.join( worktree, '.package.tgz' );
+	for ( const [ key, entry ] of differing ) {
+
+		if ( ! entry.resolved ) throw new Error( `${key} ${entry.version}: no tarball in the lockfile` );
+		const response = await fetch( entry.resolved );
+		if ( ! response.ok ) throw new Error( `${key}: ${entry.resolved} answered ${response.status}` );
+		const bytes = Buffer.from( await response.arrayBuffer() );
+		const [ algorithm, digest ] = entry.integrity.split( /-(.*)/s );
+		if ( createHash( algorithm ).update( bytes ).digest( 'base64' ) !== digest ) throw new Error( `${key}: tarball does not match the lockfile's integrity` );
+		const dir = path.join( worktree, key );
+		await fs.rm( dir, { recursive: true, force: true } );
+		await fs.mkdir( dir, { recursive: true } );
+		await fs.writeFile( tarball, bytes );
+		await exec( 'tar', [ '-xzf', tarball, '-C', dir, '--strip-components', '1' ] );
+
+	}
+
+	await fs.rm( tarball, { force: true } );
+
+}
+
 const commitOf = async ( ref ) => ( await exec( 'git', [ 'rev-parse', `${ref}^{commit}` ], { cwd: PATHS.repoRoot } ) ).stdout.trim();
 
 async function commandAB( baseRef, flags ) {
@@ -398,9 +440,7 @@ async function commandAB( baseRef, flags ) {
 			log( `${DIM}creating worktree for ${ref} at ${worktree}${RESET}` );
 			await exec( 'git', [ 'worktree', 'add', '--detach', worktree, ref ], { cwd: PATHS.repoRoot } );
 			worktrees.push( worktree );
-			// node_modules is not copied into a worktree; symlink the existing install rather
-			// than paying a full npm ci.
-			await fs.symlink( path.join( PATHS.repoRoot, 'node_modules' ), path.join( worktree, 'node_modules' ), 'dir' );
+			await installPackages( worktree );
 			return worktree;
 
 		};
