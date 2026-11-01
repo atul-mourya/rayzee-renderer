@@ -163,18 +163,20 @@ export const CAMERA_PRESETS = {
 const PBRT_SCENES_URL = `${ASSETS_BASE_URL}/models/pbrt-scenes`;
 const RESEARCH_SCENES_URL = `${ASSETS_BASE_URL}/models/gltf-research-scenes`;
 const BITTERLI_RESOURCES = 'https://benedikt-bitterli.me/resources/';
-const pbrtScene = ( name, id, label, redirection = BITTERLI_RESOURCES ) => ( {
+// `integrator`: the light transport the scene opens with, where the usual path tracing does it less justice.
+const pbrtScene = ( name, id, label, { redirection = BITTERLI_RESOURCES, integrator } = {} ) => ( {
 	name,
 	url: `${PBRT_SCENES_URL}/${id}.zip`,
 	preview: `${RESEARCH_SCENES_URL}/webp/${id}.webp`,
 	label,
 	redirection,
+	...( integrator ? { integrator } : {} ),
 } );
 
 export const MODEL_FILES = [
-	pbrtScene( "Bathroom", 				"contemporary-bathroom", "“Contemporary Bathroom” by Mareck · CC0", 'https://github.com/mmp/pbrt-v4-scenes/tree/master/contemporary-bathroom' ),
+	pbrtScene( "Bathroom", 				"contemporary-bathroom", "“Contemporary Bathroom” by Mareck · CC0", { redirection: 'https://github.com/mmp/pbrt-v4-scenes/tree/master/contemporary-bathroom' } ),
 	pbrtScene( "Bathroom 2", 			"bathroom2", 			"“Salle de bain” by nacimus · CC BY 3.0" ),
-	pbrtScene( "BMW M6", 				"bmw-m6", 				"“BMW M6 2006” by tyrant monkey · CC0", 'https://github.com/mmp/pbrt-v4-scenes/tree/master/bmw-m6' ),
+	pbrtScene( "BMW M6", 				"bmw-m6", 				"“BMW M6 2006” by tyrant monkey · CC0", { redirection: 'https://github.com/mmp/pbrt-v4-scenes/tree/master/bmw-m6' } ),
 	pbrtScene( "Breakfast Room", 		"breakfast-room", 		"“The Breakfast Room” by Wig42 · CC BY 3.0" ),
 	pbrtScene( "Classroom", 			"classroom", 			"“Japanese Classroom” by NovaZeeke · CC BY 3.0" ),
 	{
@@ -186,7 +188,8 @@ export const MODEL_FILES = [
 	},
 	pbrtScene( "Coffee Maker", 			"coffee-maker", 		"“Coffee Maker” by cekuhnen · CC BY 3.0" ),
 	pbrtScene( "Cornell Box", 			"cornell-box", 			"“Cornell Box” by Benedikt Bitterli · CC0" ),
-	pbrtScene( "Cornell Caustic", 		"cornell-caustic", 		"“Water Caustic” by Benedikt Bitterli · CC0" ),
+	// Light through the water only reaches the walls by vertex merging.
+	pbrtScene( "Cornell Caustic", 		"cornell-caustic", 		"“Water Caustic” by Benedikt Bitterli · CC0", { integrator: 'vcm' } ),
 	pbrtScene( "Dragon Statue", 		"dragon", 				"“Dragon” by Delatronic · CC BY 3.0" ),
 	pbrtScene( "Glass of Water", 		"glass-of-water", 		"“Glass of Water” by aXel · CC0" ),
 	pbrtScene( "House", 				"house", 				"“Victorian Style House” by MrChimp2313 · CC0" ),
@@ -202,7 +205,8 @@ export const MODEL_FILES = [
 	pbrtScene( "Teapot", 				"teapot", 				"“Utah Teapot” by Benedikt Bitterli · CC0" ),
 	pbrtScene( "Teapot Full", 			"teapot-full", 			"“Utah Teapot (full)” by Benedikt Bitterli · CC0" ),
 	pbrtScene( "Veach Ajar", 			"veach-ajar", 			"“Veach, Ajar” by Benedikt Bitterli · CC0" ),
-	pbrtScene( "Veach Bidir", 			"veach-bidir", 			"“Veach, Bidir Room” by Benedikt Bitterli · CC0" ),
+	// Lit from inside a lamp shade, with a glass egg's caustic: bidirectional, as the file asks.
+	pbrtScene( "Veach Bidir", 			"veach-bidir", 			"“Veach, Bidir Room” by Benedikt Bitterli · CC0", { integrator: 'bidirectional' } ),
 	pbrtScene( "Veach MIS", 			"veach-mis", 			"“Veach, MIS” by Benedikt Bitterli · CC0" ),
 	pbrtScene( "Vintage Car", 			"vintage-car", 			"“Old vintage car” by piopis · CC0" ),
 ];

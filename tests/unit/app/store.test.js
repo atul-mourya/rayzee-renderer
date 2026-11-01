@@ -700,3 +700,44 @@ describe( 'Fog', () => {
 	} );
 
 } );
+
+describe( 'a catalog scene\'s light transport', () => {
+
+	// Imported here, after the store: Constants reads `window` at import.
+	const at = async ( name ) => ( await import( '@/Constants' ) ).MODEL_FILES.find( m => m.name === name ).url;
+
+	it( 'opens with the scene\'s integrator and gives the next model back what it replaced', async () => {
+
+		const settings = new Map();
+		( await import( '@/lib/appProxy.js' ) ).__setMockApp( { settings: { set: ( k, v ) => settings.set( k, v ) } } );
+		const pt = store.usePathTracerStore;
+		pt.setState( { integrator: 'path', _sceneIntegrator: null } );
+
+		pt.getState().applySceneIntegrator( await at( 'Veach Bidir' ) );
+		expect( [ pt.getState().integrator, settings.get( 'integrator' ) ] ).toEqual( [ 'bidirectional', 'bidirectional' ] );
+
+		// One that names none keeps the usual setting: here, the one Veach Bidir replaced.
+		pt.getState().applySceneIntegrator( await at( 'Kitchen' ) );
+		expect( [ pt.getState().integrator, settings.get( 'integrator' ) ] ).toEqual( [ 'path', 'path' ] );
+
+		pt.getState().applySceneIntegrator( await at( 'Cornell Caustic' ) );
+		expect( pt.getState().integrator ).toBe( 'vcm' );
+		pt.getState().applySceneIntegrator( null );
+		expect( pt.getState().integrator ).toBe( 'path' );
+
+	} );
+
+	it( 'keeps what the user chose after the scene opened', async () => {
+
+		( await import( '@/lib/appProxy.js' ) ).__setMockApp( { settings: { set: () => {} } } );
+		const pt = store.usePathTracerStore;
+		pt.setState( { integrator: 'path', _sceneIntegrator: null } );
+
+		pt.getState().applySceneIntegrator( await at( 'Veach Bidir' ) );
+		pt.getState().handleIntegratorChange( 'vcm' );
+		pt.getState().applySceneIntegrator( await at( 'Kitchen' ) );
+		expect( pt.getState().integrator ).toBe( 'vcm' );
+
+	} );
+
+} );

@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import * as THREE from 'three';
-import { DEFAULT_STATE, NRD_QUALITY_PRESETS, computeOutputDimensions, isPanorama, DENOISER_STRATEGIES, SKY_PRESETS } from '@/Constants';
+import { DEFAULT_STATE, MODEL_FILES, NRD_QUALITY_PRESETS, computeOutputDimensions, isPanorama, DENOISER_STRATEGIES, SKY_PRESETS } from '@/Constants';
 import { PRODUCTION_RENDER_CONFIG, INTERACTIVE_RENDER_CONFIG, sunPosition, dayOfYearForMonth, timeForSunElevation } from 'rayzee';
 import { getApp } from '@/lib/appProxy';
 import { useCameraStore } from './camera.js';
@@ -490,6 +490,24 @@ export const usePathTracerStore = create( ( set, get ) => ( {
 
 		set( { integrator: val } );
 		getApp()?.settings.set( 'integrator', val );
+
+	},
+
+	// The light transport the loaded catalog scene opened with, and what it replaced.
+	_sceneIntegrator: null,
+
+	/**
+	 * Gives a just-loaded model its catalog entry's `integrator`, if it names one. The next model gets back what the
+	 * scene replaced, unless the user changed it since.
+	 * @param {?string} url - where the model was loaded from
+	 */
+	applySceneIntegrator: url => {
+
+		const opened = get()._sceneIntegrator;
+		if ( opened && get().integrator === opened.integrator ) get().handleIntegratorChange( opened.previous );
+		const integrator = url ? MODEL_FILES.find( m => m.url === url )?.integrator : undefined;
+		set( { _sceneIntegrator: integrator ? { integrator, previous: get().integrator } : null } );
+		if ( integrator ) get().handleIntegratorChange( integrator );
 
 	},
 
