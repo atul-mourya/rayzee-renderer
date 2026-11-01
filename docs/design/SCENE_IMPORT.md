@@ -76,8 +76,9 @@ subtree per element, and the whole thing rarely fits: Moana is 29 GB unpacked.
   `phimax`, in pbrt's uv, facing ∂p/∂u × ∂p/∂v. A `bilinearmesh` patch's corners are p00, p10, p01, p11 (not a ring),
   one patch of four points needs no indices, and without uvs a patch takes its own — watercolor's floor spots had been
   dropped. A camera's `lensradius`/`focaldistance` become its own effects (`userData.__rayzeeEffects`, applied when it is
-  chosen): the same aperture radius in both DOF modes, focused by hand. `Integrator` maxdepth, `Sampler` pixelsamples
-  and the Film's resolution are `sceneMetadata.render` — reported, not applied (glTF extras may carry it too).
+  chosen): the same aperture radius in both DOF modes, focused by hand. The `Integrator` (as the engine's `integrator`:
+  bdpt → bidirectional, sppm → vcm) and its maxdepth, `Sampler` pixelsamples and the Film's resolution are
+  `sceneMetadata.render` — reported, not applied (glTF extras may carry it too).
 - **Templates.** A shape inside `ObjectBegin` keeps its whole transform and a placement's goes on top, as pbrt does —
   never relative to the transform at ObjectBegin. kroken defines its cushions, blanket and rug under a `Transform` and
   places them at `Identity`; the relative reading put all of them at the world origin.

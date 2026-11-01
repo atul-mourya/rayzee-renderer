@@ -717,7 +717,8 @@ export class PBRTParser {
 				const params = this._parseParams();
 				this._translate( params, `${name} ${type}`, () => {
 
-					if ( params.maxdepth ) this.ir.integrator = { maxdepth: this._num( param( params, 'maxdepth' ), 5 ) };
+					this.ir.integrator = { type };
+					if ( params.maxdepth ) this.ir.integrator.maxdepth = this._num( param( params, 'maxdepth' ), 5 );
 
 				} );
 				break;

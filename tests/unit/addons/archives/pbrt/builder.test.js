@@ -120,11 +120,18 @@ describe( 'PBRT scene builder', () => {
 
 	} );
 
-	it( 'reports what the scene asks the renderer for: its depth, samples and film size', async () => {
+	it( 'reports what the scene asks the renderer for: its integrator, depth, samples and film size', async () => {
 
 		const scene = 'Integrator "volpath" "integer maxdepth" 15\nSampler "zsobol" "integer pixelsamples" 1024\n' + SCENE;
 		const { render } = await loadPBRTScene( buildArgs( { vfs: { 'scene.pbrt': enc.encode( scene ) } } ) );
-		expect( render ).toEqual( { maxBounces: 15, samples: 1024, width: 800, height: 600 } );
+		expect( render ).toEqual( { integrator: 'path', maxBounces: 15, samples: 1024, width: 800, height: 600 } );
+		for ( const [ pbrt, engine ] of [[ 'bdpt', 'bidirectional' ], [ 'sppm', 'vcm' ], [ 'mlt', undefined ]] ) {
+
+			const asked = await loadPBRTScene( buildArgs( { vfs: { 'scene.pbrt': enc.encode( `Integrator "${pbrt}"\n` + SCENE ) } } ) );
+			expect( asked.render.integrator ).toBe( engine );
+
+		}
+
 		const bare = 'WorldBegin\nShape "sphere"\n';
 		expect( ( await loadPBRTScene( buildArgs( { vfs: { 'scene.pbrt': enc.encode( bare ) } } ) ) ).render ).toBeNull();
 
