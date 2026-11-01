@@ -172,7 +172,7 @@ const pbrtScene = ( name, id, label, redirection = BITTERLI_RESOURCES ) => ( {
 } );
 
 export const MODEL_FILES = [
-	pbrtScene( "Bathroom", 				"bathroom", 			"“Contemporary Bathroom” by Mareck · CC0" ),
+	pbrtScene( "Bathroom", 				"contemporary-bathroom", "“Contemporary Bathroom” by Mareck · CC0", 'https://github.com/mmp/pbrt-v4-scenes/tree/master/contemporary-bathroom' ),
 	pbrtScene( "Bathroom 2", 			"bathroom2", 			"“Salle de bain” by nacimus · CC BY 3.0" ),
 	pbrtScene( "BMW M6", 				"bmw-m6", 				"“BMW M6 2006” by tyrant monkey · CC0", 'https://github.com/mmp/pbrt-v4-scenes/tree/master/bmw-m6' ),
 	pbrtScene( "Breakfast Room", 		"breakfast-room", 		"“The Breakfast Room” by Wig42 · CC BY 3.0" ),
