@@ -65,6 +65,7 @@ vi.mock( 'three', () => {
 	return {
 		EventDispatcher,
 		PerspectiveCamera,
+		Quaternion: class {},
 		Vector3: class {
 
 			constructor( x = 0, y = 0, z = 0 ) {

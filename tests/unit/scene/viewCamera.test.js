@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { OrthographicCamera, PerspectiveCamera, Raycaster, Vector3 } from 'three';
-import { ViewCamera } from '@/core/scene/ViewCamera.js';
+import { Matrix4, OrthographicCamera, PerspectiveCamera, Raycaster, Vector3 } from 'three';
+import { ViewCamera, viewMatrixOf } from '@/core/scene/ViewCamera.js';
 
 function camera() {
 
@@ -68,6 +68,38 @@ describe( 'ViewCamera', () => {
 
 		expect( copy ).toBeInstanceOf( ViewCamera );
 		expect( [ copy.isOrthographicCamera, copy.orthoHalfHeight ] ).toEqual( [ true, 4 ] );
+
+	} );
+
+} );
+
+describe( 'viewMatrixOf', () => {
+
+	const identity = ( m ) => m.elements.every( ( v, i ) => Math.abs( v - ( i % 5 === 0 ? 1 : 0 ) ) < 1e-12 );
+
+	it( 'undoes a mirrored camera\'s world matrix, which three\'s own view matrix does not', () => {
+
+		const c = camera();
+		c.scale.set( - 1, 1, 1 );
+		c.lookAt( 3, 0, 0 );
+		c.updateMatrixWorld();
+
+		expect( identity( viewMatrixOf( c, new Matrix4() ).multiply( c.matrixWorld ) ) ).toBe( true );
+		expect( identity( c.matrixWorldInverse.clone().multiply( c.matrixWorld ) ) ).toBe( false );
+
+	} );
+
+	it( 'is three\'s view matrix for any camera without a mirror, scaled or not', () => {
+
+		for ( const scale of [ 1, 2 ] ) {
+
+			const c = camera();
+			c.scale.setScalar( scale );
+			c.lookAt( 3, 0, 0 );
+			c.updateMatrixWorld();
+			expect( viewMatrixOf( c, new Matrix4() ).elements ).toEqual( c.matrixWorldInverse.elements );
+
+		}
 
 	} );
 

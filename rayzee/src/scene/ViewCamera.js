@@ -1,4 +1,22 @@
-import { OrthographicCamera, PerspectiveCamera } from 'three';
+import { OrthographicCamera, PerspectiveCamera, Quaternion, Vector3 } from 'three';
+
+const _position = new Vector3();
+const _quaternion = new Quaternion();
+const _scale = new Vector3();
+
+/**
+ * The inverse of the matrix rays are traced from, its mirror kept: three drops scale from `matrixWorldInverse`.
+ * @param {import('three').Camera} camera
+ * @param {import('three').Matrix4} target
+ * @returns {import('three').Matrix4} target
+ */
+export function viewMatrixOf( camera, target ) {
+
+	if ( camera.matrixWorld.determinant() >= 0 ) return target.copy( camera.matrixWorldInverse );
+	camera.matrixWorld.decompose( _position, _quaternion, _scale );
+	return target.compose( _position, _quaternion, _scale.set( Math.sign( _scale.x ), Math.sign( _scale.y ), Math.sign( _scale.z ) ) ).invert();
+
+}
 
 /**
  * The view's camera: a perspective camera that can also project orthographically.

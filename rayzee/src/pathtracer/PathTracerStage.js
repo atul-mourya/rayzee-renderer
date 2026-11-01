@@ -16,6 +16,7 @@ import { ShaderBuilder } from './ShaderBuilder.js';
 
 // Scene building
 import { SceneProcessor } from '../scene/SceneProcessor.js';
+import { viewMatrixOf } from '../scene/ViewCamera.js';
 import { LightSerializer } from '../lights/LightSerializer';
 
 // Constants
@@ -1516,7 +1517,7 @@ export class PathTracerStage extends RenderStage {
 			clipStart !== this.cameraClipStart.value ) {
 
 			this.cameraWorldMatrix.value.copy( this.camera.matrixWorld );
-			this.cameraViewMatrix.value.copy( this.camera.matrixWorldInverse );
+			viewMatrixOf( this.camera, this.cameraViewMatrix.value );
 			this.cameraProjectionMatrix.value.copy( this.camera.projectionMatrix );
 			this.cameraProjectionMatrixInverse.value.copy( this.camera.projectionMatrixInverse );
 			this.cameraClipStart.value = clipStart;
