@@ -41,17 +41,16 @@ Shape "sphere" "float radius" 0.5
 `;
 
 // Read against the text above: every parameter a translated directive sets and nothing reads, and every one read but
-// not honoured exactly. "spare" and "bump" are never translated, so they report nothing.
+// not honoured exactly. "spare" is never translated, so it reports nothing.
 const REPORT = {
 	unused: {
 		'AreaLightSource diffuse: filename': 1,
 		'Camera perspective: frameaspectratio': 1,
 		'Film rgb: iso': 1,
-		'Material coateddiffuse: displacement': 1,
 		'Material coateddiffuse: thickness': 1,
 		'Option: disablepixeljitter': 1,
 		'Shape trianglemesh: edgelength': 2,
-		'Texture imagemap: wrap': 1,
+		'Texture imagemap: wrap': 2,
 	},
 	approximated: {
 		'LightSource distant: L': 1,

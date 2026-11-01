@@ -112,7 +112,7 @@ const DEFAULT_CURVE_SIDES = { flat: 1, ribbon: 1, cylinder: 2 };
 const DEFAULT_CURVE_TOLERANCE = 0.05;
 
 /** Bumped whenever the same scene files build a different graph, so a stored graph is not reused. */
-export const PBRT_BUILD_REVISION = 16;
+export const PBRT_BUILD_REVISION = 17;
 
 function samePlacements( a, b ) {
 
@@ -623,6 +623,7 @@ export class PBRTSceneBuilder {
 		this._geometryCache = new Map(); // shape object -> Promise<BufferGeometry|null>
 		this._materialBySignature = new Map(); // visual signature -> shared MeshPhysicalMaterial
 		this._noUVMaterials = new Map(); // textured material -> its map-less clone
+		this._bumpAreas = new Map(); // bump-mapped material -> { world, uv } triangle areas under it
 		this._plyCache = new Map(); // filename -> Promise<BufferGeometry|null>
 		this._imageCache = new Map(); // filename -> Promise<Texture|null>, decoded once for every named texture
 		this._heldImages = new Map(); // source -> its hold: images a bake read, held until the build ends
@@ -747,6 +748,7 @@ export class PBRTSceneBuilder {
 
 		await this._buildInstances( ir, group );
 		await this._buildAnimatedPlacements( ir, group );
+		this._applyBumpScales();
 
 		if ( this.skippedForBudget > 0 ) this.warn(
 			`stopped at ${this.triangleCount.toLocaleString()} stored triangles ` +
@@ -1251,6 +1253,7 @@ export class PBRTSceneBuilder {
 	 */
 	_materialForGeometry( shape, geometry, sharedMaterial, name ) {
 
+		if ( sharedMaterial.userData.pbrtBump ) this._noteBumpArea( sharedMaterial, geometry, shape.ctm );
 		if ( ! sharedMaterial.map || geometry.getAttribute( 'uv' ) ) return sharedMaterial;
 
 		// One clone per source material, not per shape — else 173,000 warnings and 173,000
@@ -1266,6 +1269,47 @@ export class PBRTSceneBuilder {
 		}
 
 		return material;
+
+	}
+
+	/** Scene-unit and uv areas of a bump-mapped material's triangles (up to 20k sampled a shape). @private */
+	_noteBumpArea( material, geometry, ctm ) {
+
+		const pos = geometry.getAttribute( 'position' ), uv = geometry.getAttribute( 'uv' );
+		if ( ! pos || ! uv ) return;
+		const index = geometry.index;
+		const count = index ? index.count / 3 : pos.count / 3;
+		const step = Math.max( 1, Math.floor( count / 20000 ) );
+		const at = ( k ) => ( index ? index.getX( k ) : k );
+		let world = 0, flat = 0;
+		for ( let f = 0; f < count; f += step ) {
+
+			const a = at( f * 3 ), b = at( f * 3 + 1 ), c = at( f * 3 + 2 );
+			const ex = pos.getX( b ) - pos.getX( a ), ey = pos.getY( b ) - pos.getY( a ), ez = pos.getZ( b ) - pos.getZ( a );
+			const fx = pos.getX( c ) - pos.getX( a ), fy = pos.getY( c ) - pos.getY( a ), fz = pos.getZ( c ) - pos.getZ( a );
+			world += Math.hypot( ey * fz - ez * fy, ez * fx - ex * fz, ex * fy - ey * fx );
+			flat += Math.abs( ( uv.getX( b ) - uv.getX( a ) ) * ( uv.getY( c ) - uv.getY( a ) ) - ( uv.getX( c ) - uv.getX( a ) ) * ( uv.getY( b ) - uv.getY( a ) ) );
+
+		}
+
+		const areas = this._bumpAreas.get( material ) ?? { world: 0, uv: 0 };
+		areas.world += world * ( ctm ? Math.abs( M.determinant3( ctm ) ) ** ( 2 / 3 ) : 1 );
+		areas.uv += flat;
+		this._bumpAreas.set( material, areas );
+
+	}
+
+	/** bumpScale is texels per scene unit, √( W·H · uv area / scene area ): the engine steps one texel. @private */
+	_applyBumpScales() {
+
+		for ( const [ material, { world, uv } ] of this._bumpAreas ) {
+
+			const image = material.bumpMap?.image;
+			if ( image?.width > 0 && world > 0 && uv > 0 ) material.bumpScale = Math.sqrt( image.width * image.height * uv / world );
+
+		}
+
+		this._bumpAreas.clear();
 
 	}
 
@@ -2101,7 +2145,7 @@ export class PBRTSceneBuilder {
 			`${material.map ? material.map.uuid : '-'}|${material.roughness}|${material.roughnessMap?.uuid ?? '-'}|${material.metalness}|` +
 			`${material.transmission}|${material.ior}|${material.thickness}|` +
 			`${material.clearcoat}|${material.clearcoatRoughness}|${material.clearcoatRoughnessMap?.uuid ?? '-'}|${material.opacity}|${material.side}|` +
-			`${material.normalMap ? material.normalMap.uuid : '-'}|${material.attenuationDistance}|${material.attenuationColor.toArray()}|` +
+			`${material.normalMap ? material.normalMap.uuid : '-'}|${material.bumpMap?.uuid ?? '-'}|${material.attenuationDistance}|${material.attenuationColor.toArray()}|` +
 			`${material.specularIntensity}|${material.diffuseTransmission ?? 0}|${material.diffuseTransmissionColor?.toArray() ?? '-'}|` +
 			`${material.subsurface ?? 0}|${material.subsurfaceColor?.toArray() ?? '-'}|${material.subsurfaceRadius ?? '-'}|${material.subsurfaceAnisotropy ?? 0}|` +
 			`${material.diffuseRoughness ?? 0}`;

@@ -1139,6 +1139,27 @@ describe( 'PBRT scene builder: pbrt-v4 fidelity', () => {
 
 	} );
 
+	it( 'reads pbrt-v4\'s displacement as a bump map, as strong as texels per scene unit under it', async () => {
+
+		const quad = '"point3 P" [ 0 0 0  2 0 0  2 1 0  0 1 0 ] "integer indices" [ 0 1 2  0 2 3 ] "point2 uv" [ 0 0  1 0  1 1  0 1 ]';
+		const { meshes } = await meshesOf( `
+			Texture "bump" "float" "imagemap" "string filename" "bump.png" "string encoding" "linear"
+			Material "diffuse" "texture displacement" "bump"
+			Shape "trianglemesh" ${quad}
+			Material "conductor" "texture displacement" "bump"
+			Scale 0.5 0.5 0.5
+			Shape "trianglemesh" ${quad}
+		`, {}, { 'bump.png': image( 0, 64, 128, 255 ) } );
+
+		const [ full, half ] = meshes.map( ( m ) => m.material );
+		const { width, height } = full.bumpMap.image;
+		// uv [0,1]² over 2 × 1 scene units, then over a quarter of that.
+		expect( full.bumpScale ).toBeCloseTo( Math.sqrt( width * height / 2 ), 9 );
+		expect( half.bumpScale / full.bumpScale ).toBeCloseTo( 2, 9 );
+		expect( half.bumpMap.colorSpace ).toBe( NoColorSpace );
+
+	} );
+
 	it( 'reads a constant alpha as the chance a ray stops, and keeps the engine\'s own material properties', async () => {
 
 		const { meshes, warnings } = await meshesOf( `

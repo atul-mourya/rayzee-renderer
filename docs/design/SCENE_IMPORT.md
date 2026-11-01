@@ -90,6 +90,9 @@ subtree per element, and the whole thing rarely fits: Moana is 29 GB unpacked.
   crown's gems an IOR of 200); `normalmap` loads linear, a float image converted to 8 bits (`eightBit`: a material
   map takes only 8-bit texels). Glass whose `MediumInterface` interior is a homogeneous medium gets Beer–Lambert
   attenuation from σa + σs (no scattering inside). `diffusetransmission` is the engine's diffuse transmission lobe.
+  `displacement` (pbrt-v4's bump map, a height in scene units) becomes a bump map whose `bumpScale` is the texels per
+  scene unit under the material (`_applyBumpScales`, from its triangles' scene and uv areas): the engine steps one texel.
+  Bitterli's scenes carry their bump images unscaled, ~20× what pbrt's own contemporary-bathroom sets (0.05).
   Textures the engine has no node for are baked on the CPU (`PBRTTextureBake.js`) into 8-bit sRGB DataTextures in
   their image's uv mapping: `mix`, `scale` by a texture, an imagemap's `scale` above 1 or `invert`, and a `mix`
   material with a textured amount (its colours baked, everything else weighed by the amount's mean). Each colour
