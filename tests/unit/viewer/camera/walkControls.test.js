@@ -113,6 +113,23 @@ describe( 'WalkControls', () => {
 
 	} );
 
+	it( 'turns and steps with the picture on a mirrored camera', () => {
+
+		const { camera, controls, key, drag } = rig();
+		camera.scale.x = - 1; // a pbrt LookAt camera: the picture's right is the world's −x here
+		camera.updateMatrixWorld();
+
+		drag( 100, 0 );
+		expect( forward( camera ).x ).toBeGreaterThan( 0.1 );
+
+		camera.lookAt( 0, 1.6, 0 );
+		camera.updateMatrixWorld();
+		key( 'keydown', 'KeyD' );
+		controls.update( 1 );
+		expect( camera.position.x ).toBeLessThan( - 0.1 );
+
+	} );
+
 	it( 'keeps still while the orbit controls are off, in orbit mode, or when a key goes to a text field or a control used it', () => {
 
 		const { camera, orbit, controls, key } = rig();

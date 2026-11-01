@@ -1,4 +1,5 @@
 import { Controls, MathUtils, Quaternion, Vector3 } from 'three';
+import { mirrorSign } from '../../scene/ViewCamera.js';
 
 const CROSSING_SECONDS = 8;
 const FAST = 4;
@@ -142,7 +143,7 @@ export class WalkControls extends Controls {
 		_right.crossVectors( _forward, camera.up );
 
 		_move.set( 0, 0, 0 )
-			.addScaledVector( _right, right )
+			.addScaledVector( _right, right * mirrorSign( camera ) )
 			.addScaledVector( _forward, forward )
 			.addScaledVector( camera.up, up )
 			.normalize()
@@ -173,7 +174,7 @@ export class WalkControls extends Controls {
 		const distance = camera.position.distanceTo( target ) || 1;
 		const radiansPerPixel = MathUtils.degToRad( camera.fov ) / ( this.domElement.clientHeight || 1 );
 
-		camera.quaternion.premultiply( _q.setFromAxisAngle( camera.up, dx * radiansPerPixel ) );
+		camera.quaternion.premultiply( _q.setFromAxisAngle( camera.up, dx * radiansPerPixel * mirrorSign( camera ) ) );
 
 		camera.getWorldDirection( _forward );
 		const pitch = Math.asin( MathUtils.clamp( _forward.dot( camera.up ), - 1, 1 ) );

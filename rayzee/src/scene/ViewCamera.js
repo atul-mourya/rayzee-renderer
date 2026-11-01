@@ -12,9 +12,20 @@ const _scale = new Vector3();
  */
 export function viewMatrixOf( camera, target ) {
 
-	if ( camera.matrixWorld.determinant() >= 0 ) return target.copy( camera.matrixWorldInverse );
+	if ( mirrorSign( camera ) > 0 ) return target.copy( camera.matrixWorldInverse );
 	camera.matrixWorld.decompose( _position, _quaternion, _scale );
 	return target.compose( _position, _quaternion, _scale.set( Math.sign( _scale.x ), Math.sign( _scale.y ), Math.sign( _scale.z ) ) ).invert();
+
+}
+
+/**
+ * −1 when the camera mirrors its picture left to right (a pbrt `LookAt` camera), else 1.
+ * @param {import('three').Camera} camera
+ * @returns {number}
+ */
+export function mirrorSign( camera ) {
+
+	return camera.matrixWorld.determinant() < 0 ? - 1 : 1;
 
 }
 

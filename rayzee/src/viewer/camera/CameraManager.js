@@ -3,9 +3,21 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { EngineEvents, } from '../../EngineEvents.js';
 import { CAMERA_PROJECTION_IDS } from '../../EngineDefaults.js';
 import { viewDepth } from './InteractionManager.js';
-import { ViewCamera } from '../../scene/ViewCamera.js';
+import { ViewCamera, mirrorSign } from '../../scene/ViewCamera.js';
 import { WalkControls } from './WalkControls.js';
 import { toPortable, fromPortable } from '../../Portable.js';
+
+// The horizontal turn follows a mirrored camera's picture (pan reads the camera's matrix already).
+// `_rotateLeft` is three's own: re-check on each upgrade.
+class ViewOrbitControls extends OrbitControls {
+
+	_rotateLeft( angle ) {
+
+		super._rotateLeft( angle * mirrorSign( this.object ) );
+
+	}
+
+}
 
 export const AUTO_FOCUS_DEFAULTS = {
 	autoFocusMode: 'auto', // 'manual' | 'auto'
@@ -43,7 +55,7 @@ export class CameraManager extends EventDispatcher {
 		this.camera = new ViewCamera( 60, width / height, 0.01, 1000 );
 		this.camera.position.set( 0, 0, 5 );
 
-		this.controls = new OrbitControls( this.camera, canvas );
+		this.controls = new ViewOrbitControls( this.camera, canvas );
 		this.controls.screenSpacePanning = true;
 		this.controls.zoomToCursor = true;
 		this.controls.saveState();

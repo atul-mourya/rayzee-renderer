@@ -288,6 +288,25 @@ describe( 'CameraManager reset view', () => {
 
 	} );
 
+	it( 'turns a mirrored camera\'s orbit with the picture, as an unmirrored one turns', () => {
+
+		const along = ( mirror ) => {
+
+			const { cm } = manager();
+			cm.camera.scale.x = mirror;
+			cm.camera.updateMatrixWorld();
+			const right = new Vector3().setFromMatrixColumn( cm.camera.matrixWorld, 0 ).normalize();
+			const start = cm.camera.position.clone();
+			cm.controls.rotateLeft( 0.2 );
+			return Math.sign( cm.camera.position.clone().sub( start ).dot( right ) );
+
+		};
+
+		expect( along( 1 ) ).not.toBe( 0 );
+		expect( along( - 1 ) ).toBe( along( 1 ) );
+
+	} );
+
 	it( 'orbits a saved camera around the target it was saved with', () => {
 
 		const { cm } = manager();
