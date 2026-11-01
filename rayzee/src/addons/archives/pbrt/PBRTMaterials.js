@@ -597,15 +597,14 @@ export async function buildMaterial( def, ctx ) {
 	// pbrt shades a coat in the same normal-mapped frame as what it covers.
 	if ( mat.clearcoat > 0 && mat.normalMap ) mat.clearcoatNormalMap = mat.normalMap;
 
-	// pbrt-v4 bump-maps through `displacement`, a height in scene units: the builder sets bumpScale from the geometry.
-	if ( param( params, 'displacement' )?.type === 'texture' && ctx.bakeFloatMap ) {
+	// pbrt-v4 bump-maps through `displacement`, a height in scene units.
+	if ( param( params, 'displacement' )?.type === 'texture' && ctx.heightMap ) {
 
-		const map = await ctx.bakeFloatMap( params, [ 'displacement' ], ( [ height ] ) => height );
-		if ( map ) {
+		const height = await ctx.heightMap( params, 'displacement' );
+		if ( height ) {
 
-			mat.bumpMap = map;
-			mat.bumpScale = 0;
-			mat.userData.pbrtBump = true;
+			mat.bumpMap = height.map;
+			mat.bumpDistance = height.distance;
 
 		}
 

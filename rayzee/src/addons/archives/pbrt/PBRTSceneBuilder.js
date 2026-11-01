@@ -112,7 +112,7 @@ const DEFAULT_CURVE_SIDES = { flat: 1, ribbon: 1, cylinder: 2 };
 const DEFAULT_CURVE_TOLERANCE = 0.05;
 
 /** Bumped whenever the same scene files build a different graph, so a stored graph is not reused. */
-export const PBRT_BUILD_REVISION = 17;
+export const PBRT_BUILD_REVISION = 18;
 
 function samePlacements( a, b ) {
 
@@ -623,7 +623,6 @@ export class PBRTSceneBuilder {
 		this._geometryCache = new Map(); // shape object -> Promise<BufferGeometry|null>
 		this._materialBySignature = new Map(); // visual signature -> shared MeshPhysicalMaterial
 		this._noUVMaterials = new Map(); // textured material -> its map-less clone
-		this._bumpAreas = new Map(); // bump-mapped material -> { world, uv } triangle areas under it
 		this._plyCache = new Map(); // filename -> Promise<BufferGeometry|null>
 		this._imageCache = new Map(); // filename -> Promise<Texture|null>, decoded once for every named texture
 		this._heldImages = new Map(); // source -> its hold: images a bake read, held until the build ends
@@ -748,7 +747,6 @@ export class PBRTSceneBuilder {
 
 		await this._buildInstances( ir, group );
 		await this._buildAnimatedPlacements( ir, group );
-		this._applyBumpScales();
 
 		if ( this.skippedForBudget > 0 ) this.warn(
 			`stopped at ${this.triangleCount.toLocaleString()} stored triangles ` +
@@ -1253,7 +1251,6 @@ export class PBRTSceneBuilder {
 	 */
 	_materialForGeometry( shape, geometry, sharedMaterial, name ) {
 
-		if ( sharedMaterial.userData.pbrtBump ) this._noteBumpArea( sharedMaterial, geometry, shape.ctm );
 		if ( ! sharedMaterial.map || geometry.getAttribute( 'uv' ) ) return sharedMaterial;
 
 		// One clone per source material, not per shape — else 173,000 warnings and 173,000
@@ -1269,47 +1266,6 @@ export class PBRTSceneBuilder {
 		}
 
 		return material;
-
-	}
-
-	/** Scene-unit and uv areas of a bump-mapped material's triangles (up to 20k sampled a shape). @private */
-	_noteBumpArea( material, geometry, ctm ) {
-
-		const pos = geometry.getAttribute( 'position' ), uv = geometry.getAttribute( 'uv' );
-		if ( ! pos || ! uv ) return;
-		const index = geometry.index;
-		const count = index ? index.count / 3 : pos.count / 3;
-		const step = Math.max( 1, Math.floor( count / 20000 ) );
-		const at = ( k ) => ( index ? index.getX( k ) : k );
-		let world = 0, flat = 0;
-		for ( let f = 0; f < count; f += step ) {
-
-			const a = at( f * 3 ), b = at( f * 3 + 1 ), c = at( f * 3 + 2 );
-			const ex = pos.getX( b ) - pos.getX( a ), ey = pos.getY( b ) - pos.getY( a ), ez = pos.getZ( b ) - pos.getZ( a );
-			const fx = pos.getX( c ) - pos.getX( a ), fy = pos.getY( c ) - pos.getY( a ), fz = pos.getZ( c ) - pos.getZ( a );
-			world += Math.hypot( ey * fz - ez * fy, ez * fx - ex * fz, ex * fy - ey * fx );
-			flat += Math.abs( ( uv.getX( b ) - uv.getX( a ) ) * ( uv.getY( c ) - uv.getY( a ) ) - ( uv.getX( c ) - uv.getX( a ) ) * ( uv.getY( b ) - uv.getY( a ) ) );
-
-		}
-
-		const areas = this._bumpAreas.get( material ) ?? { world: 0, uv: 0 };
-		areas.world += world * ( ctm ? Math.abs( M.determinant3( ctm ) ) ** ( 2 / 3 ) : 1 );
-		areas.uv += flat;
-		this._bumpAreas.set( material, areas );
-
-	}
-
-	/** bumpScale is texels per scene unit, √( W·H · uv area / scene area ): the engine steps one texel. @private */
-	_applyBumpScales() {
-
-		for ( const [ material, { world, uv } ] of this._bumpAreas ) {
-
-			const image = material.bumpMap?.image;
-			if ( image?.width > 0 && world > 0 && uv > 0 ) material.bumpScale = Math.sqrt( image.width * image.height * uv / world );
-
-		}
-
-		this._bumpAreas.clear();
 
 	}
 
@@ -2060,6 +2016,7 @@ export class PBRTSceneBuilder {
 			},
 			bakeMaterialMix: ( a, b, amountName ) => this._bakeMaterialMix( a, b, amountName ),
 			bakeFloatMap: ( params, keys, combine ) => this._floatMap( params, keys, combine ),
+			heightMap: ( params, key ) => this._heightMap( params, key ),
 			textureMeanRGB: async ( n ) => {
 
 				const term = await this._bakeTerm( n, 3 );
@@ -2404,6 +2361,48 @@ export class PBRTSceneBuilder {
 
 	}
 
+	/**
+	 * A float texture parameter read as a height: `{ map, distance }`, the map spanning 0 → 1 over `distance` scene
+	 * units. `scale` textures with a constant factor fold into the distance, and an image's values are stretched over
+	 * the map's whole 8 bits — a bump takes only height differences, so the offset is free. Anything else is baked
+	 * whole, clamped to 0 → 1. Null when it cannot be read here or is flat.
+	 * @private
+	 */
+	async _heightMap( params, key ) {
+
+		let name = param( params, key ).value[ 0 ], distance = 1;
+		let def = this._textureDef( name );
+		while ( def?.class === 'scale' && param( def.params, 'tex' )?.type === 'texture' && param( def.params, 'scale' )?.type !== 'texture' ) {
+
+			distance *= pFloat( def.params, 'scale', 1 );
+			name = param( def.params, 'tex' ).value[ 0 ];
+			def = this._textureDef( name );
+
+		}
+
+		if ( def?.class !== 'imagemap' ) {
+
+			const map = await this._floatMap( params, [ key ], ( [ height ] ) => height );
+			return map && { map, distance: 1 };
+
+		}
+
+		const layer = await this._imageLayer( name, def, 1 );
+		if ( ! layer ) return null;
+		let low = Infinity, high = - Infinity;
+		for ( const v of layer.data ) {
+
+			if ( v < low ) low = v;
+			if ( v > high ) high = v;
+
+		}
+
+		if ( ! ( high > low ) ) return null;
+		const baked = this._bake( `"${key}"`, [ { layer } ], ( [ h ] ) => h.map( ( v ) => ( v - low ) / ( high - low ) ), { linear: true } );
+		return baked && { map: bakedTexture( baked, { srgb: false } ), distance: distance * ( high - low ) };
+
+	}
+
 	/** pbrt's `mix` texture, ( 1 − amount ) · tex1 + amount · tex2, baked when any of the three is an image. @private */
 	async _mixTexture( name, def ) {
 
@@ -2457,13 +2456,8 @@ export class PBRTSceneBuilder {
 		const def = this._textureDef( name );
 		if ( def?.class === 'imagemap' ) {
 
-			const filename = pString( def.params, 'filename', null );
-			const pixels = await this._readPixels( filename && await this._image( filename ) );
-			if ( ! pixels ) return null;
-			return { layer: makeLayer( pixels, {
-				channels, decode: pixels.float ? null : decoderFor( def.params ),
-				scale: pFloat( def.params, 'scale', 1 ), invert: pBool( def.params, 'invert', false ), mapping: this._textureMapping( name, def )
-			} ) };
+			const layer = await this._imageLayer( name, def, channels );
+			return layer && { layer };
 
 		}
 
@@ -2472,6 +2466,18 @@ export class PBRTSceneBuilder {
 		if ( ! resolved.texture ) return resolved.constant ? { rgb: resolved.constant } : null;
 		const layer = await this._textureLayer( resolved.texture, channels );
 		return layer ? { layer, tint: resolved.constant ?? null } : null;
+
+	}
+
+	/** An `imagemap` texture's image as a bake layer, scaled and inverted as pbrt reads it; null when unreadable. @private */
+	async _imageLayer( name, def, channels ) {
+
+		const filename = pString( def.params, 'filename', null );
+		const pixels = await this._readPixels( filename && await this._image( filename ) );
+		return pixels && makeLayer( pixels, {
+			channels, decode: pixels.float ? null : decoderFor( def.params ),
+			scale: pFloat( def.params, 'scale', 1 ), invert: pBool( def.params, 'invert', false ), mapping: this._textureMapping( name, def )
+		} );
 
 	}
 

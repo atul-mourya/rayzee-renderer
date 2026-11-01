@@ -1139,24 +1139,28 @@ describe( 'PBRT scene builder: pbrt-v4 fidelity', () => {
 
 	} );
 
-	it( 'reads pbrt-v4\'s displacement as a bump map, as strong as texels per scene unit under it', async () => {
+	it( 'reads pbrt-v4\'s displacement as a bump map, a height in scene units stretched over the map\'s 8 bits', async () => {
 
-		const quad = '"point3 P" [ 0 0 0  2 0 0  2 1 0  0 1 0 ] "integer indices" [ 0 1 2  0 2 3 ] "point2 uv" [ 0 0  1 0  1 1  0 1 ]';
+		const shape = 'Shape "trianglemesh" "point3 P" [ 0 0 0  1 0 0  0 1 0 ] "integer indices" [ 0 1 2 ] "point2 uv" [ 0 0 1 0 0 1 ]';
 		const { meshes } = await meshesOf( `
 			Texture "bump" "float" "imagemap" "string filename" "bump.png" "string encoding" "linear"
+			Texture "halved" "float" "imagemap" "string filename" "bump.png" "string encoding" "linear" "float scale" 0.5
+			Texture "pressed" "float" "scale" "texture tex" "halved" "float scale" -0.05
 			Material "diffuse" "texture displacement" "bump"
-			Shape "trianglemesh" ${quad}
-			Material "conductor" "texture displacement" "bump"
-			Scale 0.5 0.5 0.5
-			Shape "trianglemesh" ${quad}
-		`, {}, { 'bump.png': image( 0, 64, 128, 255 ) } );
+			${shape}
+			Material "conductor" "texture displacement" "pressed"
+			${shape}
+		`, {}, { 'bump.png': image( 64, 96, 128 ) } );
 
-		const [ full, half ] = meshes.map( ( m ) => m.material );
-		const { width, height } = full.bumpMap.image;
-		// uv [0,1]² over 2 × 1 scene units, then over a quarter of that.
-		expect( full.bumpScale ).toBeCloseTo( Math.sqrt( width * height / 2 ), 9 );
-		expect( half.bumpScale / full.bumpScale ).toBeCloseTo( 2, 9 );
-		expect( half.bumpMap.colorSpace ).toBe( NoColorSpace );
+		const [ plain, pressed ] = meshes.map( ( m ) => m.material );
+		const bytes = ( map ) => Array.from( map.image.data.filter( ( _, i ) => i % 4 === 0 ) );
+		// 64 → 128 of 255 becomes 0 → 255 over 64/255 scene units: a bump takes only height differences.
+		expect( bytes( plain.bumpMap ) ).toEqual( [ 0, 127, 255 ] );
+		expect( plain.bumpDistance ).toBeCloseTo( 64 / 255, 6 );
+		expect( plain.bumpMap.colorSpace ).toBe( NoColorSpace );
+		// The image's own scale and a scale texture's factor fold into the distance, sign and all.
+		expect( bytes( pressed.bumpMap ) ).toEqual( [ 0, 127, 255 ] );
+		expect( pressed.bumpDistance ).toBeCloseTo( - 0.05 * 0.5 * 64 / 255, 6 );
 
 	} );
 
