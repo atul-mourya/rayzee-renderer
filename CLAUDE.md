@@ -503,6 +503,8 @@ bench gates and measurements.
   lottery declines, Shade sets `material.transmission` to 0 so the opaque base is itself (it lost (1 − T) twice).
   Only refraction takes the base colour, √ of it a crossing (`transmissionTint`: a way in and out takes it once, as in
   Cycles); reflections stay the light's. ⚠️ Change the glass sampler, rerun `npm run bench:lut`; `furnace-glass-*` gate it.
+  `ior` is absolute and tracked through nested volumes (glTF); `relativeIOR` (every pbrt material) makes it the surface's
+  own ratio, and only a surface with a volume changes the medium. pbrt glass with its medium outside is turned over.
 - **Light through glass**: `traceShadowRay` crosses glass straight and returns a **colour** (`transmissionTint` of base
   colour × map per face, absorption per channel); `traceShadowRayRefractiveOpaque` (bidirectional) stays a float. A path
   refracted to an emitter is MIS-weighed from the last opaque scatter: the MIS ray length runs on across a refraction

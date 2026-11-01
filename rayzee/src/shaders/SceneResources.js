@@ -17,6 +17,7 @@
  * @property {boolean} [transmissionMaps] - some material has a transmission map; false = shadow rays never sample one
  * @property {boolean} [clearcoatNormals] - some coated material has a normal or bump map; false = every coat follows N
  * @property {boolean} [bumpMaps] - some material has a bump map; false = no shading reads one
+ * @property {boolean} [relativeIOR] - some transmissive or subsurface material has a relative IOR; false = every IOR is absolute
  * @property {?Object} [fog] - the fog's uniforms ( density, color, anisotropy, boxMin, boxMax, falloff, floor ) while it has a density
  *   (path tracing only); every shadow ray takes its transmittance. null = no fog
  */
@@ -95,5 +96,12 @@ export function usesClearcoatNormals( builder ) {
 export function usesBumpMaps( builder ) {
 
 	return builder.context[ KEY ]?.bumpMaps ?? true;
+
+}
+
+/** Whether the kernel being built reads materials' relativeIOR. Outside a scene kernel (a test) it does. */
+export function usesRelativeIOR( builder ) {
+
+	return builder.context[ KEY ]?.relativeIOR ?? true;
 
 }

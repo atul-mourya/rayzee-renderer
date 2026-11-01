@@ -120,6 +120,7 @@ export const RayTracingMaterial = struct( {
 	bumpScale: 'float',
 	bumpDistance: 'float',
 	bumpMapSize: 'vec2', // as authored; 0 when unknown
+	relativeIOR: 'float', // 1: ior is the ratio across the surface (pbrt), 0: absolute, tracked through nesting (glTF)
 	displacementScale: 'float',
 	displacementBias: 'float',
 	metalnessMapIndex: 'int',

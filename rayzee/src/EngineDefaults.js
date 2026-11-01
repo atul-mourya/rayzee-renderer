@@ -127,6 +127,9 @@ export const MATERIAL_DEFAULTS = deepFreeze( {
 	bumpScale: 1,
 	// The height a bump map's 0 → 1 spans, in scene units (pbrt's displacement, Cycles' Bump Distance); 0 reads bumpScale.
 	bumpDistance: 0,
+	// 1: `ior` is the ratio across the surface, inside over outside (pbrt, Mitsuba, Cycles), and only a surface with a
+	// volume changes the medium a ray is in. 0: an absolute index, tracked through nested glass (glTF).
+	relativeIOR: 0,
 	displacementScale: 1,
 	displacementBias: 0,
 	transparent: 0,

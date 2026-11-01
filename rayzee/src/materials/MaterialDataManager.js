@@ -74,6 +74,7 @@ const SCALAR_PROPERTY_OFFSETS = {
 	diffuseTransmission: M.DIFFUSE_TRANSMISSION,
 	diffuseRoughness: M.DIFFUSE_ROUGHNESS,
 	bumpDistance: M.BUMP_DISTANCE,
+	relativeIOR: M.RELATIVE_IOR,
 };
 
 export class MaterialDataManager {
@@ -383,6 +384,22 @@ export class MaterialDataManager {
 
 	}
 
+	/** Whether some transmissive or subsurface material has a relative IOR: only then do the kernels read the flag. */
+	hasRelativeIOR() {
+
+		const data = this.materialStorageAttr?.array;
+		if ( ! data ) return false;
+		for ( let i = 0; i < this.materialCount; i ++ ) {
+
+			const at = i * M.FLOATS_PER_MATERIAL;
+			if ( data[ at + M.RELATIVE_IOR ] > 0 && ( data[ at + M.TRANSMISSION ] > 0 || data[ at + M.SUBSURFACE ] > 0 ) ) return true;
+
+		}
+
+		return false;
+
+	}
+
 	/** Whether some material has a transmission map: only then do shadow rays sample one. */
 	hasTransmissionMaps() {
 
@@ -555,6 +572,7 @@ export class MaterialDataManager {
 				break;
 			case 'bumpScale': data[ stride + M.BUMP_SCALE ] = value; break;
 			case 'bumpDistance': data[ stride + M.BUMP_DISTANCE ] = value; break;
+			case 'relativeIOR': data[ stride + M.RELATIVE_IOR ] = + value; break;
 			case 'displacementScale': data[ stride + M.DISPLACEMENT_SCALE ] = value; break;
 			case 'displacementBias': data[ stride + M.DISPLACEMENT_BIAS ] = value; break;
 			case 'subsurface': data[ stride + M.SUBSURFACE ] = value; break;
@@ -621,7 +639,7 @@ export class MaterialDataManager {
 		}
 
 		// A material layer, and glass in shadow rays, is compiled in only while some material uses it.
-		if ( MATERIAL_LAYERS.includes( property ) || property === 'transmission' ) this.callbacks.onMaterialFeaturesChanged?.();
+		if ( MATERIAL_LAYERS.includes( property ) || property === 'transmission' || property === 'relativeIOR' ) this.callbacks.onMaterialFeaturesChanged?.();
 
 		this._notifyReset();
 

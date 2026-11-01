@@ -169,6 +169,6 @@ export function packMaterial( data, base, mat ) {
 	s( M.BUMP_DISTANCE, mat.bumpDistance, D.bumpDistance );
 	data[ base + M.BUMP_MAP_WIDTH ] = num( mat.bumpMapSize?.[ 0 ], 0 );
 	data[ base + M.BUMP_MAP_HEIGHT ] = num( mat.bumpMapSize?.[ 1 ], 0 );
-	data[ base + M.SPARE ] = 0;
+	s( M.RELATIVE_IOR, mat.relativeIOR, D.relativeIOR );
 
 }

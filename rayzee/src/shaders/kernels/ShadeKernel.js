@@ -33,7 +33,7 @@ import { traverseBVHShadow, triangleSide, sideAccepts } from '../BVHTraversal.js
 import { visibilityCell } from '../LightVisibility.js';
 import { handleMaterialTransparency, MaterialInteractionResult } from '../MaterialTransmission.js';
 import { sampleChromaticCollision, sampleHenyeyGreenstein, subsurfaceCoefficients, CollisionSample, MediumCoeffs } from '../Subsurface.js';
-import { ALL_MATERIAL_LAYERS, usesClearcoatNormals, usesBumpMaps } from '../SceneResources.js';
+import { ALL_MATERIAL_LAYERS, usesClearcoatNormals, usesBumpMaps, usesRelativeIOR } from '../SceneResources.js';
 import { calculateIndirectLighting } from '../LightsIndirect.js';
 import {
 	IndirectLightingResult, sampleCone, LightSample, DirectionalLight, AreaLight, PointLight, SpotLight,
@@ -1213,6 +1213,15 @@ export function buildShadeKernel( params ) {
 
 		} );
 
+		// A relative IOR is the surface's own ratio, inside over outside: what is around it does not enter.
+		const relativeIOR = usesRelativeIOR( builder ) ? material.relativeIOR.greaterThan( 0.5 ) : null;
+		if ( relativeIOR ) If( relativeIOR, () => {
+
+			currentMediumIOR.assign( 1.0 );
+			previousMediumIOR.assign( 1.0 );
+
+		} );
+
 		// A displaced normal leans with the relief: the triangle says which side the ray arrives from.
 		const entering = dot( direction, N ).lessThan( 0.0 ).toVar();
 		If( displaced, () => {
@@ -1323,14 +1332,23 @@ export function buildShadeKernel( params ) {
 
 						} );
 
-						// precompute Beer-Lambert sigmaA once at enter
-						writeMediumSigmaA( rayBufferRW, rayID, select(
-							material.attenuationDistance.greaterThan( 0.0 ),
-							log( max( material.attenuationColor, vec3( 0.001 ) ) ).negate().div( material.attenuationDistance ),
-							vec3( 0.0 ),
-						) );
-						// sigmaS==0 marks glass → in-medium block takes the Beer-Lambert path, not SSS walk
-						writeSSSMedium( rayBufferRW, rayID, vec3( 0.0 ), float( 0.0 ) );
+						const enterMedium = () => {
+
+							// precompute Beer-Lambert sigmaA once at enter
+							writeMediumSigmaA( rayBufferRW, rayID, select(
+								material.attenuationDistance.greaterThan( 0.0 ),
+								log( max( material.attenuationColor, vec3( 0.001 ) ) ).negate().div( material.attenuationDistance ),
+								vec3( 0.0 ),
+							) );
+							// sigmaS==0 marks glass → in-medium block takes the Beer-Lambert path, not SSS walk
+							writeSSSMedium( rayBufferRW, rayID, vec3( 0.0 ), float( 0.0 ) );
+
+						};
+
+						// Relative (pbrt): only a surface with a volume changes the medium; clear glass keeps the one around it,
+						// none when entered from outside every medium.
+						if ( relativeIOR ) If( relativeIOR.not().or( material.attenuationDistance.greaterThan( 0.0 ) ).or( mediumStackDepth.equal( 1 ) ), enterMedium );
+						else enterMedium();
 
 					} );
 
@@ -1339,6 +1357,12 @@ export function buildShadeKernel( params ) {
 					If( mediumStackDepth.greaterThan( 0 ), () => {
 
 						mediumStackDepth.subAssign( 1 );
+
+					} );
+					// Relative: leaving a volume puts the ray back outside it, in no medium.
+					if ( relativeIOR ) If( relativeIOR.and( material.attenuationDistance.greaterThan( 0.0 ) ), () => {
+
+						writeMediumSigmaA( rayBufferRW, rayID, vec3( 0.0 ) );
 
 					} );
 

@@ -130,6 +130,17 @@ the shadow terminator, shadow-ray picking, sized lights and fog. CLAUDE.md keeps
   shows amber (image mean 3.8 % under Cycles 5.1; now 0.7 % under). Every crossing goes through it: the crossing itself,
   the opaque path's stand-in transmission lobe (`LightsIndirect`), shadow rays and the OIDN guide's see-through tint
   (`featCarry`).
+  **Relative IOR** (`relativeIOR`, set by the pbrt importer on every material): glTF's IOR is absolute and the renderer
+  tracks it through overlapping volumes (KHR_materials_volume: "incident and transmitted IOR have to be correctly set by
+  the renderer"), which the medium stack does. pbrt, Mitsuba, Tungsten and Cycles give each surface its own ratio,
+  inside over outside — a glass–tea wall is 1.5 / 1.33 = 1.13, an air bubble in ice 0.763 — and a surface changes the
+  medium a ray is in only where it names one (pbrt's MediumInterface). Read through the stack those files bent light
+  twice at every such wall. With the flag Shade takes the ratio from the material alone; entering a clear one keeps the
+  medium around it (none from outside every medium), an attenuating one sets its own and leaving it clears it. The
+  flag sits in slot 34's last lane, read for a transmissive or subsurface material only while some material has it
+  (`relativeIOR` in the build context, `MaterialDataManager.hasRelativeIOR()`): a scene without one compiles exactly as
+  before. Bitterli's Teapot (full) showed clear tea where its preview is amber (its tea sits outside the glass–tea wall);
+  now amber, with the preview's pattern through the bottom under the scene's original environment.
 - **Light through glass** (`traceShadowRay`, path integrator) — a shadow ray crosses glass in a straight line, as V-Ray's
   and Arnold's "glass affects shadows" do, and returns a colour: each face multiplies it by (1 − F) × transmission × the
   crossing's tint (base colour and its map at the hit), and a volume by its absorption per channel, so NEE carries what a

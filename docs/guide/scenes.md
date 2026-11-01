@@ -291,6 +291,12 @@ way the bumps lean along the texture's U and V.
 
 Glass (`transmission`) colours the light that passes through it as Cycles' Principled BSDF does: a closed object takes its base colour (and map) once, each surface the square root of it, and its reflections stay untinted. Light reaching a surface through glass — its shadow — takes the same colour, and a volume's `attenuationColor` per channel.
 
+A glass `ior` is absolute, as in glTF: where volumes overlap (ice in water inside a glass) the renderer works out the
+ratio at each surface. A material with `relativeIOR: true` (set it on the three.js material, or with
+`setMaterialProperty`) instead gives the ratio across its own surface, inside over outside, as pbrt, Mitsuba and Cycles
+do — a glass–water wall is 1.5 / 1.33 ≈ 1.13 — and only one with a volume (`attenuationDistance`) changes what absorbs
+the light behind it. The pbrt importer sets it on every material it builds.
+
 ## engine.environmentManager
 
 Environment maps, sky modes, and procedural generation.

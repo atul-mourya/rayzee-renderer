@@ -178,9 +178,9 @@ export const MATERIAL_DATA_LAYOUT = {
 	// map index and scale; read only for a material with diffuse transmission or a coat
 	DIFFUSE_TRANSMISSION_MAP_INDEX: 132, DIFFUSE_TRANSMISSION_COLOR_MAP_INDEX: 133,
 	CLEARCOAT_NORMAL_MAP_INDEX: 134, CLEARCOAT_NORMAL_SCALE: 135,
-	// Slot 34: bumpDistance + the bump map's own width and height + a lane nothing reads; read only for a bump-mapped
-	// material
-	BUMP_DISTANCE: 136, BUMP_MAP_WIDTH: 137, BUMP_MAP_HEIGHT: 138, SPARE: 139,
+	// Slot 34: bumpDistance + the bump map's own width and height + relativeIOR; read only for a bump-mapped material,
+	// or a transmissive one while some material has a relative IOR
+	BUMP_DISTANCE: 136, BUMP_MAP_WIDTH: 137, BUMP_MAP_HEIGHT: 138, RELATIVE_IOR: 139,
 
 	// ── Vec4 slot indices (GPU/TSL side) ─────────────────────────────
 	// Used with getDatafromStorageBuffer( buf, matIdx, int(slot), int(SLOTS_PER_MATERIAL) )
@@ -212,7 +212,7 @@ export const MATERIAL_DATA_LAYOUT = {
 		EXT_MAP_INDICES_B: 31, // sheenRoughness, iridescence, iridescenceThickness, specularIntensity map indices
 		EXT_MAP_INDICES_C: 32, // specularColor map index, diffuseTransmissionColor
 		EXT_MAP_INDICES_D: 33, // diffuseTransmission, diffuseTransmissionColor, clearcoatNormal map indices, clearcoatNormalScale
-		BUMP: 34, // bumpDistance, bump map width, height
+		BUMP: 34, // bumpDistance, bump map width, height, relativeIOR
 	},
 
 };

@@ -1291,6 +1291,7 @@ export class GeometryExtractor {
 			normalScale: pick( 'normalScale' ),
 			bumpScale: pick( 'bumpScale' ),
 			bumpDistance: pick( 'bumpDistance' ),
+			relativeIOR: pick( 'relativeIOR' ),
 			displacementScale: pick( 'displacementScale' ),
 			displacementBias: pick( 'displacementBias' ),
 

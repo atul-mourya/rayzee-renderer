@@ -133,6 +133,7 @@ exports[`defaults that shape pixels — a change here says how renders change in
     1,
   ],
   "opacity": 1,
+  "relativeIOR": 0,
   "roughness": 1,
   "sheen": 0,
   "sheenColor": [
