@@ -160,7 +160,10 @@ USDLoader. Each layer is read only when composition reaches it (`USDFiles` over 
   is glass), sheen, subsurface, translucent; mix, add, layer and multiply weight them; a plain diffuse gets no specular.
   Values fold to a constant, a texture with its gain (`multiply` by a constant), channel (`extract`) and placement (a
   3×3 UV matrix from `place2d`, `tiledimage`, and multiply / add / z-rotate chains, which is how Blender writes its
-  Mapping node; the map is a copy, so materials sharing an image keep their own placement), or a normal / height map;
+  Mapping node; the map is a copy, so materials sharing an image keep their own placement), or a normal / height map
+  (`heighttonormal`, `bump`: MaterialX's slope, per whole UV unit over 16, times the normal map after it — Blender's
+  Strength × Distance, negative when inverted — taken to `bumpScale` per texel by the map's size; not `bumpDistance`,
+  whose heights are scene units);
   under a coat, its own normal map (`geometry_coat_normal`, `coat_normal`, `clearcoat_normal`; a coat height map is dropped).
   A texture mixed with a colour keeps its larger part; hue shifts of a texture and procedural nodes (noise, ramps) are
   dropped — each said once. three's MaterialXLoader is not used: it reads `.mtlx` documents, translates only

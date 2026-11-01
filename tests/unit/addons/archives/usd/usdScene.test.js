@@ -589,6 +589,51 @@ ${extra}` ), 'wood.png': '', 'rough.png': '', 'normal.png': '', 'leather.png': '
 
 	} );
 
+	it( 'reads a MaterialX height map at its own slope: per UV unit over 16, times the normal map after it', async () => {
+
+		const sized = { resolveImage: async path => Object.assign( new Texture( { width: 512, height: 512 } ), { name: path } ) };
+		const bumped = ( nodes ) => scene( `    token outputs:mtlx:surface.connect = </mat/s.outputs:out>
+    def Shader "s"
+    {
+        uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+        float3 inputs:geometry_normal.connect = </mat/n.outputs:out>
+    }
+    def Shader "h"
+    {
+        uniform token info:id = "ND_image_float"
+        asset inputs:file = @./rough.png@
+    }
+${nodes}` );
+
+		// Blender's Bump node: heighttonormal at Strength, a normal map at Distance (negative when inverted).
+		const blender = ( distance ) => bumped( `    def Shader "hn"
+    {
+        uniform token info:id = "ND_heighttonormal_vector3"
+        float inputs:in.connect = </mat/h.outputs:out>
+        float inputs:scale = 2
+    }
+    def Shader "n"
+    {
+        uniform token info:id = "ND_normalmap_float"
+        float3 inputs:in.connect = </mat/hn.outputs:out>
+        float inputs:scale = ${distance}
+    }` );
+		const { material } = await materialOf( blender( 0.5 ), sized );
+		expect( material.bumpMap.userData.usdPath ).toMatch( /rough\.png$/ );
+		expect( material.bumpScale ).toBe( 2 * 0.5 * 512 / 16 );
+		expect( material.normalMap ).toBeNull();
+		expect( ( await materialOf( blender( - 0.5 ), sized ) ).material.bumpScale ).toBe( - 2 * 0.5 * 512 / 16 );
+
+		const node = await materialOf( bumped( `    def Shader "n"
+    {
+        uniform token info:id = "ND_bump_vector3"
+        float inputs:height.connect = </mat/h.outputs:out>
+        float inputs:scale = 0.25
+    }` ), sized );
+		expect( node.material.bumpScale ).toBe( 0.25 * 512 / 16 );
+
+	} );
+
 	it( 'gives a clear coat its own normal map, only under a coat, and drops a coat height map', async () => {
 
 		const coated = ( id, coat, input, node = 'normalmap_float' ) => scene( `    token outputs:mtlx:surface.connect = </mat/s.outputs:out>

@@ -113,6 +113,21 @@ describeGPU( 'bump', () => {
 
 	} );
 
+	it( 'presses a negative bumpScale in, as three.js does', async () => {
+
+		const map = ramp( NATIVE );
+		const axes = { T: [ 1, 0, 0 ], B: [ 0, 1, 0 ] };
+		const raised = await bump( map, [ NATIVE, NATIVE ], 2, axes );
+		const pressed = await bump( map, [ NATIVE, NATIVE ], - 2, axes );
+		for ( let i = 0; i < 64; i ++ ) {
+
+			expect( raised[ i * 4 ] ).toBeLessThan( - 0.002 );
+			expect( pressed[ i * 4 ] ).toBeCloseTo( - raised[ i * 4 ], 6 );
+
+		}
+
+	} );
+
 	it( 'tilts a bumpScale along the map\'s U axis', async () => {
 
 		// U runs along +y: the ramp rises that way, so the normal leans to −y.

@@ -152,7 +152,8 @@ the shadow terminator, shadow-ray picking, sized lights and fog. CLAUDE.md keeps
   normalize( |det| N − sign( det ) ( ∂h/∂u · ( dP/dv × N ) + ∂h/∂v · ( N × dP/du ) ) ), det = N · ( dP/du × dP/dv ), over
   the triangle's world-space UV axes in the map's transformed UV space (`triangleUVAxes`: triangleUVTangent's frame with
   its lengths kept). Its slope follows the surface's size and the map's repeat, and a mirrored UV leaves it alone.
-  Without one, three.js's `bumpScale`: the slope per texel times the scale, faded in by the scale up to 1. Both tilt along
+  Without one, three.js's `bumpScale`: the slope per texel times the scale (negative presses it in, as in three.js; it
+  turned the bump off before 2026-11), faded in by its size up to 1. Both tilt along
   the map's U and V; `bumpScale` used the arbitrary cross( up, N ) frame until 2026-11, so its bumps leaned a way that
   depended on how the surface faced the world. Either takes its slope over one texel of the map as authored
   (`bumpMapSize`, slot 34 beside `bumpDistance`, read only for a bump-mapped material). Compiled in only while some

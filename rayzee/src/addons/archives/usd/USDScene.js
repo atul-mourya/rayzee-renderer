@@ -1726,6 +1726,14 @@ export class USDSceneReader {
 
 			}
 
+			case 'bump': {
+
+				// MaterialX's own graph for it: heighttonormal at scale 1, then a normal map at this one.
+				const t = await input( 'height' );
+				return t?.texture ? { ...t, bump: 1, normalScale: await value( 'scale', 1 ) } : null;
+
+			}
+
 			case 'artistic_ior':
 				// Gulbrandsen's reflectivity is the conductor's colour at normal incidence.
 				return { artistic: { reflectivity: await input( 'reflectivity' ), edge: await input( 'edge_color' ) } };
@@ -1870,8 +1878,13 @@ export class USDSceneReader {
 		if ( ! map ) return;
 		if ( term.bump !== undefined ) {
 
+			// MaterialX's heighttonormal slopes a height per whole UV unit, over 16, and a normal map after it scales them
+			// (Blender writes its Bump node so: Strength, then Distance, negative when inverted); bumpScale slopes per
+			// texel. A map that is not square comes out √aspect off along each axis.
+			const { width = 0, height = 0 } = map.image ?? {};
+			if ( ! ( width * height > 0 ) ) this.warnOnce( 'mtlx:bumpsize', 'MaterialX height maps of unknown size are read one texel per UV unit' );
 			mat.bumpMap = map;
-			mat.bumpScale = term.bump;
+			mat.bumpScale = term.bump * ( term.normalScale ?? 1 ) * ( width * height > 0 ? Math.sqrt( width * height ) / 16 : 1 );
 
 		} else {
 

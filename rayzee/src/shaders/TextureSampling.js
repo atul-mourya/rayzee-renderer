@@ -566,8 +566,8 @@ export const processNormal = Fn( ( [ geometryNormal, material, uvCache, uvTangen
  *
  * With a `bumpDistance` the map is a height, 0 → 1 spanning that many scene units (negative presses it in), and the
  * normal is the bumped surface's own: Mikkelsen's surface gradient over the axes, as Cycles' Bump node and pbrt's
- * displacement take it. Without one, three.js's bumpScale: the slope per texel times the scale, faded in by the scale up
- * to 1, tilted along the map's U and V.
+ * displacement take it. Without one, three.js's bumpScale: the slope per texel times the scale (negative presses it in),
+ * faded in by its size up to 1, tilted along the map's U and V.
  */
 export const processBump = Fn( ( [ currentNormal, material, uvCache, axes ], builder ) => {
 
@@ -577,7 +577,7 @@ export const processBump = Fn( ( [ currentNormal, material, uvCache, axes ], bui
 	const result = currentNormal.toVar();
 	const physical = material.bumpDistance.notEqual( 0.0 );
 
-	If( material.bumpMapIndex.greaterThanEqual( int( 0 ) ).and( physical.or( material.bumpScale.greaterThan( 0.0 ) ) ), () => {
+	If( material.bumpMapIndex.greaterThanEqual( int( 0 ) ).and( physical.or( material.bumpScale.notEqual( 0.0 ) ) ), () => {
 
 		// Height change over one texel along U and V.
 		const slope = vec2( 0.0 ).toVar();
@@ -611,7 +611,7 @@ export const processBump = Fn( ( [ currentNormal, material, uvCache, axes ], bui
 			const gradient = slope.mul( material.bumpScale );
 			const { tangent, bitangent } = tangentFrame( currentNormal, uvTangentOf( axes, currentNormal ) );
 			const tilted = normalize( tangent.mul( gradient.x.negate() ).add( bitangent.mul( gradient.y.negate() ) ).add( currentNormal ) );
-			result.assign( normalize( mix( currentNormal, tilted, clamp( material.bumpScale, 0.0, 1.0 ) ) ) );
+			result.assign( normalize( mix( currentNormal, tilted, clamp( abs( material.bumpScale ), 0.0, 1.0 ) ) ) );
 
 		} );
 
