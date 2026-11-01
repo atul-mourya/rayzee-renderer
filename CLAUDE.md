@@ -934,10 +934,9 @@ Access via Path Tracer tab → Debug Mode (`shaders/Debugger.js`; modes 1–10 r
 - `9` Stratified samples · `10` Environment luminance
 - `11` NaN / Inf (in FinalWrite, bypasses accumulation)
 
-⚠️ Mode `1` perturbs normal maps in the fallback `cross( up, N )` frame, not Shade's UV tangent frame
-(`triangleUVTangent`), so it cannot show whether a normal map is oriented right: compare lit renders.
-`tests/gpu/uvTangent.test.js` holds that frame to the tangent of the transformed UVs, mirrored and
-turned `KHR_texture_transform`s included.
+Mode `1` shows the shading normal in Shade's own UV frames (`triangleUVTangent`, `triangleUVAxes`), normal and bump maps
+included; the other modes still sample with no frame. `tests/gpu/uvTangent.test.js` holds those frames to the transformed
+UVs, mirrored and turned `KHR_texture_transform`s included.
 
 ### Performance Profiling
 The engine emits `EngineEvents.FRAME` once per `animate()` tick. Hosts attach their own stats panel (e.g. `stats-gl`) — the app does this in `app/src/components/layout/Viewports/StatsPanel.jsx`. Other built-in profiling signals:

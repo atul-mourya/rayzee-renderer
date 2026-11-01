@@ -25,7 +25,7 @@ import { Ray, HitInfo, RayTracingMaterial, MaterialSamples } from './Struct.js';
 import { traverseBVHDebug as traverseBVH } from './BVHTraversal.js';
 import { sampleEnvironment } from './Environment.js';
 import { REC709_LUMINANCE_COEFFICIENTS, getMaterial, offsetRayOrigin } from './Common.js';
-import { sampleAllMaterialTextures, NO_UV_AXES } from './TextureSampling.js';
+import { sampleAllMaterialTextures, triangleUVTangent, triangleUVAxes, NO_UV_AXES } from './TextureSampling.js';
 import { pcgHash, wang_hash, RandomValue } from './Random.js';
 import { cosineWeightedSample } from './MaterialSampling.js';
 
@@ -245,9 +245,23 @@ export const TraceDebugMode = Fn( ( [
 			// Get material from texture
 			const material = RayTracingMaterial.wrap( getMaterial( hitInfo.materialIndex, materialBuffer ) ).toVar();
 
-			// Get material-mapped normal (same as what's used in main shader)
+			// The shading normal Shade gives it, in the same UV frames.
+			const uvTangent = vec4( 0.0 ).toVar();
+			If( material.normalMapIndex.greaterThanEqual( int( 0 ) ), () => {
+
+				uvTangent.assign( triangleUVTangent( triangleBuffer, hitInfo.triangleIndex, hitInfo.normal, material.normalTransform, bvhBuffer, hitInfo.instanceLeaf ) );
+
+			} );
+
+			const bumpAxes = NO_UV_AXES.toVar();
+			If( material.bumpMapIndex.greaterThanEqual( int( 0 ) ), () => {
+
+				bumpAxes.assign( triangleUVAxes( triangleBuffer, hitInfo.triangleIndex, material.bumpTransform, bvhBuffer, hitInfo.instanceLeaf ) );
+
+			} );
+
 			const matSamples = MaterialSamples.wrap( sampleAllMaterialTextures(
-				material, hitInfo.uv, hitInfo.normal, vec4( 0.0 ), NO_UV_AXES,
+				material, hitInfo.uv, hitInfo.normal, uvTangent, bumpAxes,
 			) ).toVar();
 
 			const worldNormal = normalize( matSamples.normal );
