@@ -643,6 +643,8 @@ export class GeometryExtractor {
 		this._singlesRun = null;
 		this._compressed = new Set();
 		this._matrixLists = new Map();
+		this._listsByContent = new Map();
+		this._resolvedLists = new Map();
 
 	}
 
@@ -979,8 +981,9 @@ export class GeometryExtractor {
 		const count = mesh.count ?? ( arr.length / 16 );
 		if ( groupable && count > 0 ) {
 
-			let list = this._matrixLists.get( mesh.instanceMatrix );
-			if ( ! list ) this._matrixLists.set( mesh.instanceMatrix, list = [] );
+			const key = this._sameMatrixList( mesh, count );
+			let list = this._matrixLists.get( key );
+			if ( ! list ) this._matrixLists.set( key, list = [] );
 			list.push( { meshIndex, start: this.instanceCount, count, world: Float32Array.from( world ) } );
 
 		}
@@ -1047,7 +1050,48 @@ export class GeometryExtractor {
 		}
 
 		this._matrixLists.clear();
+		this._listsByContent.clear();
+		this._resolvedLists.clear();
 		return groups;
+
+	}
+
+	/**
+	 * The matrix list a mesh groups by: its own, or a sibling's holding the same matrices, which it then shares (so an
+	 * edit to one moves both, as a shared list does: a group is traced through one member's list). glTF's
+	 * EXT_mesh_gpu_instancing gives each primitive of a node an InstancedMesh with its own copy of the node's list.
+	 * Siblings only, under a group (two objects added to the scene stay apart), of two copies or more, and float lists
+	 * only. A list seen before returns at once, so shared lists (pbrt, USD) never reach the compare.
+	 * @private
+	 */
+	_sameMatrixList( mesh, count ) {
+
+		const attribute = mesh.instanceMatrix;
+		const resolved = this._resolvedLists.get( attribute );
+		if ( resolved ) return ( mesh.instanceMatrix = resolved );
+		if ( this._matrixLists.has( attribute ) ) return attribute;
+		const array = attribute.array, parent = mesh.parent;
+		if ( count < 2 || ! parent || parent.isScene || ! ( array instanceof Float32Array ) || array.length < count * 16 ) return attribute;
+
+		const bits = new Uint32Array( array.buffer, array.byteOffset, count * 16 );
+		const last = bits.length - 16;
+		// Parent, count, and the first and last copies' translations: a compare only where they all agree.
+		const key = `${parent.id}|${count}|${bits[ 12 ]},${bits[ 13 ]},${bits[ 14 ]}|${bits[ last + 12 ]},${bits[ last + 13 ]},${bits[ last + 14 ]}`;
+		const candidates = this._listsByContent.get( key );
+		for ( const other of candidates ?? [] ) {
+
+			const theirs = new Uint32Array( other.array.buffer, other.array.byteOffset, count * 16 );
+			let i = 0;
+			while ( i < bits.length && bits[ i ] === theirs[ i ] ) i ++;
+			if ( i < bits.length ) continue;
+			this._resolvedLists.set( attribute, other );
+			return ( mesh.instanceMatrix = other );
+
+		}
+
+		if ( candidates ) candidates.push( attribute );
+		else this._listsByContent.set( key, [ attribute ] );
+		return attribute;
 
 	}
 

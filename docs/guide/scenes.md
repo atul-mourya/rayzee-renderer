@@ -375,6 +375,11 @@ vertices needlessly, and drags along any other object sharing the same geometry.
 `{ refitTimeMs, placements }`, or `null` on a `memorySpill` scene whose matrices or tree are on disk:
 the move then lands once they are read back.
 
+Instanced meshes sharing one `instanceMatrix` under the same transform are traced as one object, so moving one
+moves the others. Instanced siblings in a group whose lists are equal (each part of a glTF node with
+`EXT_mesh_gpu_instancing`) count as one too: the engine makes them share the first one's attribute, so a
+`setMatrixAt` on any of them reaches all.
+
 All three take **indices into `engine.sceneMeshes`**, which is a depth-first walk of the rendered
 scene and includes the engine's own hidden ground disk. Build your index list from that array, never
 from your own model root, or the two orders silently disagree.

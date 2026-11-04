@@ -249,7 +249,12 @@ Combined buffer `[ TLAS | group trees | empty leaf | BLAS_0 | BLAS_1 | ... | cop
   (`TLAS_LEAF_IDENTITY`) marks a baked placement whose ray transform is skipped.
 
 **Grouped placements.** Instanced meshes sharing one matrix list under the same host transform are one
-object: each copy is one TLAS entry whose root is a small tree over the members' BLAS roots (the group
+object. So are siblings under a group holding equal lists of two copies or more (glTF's EXT_mesh_gpu_instancing gives
+each primitive of a node an InstancedMesh with its own copy of one list): `_sameMatrixList` then makes them share the
+first one's attribute, since a group copy is traced through one member's list and an edit must reach them all. It
+compares lists only where parent, count and the first and last copies agree, so shared pbrt/USD lists never reach the
+compare; two objects added to the scene itself are never matched. Each copy is one TLAS entry whose root is a small
+tree over the members' BLAS roots (the group
 trees, plain inner nodes in the copies' shared object space), so traversal is unchanged. A hidden
 member's child points at the empty leaf. `InstanceTable.entryOf` / `repOf` map placements and entries.
 
@@ -315,8 +320,8 @@ unload and the next build.
   and slots 4–15 hold the world-to-object matrix rows. Slot `[1]` carries the **TLAS entry** index
   masked by `TLAS_PLACEMENT_MASK` (the placement, unless placements are grouped); its bit 30 (`TLAS_LEAF_IDENTITY`)
   says the matrix is identity, which is how a baked placement tells traversal to skip the ray transform.
-- **Grouped placements** (`InstanceTable.setGroups`): instanced meshes sharing one `instanceMatrix` attribute under the
-  same host transform (non-emissive, non-deforming — `GeometryExtractor._instanceGroups`) are one object: each copy is
+- **Grouped placements** (`InstanceTable.setGroups`): instanced meshes sharing one `instanceMatrix` attribute (siblings
+  with equal lists are made to share one, `_sameMatrixList`) under the same host transform (non-emissive, non-deforming — `GeometryExtractor._instanceGroups`) are one object: each copy is
   ONE TLAS entry whose root is a small tree over the members' BLAS roots (plain inner nodes in the copies' shared object
   space, so traversal is unchanged). Members keep their placements, so transforms, visibility and refit stay per mesh;
   `entryOf` / `repOf` map placements and entries. A hidden member's child points at the empty leaf with a far point box

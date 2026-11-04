@@ -250,8 +250,6 @@ once looked at. How it should have been built so they could not happen:
   the branches, divergence or bindings (each tested); only a different layout (parts at BLAS boundaries?) could help.
 - [ ] **Member placements** — a grouped copy is one TLAS entry, but every member keeps its placement (a matrix and
   ~11 B each): 11M extra on the whole island, ~0.8 GB of CPU memory. Store the matrix once a copy.
-- [ ] **glTF instancing** — EXT_mesh_gpu_instancing gives each primitive its own matrix attribute, so its parts do not
-  group; group equal matrix lists by content too.
 - [ ] **Placements' memory** — copy clusters (~80 B a copy on the GPU against 128) and the after-load spill (matrix lists,
   TLAS with its copy records and order maps on disk) took the island's resident CPU data from 6.9 to 2.2 GB; what stays
   is the table's columns (~1.2 GB, ~25 B a placement). A compact instancer level (position, rotation, scale) is the lever
