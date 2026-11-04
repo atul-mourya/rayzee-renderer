@@ -283,6 +283,12 @@ your own copy of the image; textures you create are left as they are.
 
 A property a three.js material lacks falls back to `MATERIAL_DEFAULTS` (exported) — MeshPhysicalMaterial's own values, so a glTF metallic material gets IOR 1.5, not a guess derived from its metalness. Weights and roughnesses (metalness, roughness, transmission, opacity, clearcoat, sheen, iridescence, …) are clamped to [0, 1] on upload and on `setMaterialProperty`.
 
+`setMaterialProperty` writes what a load of a material with that value would write, with two exceptions to know.
+Raising `transmission` above 0 makes the material double-sided, as a load does, and it stays so if set back to 0
+(the side it was authored with is not kept). `alphaMode` is the one alpha field the shader reads, and an edit of
+`alphaTest`, `transparent` or `opacity` does not re-derive it: set `alphaMode` too (0 opaque, 1 mask, 2 blend), as
+the app does after each of those controls.
+
 A bump map follows three.js's `bumpScale` (negative presses it in) unless the material has a `bumpDistance` (set it on the three.js material,
 which three.js's `clone()` does not copy, or with `setMaterialProperty`): then the map is a height, its 0 → 1 spanning
 that many scene units (negative presses it in), and the shading follows the bumped surface's own slope whatever the

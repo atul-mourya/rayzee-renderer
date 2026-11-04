@@ -246,6 +246,9 @@ describe( 'material edits', () => {
 
 		SceneEdits.setMaterialProperty( app, 4, 'side', 2 );
 		expect( app._sdf.rebuildEmissiveColors ).toHaveBeenCalledTimes( 1 );
+		// Transmission makes it double-sided.
+		SceneEdits.setMaterialProperty( app, 3, 'transmission', 0.5 );
+		expect( app._sdf.rebuildEmissiveColors ).toHaveBeenCalledTimes( 2 );
 
 	} );
 

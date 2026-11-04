@@ -99,9 +99,10 @@ export function setMaterialProperty( app, materialIndex, property, value ) {
 
 	}
 
-	// A side edit moves the faces an emitter glows from (its triangles' flags, patched above): the light list's one- or
-	// two-sided cones are rebuilt from them, or NEE would keep drawing the old side.
-	if ( property === 'side' && app._sdf?.emissiveTriangleBuilder?.emissiveTriangles?.some( ( t ) => t.materialIndex === materialIndex ) ) {
+	// A side edit moves the faces an emitter glows from (its triangles' flags, patched above), as a transmission edit
+	// can (it makes the material double-sided): the light list's one- or two-sided cones are rebuilt from them, or NEE
+	// would keep drawing the old side.
+	if ( ( property === 'side' || property === 'transmission' ) && app._sdf?.emissiveTriangleBuilder?.emissiveTriangles?.some( ( t ) => t.materialIndex === materialIndex ) ) {
 
 		app._uploadEmissivePayload( app._sdf.rebuildEmissiveColors() );
 

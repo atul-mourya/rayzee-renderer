@@ -492,7 +492,17 @@ export class MaterialDataManager {
 				break;
 			case 'roughness': data[ stride + M.ROUGHNESS ] = value; break;
 			case 'ior': data[ stride + M.IOR ] = value; break;
-			case 'transmission': data[ stride + M.TRANSMISSION ] = value; break;
+			case 'transmission': data[ stride + M.TRANSMISSION ] = value;
+				// Seen from both faces once it transmits, as a load makes it (GeometryExtractor.getMaterialSide). Back at 0
+				// it stays so: the side it was authored with is not kept.
+				if ( value > 0 && data[ stride + M.SIDE ] !== 2 ) {
+
+					data[ stride + M.SIDE ] = 2;
+					this._patchTriangleSideForMaterial( materialIndex, 2 );
+
+				}
+
+				break;
 			case 'thickness': data[ stride + M.THICKNESS ] = value; break;
 			case 'emissiveIntensity': data[ stride + M.EMISSIVE_INTENSITY ] = value; break;
 			case 'attenuationColor':

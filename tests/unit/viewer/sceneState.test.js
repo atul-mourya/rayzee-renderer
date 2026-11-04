@@ -7,6 +7,7 @@ import { LightManager } from '@/core/lights/LightManager.js';
 import { CameraManager } from '@/core/viewer/camera/CameraManager.js';
 import { CameraTrack } from '@/core/viewer/animation/CameraTrack.js';
 import { RenderSettings, SETTING_SOURCE } from '@/core/RenderSettings.js';
+import { ENGINE_DEFAULTS } from '@/core/EngineDefaults.js';
 import { MaterialDataManager } from '@/core/materials/MaterialDataManager.js';
 import { MATERIAL_DATA_LAYOUT } from '@/core/scene/BufferLayout.js';
 
@@ -219,6 +220,33 @@ describe( 'timeline and settings sessions', () => {
 		const b = new RenderSettings( { maxBounces: 4 } );
 		expect( b.restore( { ...saved, retiredSetting: 3 } ) ).toEqual( [ 'retiredSetting' ] );
 		expect( b.getEffective().maxBounces ).toMatchObject( { value: 12, source: SETTING_SOURCE.HOST } );
+
+	} );
+
+	it( 'saves every setting a host set and restores each as it was set', () => {
+
+		// Away from its default: a number one up, a flag flipped, a string another value it takes.
+		const other = {
+			integrator: 'bidirectional', shadowRays: 'all', renderLimitMode: 'time', backgroundColor: '#123456', fogColor: '#654321',
+			cameraProjection: 'orthographic', dofMode: 'physical', fogBounds: { min: [ - 1, 0, - 1 ], max: [ 1, 2, 1 ] }, fogFloor: 0.5,
+			panoramaLonRange: [ - 90, 90 ], panoramaLatRange: [ - 45, 45 ],
+		};
+		const away = ( key, d ) => ( key in other ? other[ key ] : typeof d === 'boolean' ? ! d : typeof d === 'number' ? d + 1 : undefined );
+		const a = new RenderSettings( ENGINE_DEFAULTS );
+		const asSet = {};
+		for ( const [ key, d ] of Object.entries( ENGINE_DEFAULTS ) ) {
+
+			const value = away( key, d );
+			expect( value, `a value for ${key}` ).not.toBeUndefined();
+			a.set( key, value );
+			asSet[ key ] = a.get( key );
+
+		}
+
+		const b = new RenderSettings( ENGINE_DEFAULTS );
+		expect( b.restore( json( a.serialize() ) ) ).toEqual( [] );
+		const lost = Object.keys( ENGINE_DEFAULTS ).filter( ( key ) => JSON.stringify( toPortable( b.get( key ) ) ) !== JSON.stringify( toPortable( asSet[ key ] ) ) );
+		expect( lost ).toEqual( [] );
 
 	} );
 

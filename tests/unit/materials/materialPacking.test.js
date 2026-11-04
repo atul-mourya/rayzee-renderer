@@ -6,7 +6,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
 	Color, Texture, MeshStandardMaterial, MeshPhysicalMaterial, MeshBasicMaterial, MeshPhongMaterial,
-	DataTexture, Mesh, PlaneGeometry, Scene, FrontSide, BackSide, DoubleSide,
+	DataTexture, Mesh, PlaneGeometry, Scene, FrontSide, BackSide, DoubleSide, Vector2,
 } from 'three';
 
 vi.mock( 'three/webgpu', () => ( {
@@ -27,6 +27,7 @@ vi.mock( 'three/tsl', () => ( { storage: () => ( { toReadOnly() {
 } } ) } ) );
 
 import { MATERIAL_DEFAULTS } from '@/core/EngineDefaults.js';
+import { fromPortable } from '@/core/Portable.js';
 import {
 	TRIANGLE_DATA_LAYOUT as T, TRI_BLOCKER_SHIFT, TRI_SIDE_SHIFT, TRI_EMIT_SIDE_SHIFT, shadowBlockerBits, MATERIAL_DATA_LAYOUT as M,
 } from '@/core/scene/BufferLayout.js';
@@ -382,6 +383,46 @@ describe( 'MaterialDataManager', () => {
 
 	} );
 
+	// A value away from the default for every property an edit takes, in the form a host hands it.
+	const editValues = () => ( {
+		color: new Color( 0.2, 0.4, 0.6 ), emissive: new Color( 0.3, 0.1, 0.05 ), attenuationColor: new Color( 0.8, 0.5, 0.2 ),
+		sheenColor: new Color( 0.4, 0.3, 0.2 ), specularColor: new Color( 0.9, 0.7, 0.5 ),
+		diffuseTransmissionColor: new Color( 0.2, 0.6, 0.3 ), subsurfaceColor: new Color( 0.9, 0.4, 0.3 ),
+		metalness: 0.3, roughness: 0.4, ior: 1.7, transmission: 0.5, thickness: 0.2, emissiveIntensity: 3,
+		attenuationDistance: 2, dispersion: 0.2, sheen: 0.6, sheenRoughness: 0.3, specularIntensity: 0.7, iridescence: 0.5,
+		iridescenceIOR: 1.6, iridescenceThicknessRange: [ 120, 380 ], clearcoat: 0.4, clearcoatRoughness: 0.2,
+		clearcoatNormalScale: new Vector2( 0.5, 0.5 ), opacity: 0.6, side: DoubleSide, transparent: true, alphaTest: 0.3,
+		depthWrite: false, normalScale: new Vector2( 0.5, - 0.5 ), bumpScale: 0.4, bumpDistance: 0.02, relativeIOR: true,
+		displacementScale: 0.3, displacementBias: 0.1, subsurface: 0.5, subsurfaceRadius: [ 0.5, 0.25, 0.125 ],
+		subsurfaceRadiusScale: 0.3, subsurfaceAnisotropy: 0.2, anisotropy: 0.4, anisotropyRotation: 0.7,
+		diffuseTransmission: 0.3, diffuseRoughness: 0.4,
+	} );
+
+	it( 'writes each property edited on its own as a load of a material with it does', () => {
+
+		const values = editValues();
+		const differing = [];
+		for ( const [ key, value ] of Object.entries( values ) ) {
+
+			const edited = managerWith( new GeometryExtractor() );
+			edited.updateMaterial( 0, new MeshPhysicalMaterial() );
+			edited.updateMaterialProperty( 0, key, value );
+			const loaded = managerWith( new GeometryExtractor() );
+			loaded.updateMaterial( 0, Object.assign( new MeshPhysicalMaterial(), { [ key ]: value } ) );
+			const a = edited.materialStorageAttr.array, b = loaded.materialStorageAttr.array;
+			const slots = [];
+			// A load derives the alpha mode from the alpha inputs; an edit leaves it to the host, which sets it after
+			// them (the app's syncAlphaMode).
+			const derived = [ 'alphaTest', 'transparent', 'opacity' ].includes( key ) ? M.ALPHA_MODE : - 1;
+			for ( let i = 0; i < a.length; i ++ ) if ( i !== derived && ! Object.is( a[ i ], b[ i ] ) ) slots.push( `${i}: ${a[ i ]} ≠ ${b[ i ]}` );
+			if ( slots.length ) differing.push( `${key} (${slots.join( ', ' )})` );
+
+		}
+
+		expect( differing ).toEqual( [] );
+
+	} );
+
 	it( 'edits the thin-film thickness by three\'s names as well as by the range', () => {
 
 		const manager = managerWith( new GeometryExtractor() );
@@ -392,6 +433,41 @@ describe( 'MaterialDataManager', () => {
 		const data = manager.materialStorageAttr.array;
 		expect( [ data[ M.IRIDESCENCE_THICKNESS_RANGE ], data[ M.IRIDESCENCE_THICKNESS_RANGE + 1 ] ] ).toEqual( [ 50, 600 ] );
 		expect( manager.getMaterialProperty( 0, 'iridescenceThicknessMaximum' ) ).toBe( 600 );
+
+	} );
+
+	it( 'replays every edit a session saved to the same material bytes', () => {
+
+		const edited = managerWith( new GeometryExtractor() );
+		edited.updateMaterial( 0, new MeshPhysicalMaterial() );
+		for ( const [ key, value ] of Object.entries( editValues() ) ) edited.updateMaterialProperty( 0, key, value );
+
+		// As SceneState stores them (JSON) and replays them (fromPortable, then the edit).
+		const saved = JSON.parse( JSON.stringify( edited.serializeHostEdits() ) );
+		expect( saved.map( ( e ) => e.index ) ).toEqual( [ 0 ] );
+		expect( Object.keys( saved[ 0 ].props ).sort() ).toEqual( Object.keys( editValues() ).sort() );
+		const restored = managerWith( new GeometryExtractor() );
+		restored.updateMaterial( 0, new MeshPhysicalMaterial() );
+		for ( const [ key, portable ] of Object.entries( saved[ 0 ].props ) ) restored.updateMaterialProperty( 0, key, fromPortable( portable ) );
+
+		const a = edited.materialStorageAttr.array, b = restored.materialStorageAttr.array;
+		const slots = [];
+		for ( let i = 0; i < a.length; i ++ ) if ( ! Object.is( a[ i ], b[ i ] ) ) slots.push( `${i}: ${a[ i ]} ≠ ${b[ i ]}` );
+		expect( slots ).toEqual( [] );
+
+	} );
+
+	it( 'shows a material from both faces once an edit makes it transmit, as a load does', () => {
+
+		const flags = new Uint32Array( T.FLOATS_PER_TRIANGLE );
+		const manager = managerWith( new GeometryExtractor(), flags );
+		manager.updateMaterial( 0, new MeshPhysicalMaterial() );
+		const side = () => [ manager.materialStorageAttr.array[ M.SIDE ], ( flags[ T.MATERIAL_FLAGS_OFFSET ] >>> TRI_SIDE_SHIFT ) & 3 ];
+		expect( side() ).toEqual( [ 0, 0 ] );
+		manager.updateMaterialProperty( 0, 'transmission', 0.5 );
+		expect( side() ).toEqual( [ 2, 2 ] );
+		manager.updateMaterialProperty( 0, 'transmission', 0 );
+		expect( side() ).toEqual( [ 2, 2 ] );
 
 	} );
 
