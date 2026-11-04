@@ -151,6 +151,27 @@ describe( 'pbrt materials', () => {
 
 	} );
 
+	it( 'colours a conductor from a measured eta with copper\'s k where it gives none, and survives a textured eta', async () => {
+
+		const fr = ( n, k ) => ( ( n - 1 ) ** 2 + k ** 2 ) / ( ( n + 1 ) ** 2 + k ** 2 );
+		const copper = [ fr( 0.2, 3.9 ), fr( 0.92, 2.45 ), fr( 1.1, 2.14 ) ].map( ( v ) => expect.closeTo( v, 6 ) );
+		// Was the eta itself as the colour, blue 1.1.
+		const measured = await buildMaterial( { type: 'conductor', params: { eta: param( 'rgb', 0.2, 0.92, 1.1 ) } }, ctx );
+		expect( measured.color.toArray() ).toEqual( copper );
+
+		// Threw: a texture with no constant resolves to no rgb.
+		const textured = { ...ctx, resolveNamedTexture: async () => ( { texture: new Texture() } ) };
+		const map = await buildMaterial( { type: 'conductor', params: { eta: param( 'texture', 'e' ), k: param( 'texture', 'k' ) } }, textured );
+		expect( map.color.toArray() ).toEqual( copper );
+		expect( map.metalness ).toBe( 1 );
+
+		// A named k alone is that metal.
+		const silver = await buildMaterial( { type: 'conductor', params: { k: param( 'spectrum', 'metal-Ag-k' ) } }, ctx );
+		const gold = await buildMaterial( { type: 'conductor', params: { eta: param( 'spectrum', 'metal-Au-eta' ) } }, ctx );
+		expect( silver.color.toArray() ).not.toEqual( gold.color.toArray() );
+
+	} );
+
 	it( 'makes diffuse Lambertian', async () => {
 
 		const mat = await buildMaterial( { type: 'diffuse', params: { reflectance: param( 'rgb', 0.2, 0.4, 0.6 ) } }, ctx );

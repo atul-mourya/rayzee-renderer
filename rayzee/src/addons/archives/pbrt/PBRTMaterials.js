@@ -339,34 +339,48 @@ const oneMapping = ( a, b ) => a === b || ( a.repeat.x === ( b?.repeat.x ?? 1 ) 
 	&& a.offset.x === ( b?.offset.x ?? 0 ) && a.offset.y === ( b?.offset.y ?? 0 )
 	&& uvKey( a.userData.pbrtUV ) === uvKey( b?.userData.pbrtUV ) );
 
-// A conductor's colour: `reflectance`, else normal-incidence Fresnel of `eta`/`k` (under `prefix` for a coated
-// conductor). pbrt's default is copper.
+// pbrt-v4's default conductor, copper, as RGB.
+const COPPER_ETA = [ 0.2, 0.92, 1.1 ], COPPER_K = [ 3.9, 2.45, 2.14 ];
+const isNamedSpectrum = ( p ) => p?.type === 'spectrum' && typeof p.value[ 0 ] === 'string';
+
+// A conductor's colour: `reflectance`; else the metal table for a named eta or k, which stands for that metal's eta and
+// k alike (another metal's, or a number, beside it is unused); else normal-incidence Fresnel of a measured eta and k,
+// copper's for one not given (under `prefix` for a coated conductor). Neither given is copper.
 async function applyConductorColor( mat, params, ctx, prefix, applyAlbedo, setColor ) {
 
 	const refl = await resolveSpectrum( params, 'reflectance', ctx, null );
-	const etaP = params[ `${prefix}eta` ], kP = params[ `${prefix}k` ];
-	const etaNamed = etaP && etaP.type === 'spectrum' && typeof etaP.value[ 0 ] === 'string';
+	const etaKey = `${prefix}eta`, kKey = `${prefix}k`;
+	const etaP = params[ etaKey ], kP = params[ kKey ];
 
 	if ( refl.rgb || refl.texture ) {
 
 		applyAlbedo( refl );
 
-	} else if ( etaP && kP && ! etaNamed ) {
+	} else if ( isNamedSpectrum( etaP ) || isNamedSpectrum( kP ) ) {
 
-		// Normal-incidence reflectance from complex IOR: ((η-1)²+k²)/((η+1)²+k²).
-		const eta = ( await resolveSpectrum( params, `${prefix}eta`, ctx, [ 0.2, 0.92, 1.1 ] ) ).rgb;
-		const k = ( await resolveSpectrum( params, `${prefix}k`, ctx, [ 3.9, 2.45, 2.14 ] ) ).rgb;
+		const [ key, other, otherKey ] = isNamedSpectrum( etaP ) ? [ etaKey, kP, kKey ] : [ kKey, etaP, etaKey ];
+		setColor( ( await resolveSpectrum( params, key, ctx, DEFAULT_METAL ) ).rgb || DEFAULT_METAL );
+		if ( isNamedSpectrum( other ) && namedMetalKey( other.value[ 0 ] ) === namedMetalKey( params[ key ].value[ 0 ] ) ) approximated( params, otherKey );
+
+	} else if ( etaP || kP ) {
+
+		// ((η-1)²+k²)/((η+1)²+k²); a texture's mean is not read here, so it takes copper's value.
+		const measured = async ( key, dflt ) => {
+
+			if ( ! params[ key ] ) return dflt;
+			const { rgb, texture } = await resolveSpectrum( params, key, ctx, dflt );
+			if ( texture || ! rgb ) approximated( params, key );
+			return ( ! texture && rgb ) || dflt;
+
+		};
+
+		const eta = await measured( etaKey, COPPER_ETA ), k = await measured( kKey, COPPER_K );
 		const fr = ( n, kk ) => ( ( n - 1 ) ** 2 + kk ** 2 ) / ( ( n + 1 ) ** 2 + kk ** 2 );
 		setColor( [ fr( eta[ 0 ], k[ 0 ] ), fr( eta[ 1 ], k[ 1 ] ), fr( eta[ 2 ], k[ 2 ] ) ] );
 
-	} else if ( etaP ) {
-
-		// Named conductor spectrum → metal albedo table.
-		setColor( ( await resolveSpectrum( params, `${prefix}eta`, ctx, DEFAULT_METAL ) ).rgb || DEFAULT_METAL );
-
 	} else {
 
-		setColor( METAL_ALBEDO.cu ); // pbrt-v4 default conductor is copper
+		setColor( METAL_ALBEDO.cu );
 
 	}
 

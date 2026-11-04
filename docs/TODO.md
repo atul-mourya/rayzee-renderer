@@ -18,7 +18,6 @@
 - [ ] `sceneMetadata.render` (bounces, samples, film size, integrator) is applied by nothing; the canvas keeps its own aspect, so framing differs from 16:9 previews
 - [ ] PixelFilter (triangle, radius 1; 25 scenes) — engine uses its own pixel reconstruction
 - [ ] volpath `regularize` (BMW), sppm `radius` (Cornell Caustic)
-- [ ] conductor `k` reported ignored though the named-metal table covers it (report it as approximated)
 - [ ] Not read, not in the catalog: spherical / realistic cameras (spherical becomes perspective), perspective `screenwindow`, `frameaspectratio`, shutter (motion blur), Film white balance / sensor / `cropwindow` / `maxcomponentvalue`, CameraMedium and space-filling media, non-homogeneous media, scattering inside media (σs folds into absorption)
 
 ### UX issue

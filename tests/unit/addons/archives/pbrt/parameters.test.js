@@ -93,6 +93,28 @@ describe( 'pbrt parameters the loader does not honour', () => {
 
 	} );
 
+	it( 'counts a metal\'s k as approximated where the metal table stands for it, and reads a measured eta and k', async () => {
+
+		const tri = ( z ) => `Shape "trianglemesh" "point3 P" [ 0 0 ${z} 1 0 ${z} 0 1 ${z} ] "integer indices" [ 0 1 2 ]\n`;
+		const scene = 'Camera "perspective"\nWorldBegin\n' +
+			`Material "conductor" "spectrum eta" "metal-Au-eta" "spectrum k" "metal-Au-k"\n${tri( 0 )}` +
+			`Material "conductor" "spectrum k" "metal-Ag-k"\n${tri( 1 )}` +
+			`Material "coatedconductor" "spectrum conductor.eta" "metal-Cu-eta" "spectrum conductor.k" "metal-Cu-k"\n${tri( 2 )}` +
+			`Material "conductor" "rgb eta" [ 0.2 0.9 1.1 ] "rgb k" [ 3.9 2.4 2.1 ]\n${tri( 3 )}` +
+			`Material "conductor" "spectrum eta" "metal-Au-eta" "rgb k" [ 3.9 2.4 2.1 ]\n${tri( 4 )}`;
+		const { parameters } = await loadPBRTScene( { vfs: { 'scene.pbrt': enc.encode( scene ) }, plyParser: () => null, imageFromBytes: async () => null } );
+
+		// A number beside a named metal changes nothing: unused. A named k alone is that metal's colour.
+		expect( parameters.unused ).toEqual( { 'Material conductor: k': 1 } );
+		expect( parameters.approximated ).toEqual( {
+			'Material coatedconductor: conductor.eta': 1,
+			'Material coatedconductor: conductor.k': 1,
+			'Material conductor: eta': 2,
+			'Material conductor: k': 2,
+		} );
+
+	} );
+
 	function importer( storage ) {
 
 		const loader = {
