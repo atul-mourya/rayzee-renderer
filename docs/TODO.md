@@ -42,7 +42,11 @@
   lobe and shadow rays; importers mark solid glass with thickness 1; the app gets a "Thin" switch. Changes how glTF
   glass without a volume renders (it stops refracting).
 - [ ] (low priority) OIDN made 150-spp renders slightly worse than raw (2026-08, before oidn-web 0.5.0 — re-measure). Defaults stop at 30–60 spp, so only raised caps hit it. Fix if real: fade OIDN out as the image converges.
-- [ ] NRD is still worse than raw at 4–16 spp on several scenes (2026-10-14, after the 1-spp fix): alpha-cutout 1.57 / 2.21, sheen 1.13 / 1.38, clearcoat 1.05 / 1.35, shadow-catcher 1.24 / 1.37, iridescence 1.08, anisotropy 1.04 (4 / 16 spp). `bench:denoise`'s `sppLadder [1, 64]` never measures them: add a 4 or 16 rung.
+- [ ] NRD is still worse than raw at 16 spp on several scenes (re-measured 2026-11-04, unchanged since 10-14):
+  alpha-cutout 2.22, sheen 1.38, shadow-catcher 1.37, clearcoat 1.35, iridescence 1.08, anisotropy 1.03; at 1 spp it
+  helps on all (0.64–0.87) and at 64 it hands over (1.000). `bench:denoise` has a 16 rung since 2026-11-04 (`sppLadder
+  [1, 16, 64]`), but these scenes are not in its list (`bench:denoise -- --only alpha-cutout,…` measures them); its
+  three gate NRD at 0.87–0.98 there.
 - [ ] NRD treats a whole emissive material as an emitter (never blurred), so a surface with a mostly-black emissive map is left noisy; a one-pixel ring can still leak at a non-black emitter's edge (needs per-sample emission, no free G-buffer lane).
 - [ ] Shadow rays cross glass in a straight line (coloured since 11.16, see `docs/design/SHADING.md` → Light through
   glass): within ~1 % of refraction for panes, but a thick block lands ±7 % off, as the light really bends through it.

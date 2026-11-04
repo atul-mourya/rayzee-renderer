@@ -235,9 +235,10 @@ export const MEMORY_GATES = {
  */
 export const DENOISE_GATES = {
 	// A ladder, not a single point: that regression was a CROSSOVER — it helped at low
-	// sample counts and hurt at high ones, so either rung alone would have missed it. Two rungs
-	// keeps the suite affordable.
-	sppLadder: [ 1, 64 ],
+	// sample counts and hurt at high ones, so either rung alone would have missed it. The middle
+	// rung is where NRD loses to raw on several scenes (4–16 spp, docs/TODO.md), which 1 and 64
+	// never saw.
+	sppLadder: [ 1, 16, 64 ],
 	strategies: [
 		// ReBLUR port: temporal + recurrent-blur chain on the fused signal (viewer/denoise/NRD.js).
 		{ id: 'nrd', preset: 'medium' },
