@@ -50,9 +50,16 @@
 - [ ] NRD treats a whole emissive material as an emitter (never blurred), so a surface with a mostly-black emissive map is left noisy; a one-pixel ring can still leak at a non-black emitter's edge (needs per-sample emission, no free G-buffer lane).
 - [ ] Shadow rays cross glass in a straight line (coloured since 11.16, see `docs/design/SHADING.md` → Light through
   glass): within ~1 % of refraction for panes, but a thick block lands ±7 % off, as the light really bends through it.
-- [ ] Rough, dense, part-transmissive glass still reads 0.97–0.98 in a closed white furnace (T 0.5, IOR 1.5, roughness
-  0.7–1; 1.00 to roughness 0.2, and 0.999 at IOR 1.01). Before the part-transmission fix it read 0.46–0.80. Not the
-  straight shadow rays' missing (n1/n2)²: giving them it read 1.11 / 1.05 / 1.01 at roughness 0 / 0.5 / 1.
+- [ ] Rough, part-transmissive glass reads 0.96–0.97 in a closed white furnace (T 0.25–0.75, IOR 1.5, roughness
+  0.7–1, 32 bounces; T 0 reads 1.000 and T 1 0.998). Cause found 2026-11-04: the straight shadow rays, not the BSDF.
+  From inside the sphere, environment NEE crosses the wall straight (T, no Fresnel, no total internal reflection),
+  while BSDF paths through the same wall keep the last opaque scatter's pdf and are balance-weighted against it, so the
+  two estimate different light. With NEE blocked by glass and every path that crossed glass weighed 1, the furnace
+  reads 0.999 (roughness 1) and 0.995 (0.2). Weighing only glass reflections 1 (NEE never draws them) recovers a third:
+  0.964 → 0.975, but overshoots at roughness 0.2 (1.0065). The 0.97 at roughness 0.2 in `furnace-glass-*` is the
+  8-bounce limit (32 bounces: 1.000). A fix is the "Light through glass" trade (noise-free coloured shadows behind
+  panes against this bias), not a bug fix; the same cause as the thick-block line above. Experiments:
+  `~/RayzeeScratch/night/2026-11-04/rough-glass-furnace/`.
 - [ ] Extension maps (transmission, clearcoat, sheen, …) are read on the base-colour map's UV transform (the coat's normal map on the base normal map's, or its own when there is none) and the first UV set; glTF gives each its own `texCoord` and `KHR_texture_transform`.
 - [ ] OIDN's guide jumps from "see through" to "this surface" at a hard step (pure metal: roughness 0.049). Cycles' smooth ramp was tried (2026-08) and lost on 9 of 10 `bench:denoise` OIDN tests; a retry must keep one surface per pixel.
 - [ ] Fluted glass (24233846.glb): firefly threshold, bounce counts and LED brightness change nothing — don't retry. The leftover noise is the LED-lit cabinet seen through the glass; it needs ReSTIR DI or a radiance cache (neither built).
