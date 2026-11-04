@@ -55,7 +55,10 @@ turns it off or supplies a host manager; `openHeadless` defaults to off.
   template's stored BLAS is used only if its position checksum matches — so extraction, TLAS and
   textures always run as before. ⚠️ `Material.toJSON` stores colours as 8-bit sRGB hex and
   `MaterialLoader` rounds `ior` through `reflectivity`; the codec carries both exactly
-  (`exactColors`, `exactIor`) or the warm render differs. ⚠️ A file several textures read is decoded once and shared
+  (`exactColors`, `exactIor`) or the warm render differs. The engine's own material properties three.js does not
+  serialise (`ENGINE_VALUES`, `ENGINE_TEXTURES`: diffuse transmission, subsurface, bump distance, …) ride beside them;
+  `sceneCache.test.js` round-trips every `MATERIAL_DEFAULTS` property and map, so a new one left out fails there (stored
+  scenes had come back without subsurface scattering). ⚠️ A file several textures read is decoded once and shared
   (`decodeSceneGraph`), as the build shares it: decoded per texture, bistro's normal maps took 24 more array layers
   (400 MB in the tab, as much on the GPU) and its second load ran out of memory. Read sections in one forward pass of
   large windows: thousands of small `File.slice` reads took 9.8 s, one pass 0.37 s.

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
 	AnimationClip, BufferAttribute, BufferGeometry, DataTexture, FloatType, Group, InstancedMesh, Matrix4, Mesh,
 	MeshPhysicalMaterial, PerspectiveCamera, RGBAFormat, RepeatWrapping, SRGBColorSpace, Texture, VectorKeyframeTrack, PointLight,
-	SpotLight, DirectionalLight, HemisphereLight, Vector3, BoxGeometry, SphereGeometry, FrontSide,
+	SpotLight, DirectionalLight, HemisphereLight, Vector3, BoxGeometry, SphereGeometry, Color, DoubleSide, BackSide, FrontSide,
 } from 'three';
 import { createFakeOPFS } from '../../__mocks__/opfs.js';
 import { openStorage, acquireSharedStorage } from '@/core/addons/storage/OpenStorage.js';
@@ -13,6 +13,10 @@ import { worthStoring } from '@/core/storage/StorageAreas.js';
 import { getAssetConfig } from '@/core/AssetConfig.js';
 import { SceneProcessor } from '@/core/scene/SceneProcessor.js';
 import { SpillStore } from '@/core/storage/SpillStore.js';
+import { inspectBVH } from '../bvh/bvhInvariants.js';
+import { GeometryExtractor, resolveMaterialTextures } from '@/core/scene/GeometryExtractor.js';
+import { TextureCreator } from '@/core/materials/TextureCreator.js';
+import { MATERIAL_DEFAULTS } from '@/core/EngineDefaults.js';
 
 vi.mock( '@/core/bvh/BVHWorker.js?worker&inline', async () => {
 
@@ -257,6 +261,71 @@ describe( 'SceneGraphCodec', () => {
 
 	} );
 
+	it( 'keeps every property and map the engine reads off a material', async () => {
+
+		// Every MATERIAL_DEFAULTS property away from its default; alphaMode is derived, not set.
+		const maps = Object.keys( resolveMaterialTextures( {} ) );
+		const make = ( extra ) => {
+
+			const material = Object.assign( new MeshPhysicalMaterial(), {
+				roughness: 0.3, metalness: 0.2, ior: 1.37, opacity: 0.8, transmission: 0.4, thickness: 0.6, attenuationDistance: 2.5,
+				dispersion: 0.1, sheen: 0.5, sheenRoughness: 0.4, specularIntensity: 0.7, clearcoat: 0.3, clearcoatRoughness: 0.2,
+				iridescence: 0.4, iridescenceIOR: 1.6, iridescenceThicknessRange: [ 120, 380 ], bumpScale: 0.5, bumpDistance: 0.02,
+				relativeIOR: true, displacementScale: 0.3, displacementBias: 0.1, transparent: true, alphaTest: 0.25, side: DoubleSide,
+				depthWrite: false, emissiveIntensity: 2.5, anisotropy: 0.5, anisotropyRotation: 0.7, diffuseTransmission: 0.3,
+				diffuseRoughness: 0.4, subsurface: 0.6, subsurfaceRadius: [ 0.5, 0.25, 0.125 ], subsurfaceRadiusScale: 0.3,
+				subsurfaceAnisotropy: 0.2,
+				subsurfaceColor: new Color( 0.9, 0.4, 0.3 ), diffuseTransmissionColor: new Color( 0.2, 0.7, 0.4 ),
+			}, extra );
+			material.color.setRGB( 0.6, 0.5, 0.4 );
+			material.emissive.setRGB( 0.1, 0.2, 0.3 );
+			material.attenuationColor.setRGB( 0.8, 0.7, 0.6 );
+			material.sheenColor.setRGB( 0.3, 0.2, 0.1 );
+			material.specularColor.setRGB( 0.9, 0.8, 0.7 );
+			material.normalScale.set( 0.5, - 0.5 );
+			material.clearcoatNormalScale.set( 0.25, 0.75 );
+			for ( const key of maps ) {
+
+				material[ key ] = new Texture();
+				material[ key ].userData[ ARCHIVE_PATH ] = `textures/${key}.png`;
+
+			}
+
+			return material;
+
+		};
+
+		const material = make();
+		// Glass reads as double-sided whatever its side: a second, opaque material carries `side`.
+		const opaque = make( { transmission: 0, side: BackSide } );
+
+		const record = ( m ) => new GeometryExtractor().createMaterialObject( m );
+		const plain = ( v ) => ( v?.isColor || v?.isVector2 ? v.toArray() : v );
+		const before = [ record( material ), record( opaque ) ];
+		const untouched = Object.keys( MATERIAL_DEFAULTS ).filter( ( key ) => key !== 'alphaMode'
+			&& before.some( ( r ) => JSON.stringify( plain( r[ key ] ) ) === JSON.stringify( MATERIAL_DEFAULTS[ key ] ) ) );
+		expect( untouched, 'properties this test leaves at their default' ).toEqual( [ 'transmission' ] );
+
+		const root = new Group();
+		root.add( new Mesh( new BoxGeometry(), material ), new Mesh( new BoxGeometry(), opaque ) );
+		const area = storage.area( 'scenes' );
+		const writer = await area.create( 'all' );
+		await writeSceneGraph( writer, encodeSceneGraph( root ) );
+		await writer.commit();
+		const entry = await area.open( 'all' );
+		const decoded = await decodeSceneGraph( await entry.json( 'graph.json' ), await entry.file( 'data.bin' ), {
+			loadTexture: async () => new Texture(),
+		} );
+		entry.release();
+
+		const out = decoded.root.children.map( ( mesh ) => mesh.material );
+		for ( const key of maps ) expect( out[ 0 ][ key ]?.uuid, key ).toBe( material[ key ].uuid );
+		const packed = ( m ) => [ ...new TextureCreator().createMaterialRawData( [ record( m ) ] ) ];
+		expect( packed( out[ 0 ] ) ).toEqual( packed( material ) );
+		expect( packed( out[ 1 ] ) ).toEqual( packed( opaque ) );
+
+	} );
+
 	it( 'refuses what it does not know rather than store it wrongly', () => {
 
 		const { root } = buildScene();
@@ -339,6 +408,54 @@ describe( 'a failed BVH build', () => {
 	const processor = () => Object.assign( new SceneProcessor(), { _sceneKey: 'two shapes' } );
 	// Replacing an entry waits for every reader's lock on it.
 	const storeOrLocked = ( sp ) => Promise.race( [ sp._storeBLASes( 'test' ), new Promise( r => setTimeout( () => r( 'locked' ), 2000 ) ) ] );
+
+	// The sphere and box, plus instanced copies sharing one list (a group), over a second template.
+	const richScene = () => {
+
+		const root = scene();
+		const material = new MeshPhysicalMaterial();
+		const trunk = new InstancedMesh( new BoxGeometry( 0.2, 1, 0.2 ), material, 3 );
+		const crown = new InstancedMesh( new SphereGeometry( 0.5, 8, 6 ), material, 3 );
+		for ( let i = 0; i < 3; i ++ ) trunk.setMatrixAt( i, new Matrix4().makeTranslation( i * 2, 4, 0 ) );
+		crown.instanceMatrix = trunk.instanceMatrix;
+		root.add( trunk, crown );
+		root.updateMatrixWorld( true );
+		return root;
+
+	};
+
+	// The first lane whose bits differ, or -1.
+	const firstDifference = ( a, b ) => {
+
+		const x = new Uint32Array( a.buffer, a.byteOffset, a.length ), y = new Uint32Array( b.buffer, b.byteOffset, b.length );
+		return x.length === y.length ? x.findIndex( ( v, i ) => v !== y[ i ] ) : Math.min( x.length, y.length );
+
+	};
+
+	it( 'restores a stored BVH that keeps every invariant and is the fresh build bit for bit', async () => {
+
+		const fresh = processor();
+		await fresh._extractGeometry( richScene() );
+		await fresh._buildBVH();
+		expect( await fresh._storeBLASes( 'test' ) ).toBe( true );
+
+		const again = processor();
+		await again._extractGeometry( richScene() );
+		await again._buildBVH();
+		expect( again._blasRestored ).toBe( true );
+		expect( again.instanceGroups.length ).toBe( 1 );
+
+		const { problems, stats } = inspectBVH( again.bvh, again.triangles, { table: again.instanceTable } );
+		expect( problems ).toEqual( [] );
+		expect( stats.groupCopies ).toBe( 3 );
+		const nodes = ( sp ) => sp.bvh.single ?? sp.bvh.copyOf( 0, sp.bvh.recordCount );
+		const triangles = ( sp ) => sp.triangles.single ?? sp.triangles.copyOf( 0, sp.triangles.recordCount );
+		expect( firstDifference( nodes( again ), nodes( fresh ) ) ).toBe( - 1 );
+		expect( firstDifference( triangles( again ), triangles( fresh ) ) ).toBe( - 1 );
+		fresh.dispose();
+		again.dispose();
+
+	} );
 
 	it( 'lets go of a stored BVH when the build that restored it fails', async () => {
 

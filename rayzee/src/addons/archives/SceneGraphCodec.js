@@ -13,10 +13,13 @@ import {
 	MaterialLoader, Mesh, Object3D, OrthographicCamera, PerspectiveCamera, DirectionalLight, PointLight, SpotLight,
 } from 'three';
 
-export const SCENE_GRAPH_FORMAT = 2;
-// What the engine reads off a material that three.js does not serialise.
+export const SCENE_GRAPH_FORMAT = 3;
+// What the engine reads off a material that three.js does not serialise (colours go through exactColors).
 const ENGINE_TEXTURES = [ 'diffuseTransmissionMap', 'diffuseTransmissionColorMap' ];
-const ENGINE_VALUES = [ 'diffuseTransmission', 'diffuseRoughness', 'bumpDistance', 'relativeIOR', 'emissiveSide' ];
+const ENGINE_VALUES = [
+	'diffuseTransmission', 'diffuseRoughness', 'bumpDistance', 'relativeIOR', 'emissiveSide',
+	'subsurface', 'subsurfaceRadius', 'subsurfaceRadiusScale', 'subsurfaceAnisotropy',
+];
 export const ARCHIVE_PATH = '__rayzeeArchivePath';
 export const ARCHIVE_LOADER = '__rayzeeArchiveLoader';
 
@@ -171,7 +174,7 @@ function encodeMaterial( material, meta ) {
 	// MaterialLoader sets `reflectivity` after `ior`, and that setter rewrites ior with rounding.
 	if ( material.ior !== undefined ) json.exactIor = material.ior;
 	// Engine properties three.js does not know, so toJSON drops them.
-	for ( const key of ENGINE_VALUES ) if ( material[ key ] !== undefined ) json[ key ] = material[ key ];
+	for ( const key of ENGINE_VALUES ) if ( material[ key ] !== undefined ) json[ key ] = Array.isArray( material[ key ] ) ? [ ...material[ key ] ] : material[ key ];
 	for ( const key of ENGINE_TEXTURES ) if ( material[ key ]?.isTexture ) ( json.engineTextures ??= {} )[ key ] = material[ key ].uuid;
 	return json;
 
@@ -469,8 +472,9 @@ export async function decodeSceneGraph( manifest, data, { loadTexture } ) {
 		const material = materialLoader.parse( json );
 		for ( const [ key, rgb ] of Object.entries( json.exactColors ?? {} ) ) {
 
-			if ( key === 'diffuseTransmissionColor' ) material[ key ] = new Color();
-			material[ key ]?.setRGB( rgb[ 0 ], rgb[ 1 ], rgb[ 2 ] );
+			// An engine colour (diffuse transmission, subsurface) is not on a three.js material.
+			if ( ! material[ key ]?.isColor ) material[ key ] = new Color();
+			material[ key ].setRGB( rgb[ 0 ], rgb[ 1 ], rgb[ 2 ] );
 
 		}
 
