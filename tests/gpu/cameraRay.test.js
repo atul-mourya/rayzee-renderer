@@ -7,12 +7,12 @@
  */
 
 import { afterAll, beforeAll, expect, it } from 'vitest';
-import { PerspectiveCamera, Raycaster, Vector2, Vector3, Vector4 } from 'three';
+import { Matrix4, PerspectiveCamera, Raycaster, Vector2, Vector3, Vector4 } from 'three';
 import { uniform, vec4 } from 'three/tsl';
 import { describeGPU, createRenderer, evaluate } from './gpu.js';
 import { generateRayFromCamera, cameraClipDistance } from '@/core/shaders/CameraRay.js';
 import { Ray } from '@/core/shaders/Struct.js';
-import { ViewCamera } from '@/core/scene/ViewCamera.js';
+import { ViewCamera, projectionInverseOf } from '@/core/scene/ViewCamera.js';
 import { CAMERA_PROJECTION_IDS } from '@/core/EngineDefaults.js';
 
 const FOCUS = 3.5;
@@ -55,11 +55,10 @@ UVS.forEach( ( [ u, v ], p ) => {
 
 } );
 
-async function trace( renderer, projection, look = false, dof = true ) {
+async function trace( renderer, projection, look = false, dof = true, view = projection === CAMERA_PROJECTION_IDS.orthographic ? ortho : camera ) {
 
-	const view = projection === CAMERA_PROJECTION_IDS.orthographic ? ortho : camera;
 	const args = [
-		uniform( view.matrixWorld.clone() ), uniform( view.projectionMatrixInverse.clone() ),
+		uniform( view.matrixWorld.clone() ), uniform( projectionInverseOf( view, new Matrix4() ) ),
 		uniform( projection, 'int' ), uniform( new Vector2( - Math.PI, Math.PI ) ), uniform( new Vector2( - Math.PI / 2, Math.PI / 2 ) ), uniform( 0, 'int' ),
 		uniform( dof ? 1 : 0, 'int' ), uniform( FOCAL_LENGTH ), uniform( F_STOP ), uniform( FOCUS ), uniform( UNITS_PER_METRE ), uniform( APERTURE_SCALE ), uniform( 1.0 ),
 		uniform( look ? 1 : 0, 'int' ), uniform( BLUR ),
@@ -201,6 +200,20 @@ describeGPU( 'thin lens', () => {
 
 		expect( widest ).toBeLessThanOrEqual( expected * 1.0001 );
 		expect( widest ).toBeGreaterThan( expected * 0.95 );
+
+	} );
+
+	// glTF's znear 1e-4 and zfar 1e10 (Khronos' teapots_galore): the far plane's w, 1 / far, cancels to 0 in f32, and
+	// every ray hit nothing but the sky.
+	it( 'aims a camera whose far plane is past f32\'s reach as any other', async () => {
+
+		const far = camera.clone();
+		Object.assign( far, { near: 1e-4, far: 1e10 } ).updateProjectionMatrix();
+		for ( const { pixel, direction } of await trace( renderer, CAMERA_PROJECTION_IDS.perspective, false, false, far ) ) {
+
+			expect( direction.dot( pinholeDirection( UVS[ pixel ] ).normalize() ), `uv ${UVS[ pixel ]}` ).toBeGreaterThan( 1 - 1e-6 );
+
+		}
 
 	} );
 

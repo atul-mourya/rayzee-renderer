@@ -1083,6 +1083,12 @@ rides in mis_ray_t), and picking / auto-focus (`raycaster.near`).
 and walk controls turn by `mirrorSign()`, picking keeps it (the world matrix), and the overlay layer is shown flipped
 (`ViewOverlayRenderer.setMirrored`). ⚠️ Anything else drawn by a three.js renderer from the live camera needs the same.
 
+**A far plane past f32** (glTF's zfar 1e10 at znear 1e-4, Khronos' teapots_galore): the inverse projection's w at the
+far plane, 1 / far, rounded to 0 or below and every camera ray turned round (sky only). `cameraProjectionMatrixInverse`
+comes from `projectionInverseOf()` (`scene/ViewCamera.js`), which keeps that w positive there and is the camera's own
+matrix, bit for bit, otherwise. Every camera-ray site (NormalDepth, MotionVector, NRD, OIDN's history, DepthPass) reads
+that uniform, never `camera.projectionMatrixInverse`.
+
 **Orthographic** (`cameraProjection: 'orthographic'`, uniform id 2 in `CAMERA_PROJECTION_IDS`): rays are parallel and
 start on the camera's image plane (`cameraRayOrigin()` in `shaders/CameraRay.js`). The live camera is a `ViewCamera`
 (`scene/ViewCamera.js`), a PerspectiveCamera that switches its own projection, so every holder of it — both

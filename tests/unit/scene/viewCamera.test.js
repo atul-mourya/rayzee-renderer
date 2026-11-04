@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { Matrix4, OrthographicCamera, PerspectiveCamera, Raycaster, Vector3 } from 'three';
-import { ViewCamera, viewMatrixOf } from '@/core/scene/ViewCamera.js';
+import { Matrix4, OrthographicCamera, PerspectiveCamera, Raycaster, Vector3, Vector4 } from 'three';
+import { ViewCamera, viewMatrixOf, projectionInverseOf } from '@/core/scene/ViewCamera.js';
 
 function camera() {
 
@@ -98,6 +98,50 @@ describe( 'viewMatrixOf', () => {
 			c.lookAt( 3, 0, 0 );
 			c.updateMatrixWorld();
 			expect( viewMatrixOf( c, new Matrix4() ).elements ).toEqual( c.matrixWorldInverse.elements );
+
+		}
+
+	} );
+
+} );
+
+describe( 'projectionInverseOf', () => {
+
+	// w at the far plane as the GPU reads it: the inverse's elements and their sum in f32.
+	const farW = ( m ) => Math.fround( Math.fround( m.elements[ 11 ] ) + Math.fround( m.elements[ 15 ] ) );
+
+	it( 'is the camera\'s own inverse, bit for bit, wherever f32 holds the far plane', () => {
+
+		const ortho = camera();
+		ortho.orthographic = true;
+		ortho.updateProjectionMatrix();
+		for ( const c of [ camera(), new PerspectiveCamera( 50, 1, 1e-4, 1e3 ), new PerspectiveCamera( 50, 1, 0.01, 1e4 ), ortho ] ) {
+
+			expect( projectionInverseOf( c, new Matrix4() ).elements ).toEqual( c.projectionMatrixInverse.elements );
+
+		}
+
+	} );
+
+	// glTF's znear 1e-4, zfar 1e10 (Khronos' teapots_galore).
+	it( 'keeps w positive past that, aiming every ray where the camera looks', () => {
+
+		const far = new PerspectiveCamera( 47, 4 / 3, 1e-4, 1e10 );
+		const near = new PerspectiveCamera( 47, 4 / 3, 1e-4, 1e3 );
+		expect( farW( far.projectionMatrixInverse ) ).toBeLessThanOrEqual( 0 );
+
+		const inverse = projectionInverseOf( far, new Matrix4() );
+		expect( farW( inverse ) ).toBeGreaterThan( 0 );
+		for ( const [ x, y ] of [[ 0, 0 ], [ - 1, 1 ], [ 0.7, - 0.3 ]] ) {
+
+			const ray = ( m ) => {
+
+				const p = new Vector4( x, y, 1, 1 ).applyMatrix4( m );
+				return new Vector3( p.x, p.y, p.z ).divideScalar( p.w ).normalize();
+
+			};
+
+			expect( ray( inverse ).dot( ray( near.projectionMatrixInverse ) ) ).toBeCloseTo( 1, 12 );
 
 		}
 

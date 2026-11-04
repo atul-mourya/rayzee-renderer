@@ -173,7 +173,7 @@ as a 512-spp guide gives), unchanged elsewhere; `glass-transmission`'s 64-spp de
 
 Uniforms are owned by `UniformManager` (`rayzee/src/pathtracer/`) and exposed on the stage through getters; `PathTracer` wires them into the kernel builders. Principal categories:
 
-1. **Camera & DOF:** `cameraWorldMatrix`, `cameraProjectionMatrixInverse`, `cameraViewMatrix`, `cameraProjectionMatrix`; `cameraProjection` (`CAMERA_PROJECTION_IDS`), `panoLonRange`, `panoLatRange`, `panoLevelHorizon`; `enableDOF`, `dofMode`, `dofBlur`, `focusDistance`, `focalLength`, `aperture`, `apertureScale`, `anamorphicRatio`, `unitsPerMetre`.
+1. **Camera & DOF:** `cameraWorldMatrix`, `cameraProjectionMatrixInverse` (from `projectionInverseOf()`: a far plane past f32, as glTF's zfar 1e10, would round the far plane's w to 0 and turn every ray round), `cameraViewMatrix`, `cameraProjectionMatrix`; `cameraProjection` (`CAMERA_PROJECTION_IDS`), `panoLonRange`, `panoLatRange`, `panoLevelHorizon`; `enableDOF`, `dofMode`, `dofBlur`, `focusDistance`, `focalLength`, `aperture`, `apertureScale`, `anamorphicRatio`, `unitsPerMetre`.
 2. **Frame & control:** `frame` (accumulation index), `seedFrame` (the RNG's frame axis), `resolution`, `maxBounces`, `maxSamples`, `transmissiveBounces`, `maxSubsurfaceSteps`, `maxTransparentBounces`, `renderMode`.
 3. **Accumulation:** `enableAccumulation`, `accumulationAlpha`, `cameraIsMoving`, `hasPreviousAccumulated`, and for the aux outputs `auxAccumulationAlpha`, `hasPreviousAux` (+ prev-frame MRT texture nodes).
 4. **Adaptive sampling:** `useAdaptiveSampling`, `noiseThreshold`, `adaptiveMinSamples`, `adaptiveStopFraction`; per-pixel freeze `usePixelFreeze`, `pixelFreezeThreshold`, `pixelFreezeStability`; `convergenceOverlay`.
