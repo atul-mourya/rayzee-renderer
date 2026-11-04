@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { BufferGeometry, DataTexture, DoubleSide, Float32BufferAttribute, FrontSide, Matrix4, Mesh, NoColorSpace, OrthographicCamera, PerspectiveCamera, Texture, Vector3 } from 'three';
+import { BufferGeometry, DataTexture, DoubleSide, Float32BufferAttribute, FrontSide, Matrix4, Mesh, NoColorSpace, OrthographicCamera, PerspectiveCamera, SRGBColorSpace, Texture, Vector3 } from 'three';
 import { loadPBRTScene, pickEntryPath, PBRTParser, PBRTSceneBuilder } from '@/core/addons/archives/pbrt/index.js';
 import { deriveAlphaMode } from '@/core/scene/GeometryExtractor.js';
+import { srgbToLinear } from '@/core/addons/archives/pbrt/PBRTTextureBake.js';
 
 const enc = new TextEncoder();
 
@@ -1017,6 +1018,72 @@ describe( 'PBRT scene builder: pbrt-v4 fidelity', () => {
 		// Colour as it was; alpha through the sRGB curve, as pbrt decodes every channel of an 8-bit image.
 		expect( Array.from( cut.map.image.data ) ).toEqual( [ 200, 100, 50, 255, 10, 20, 30, 0, 10, 20, 30, 55 ] );
 		expect( deriveAlphaMode( solid ) ).toBe( 0 );
+
+	} );
+
+	// An archive's images arrive sRGB, as ArchiveImporter flags them.
+	const srgb = ( texture ) => Object.assign( texture, { colorSpace: SRGBColorSpace } );
+	const UV = '"point2 uv" [ 0 0 1 0 0 1 ]';
+
+	it( 'transmits a textured transmittance through its image, a leaf card cut out by the same image', async () => {
+
+		// The Grey & White Room's leaves: R and T one image, × 0.5.
+		const { meshes, warnings } = await meshesOf( `
+			Texture "leaf" "spectrum" "imagemap" "string filename" "leaf.png"
+			Texture "leaf-alpha" "float" "imagemap" "string filename" "leaf.png"
+			Material "diffusetransmission" "texture reflectance" "leaf" "texture transmittance" "leaf" "float scale" 0.5
+			Shape "trianglemesh" ${TRI} ${UV} "texture alpha" "leaf-alpha"
+			Shape "trianglemesh" "point3 P" [ 0 0 1  1 0 1  0 1 1 ] "integer indices" [ 0 1 2 ] ${UV}
+		`, {}, { 'leaf.png': srgb( rgba( [ 200, 100, 50, 255 ], [ 10, 20, 30, 0 ] ) ) } );
+
+		expect( warnings.filter( ( w ) => /transmittance/.test( w ) ) ).toEqual( [] );
+		const [ cut, solid ] = meshes.map( ( m ) => m.material );
+		// dt is T's peak: the brightest texel, 200 decoded (0.578), × 0.5. At every texel, reflected (1 − dt) · colour ·
+		// image = 0.5 R and transmitted dt · colour · image = 0.5 T, per channel.
+		expect( solid.diffuseTransmission ).toBeCloseTo( 0.5 * 0.578, 3 );
+		const most = [ 200, 100, 50 ].map( ( v ) => srgbToLinear( v / 255 ) );
+		expect( solid.color.toArray().map( ( c, k ) => c * ( 1 - solid.diffuseTransmission ) * most[ k ] ) ).toEqual( most.map( ( v ) => expect.closeTo( 0.5 * v, 6 ) ) );
+		expect( solid.diffuseTransmissionColor.toArray().map( ( c, k ) => c * solid.diffuseTransmission * most[ k ] ) ).toEqual( most.map( ( v ) => expect.closeTo( 0.5 * v, 6 ) ) );
+		expect( solid.diffuseTransmissionColorMap ).toBe( solid.map );
+		// Cut out, both read the copy carrying the alpha.
+		expect( cut.map ).not.toBe( solid.map );
+		expect( cut.diffuseTransmissionColorMap ).toBe( cut.map );
+
+	} );
+
+	it( 'keeps a textured transmittance\'s tint and scale in its colour, materials with other images apart, and flat without uv', async () => {
+
+		const { meshes } = await meshesOf( `
+			Texture "a" "spectrum" "imagemap" "string filename" "a.png"
+			Texture "b" "spectrum" "imagemap" "string filename" "b.png"
+			Texture "tinted" "spectrum" "scale" "texture tex" "a" "rgb scale" [ 0.2 0.4 0.1 ]
+			Material "diffusetransmission" "rgb reflectance" [ 0.3 0.3 0.3 ] "texture transmittance" "tinted"
+			Shape "trianglemesh" ${TRI} ${UV}
+			Material "diffusetransmission" "rgb reflectance" [ 0.3 0.3 0.3 ] "texture transmittance" "b"
+			Shape "trianglemesh" "point3 P" [ 0 0 1  1 0 1  0 1 1 ] "integer indices" [ 0 1 2 ] ${UV}
+			Texture "c" "spectrum" "imagemap" "string filename" "c.png"
+			Material "diffusetransmission" "rgb reflectance" [ 0.3 0.3 0.3 ] "texture transmittance" "c"
+			Shape "trianglemesh" "point3 P" [ 0 0 2  1 0 2  0 1 2 ] "integer indices" [ 0 1 2 ] ${UV}
+			Shape "trianglemesh" "point3 P" [ 0 0 3  1 0 3  0 1 3 ] "integer indices" [ 0 1 2 ]
+		`, {}, { 'a.png': srgb( image( 255 ) ), 'b.png': srgb( image( 128 ) ), 'c.png': srgb( image( 128, 0 ) ) } );
+
+		const [ tinted, plain, other, noUV ] = meshes.map( ( m ) => m.material );
+		expect( tinted ).not.toBe( plain );
+		// The same numbers, another image.
+		expect( other ).not.toBe( plain );
+		expect( other.diffuseTransmissionColorMap ).not.toBe( plain.diffuseTransmissionColorMap );
+		expect( tinted.diffuseTransmission ).toBeCloseTo( 0.4, 6 );
+		expect( tinted.diffuseTransmissionColor.toArray() ).toEqual( [ 0.5, 1, 0.25 ].map( ( v ) => expect.closeTo( v, 6 ) ) );
+		expect( tinted.diffuseTransmissionColorMap ).toBeTruthy();
+		// R still exact: (1 − dt) · colour = 0.3.
+		expect( tinted.color.r * ( 1 - tinted.diffuseTransmission ) ).toBeCloseTo( 0.3, 6 );
+		// A dim image (128, 0.216 decoded) splits at its own brightest texel, its colour making up the rest: T is the image.
+		expect( plain.diffuseTransmission ).toBeCloseTo( 0.216, 3 );
+		expect( plain.diffuseTransmissionColor.r * plain.diffuseTransmission ).toBeCloseTo( 1, 6 );
+		expect( plain.color.r * ( 1 - plain.diffuseTransmission ) ).toBeCloseTo( 0.3, 6 );
+		// No uv: one texel would stand for the whole surface, so T is flat at its brightest.
+		expect( noUV.diffuseTransmissionColorMap ).toBeNull();
+		expect( noUV.diffuseTransmissionColor.r * noUV.diffuseTransmission ).toBeCloseTo( 0.216, 3 );
 
 	} );
 

@@ -11,6 +11,7 @@
 import { MeshPhysicalMaterial, Color, DoubleSide } from 'three';
 import { namedScattering, dipoleReflectance, albedoForReflectance } from './PBRTScattering.js';
 import { approximated, param } from './PBRTParser.js';
+import { uvKey } from './PBRTTextureBake.js';
 
 // Normal-incidence reflectance approximations for pbrt's named conductor spectra.
 const METAL_ALBEDO = {
@@ -333,6 +334,11 @@ async function applySubsurface( mat, params, ctx ) {
 
 }
 
+// Two maps read through one UV transform: the same repeat, offset and generated uv set; `b` null is the mesh's own uv.
+const oneMapping = ( a, b ) => a === b || ( a.repeat.x === ( b?.repeat.x ?? 1 ) && a.repeat.y === ( b?.repeat.y ?? 1 )
+	&& a.offset.x === ( b?.offset.x ?? 0 ) && a.offset.y === ( b?.offset.y ?? 0 )
+	&& uvKey( a.userData.pbrtUV ) === uvKey( b?.userData.pbrtUV ) );
+
 // A conductor's colour: `reflectance`, else normal-incidence Fresnel of `eta`/`k` (under `prefix` for a coated
 // conductor). pbrt's default is copper.
 async function applyConductorColor( mat, params, ctx, prefix, applyAlbedo, setColor ) {
@@ -468,25 +474,41 @@ export async function buildMaterial( def, ctx ) {
 		case 'diffusetransmission': {
 
 			// pbrt reflects R and transmits T, both diffusely and both × `scale`, clamped to [0, 1]; no specular layer.
-			// The engine splits its diffuse lobe by `diffuseTransmission`: reflecting (1 − dt) · base, transmitting
-			// dt · colour. dt = max(T) makes both exact whenever max(R) + max(T) ≤ 1.
+			// The engine splits its diffuse lobe by `diffuseTransmission`: reflecting (1 − dt) · colour · map, transmitting
+			// dt · its colour · its map. dt = T's peak (its brightest texel × tint × scale); each colour is its lobe's
+			// peak over its share × its map's brightest texel (`ctx.textureMaxRGB`, else taken as 1), so both are exact at
+			// every texel pbrt does not clamp while max R + max T ≤ 1. A mapped colour may pass 1; colour × map stays ≤ 1.
+			// `userData.pbrtFlat` keeps each colour at its peak, for where its map is dropped.
 			const scale = pFloat( params, 'scale', 1 );
 			const unit = ( v ) => Math.min( 1, Math.max( 0, scale * v ) );
-			const trans = await resolveSpectrum( params, 'transmittance', ctx, [ 0.25, 0.25, 0.25 ] );
-			const T = trans.rgb ? trans.rgb.map( unit ) : [ 0.5, 0.5, 0.5 ];
-			const dt = Math.min( 0.99, Math.max( ...T ) );
-			const refl = await resolveSpectrum( params, 'reflectance', ctx, [ 0.25, 0.25, 0.25 ] );
-			const base = ( v ) => Math.min( 1, unit( v ) / ( 1 - dt ) );
-			applyAlbedo( { texture: refl.texture, rgb: refl.rgb ? refl.rgb.map( base ) : ( refl.texture ? [ 1, 1, 1 ].map( base ) : null ) } );
-			if ( trans.texture ) {
+			const lobe = async ( key ) => {
 
-				ctx.warn( 'diffusetransmission: a textured "transmittance" is not supported — using 0.5' );
+				const { rgb, texture } = await resolveSpectrum( params, key, ctx, [ 0.25, 0.25, 0.25 ] );
+				const name = texture ? param( params, key )?.value[ 0 ] : null;
+				const most = ( name && await ctx.textureMaxRGB?.( name ) ) || [ 1, 1, 1 ];
+				return { texture, most, peak: ( rgb ?? [ 1, 1, 1 ] ).map( ( v, c ) => unit( v * most[ c ] ) ) };
+
+			};
+
+			const R = await lobe( 'reflectance' ), T = await lobe( 'transmittance' );
+			const dt = Math.min( 0.99, Math.max( ...T.peak ) );
+			const flat = ( l, share ) => l.peak.map( ( v ) => ( share > 0 ? Math.min( 1, v / share ) : 1 ) );
+			const mapped = ( l, share ) => flat( l, share ).map( ( v, c ) => ( l.texture && l.most[ c ] > 0 ? v / l.most[ c ] : v ) );
+			// T's map is read on the reflectance map's transform (the extension maps share it): another mapping is flat.
+			const shared = T.texture && oneMapping( T.texture, R.texture );
+			if ( T.texture && ! shared ) {
+
+				ctx.warn( 'diffusetransmission: a textured "transmittance" mapped unlike its reflectance — flat at its brightest' );
 				approximated( params, 'transmittance' );
 
 			}
 
+			mat.color.setRGB( ...mapped( R, 1 - dt ) );
+			mat.map = R.texture ?? null;
 			mat.diffuseTransmission = dt;
-			mat.diffuseTransmissionColor = new Color().setRGB( ...T.map( ( v ) => ( dt > 0 ? Math.min( 1, v / dt ) : 1 ) ) );
+			mat.diffuseTransmissionColor = new Color().setRGB( ...( shared ? mapped( T, dt ) : flat( T, dt ) ) );
+			if ( shared ) mat.diffuseTransmissionColorMap = T.texture;
+			if ( R.texture || shared ) mat.userData.pbrtFlat = { color: flat( R, 1 - dt ), diffuseTransmissionColor: flat( T, dt ) };
 			mat.roughness = 1;
 			mat.metalness = 0;
 			mat.specularIntensity = 0;
@@ -528,7 +550,10 @@ export async function buildMaterial( def, ctx ) {
 				const baked = amountP?.type === 'texture' ? await ctx.bakeMaterialMix?.( matA, matB, amountP.value[ 0 ] ) : null;
 				if ( baked ) t = baked.mean;
 				const lerp = ( a, b ) => a * ( 1 - t ) + b * t;
-				mat.color.lerpColors( matA.color, matB.color, t );
+				// A colour made for its map's brightest texel (diffusetransmission's pbrtFlat) mixes at that peak, so the
+				// dominant side's map darkens it and never takes it past 1.
+				const flatOf = ( m, key ) => ( m.userData.pbrtFlat ? new Color( ...m.userData.pbrtFlat[ key ] ) : m[ key ] );
+				mat.color.lerpColors( flatOf( matA, 'color' ), flatOf( matB, 'color' ), t );
 				mat.roughness = lerp( matA.roughness, matB.roughness );
 				mat.metalness = lerp( matA.metalness, matB.metalness );
 				mat.ior = lerp( matA.ior ?? 1.5, matB.ior ?? 1.5 );
@@ -541,7 +566,9 @@ export async function buildMaterial( def, ctx ) {
 				if ( dtA > 0 || dtB > 0 ) {
 
 					mat.diffuseTransmission = lerp( dtA, dtB );
-					mat.diffuseTransmissionColor = new Color().lerpColors( matA.diffuseTransmissionColor ?? new Color( 1, 1, 1 ), matB.diffuseTransmissionColor ?? new Color( 1, 1, 1 ), t );
+					const white = new Color( 1, 1, 1 );
+					mat.diffuseTransmissionColor = new Color().lerpColors( flatOf( matA, 'diffuseTransmissionColor' ) ?? white, flatOf( matB, 'diffuseTransmissionColor' ) ?? white, t );
+					mat.diffuseTransmissionColorMap = ( t < 0.5 ? matA : matB ).diffuseTransmissionColorMap ?? null;
 
 				}
 

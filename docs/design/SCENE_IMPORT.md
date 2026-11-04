@@ -94,7 +94,14 @@ subtree per element, and the whole thing rarely fits: Moana is 29 GB unpacked.
   (no scattering inside). Glass with its medium outside only (Teapot (full)'s glass–tea wall, `"" "Tea"`) is turned
   over — normals negated, triangles rewound (`turnedOver`), eta inverted — so the medium is its inside and every
   crossing bends as before (`_shapeMedium`). A medium on both sides keeps the inside one; the same medium on both sides
-  (a medium filling space) is not supported, reported once. `diffusetransmission` is the engine's diffuse transmission lobe.
+  (a medium filling space) is not supported, reported once. `diffusetransmission` is the engine's diffuse transmission lobe,
+  split at T's peak (brightest texel × tint × scale; `ctx.textureMaxRGB` scans the map's bytes, no bake layer). Each
+  colour is its lobe's peak over its share × its map's brightest texel, so R and T are exact at every texel pbrt does
+  not clamp while max R + max T ≤ 1; a mapped colour may pass 1, colour × map never does. A textured T is the
+  diffuse transmission colour map only on the reflectance map's transform (the extension maps share it), else flat at
+  its peak and reported approximated; flat too where the mesh has no uv, and in a `mix` (both read
+  `userData.pbrtFlat`, the colours at their peaks). Under a shape's alpha it reads the colour map's copy carrying the
+  alpha (one image, not two).
   `displacement` (pbrt-v4's bump map, a height in scene units) becomes a bump map with a `bumpDistance` (`_heightMap`):
   `scale` textures with a constant factor fold into the distance, sign included (contemporary-bathroom's floor is
   −0.05), and the image's range is stretched over the map's 8 bits, the distance taking it (a bump reads only height

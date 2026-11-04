@@ -112,7 +112,7 @@ const DEFAULT_CURVE_SIDES = { flat: 1, ribbon: 1, cylinder: 2 };
 const DEFAULT_CURVE_TOLERANCE = 0.05;
 
 /** Bumped whenever the same scene files build a different graph, so a stored graph is not reused. */
-export const PBRT_BUILD_REVISION = 20;
+export const PBRT_BUILD_REVISION = 21;
 
 function samePlacements( a, b ) {
 
@@ -1279,7 +1279,7 @@ export class PBRTSceneBuilder {
 	 */
 	_materialForGeometry( shape, geometry, sharedMaterial, name ) {
 
-		if ( ! sharedMaterial.map || geometry.getAttribute( 'uv' ) ) return sharedMaterial;
+		if ( ! ( sharedMaterial.map || sharedMaterial.diffuseTransmissionColorMap ) || geometry.getAttribute( 'uv' ) ) return sharedMaterial;
 
 		// One clone per source material, not per shape — else 173,000 warnings and 173,000
 		// materials, defeating every downstream cache that keys on material identity.
@@ -1289,6 +1289,10 @@ export class PBRTSceneBuilder {
 			this.warn( `${name} (${shape.type}, "${shape.material?.type || 'diffuse'}") has a texture map but no UVs — dropping map, using base color` );
 			material = cloneMaterial( sharedMaterial );
 			material.map = null;
+			material.diffuseTransmissionColorMap = null;
+			// Colours made for a map's brightest texel (diffusetransmission) take the value they have there.
+			const flat = sharedMaterial.userData.pbrtFlat;
+			if ( flat ) for ( const key in flat ) material[ key ].setRGB( ...flat[ key ] );
 			this._noUVMaterials.set( sharedMaterial, material );
 
 		}
@@ -1964,6 +1968,8 @@ export class PBRTSceneBuilder {
 
 		if ( map.constant !== undefined ) return map.constant < 1 ? translucent( material, map.constant ) : material;
 		const out = cloneMaterial( material );
+		// A transmittance read from the colour map's image (leaves) takes the copy carrying the alpha: one image, not two.
+		if ( material.diffuseTransmissionColorMap && material.diffuseTransmissionColorMap === material.map ) out.diffuseTransmissionColorMap = map;
 		out.map = map;
 		out.transparent = true;
 		return out;
@@ -2055,6 +2061,20 @@ export class PBRTSceneBuilder {
 				const sum = [ 0, 0, 0 ];
 				for ( let i = 0; i < data.length; i ++ ) sum[ i % 3 ] += data[ i ];
 				return sum.map( ( v, c ) => v / ( data.length / 3 ) * ( term.tint?.[ c ] ?? 1 ) );
+
+			},
+			// The brightest texel of the map a named texture binds, per channel, linear and at most 1 as the engine
+			// reads it (a bake is stored clamped); null when it cannot be read here. Scans the bytes: no bake layer.
+			textureMaxRGB: async ( n ) => {
+
+				const texture = ( await this._resolveNamedTexture( n ) )?.texture;
+				const pixels = texture && await this._readPixels( texture );
+				if ( ! pixels ) return null;
+				const { data } = pixels;
+				const most = [ 0, 0, 0 ];
+				for ( let i = 0; i < data.length; i += 4 ) for ( let c = 0; c < 3; c ++ ) if ( data[ i + c ] > most[ c ] ) most[ c ] = data[ i + c ];
+				const srgb = ! pixels.float && texture.colorSpace === SRGBColorSpace;
+				return most.map( ( v ) => Math.min( 1, pixels.float ? v : srgb ? srgbToLinear( v / 255 ) : v / 255 ) );
 
 			},
 			resolveNormalMap: async ( filename ) => {
@@ -2183,6 +2203,7 @@ export class PBRTSceneBuilder {
 			`${material.clearcoat}|${material.clearcoatRoughness}|${material.clearcoatRoughnessMap?.uuid ?? '-'}|${material.opacity}|${material.side}|${material.emissiveSide ?? '-'}|` +
 			`${material.normalMap ? material.normalMap.uuid : '-'}|${material.bumpMap?.uuid ?? '-'}|${material.attenuationDistance}|${material.attenuationColor.toArray()}|` +
 			`${material.specularIntensity}|${material.diffuseTransmission ?? 0}|${material.diffuseTransmissionColor?.toArray() ?? '-'}|` +
+			`${material.diffuseTransmissionColorMap?.uuid ?? '-'}|` +
 			`${material.subsurface ?? 0}|${material.subsurfaceColor?.toArray() ?? '-'}|${material.subsurfaceRadius ?? '-'}|${material.subsurfaceAnisotropy ?? 0}|` +
 			`${material.diffuseRoughness ?? 0}`;
 

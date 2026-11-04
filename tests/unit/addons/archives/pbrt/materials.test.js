@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { Texture } from 'three';
 import { buildMaterial } from '@/core/addons/archives/pbrt/PBRTMaterials.js';
 import { albedoForReflectance, dipoleReflectance } from '@/core/addons/archives/pbrt/PBRTScattering.js';
 
@@ -65,6 +66,88 @@ describe( 'pbrt materials', () => {
 		// Reflected (1 − dt) · base = R, transmitted dt · colour = T.
 		expect( rug.color.toArray().map( ( c ) => c * ( 1 - rug.diffuseTransmission ) ) ).toEqual( [ 0.85, 0.8, 0.85 ].map( ( v ) => expect.closeTo( v, 6 ) ) );
 		expect( rug.diffuseTransmissionColor.toArray().map( ( c ) => c * rug.diffuseTransmission ) ).toEqual( [ 0.1, 0.15, 0.1 ].map( ( v ) => expect.closeTo( v, 6 ) ) );
+
+	} );
+
+	it( 'transmits a textured transmittance through its map, taking its brightest texel as 1 where it cannot be read', async () => {
+
+		const leaf = new Texture();
+		const withTexture = { ...ctx, resolveNamedTexture: async () => ( { texture: leaf } ) };
+		const mat = await buildMaterial( { type: 'diffusetransmission', params: {
+			reflectance: param( 'rgb', 0.25, 0.25, 0.25 ), transmittance: param( 'texture', 'leaf' ), scale: param( 'float', 0.5 )
+		} }, withTexture );
+
+		expect( mat.diffuseTransmissionColorMap ).toBe( leaf );
+		expect( mat.diffuseTransmission ).toBe( 0.5 );
+		expect( mat.diffuseTransmissionColor.toArray() ).toEqual( [ 1, 1, 1 ] );
+		expect( mat.color.toArray().map( ( c ) => c * ( 1 - mat.diffuseTransmission ) ) ).toEqual( [ 0.125, 0.125, 0.125 ].map( ( v ) => expect.closeTo( v, 6 ) ) );
+
+	} );
+
+	// Named textures and their maps' brightest texels, as the builder resolves them.
+	const withMaps = ( maps, extra = {} ) => ( {
+		...ctx, ...extra,
+		resolveNamedTexture: async ( name ) => ( maps[ name ] ? { texture: maps[ name ].texture } : null ),
+		textureMaxRGB: async ( name ) => maps[ name ]?.most ?? null,
+	} );
+	const transmitter = ( params ) => ( { type: 'diffusetransmission', params } );
+
+	it( 'keeps R and T exact at every texel of a dim map, a scale past 1 included', async () => {
+
+		const m = new Texture();
+		const dim = withMaps( { m: { texture: m, most: [ 0.4, 0.4, 0.4 ] } } );
+		// One image for both, brightest 0.4: dt 0.4, and each colour × the map's 0.4 gives back R and T there.
+		const one = await buildMaterial( transmitter( { reflectance: param( 'texture', 'm' ), transmittance: param( 'texture', 'm' ) } ), dim );
+		expect( one.diffuseTransmission ).toBeCloseTo( 0.4, 6 );
+		expect( one.color.r * ( 1 - one.diffuseTransmission ) * 0.4 ).toBeCloseTo( 0.4, 6 );
+		expect( one.diffuseTransmissionColor.r * one.diffuseTransmission * 0.4 ).toBeCloseTo( 0.4, 6 );
+		expect( [ one.map, one.diffuseTransmissionColorMap ] ).toEqual( [ m, m ] );
+
+		// × 2: T is 2 · map, 0.8 at its brightest; pbrt clamps nowhere.
+		const twice = await buildMaterial( transmitter( {
+			reflectance: param( 'rgb', 0.1, 0.1, 0.1 ), transmittance: param( 'texture', 'm' ), scale: param( 'float', 2 ),
+		} ), dim );
+		expect( twice.diffuseTransmission ).toBeCloseTo( 0.8, 6 );
+		expect( twice.diffuseTransmissionColor.r * twice.diffuseTransmission ).toBeCloseTo( 2, 6 );
+		expect( twice.color.r * ( 1 - twice.diffuseTransmission ) ).toBeCloseTo( 0.2, 6 );
+
+	} );
+
+	it( 'reads a transmittance mapped unlike its reflectance as flat at its brightest, reported', async () => {
+
+		const tiled = new Texture();
+		tiled.repeat.set( 8, 8 );
+		const warnings = [];
+		const mat = await buildMaterial( transmitter( { reflectance: param( 'rgb', 0.2, 0.2, 0.2 ), transmittance: param( 'texture', 't' ) } ),
+			withMaps( { t: { texture: tiled, most: [ 0.5, 0.5, 0.5 ] } }, { warn: ( w ) => warnings.push( w ) } ) );
+
+		expect( mat.diffuseTransmissionColorMap ).toBeUndefined();
+		expect( mat.diffuseTransmission * mat.diffuseTransmissionColor.r ).toBeCloseTo( 0.5, 6 );
+		expect( warnings ).toEqual( [ expect.stringMatching( /mapped unlike its reflectance/ ) ] );
+
+	} );
+
+	it( 'mixes a mapped transmitter at its colours\' peaks, never past 1', async () => {
+
+		const m = new Texture();
+		const maps = withMaps( { m: { texture: m, most: [ 0.2, 0.2, 0.2 ] } }, {
+			namedMaterials: new Map( [
+				[ 'leaf', transmitter( { reflectance: param( 'rgb', 0.3, 0.3, 0.3 ), transmittance: param( 'texture', 'm' ) } ) ],
+				[ 'paper', transmitter( { reflectance: param( 'rgb', 0.3, 0.3, 0.3 ), transmittance: param( 'rgb', 0.5, 0.5, 0.5 ) } ) ],
+			] ),
+		} );
+		const leaf = await buildMaterial( maps.namedMaterials.get( 'leaf' ), maps );
+		// The mapped colour passes 1 (0.2 at its brightest, made up to T): mixed as it stands, it would light past 1.
+		expect( leaf.diffuseTransmissionColor.r ).toBeGreaterThan( 1 );
+
+		for ( const amount of [ 0.25, 0.75 ] ) {
+
+			const mix = await buildMaterial( { type: 'mix', params: { materials: param( 'string', 'leaf', 'paper' ), amount: param( 'float', amount ) } }, maps );
+			expect( mix.diffuseTransmissionColor.r, `amount ${amount}` ).toBeLessThanOrEqual( 1 );
+			expect( mix.color.r, `amount ${amount}` ).toBeLessThanOrEqual( 1 );
+			expect( mix.diffuseTransmission * mix.diffuseTransmissionColor.r + ( 1 - mix.diffuseTransmission ) * mix.color.r ).toBeLessThanOrEqual( 1 );
+
+		}
 
 	} );
 
