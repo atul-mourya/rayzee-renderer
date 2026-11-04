@@ -27,7 +27,7 @@ import {
 } from 'three/tsl';
 
 import {
-	TRI_MATERIAL_MASK, TRI_SIDE_SHIFT, BVH_LEAF_MARKERS, BVH_MAX_INDEX, BVH_FOLDED_LEAF_MAX,
+	TRI_MATERIAL_MASK, TRI_SIDE_SHIFT, TRI_EMIT_SIDE_SHIFT, BVH_LEAF_MARKERS, BVH_MAX_INDEX, BVH_FOLDED_LEAF_MAX,
 	TLAS_LEAF_IDENTITY, COPY_ENTRY, CLUSTER_FIRST_MASK, CLUSTER_COUNT_SHIFT, CLUSTER_SIZE, CLUSTER_ROOT_MASK, CLUSTER_COPY_HIDDEN,
 } from '../scene/BufferLayout.js';
 import { HitInfo } from './Struct.js';
@@ -301,6 +301,9 @@ const fastRayAABBDst = wgslFn( `
 
 // Side from a triangle's flags word (row 4 .z): 0 front, 1 back, 2 double.
 export const triangleSide = ( flags ) => int( flags.shiftRight( uint( TRI_SIDE_SHIFT ) ).bitAnd( uint( 3 ) ) );
+
+// The faces an emitter emits from, as triangleSide: its own when the material has one, else its surface's side.
+export const emitterSide = ( flags ) => int( flags.shiftRight( uint( TRI_EMIT_SIDE_SHIFT ) ).bitAnd( uint( 3 ) ) );
 
 // Whether a face of this side is seen by a ray; rayDotNormal < 0 is a front hit.
 export const sideAccepts = ( side, rayDotNormal ) => side.equal( int( 2 ) )

@@ -6,7 +6,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
 	Color, Texture, MeshStandardMaterial, MeshPhysicalMaterial, MeshBasicMaterial, MeshPhongMaterial,
-	DataTexture, Mesh, PlaneGeometry, Scene,
+	DataTexture, Mesh, PlaneGeometry, Scene, FrontSide, BackSide, DoubleSide,
 } from 'three';
 
 vi.mock( 'three/webgpu', () => ( {
@@ -28,7 +28,7 @@ vi.mock( 'three/tsl', () => ( { storage: () => ( { toReadOnly() {
 
 import { MATERIAL_DEFAULTS } from '@/core/EngineDefaults.js';
 import {
-	TRIANGLE_DATA_LAYOUT as T, TRI_BLOCKER_SHIFT, shadowBlockerBits, MATERIAL_DATA_LAYOUT as M,
+	TRIANGLE_DATA_LAYOUT as T, TRI_BLOCKER_SHIFT, TRI_SIDE_SHIFT, TRI_EMIT_SIDE_SHIFT, shadowBlockerBits, MATERIAL_DATA_LAYOUT as M,
 } from '@/core/scene/BufferLayout.js';
 import { packMaterial } from '@/core/materials/MaterialPacking.js';
 import { GeometryExtractor, MATERIAL_VALUE_SOURCE } from '@/core/scene/GeometryExtractor.js';
@@ -403,6 +403,32 @@ describe( 'MaterialDataManager', () => {
 
 		const bits = ( flags[ T.MATERIAL_FLAGS_OFFSET ] >>> TRI_BLOCKER_SHIFT ) & 3;
 		expect( bits ).toBe( shadowBlockerBits( { alphaMode: 1, transparent: 0, transmission: 0, opacity: 1 } ) );
+
+	} );
+
+	it( 'moves emission with the side, unless the material emits from a side of its own', () => {
+
+		const flags = new Uint32Array( T.FLOATS_PER_TRIANGLE );
+		const manager = managerWith( new GeometryExtractor(), flags );
+		const sides = () => [ TRI_SIDE_SHIFT, TRI_EMIT_SIDE_SHIFT ].map( ( shift ) => ( flags[ T.MATERIAL_FLAGS_OFFSET ] >>> shift ) & 3 );
+
+		manager.updateMaterial( 0, new MeshStandardMaterial( { side: FrontSide } ) );
+		expect( sides() ).toEqual( [ 0, 0 ] );
+		manager.updateMaterialProperty( 0, 'side', DoubleSide );
+		expect( sides() ).toEqual( [ 2, 2 ] );
+
+		// A one-sided light that is a surface on both faces (pbrt's).
+		manager.updateMaterial( 0, Object.assign( new MeshStandardMaterial( { side: DoubleSide } ), { emissiveSide: FrontSide } ) );
+		expect( sides() ).toEqual( [ 2, 0 ] );
+		manager.updateMaterialProperty( 0, 'side', BackSide );
+		expect( sides() ).toEqual( [ 1, 0 ] );
+
+		// A whole upload hands the materials' own sides over too.
+		const extractor = new GeometryExtractor();
+		const loaded = [ extractor.createMaterialObject( Object.assign( new MeshStandardMaterial(), { emissiveSide: BackSide } ) ) ];
+		manager.setMaterialData( new TextureCreator().createMaterialRawData( loaded ), loaded.map( m => m.sources ), loaded.map( m => m.emissiveSide ) );
+		manager.updateMaterialProperty( 0, 'side', DoubleSide );
+		expect( sides() ).toEqual( [ 2, 1 ] );
 
 	} );
 

@@ -809,7 +809,9 @@ describe( 'PBRT scene builder: pbrt-v4 fidelity', () => {
 			Shape "trianglemesh" ${TRI} "normal N" [ 0 0 -1  0 0 -1  0 0 -1 ]
 		` );
 
-		expect( meshes[ 0 ].material.side ).toBe( FrontSide );
+		// Its back is a dark surface, as in pbrt, never a hole a camera sees through.
+		expect( meshes[ 0 ].material.emissiveSide ).toBe( FrontSide );
+		expect( meshes[ 0 ].material.side ).toBe( DoubleSide );
 		// Wound +z, normals −z: the triangle is turned to face its normals.
 		expect( Array.from( meshes[ 0 ].geometry.index.array ) ).toEqual( [ 0, 2, 1 ] );
 
@@ -830,9 +832,10 @@ describe( 'PBRT scene builder: pbrt-v4 fidelity', () => {
 		` );
 
 		expect( Array.from( meshes[ 0 ].geometry.index.array ) ).toEqual( [ 0, 2, 1 ] );
-		expect( meshes[ 0 ].material.side ).toBe( FrontSide );
+		expect( meshes[ 0 ].material.emissiveSide ).toBe( FrontSide );
 		expect( Array.from( meshes[ 1 ].geometry.index.array ) ).toEqual( [ 0, 1, 2 ] );
-		expect( meshes[ 1 ].material.side ).toBe( DoubleSide );
+		expect( meshes[ 1 ].material.emissiveSide ).toBe( DoubleSide );
+		expect( meshes.map( ( m ) => m.material.side ) ).toEqual( [ DoubleSide, DoubleSide ] );
 
 	} );
 

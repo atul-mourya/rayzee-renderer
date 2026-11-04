@@ -1,4 +1,4 @@
-import { Fn, wgslFn, float, vec2, vec3, vec4, uvec2, uvec4, int, uint, mat3, If, max, dot, clamp, select, sqrt, bool as tslBool } from 'three/tsl';
+import { Fn, wgslFn, float, vec2, vec3, vec4, uvec2, uvec4, int, uint, mat3, If, max, dot, clamp, select, sqrt, abs, bool as tslBool } from 'three/tsl';
 
 import {
 	AnisoFrame,
@@ -19,6 +19,11 @@ export const offsetRayOrigin = /*@__PURE__*/ wgslFn( `
 		return select( far, p + n * 1e-5, abs( p ) < vec3f( 1.0 ) );
 	}
 ` );
+
+// Whether `p` stands off the plane through `a` (unit normal `n`) by more than offsetRayOrigin's step: a point on an
+// emitter's plane gets none of its light, but rounding puts it a hair to either side, and from its front the emitter's
+// edge-on neighbours pass both side tests (the back of a one-sided light lit along its seams).
+export const offPlane = ( p, a, n ) => abs( dot( p.sub( a ), n ) ).greaterThan( max( max( abs( p.x ), abs( p.y ) ), max( abs( p.z ), float( 1.0 ) ) ).mul( 1e-5 ) );
 
 // Visibility rays stop this fraction short of the sampled light point: unit-free, and ≫ float
 // error, so an emitter coplanar with its fixture is never occluded by it.

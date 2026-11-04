@@ -471,7 +471,7 @@ export class PathTracerStage extends RenderStage {
 		this.setTriangleData( this.sdfs.triangleData, this.sdfs.triangleCount );
 		this.setBVHData( this.sdfs.bvhData );
 		this.setInstanceTable( this.sdfs.instanceTable );
-		this.materialData.setMaterialData( this.sdfs.materialData, this.sdfs.materials?.map( m => m.sources ) );
+		this.materialData.setMaterialData( this.sdfs.materialData, this.sdfs.materials?.map( m => m.sources ), this.sdfs.materials?.map( m => m.emissiveSide ) );
 
 		// Material texture arrays
 		this.materialData.loadTexturesFromSdfs();
@@ -1854,7 +1854,7 @@ export class PathTracerStage extends RenderStage {
 			// Materials and textures only. `sdfs` is not the processor that built the scene
 			// (PathTracerApp._sdf is), so re-uploading everything from it put its empty emissive
 			// data and instance table in place of the scene's: emitters stopped being sampled.
-			this.materialData.setMaterialData( this.sdfs.materialData, this.sdfs.materials?.map( m => m.sources ) );
+			this.materialData.setMaterialData( this.sdfs.materialData, this.sdfs.materials?.map( m => m.sources ), this.sdfs.materials?.map( m => m.emissiveSide ) );
 			this.materialData.loadTexturesFromSdfs();
 			this.shaderBuilder.updateSceneTextures( this );
 			this.updateLights();

@@ -10,7 +10,7 @@
 import { StorageInstancedBufferAttribute } from 'three/webgpu';
 import { storage } from 'three/tsl';
 import {
-	TRIANGLE_DATA_LAYOUT as T, TRI_MATERIAL_MASK, TRI_SIDE_SHIFT, TRI_BLOCKER_SHIFT, shadowBlockerBits,
+	TRIANGLE_DATA_LAYOUT as T, TRI_MATERIAL_MASK, TRI_SIDE_SHIFT, TRI_BLOCKER_SHIFT, TRI_EMIT_SIDE_SHIFT, shadowBlockerBits,
 	MATERIAL_DATA_LAYOUT as M, normalizeAttenuationDistance,
 } from '../scene/BufferLayout.js';
 import { packMaterial, UNIT_RANGE_PROPERTIES, clampUnit } from './MaterialPacking.js';
@@ -113,6 +113,8 @@ export class MaterialDataManager {
 		// Per material index: createMaterialObject's sources, and properties a host set since (name → portable value).
 		this._sources = [];
 		this._hostSet = [];
+		// Per material index: its own emitting side, or undefined where emission follows `side`.
+		this._emissiveSides = [];
 
 	}
 
@@ -170,8 +172,9 @@ export class MaterialDataManager {
 	 * Sets material data from raw Float32Array via storage buffer.
 	 * @param {Float32Array} matImageData
 	 * @param {Array<Object>} [sources] - createMaterialObject().sources per material index
+	 * @param {Array<number|undefined>} [emissiveSides] - createMaterialObject().emissiveSide per material index
 	 */
-	setMaterialData( matImageData, sources = [] ) {
+	setMaterialData( matImageData, sources = [], emissiveSides = [] ) {
 
 		if ( ! matImageData ) return;
 
@@ -203,6 +206,7 @@ export class MaterialDataManager {
 
 		this._sources = [ ...sources ];
 		this._hostSet = [];
+		this._emissiveSides = [ ...emissiveSides ];
 		this.callbacks.onMaterialFeaturesChanged?.();
 		log.debug( `${fmt.n( this.materialCount )} materials (storage buffer)` );
 
@@ -672,6 +676,7 @@ export class MaterialDataManager {
 
 		this._sources[ materialIndex ] = materialData.sources;
 		this._hostSet[ materialIndex ] = undefined;
+		this._emissiveSides[ materialIndex ] = materialData.emissiveSide;
 
 		// Both read back the block, so they must follow the write.
 		this._patchTriangleSideForMaterial( materialIndex, data[ base + M.SIDE ] );
@@ -811,6 +816,14 @@ export class MaterialDataManager {
 	 */
 	_patchTriangleFlagForMaterial( materialIndex, shift, width, value ) {
 
+		const mask = ( ( ( 1 << width ) - 1 ) << shift ) >>> 0;
+		this._patchTriangleBitsForMaterial( materialIndex, mask, ( ( value << shift ) & mask ) >>> 0 );
+
+	}
+
+	/** Sets the `mask` bits of the material's triangles' flags to `bits`. @private */
+	_patchTriangleBitsForMaterial( materialIndex, mask, bits ) {
+
 		const triInfo = this.callbacks.getTriangleData?.();
 		// Chunked past the ~2 GB array cap; a flat array is the single-chunk case.
 		const records = triInfo?.records;
@@ -819,8 +832,6 @@ export class MaterialDataManager {
 		if ( ( ! flat && ! records ) || triCount === 0 ) return;
 
 		const stride = T.FLOATS_PER_TRIANGLE;
-		const mask = ( ( ( 1 << width ) - 1 ) << shift ) >>> 0;
-		const bits = ( ( value << shift ) & mask ) >>> 0;
 		let patched = 0;
 		for ( let i = 0; i < triCount; i ++ ) {
 
@@ -845,7 +856,10 @@ export class MaterialDataManager {
 
 	_patchTriangleSideForMaterial( materialIndex, sideValue ) {
 
-		this._patchTriangleFlagForMaterial( materialIndex, TRI_SIDE_SHIFT, 2, sideValue );
+		// Emission follows the surface's side unless the material has its own.
+		const emits = this._emissiveSides[ materialIndex ] ?? sideValue;
+		this._patchTriangleBitsForMaterial( materialIndex, ( ( 3 << TRI_SIDE_SHIFT ) | ( 3 << TRI_EMIT_SIDE_SHIFT ) ) >>> 0,
+			( ( sideValue << TRI_SIDE_SHIFT ) | ( emits << TRI_EMIT_SIDE_SHIFT ) ) >>> 0 );
 
 	}
 
@@ -862,6 +876,7 @@ export class MaterialDataManager {
 		this._linearTexPacked = null;
 		this._sources = [];
 		this._hostSet = [];
+		this._emissiveSides = [];
 
 	}
 

@@ -13,7 +13,7 @@ import { getRandomSample1D, getRandomSample2D, getDecorrelatedSeed, pcgHash } fr
 import { sampleTriangle, fetchTriangleData, binarySearchCDF, TriangleData } from '../../shaders/EmissiveSampling.js';
 import { cosineWeightedSample } from '../../shaders/MaterialSampling.js';
 import { offsetRayOrigin, triangleRow } from '../../shaders/Common.js';
-import { triangleSide } from '../../shaders/BVHTraversal.js';
+import { emitterSide } from '../../shaders/BVHTraversal.js';
 import { sampleSunDisc, sunRadianceToward } from '../../shaders/Sun.js';
 import { sampleEnvironment, sampleEnvironmentExact } from '../../shaders/Environment.js';
 import {
@@ -142,7 +142,7 @@ export function buildLightGenerateKernel( params ) {
 			const point = sampleTriangle( tri.v0, tri.v1, tri.v2, getRandomSample2D( pixel, int( 0 ), int( DIM_EMIT + 1 ), rng, resolution, frame ) ).toVar();
 			const windingN = normalize( cross( tri.v1.sub( tri.v0 ), tri.v2.sub( tri.v0 ) ) ).toVar();
 
-			const side = triangleSide( triangleRow( triangleBuffer, triangle, 4 ).z ).toVar();
+			const side = emitterSide( triangleRow( triangleBuffer, triangle, 4 ).z ).toVar();
 			const back = side.equal( int( 1 ) ).or( side.equal( int( 2 ) )
 				.and( getRandomSample1D( pixel, int( 0 ), int( DIM_EMIT + 3 ), rng, resolution, frame ).lessThan( 0.5 ) ) ).toVar();
 			const n = select( back, windingN.negate(), windingN ).toVar();

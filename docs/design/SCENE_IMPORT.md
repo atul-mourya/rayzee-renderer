@@ -64,7 +64,8 @@ subtree per element, and the whole thing rarely fits: Moana is 29 GB unpacked.
   the engine's units (pbrt's L / I × `scale`, `power` and `illuminance` honoured; flagged as converted so the
   photometric conversion skips them; stored in the scene cache). A non-RGB light spectrum (blackbody, named) is
   brought to luminance 1 as pbrt does. `.pfm` images load (`addons/archives/pbrt/PFM.js`). An area light is one-sided
-  unless `"bool twosided"`: `FrontSide`, its triangles rewound to face the vertex normals, or turned over by
+  unless `"bool twosided"`: a surface on both faces (`DoubleSide`) emitting from its front (`emissiveSide: FrontSide`),
+  so from behind it is dark, never a hole, as in pbrt; its triangles rewound to face the vertex normals, or turned over by
   ReverseOrientation where it has none (`_facingEmission`). An area light's `power` scales its radiance to that power
   over the shape's area (a quadric's in its own space, a mesh's in the scene's, as pbrt measures them). A shape of
   `"float alpha" 0` is dropped: pbrt never hits it and an area light on it emits nothing (kroken's 90-unit "sun" sphere).

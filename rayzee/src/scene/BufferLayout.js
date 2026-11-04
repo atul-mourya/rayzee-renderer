@@ -23,7 +23,7 @@ export const TRIANGLE_DATA_LAYOUT = {
 
 	UV_AB_OFFSET: 12, // f32 uvA.xy, uvB.xy
 	UV_C_OFFSET: 16, // f32 uvC.xy
-	MATERIAL_FLAGS_OFFSET: 18, // materialIndex | side << 24 | shadowBlockerBits << 26 (two bits)
+	MATERIAL_FLAGS_OFFSET: 18, // materialIndex | side << 24 | shadowBlockerBits << 26 (two bits) | emitter side << 28
 	MESH_INDEX_OFFSET: 19
 };
 
@@ -31,6 +31,7 @@ export const TRI_MATERIAL_MASK = 0xffffff;
 export const TRI_SIDE_SHIFT = 24; // 0 front, 1 back, 2 double
 export const TRI_BLOCKER_SHIFT = 26; // 1 = blocks shadow rays whatever the settings
 export const TRI_BLOCKER_ALPHA_SHIFT = 27; // 1 = blocks them unless alpha-cutout shadows are on
+export const TRI_EMIT_SIDE_SHIFT = 28; // the faces that emit, as `side`: the material's emissiveSide, else its side
 
 /**
  * How a shadow ray settles on this material without fetching it, mirroring traceShadowRay:
@@ -50,13 +51,14 @@ export function shadowBlockerBits( material ) {
 
 /**
  * Material index plus the per-triangle flags the shader reads without touching the
- * material buffer: `side` for inline culling and the two shadow-blocker bits.
+ * material buffer: `side` for inline culling, the two shadow-blocker bits and the emitting side.
  */
 export function packTriangleFlags( materialIndex, material ) {
 
 	return ( ( materialIndex & TRI_MATERIAL_MASK )
 		| ( ( material?.side ?? 0 ) << TRI_SIDE_SHIFT )
-		| ( shadowBlockerBits( material ) << TRI_BLOCKER_SHIFT ) ) >>> 0;
+		| ( shadowBlockerBits( material ) << TRI_BLOCKER_SHIFT )
+		| ( ( material?.emissiveSide ?? material?.side ?? 0 ) << TRI_EMIT_SIDE_SHIFT ) ) >>> 0;
 
 }
 

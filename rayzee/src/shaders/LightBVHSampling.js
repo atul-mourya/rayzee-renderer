@@ -20,7 +20,7 @@ import {
 	length,
 	abs,
 } from 'three/tsl';
-import { MIN_PDF } from './Common.js';
+import { MIN_PDF, offPlane } from './Common.js';
 import { sideAccepts } from './BVHTraversal.js';
 import { getRandomSample1D, getRandomSample2D } from './Random.js';
 import {
@@ -288,6 +288,7 @@ const makeSampleLightBVHTriangle = ( indexed, anySide = false ) => Fn( ( [
 		const xi = getRandomSample2D( pixelCoord, int( 0 ), dimBase.add( int( 3 ) ), rngState, resolution, frame ).toVar();
 
 		const geoNormal = normalize( cross( triData.v1.sub( triData.v0 ), triData.v2.sub( triData.v0 ) ) );
+		const offItsPlane = offPlane( hitPoint, triData.v0, geoNormal );
 
 		if ( anySide ) sampleTriangleAnySide( { result, triData, xi, geoNormal, emission, selectionPdf, from: hitPoint, triangleIndex, instance: emissiveInstance } );
 		// Heuristic: spherical sampling for close/large triangles, area for far/small
@@ -306,7 +307,7 @@ const makeSampleLightBVHTriangle = ( indexed, anySide = false ) => Fn( ( [
 				const surfaceFacing = dot( dir, surfaceNormal );
 				const emissiveFacing = abs( dot( dir, geoNormal ) );
 
-				If( surfaceFacing.greaterThan( float( 0.0 ) ).or( throughSurface ).and( sideAccepts( triData.side, dot( dir, geoNormal ) ) ), () => {
+				If( surfaceFacing.greaterThan( float( 0.0 ) ).or( throughSurface ).and( sideAccepts( triData.side, dot( dir, geoNormal ) ) ).and( offItsPlane ), () => {
 
 					// Interpolate normal at sampled point via barycentric coords
 					const barycentricCoords = barycentricFromPoint( samplePos, triData.v0, triData.v1, triData.v2 );
@@ -357,7 +358,7 @@ const makeSampleLightBVHTriangle = ( indexed, anySide = false ) => Fn( ( [
 			const emissiveFacing = abs( dot( dir, geoNormal ) );
 
 			// Edge-on (a two-sided emitter passes its side test there) the density is infinite and the light zero.
-			If( surfaceFacing.greaterThan( float( 0.0 ) ).or( throughSurface ).and( sideAccepts( triData.side, dot( dir, geoNormal ) ) ).and( emissiveFacing.greaterThan( float( 0.0 ) ) ), () => {
+			If( surfaceFacing.greaterThan( float( 0.0 ) ).or( throughSurface ).and( sideAccepts( triData.side, dot( dir, geoNormal ) ) ).and( emissiveFacing.greaterThan( float( 0.0 ) ) ).and( offItsPlane ), () => {
 
 				// PDF: selectionPdf / area, converted to solid angle: pdfArea * distSq / cosLight
 				const pdfArea = selectionPdf.div( max( area, float( 1e-10 ) ) );

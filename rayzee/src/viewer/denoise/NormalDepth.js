@@ -1,13 +1,14 @@
-import { Fn, vec2, vec4, float, int, uint, uvec2, uvec4, uniform, min, max, select, storage, If,
+import { Fn, vec2, vec4, float, int, uint, uvec2, uvec4, uniform, min, max, select, storage, If, dot,
 	textureStore, workgroupId, localId } from 'three/tsl';
 import { RenderTarget, StorageTexture } from 'three/webgpu';
 import { HalfFloatType, RGBAFormat, RedIntegerFormat, UnsignedIntType, NearestFilter, Matrix4 } from 'three';
 import { RenderStage, StageExecutionMode } from '../../pipeline/RenderStage.js';
 import { GBUFFER_MISS_DEPTH } from './DenoiserSettings.js';
 import { Ray, HitInfo, RayTracingMaterial, UVCache } from '../../shaders/Struct.js';
-import { traverseBVH } from '../../shaders/BVHTraversal.js';
+import { traverseBVH, triangleSide, emitterSide, sideAccepts } from '../../shaders/BVHTraversal.js';
 import { cameraRayOf, cameraRayUniforms, cameraClipDistance } from '../../shaders/CameraRay.js';
-import { getMaterial } from '../../shaders/Common.js';
+import { getMaterial, triangleRow } from '../../shaders/Common.js';
+import { windingNormal } from '../../shaders/HitFacet.js';
 import { computeUVCache, processNormal, processBump, processMetalnessRoughness, triangleUVTangent, triangleUVAxes, NO_UV_AXES, buildBucketTextureNodes, refreshBucketTextureNodes } from '../../shaders/TextureSampling.js';
 import { withSceneResources } from '../../shaders/SceneResources.js';
 
@@ -296,7 +297,19 @@ export class NormalDepth extends RenderStage {
 					shadingNormal.assign( processBump( mapped, material, uvCache, bumpAxes ) );
 					// Same floor the Shade kernel applies before shading.
 					roughness.assign( processMetalnessRoughness( material, uvCache ).y.clamp( 0.05, 1.0 ) );
-					const emits = max( material.emissive.x, max( material.emissive.y, material.emissive.z ) ).mul( material.emissiveIntensity ).greaterThan( 0.0 );
+					const emits = max( material.emissive.x, max( material.emissive.y, material.emissive.z ) ).mul( material.emissiveIntensity ).greaterThan( 0.0 ).toVar();
+					// The back of a one-sided light that is a surface on both faces (pbrt's) is dark, as Shade shades it.
+					If( emits, () => {
+
+						const flags = triangleRow( triStorage, hit.triangleIndex, 4 ).z;
+						const emitting = emitterSide( flags ).toVar();
+						If( emitting.notEqual( triangleSide( flags ) ), () => {
+
+							emits.assign( sideAccepts( emitting, dot( direction, windingNormal( triStorage, bvhStorage, hit.triangleIndex, hit.instanceLeaf ) ) ) );
+
+						} );
+
+					} );
 					roughness.assign( select( emits, roughness.negate(), roughness ) );
 
 				} );

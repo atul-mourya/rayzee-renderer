@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
 	shadowBlockerBits, packTriangleFlags, TRI_BLOCKER_SHIFT, TRI_BLOCKER_ALPHA_SHIFT, TRI_MATERIAL_MASK,
-	TRI_SIDE_SHIFT,
+	TRI_SIDE_SHIFT, TRI_EMIT_SIDE_SHIFT,
 } from '@/core/scene/BufferLayout.js';
 
 const ALWAYS = 1, UNLESS_ALPHA = 2, PASSES = 0;
@@ -62,6 +62,18 @@ describe( 'packTriangleFlags', () => {
 		expect( ( flags >>> TRI_SIDE_SHIFT ) & 3 ).toBe( 2 );
 		expect( ( flags >>> TRI_BLOCKER_SHIFT ) & 1 ).toBe( 0 );
 		expect( ( flags >>> TRI_BLOCKER_ALPHA_SHIFT ) & 1 ).toBe( 1 );
+
+	} );
+
+	it( 'emits from the material\'s own side, else from the faces it shows', () => {
+
+		const emits = ( material ) => ( packTriangleFlags( 7, material ) >>> TRI_EMIT_SIDE_SHIFT ) & 3;
+		expect( [ 0, 1, 2 ].map( ( side ) => emits( { side } ) ) ).toEqual( [ 0, 1, 2 ] );
+		expect( emits( { side: 2, emissiveSide: 0 } ) ).toBe( 0 );
+		expect( emits( { side: 0, emissiveSide: 2 } ) ).toBe( 2 );
+		// The other fields are untouched by it.
+		const flags = packTriangleFlags( 0xffffff, { side: 2, emissiveSide: 1 } );
+		expect( [ flags & TRI_MATERIAL_MASK, ( flags >>> TRI_SIDE_SHIFT ) & 3, ( flags >>> TRI_BLOCKER_SHIFT ) & 3 ] ).toEqual( [ 0xffffff, 2, 1 ] );
 
 	} );
 

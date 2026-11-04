@@ -29,7 +29,7 @@ import {
 import {
 	MIN_PDF, getDatafromStorageBuffer, powerHeuristic, MATERIAL_SLOTS, MATERIAL_SLOT,
 	computeDotProductsAniso, instanceRows, instanceNormalToWorld, instancePointToWorld,
-	unpackTriangleNormal, triangleRow, SHADOW_END, passesLight,
+	unpackTriangleNormal, triangleRow, SHADOW_END, passesLight, offPlane,
 } from './Common.js';
 import { TRI_MATERIAL_MASK } from '../scene/BufferLayout.js';
 import { getRandomSample1D, getRandomSample2D } from './Random.js';
@@ -37,7 +37,7 @@ import { calculateMaterialPDFFromDots } from './LightsSampling.js';
 import { evaluateMaterialResponseFromDots, evaluateDiffuseTransmission } from './MaterialEvaluation.js';
 import { diffuseTransmissionWeight, diffuseTransmissionPdf } from './MaterialProperties.js';
 import { struct, DotProducts } from './Struct.js';
-import { triangleSide, sideAccepts } from './BVHTraversal.js';
+import { emitterSide, sideAccepts } from './BVHTraversal.js';
 
 // ================================================================================
 // STRUCTS
@@ -344,7 +344,7 @@ export const TriangleData = struct( {
 	v0: 'vec3', v1: 'vec3', v2: 'vec3',
 	n0: 'vec3', n1: 'vec3', n2: 'vec3',
 	materialIndex: 'int',
-	side: 'int', // 0 front, 1 back, 2 double (BVHTraversal.js triangleSide)
+	side: 'int', // the faces that emit: 0 front, 1 back, 2 both (BVHTraversal.js emitterSide)
 } );
 
 // Fetch triangle vertices from storage buffer
@@ -383,7 +383,7 @@ export const fetchTriangleData = Fn( ( [ triangleIndex, triangleBuffer, bvhBuffe
 	return TriangleData( {
 		v0, v1, v2, n0, n1, n2,
 		materialIndex: int( uvMat.z.bitAnd( uint( TRI_MATERIAL_MASK ) ) ),
-		side: triangleSide( uvMat.z ),
+		side: emitterSide( uvMat.z ),
 	} );
 
 } );
@@ -522,6 +522,7 @@ const makeSampleEmissiveTriangle = ( indexed, anySide = false ) => Fn( ( [
 		const xi = getRandomSample2D( pixelCoord, int( 0 ), dimBase.add( int( 3 ) ), rngState, resolution, frame ).toVar();
 
 		const geoNormal = normalize( cross( triData.v1.sub( triData.v0 ), triData.v2.sub( triData.v0 ) ) );
+		const offItsPlane = offPlane( hitPoint, triData.v0, geoNormal );
 
 		if ( anySide ) sampleTriangleAnySide( {
 			result, triData, xi, geoNormal, emission, selectionPdf: samplePower.div( max( emissiveTotalPower, float( 1e-10 ) ) ),
@@ -543,7 +544,7 @@ const makeSampleEmissiveTriangle = ( indexed, anySide = false ) => Fn( ( [
 				const surfaceFacing = dot( dir, surfaceNormal );
 				const emissiveFacing = abs( dot( dir, geoNormal ) );
 
-				If( surfaceFacing.greaterThan( 0.0 ).or( throughSurface ).and( sideAccepts( triData.side, dot( dir, geoNormal ) ) ), () => {
+				If( surfaceFacing.greaterThan( 0.0 ).or( throughSurface ).and( sideAccepts( triData.side, dot( dir, geoNormal ) ) ).and( offItsPlane ), () => {
 
 					// Interpolate normal at sampled point via barycentric coords
 					const bary = barycentricFromPoint( samplePos, triData.v0, triData.v1, triData.v2 );
@@ -594,7 +595,7 @@ const makeSampleEmissiveTriangle = ( indexed, anySide = false ) => Fn( ( [
 			const emissiveFacing = abs( dot( dir, geoNormal ) );
 
 			// Edge-on (a two-sided emitter passes its side test there) the density is infinite and the light zero.
-			If( surfaceFacing.greaterThan( 0.0 ).or( throughSurface ).and( sideAccepts( triData.side, dot( dir, geoNormal ) ) ).and( emissiveFacing.greaterThan( 0.0 ) ), () => {
+			If( surfaceFacing.greaterThan( 0.0 ).or( throughSurface ).and( sideAccepts( triData.side, dot( dir, geoNormal ) ) ).and( emissiveFacing.greaterThan( 0.0 ) ).and( offItsPlane ), () => {
 
 				// PDF: CDF selection (power/totalPower) * uniform area (1/area)
 				// Converted to solid angle: pdfArea * distSq / cosLight

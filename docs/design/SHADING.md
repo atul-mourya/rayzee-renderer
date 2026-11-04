@@ -185,6 +185,11 @@ the shadow terminator, shadow-ray picking, sized lights and fog. CLAUDE.md keeps
   relief hit its own triangle again, or a neighbour past the edge, and each extra crossing stacked the glass's IOR
   (`furnace-displaced-glass` read 1.72). The relief traps light by total internal reflection, whose chance stays 1:
   clamped to 0.95 like a Fresnel pick, each one gained 5 % (the furnace read 1.0015).
+- **A light's own plane** — emissive NEE rejects a sample when the shading point lies on the sampled triangle's
+  plane within offsetRayOrigin's step (`offPlane`, `shaders/Common.js`; both samplers, area and spherical). The back
+  of a one-sided pbrt light faces exactly away from its own triangles, so both side tests are one dot product, and
+  the hit point, put on its own triangle's plane, sits off the neighbour's by rounding: the neighbour passed within
+  ~1e4 × that error, a line +7 % along each seam (`emitterSides.test.js` holds the back to its no-NEE render).
 - **Ray spawn points** — every ray leaving a surface starts at `offsetRayOrigin( p, n )`
   (`shaders/Common.js`, Cycles' classic ray_offset: 1e-5 along n within 1 unit of the origin, 32 float ULPs
   per axis beyond), with n the **facet** normal on the side the new ray leaves. ⚠️ The hit record's

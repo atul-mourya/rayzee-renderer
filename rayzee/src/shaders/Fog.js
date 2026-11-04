@@ -17,7 +17,7 @@ import {
 import { sampleDirectionalLight, sampleRectAreaLight, samplePointLightWithAttenuation, sampleSpotLightWithRadius, lightPick } from './LightsSampling.js';
 import { EmissiveSampleAnySide, sampleEmissiveTriangleAnySide } from './EmissiveSampling.js';
 import { sampleLightBVHTriangleAnySide } from './LightBVHSampling.js';
-import { triangleSide } from './BVHTraversal.js';
+import { emitterSide } from './BVHTraversal.js';
 
 /**
  * Sampler dimensions of the fog, in its bounce's block (Random.js): 1D but DIRECTION and SEGMENT_POINT (2D).
@@ -345,7 +345,7 @@ function emitterLight( { slot, origin, dir, near, far, g, fog, emitters, sample1
 	} );
 
 	// Only the part of the span on the side the point emits toward can see its light: draw the distance there.
-	const side = triangleSide( triangleRow( emitters.triangleBuffer, e.triangle, 4 ).z ).toVar();
+	const side = emitterSide( triangleRow( emitters.triangleBuffer, e.triangle, 4 ).z ).toVar();
 	const facing = select( side.equal( int( 1 ) ), float( - 1.0 ), float( 1.0 ) );
 	const height = dot( origin.sub( e.position ), e.faceNormal ).mul( facing );
 	const climb = dot( dir, e.faceNormal ).mul( facing );

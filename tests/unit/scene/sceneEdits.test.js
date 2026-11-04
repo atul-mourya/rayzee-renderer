@@ -227,6 +227,28 @@ describe( 'material edits', () => {
 
 	} );
 
+	it( 'rebuilds the emitter list when an emitter\'s side changes, and only an emitter\'s', () => {
+
+		const payload = { rawData: 'rows', emissiveCount: 2, totalPower: 3, bitTrailMap: 'trail', lightBVHNodeData: 'nodes', lightBVHNodeCount: 1 };
+		const app = makeApp( { sdf: {
+			emissiveTriangleBuilder: { emissiveTriangles: [ { materialIndex: 3 } ] },
+			rebuildEmissiveColors: vi.fn( () => payload ),
+		} } );
+
+		SceneEdits.setMaterialProperty( app, 3, 'side', 2 );
+		expect( app._sdf.rebuildEmissiveColors ).toHaveBeenCalledTimes( 1 );
+		expect( app.calls ).toEqual( [
+			[ 'material', 3, 'side', 2 ],
+			[ 'emissive', 'rows', 2, 3, 'trail' ],
+			[ 'lightBVH', 'nodes', 1 ],
+			[ 'reset' ],
+		] );
+
+		SceneEdits.setMaterialProperty( app, 4, 'side', 2 );
+		expect( app._sdf.rebuildEmissiveColors ).toHaveBeenCalledTimes( 1 );
+
+	} );
+
 	it( 'leaves the emitters alone for any other property', () => {
 
 		const app = makeApp( { sdf: { updateMaterialEmissive: vi.fn() } } );

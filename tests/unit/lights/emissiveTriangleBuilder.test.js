@@ -37,6 +37,7 @@ vi.mock( '@/core/lights/LightBVHBuilder.js', () => ( {
 } ) );
 
 import { EmissiveTriangleBuilder } from '@/core/lights/EmissiveTriangleBuilder.js';
+import { TRI_EMIT_SIDE_SHIFT } from '@/core/scene/BufferLayout.js';
 
 // TRIANGLE_DATA_LAYOUT: 20 uint lanes per tri; material flags at 18, meshIndex at 19
 const FLOATS_PER_TRI = 20;
@@ -505,6 +506,21 @@ describe( 'EmissiveTriangleBuilder', () => {
 			expect( t.area ).toBeCloseTo( before.area, 5 );
 			expect( t.nz ).toBeCloseTo( - before.nz, 5 );
 			expect( b.totalEmissivePower ).toBeCloseTo( t.power, 5 );
+
+		} );
+
+		it( 'emits from the sides the triangle\'s flags give, as the shaders read them', () => {
+
+			const tri = ( emit ) => ( { ...UNIT_TRI, materialIndex: ( emit << TRI_EMIT_SIDE_SHIFT ) >>> 0 } );
+			// A surface on both faces that emits from one (pbrt's one-sided light): the material's side is not it.
+			const materials = [ { emissive: { r: 1, g: 1, b: 1 }, emissiveIntensity: 1, side: 2 } ];
+			const b = new ( builder.constructor )();
+			b.extractEmissiveTriangles( makeTriangleData( [ tri( 0 ), tri( 1 ), tri( 2 ) ] ), materials, 3 );
+			const [ front, back, both ] = b.emissiveTriangles;
+
+			expect( [ front.twoSided, back.twoSided, both.twoSided ] ).toEqual( [ false, false, true ] );
+			expect( [ front.sideSign, back.sideSign ] ).toEqual( [ 1, - 1 ] );
+			expect( back.nz ).toBeCloseTo( - front.nz, 5 );
 
 		} );
 

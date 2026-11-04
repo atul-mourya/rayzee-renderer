@@ -7,7 +7,7 @@
  */
 
 import { DataTexture, RGBAFormat, FloatType, NearestFilter } from 'three';
-import { TRIANGLE_DATA_LAYOUT, TRI_MATERIAL_MASK } from '../scene/BufferLayout.js';
+import { TRIANGLE_DATA_LAYOUT, TRI_MATERIAL_MASK, TRI_EMIT_SIDE_SHIFT } from '../scene/BufferLayout.js';
 import { LightBVHBuilder } from './LightBVHBuilder.js';
 import { createLogger, fmt } from '../Logger.js';
 import { convertLinearTriple, getWorkingMatrix } from '../color/WorkingMatrix.js';
@@ -153,16 +153,18 @@ export class EmissiveTriangleBuilder {
 				const luma = 0.2126 * emissive.r + 0.7152 * emissive.g + 0.0722 * emissive.b;
 				const power = luma * emissiveIntensity * area;
 
-				// Geometric normal (emission cone axis). BackSide flips it; DoubleSide → two-sided.
+				// Geometric normal (emission cone axis). BackSide flips it; DoubleSide → two-sided. The sides are the
+				// triangle's emitting ones, as the shaders read them.
+				const emitSide = ( triU[ baseOffset + MATERIAL_FLAGS_OFFSET ] >>> TRI_EMIT_SIDE_SHIFT ) & 3;
 				let nx = ( v1y - v0y ) * ( v2z - v0z ) - ( v1z - v0z ) * ( v2y - v0y );
 				let ny = ( v1z - v0z ) * ( v2x - v0x ) - ( v1x - v0x ) * ( v2z - v0z );
 				let nz = ( v1x - v0x ) * ( v2y - v0y ) - ( v1y - v0y ) * ( v2x - v0x );
 				const nl = Math.sqrt( nx * nx + ny * ny + nz * nz ) || 1;
-				const sideSign = material.side === 1 ? - 1 : 1; // THREE.BackSide flips emission normal
+				const sideSign = emitSide === 1 ? - 1 : 1;
 				nx = nx / nl * sideSign;
 				ny = ny / nl * sideSign;
 				nz = nz / nl * sideSign;
-				const twoSided = material.side === 2; // THREE.DoubleSide
+				const twoSided = emitSide === 2;
 
 				// Centroid for BVH split decisions
 				const cx = ( v0x + v1x + v2x ) / 3;

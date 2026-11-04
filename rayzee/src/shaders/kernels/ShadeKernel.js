@@ -29,7 +29,7 @@ import {
 import { traceShadowRay, traceShadowRayRefractiveOpaque, estimateLightImportance } from '../LightsDirect.js';
 import { shadowTerminatorOrigin } from '../ShadowTerminator.js';
 import { hitFacet, unpackHitFacet, windingNormal } from '../HitFacet.js';
-import { traverseBVHShadow, triangleSide, sideAccepts } from '../BVHTraversal.js';
+import { traverseBVHShadow, triangleSide, emitterSide, sideAccepts } from '../BVHTraversal.js';
 import { visibilityCell } from '../LightVisibility.js';
 import { handleMaterialTransparency, MaterialInteractionResult } from '../MaterialTransmission.js';
 import { sampleChromaticCollision, sampleHenyeyGreenstein, subsurfaceCoefficients, CollisionSample, MediumCoeffs } from '../Subsurface.js';
@@ -1603,13 +1603,20 @@ export function buildShadeKernel( params ) {
 
 		const emissive = matSamples.emissive.toVar();
 		// NEE samples only a single-sided emitter's lit side, so from behind (bounce rays) it is a dark occluder. The side
-		// is the facet's, as NEE's: the interpolated normal turns away near a coarse mesh's silhouette.
-		If( cameraOnly( isBackdropView.not().and( length( emissive ).greaterThan( 0.0 ) ) ), () => {
+		// is the facet's, as NEE's: the interpolated normal turns away near a coarse mesh's silhouette. A camera ray met
+		// only a face Extend's culling accepted by the interpolated normal: it is tested again only where the emitting
+		// side is not the culling one (pbrt's one-sided light, a surface on both faces), so smooth emitters keep their rim.
+		If( cameraOnly( length( emissive ).greaterThan( 0.0 ) ), () => {
 
-			If( sideAccepts( triangleSide( triangleRow( triangleBuffer, int( hitTriIdx ), 4 ).z ),
-				dot( direction, windingNormal( triangleBuffer, bvhBuffer, int( hitTriIdx ), hitInstance ) ) ).not(), () => {
+			const flags = triangleRow( triangleBuffer, int( hitTriIdx ), 4 ).z;
+			const emits = emitterSide( flags ).toVar();
+			If( isBackdropView.not().or( emits.notEqual( triangleSide( flags ) ) ), () => {
 
-				emissive.assign( vec3( 0.0 ) );
+				If( sideAccepts( emits, dot( direction, windingNormal( triangleBuffer, bvhBuffer, int( hitTriIdx ), hitInstance ) ) ).not(), () => {
+
+					emissive.assign( vec3( 0.0 ) );
+
+				} );
 
 			} );
 
@@ -1637,7 +1644,7 @@ export function buildShadeKernel( params ) {
 					const cosToward = dot( direction.negate(), normalize( cross( tri.v1.sub( tri.v0 ), tri.v2.sub( tri.v0 ) ) ) ).toVar();
 					const areaPdf = emitterAreaPdf( material.emissive.mul( material.emissiveIntensity ), emissiveTotalPower ).toVar();
 					const emissionPdf = select( bdpt.lightPaths.greaterThan( uint( 0 ) ),
-						areaPdf.mul( float( 1.0 ).sub( bdpt.sunPick ) ).mul( emitterSideProbability( triangleSide( triangleRow( triangleBuffer, int( hitTriIdx ), 4 ).z ), cosToward ) )
+						areaPdf.mul( float( 1.0 ).sub( bdpt.sunPick ) ).mul( emitterSideProbability( emitterSide( triangleRow( triangleBuffer, int( hitTriIdx ), 4 ).z ), cosToward ) )
 							.mul( abs( cosToward ) ).div( Math.PI ),
 						float( 0.0 ) );
 					const neePdfA = float( 0.0 ).toVar();
@@ -2005,7 +2012,7 @@ export function buildShadeKernel( params ) {
 			} );
 
 			const NoL = cosineTo( lightDir ).toVar();
-			const side = triangleSide( triangleRow( triangleBuffer, lightTriangle, 4 ).z ).toVar();
+			const side = emitterSide( triangleRow( triangleBuffer, lightTriangle, 4 ).z ).toVar();
 			If( valid.and( lightPdf.greaterThan( 0.0 ) ).and( reaches( lightDir ) )
 				.and( sideAccepts( side, dot( lightDir, windingN ) ) ), () => {
 

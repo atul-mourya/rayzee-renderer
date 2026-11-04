@@ -123,7 +123,8 @@ exactly the unidirectional kernels: everything bidirectional is JS-gated on `par
 - ⚠️ **A light subpath carries importance:** Shade undoes refraction's (n1/n2)², evaluates the BSDF with V
   and L swapped (`evaluateMaterialResponse` is not reciprocal — energy compensation keys on NoV), and
   applies the shading-normal correction (Veach 5.3.2, `lightEndCosine`) to light-side cosines.
-- **Emitter sides:** emission follows the triangle's side flag (half each way for DoubleSide). NEE draws a
+- **Emitter sides:** emission follows the triangle's emitting side (`emitterSide`: the material's `emissiveSide`, else
+  its side; half each way for DoubleSide), apart from the side a camera culls (`triangleSide`). NEE draws a
   triangle on every side it emits from (`sideAccepts` on the winding normal, the facet's cosine for the
   density) and the hit-side pdfs return 0 for a side it cannot draw; front-only NEE had cost the path tracer
   83 % of a two-sided lamp seen from behind. ⚠️ The emitter-hit side test uses the winding normal

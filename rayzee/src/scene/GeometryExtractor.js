@@ -307,6 +307,19 @@ export function packUnitAttribute( g, name ) {
 
 }
 
+function sideIndex( side ) {
+
+	switch ( side ) {
+
+		case FrontSide: return 0;
+		case BackSide: return 1;
+		case DoubleSide: return 2;
+		default: return 0;
+
+	}
+
+}
+
 export class GeometryExtractor {
 
 	/** @param {{issues?: import('../EngineIssues.js').IssueLog}} [options] */
@@ -1300,6 +1313,8 @@ export class GeometryExtractor {
 			alphaMode: deriveAlphaMode( material ),
 
 			side: this.getMaterialSide( material ),
+			// The faces that emit, when not the surface's (a one-sided light that is solid from behind).
+			emissiveSide: material.emissiveSide === undefined ? undefined : sideIndex( material.emissiveSide ),
 			depthWrite: material.depthWrite ?? true ? 1 : 0,
 
 			map: this.processTexture( textures.map, this.maps ),
@@ -1357,15 +1372,7 @@ export class GeometryExtractor {
 
 	getMaterialSide( material ) {
 
-		if ( material.transmission > 0.0 ) return 2;
-		switch ( material.side ) {
-
-			case FrontSide: return 0;
-			case BackSide: return 1;
-			case DoubleSide: return 2;
-			default: return 0;
-
-		}
+		return material.transmission > 0.0 ? 2 : sideIndex( material.side );
 
 	}
 

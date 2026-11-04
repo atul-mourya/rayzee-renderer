@@ -112,7 +112,7 @@ const DEFAULT_CURVE_SIDES = { flat: 1, ribbon: 1, cylinder: 2 };
 const DEFAULT_CURVE_TOLERANCE = 0.05;
 
 /** Bumped whenever the same scene files build a different graph, so a stored graph is not reused. */
-export const PBRT_BUILD_REVISION = 19;
+export const PBRT_BUILD_REVISION = 20;
 
 function samePlacements( a, b ) {
 
@@ -2180,7 +2180,7 @@ export class PBRTSceneBuilder {
 		const key = `${c.r},${c.g},${c.b}|${e.r},${e.g},${e.b}|${material.emissiveIntensity}|` +
 			`${material.map ? material.map.uuid : '-'}|${material.roughness}|${material.roughnessMap?.uuid ?? '-'}|${material.metalness}|` +
 			`${material.transmission}|${material.ior}|${material.thickness}|` +
-			`${material.clearcoat}|${material.clearcoatRoughness}|${material.clearcoatRoughnessMap?.uuid ?? '-'}|${material.opacity}|${material.side}|` +
+			`${material.clearcoat}|${material.clearcoatRoughness}|${material.clearcoatRoughnessMap?.uuid ?? '-'}|${material.opacity}|${material.side}|${material.emissiveSide ?? '-'}|` +
 			`${material.normalMap ? material.normalMap.uuid : '-'}|${material.bumpMap?.uuid ?? '-'}|${material.attenuationDistance}|${material.attenuationColor.toArray()}|` +
 			`${material.specularIntensity}|${material.diffuseTransmission ?? 0}|${material.diffuseTransmissionColor?.toArray() ?? '-'}|` +
 			`${material.subsurface ?? 0}|${material.subsurfaceColor?.toArray() ?? '-'}|${material.subsurfaceRadius ?? '-'}|${material.subsurfaceAnisotropy ?? 0}|` +
@@ -2217,8 +2217,10 @@ export class PBRTSceneBuilder {
 		const scale = pFloat( areaLight.params, 'scale', 1 );
 		material.emissive.setRGB( rgb[ 0 ], rgb[ 1 ], rgb[ 2 ] );
 		material.emissiveIntensity = scale;
-		// pbrt's diffuse area light is one-sided unless "twosided" (_facingEmission turns the triangles).
-		material.side = pBool( areaLight.params, 'twosided', false ) ? DoubleSide : FrontSide;
+		// pbrt's diffuse area light emits on one side unless "twosided" (_facingEmission turns the triangles); its back
+		// is still a surface, which camera rays meet.
+		material.side = DoubleSide;
+		material.emissiveSide = pBool( areaLight.params, 'twosided', false ) ? DoubleSide : FrontSide;
 
 	}
 

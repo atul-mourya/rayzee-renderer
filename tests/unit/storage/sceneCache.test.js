@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
 	AnimationClip, BufferAttribute, BufferGeometry, DataTexture, FloatType, Group, InstancedMesh, Matrix4, Mesh,
 	MeshPhysicalMaterial, PerspectiveCamera, RGBAFormat, RepeatWrapping, SRGBColorSpace, Texture, VectorKeyframeTrack, PointLight,
-	SpotLight, DirectionalLight, HemisphereLight, Vector3, BoxGeometry, SphereGeometry,
+	SpotLight, DirectionalLight, HemisphereLight, Vector3, BoxGeometry, SphereGeometry, FrontSide,
 } from 'three';
 import { createFakeOPFS } from '../../__mocks__/opfs.js';
 import { openStorage, acquireSharedStorage } from '@/core/addons/storage/OpenStorage.js';
@@ -41,6 +41,7 @@ function buildScene() {
 	material.diffuseRoughness = 0.7;
 	material.bumpDistance = - 0.0125;
 	material.relativeIOR = true;
+	material.emissiveSide = FrontSide;
 	material.diffuseTransmissionColor = material.color.clone().setRGB( 0.9, 0.5, 0.25 );
 
 	const geometry = new BufferGeometry();
@@ -166,6 +167,7 @@ describe( 'SceneGraphCodec', () => {
 		expect( material.diffuseRoughness ).toBe( 0.7 );
 		expect( material.bumpDistance ).toBe( - 0.0125 );
 		expect( material.relativeIOR ).toBe( true );
+		expect( material.emissiveSide ).toBe( FrontSide );
 		expect( material.diffuseTransmissionColor.toArray() ).toEqual( root.children[ 0 ].material.diffuseTransmissionColor.toArray() );
 		expect( material.map.uuid ).toBe( root.children[ 0 ].material.map.uuid );
 		expect( material.map.repeat.toArray() ).toEqual( [ 4, 2 ] );

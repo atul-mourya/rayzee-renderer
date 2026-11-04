@@ -181,8 +181,9 @@ once looked at. How it should have been built so they could not happen:
 - **Validate at the loader → engine boundary.** A float EXR normal map failed the whole load (`IndexSizeError` in
   `TextureCreator`). The engine should convert a texel format it cannot pack and record an issue for that texture,
   never abort the scene.
-- **The engine ties emission side to surface side.** A one-sided pbrt light becomes `FrontSide`, which also makes its back
-  see-through to camera rays; in pbrt it stays opaque (and black). An emitter-side flag apart from culling.
+- **The engine ties emission side to surface side.** A one-sided pbrt light became `FrontSide`, which also made its back
+  see-through to camera rays; in pbrt it stays opaque (and black). Done 2026-11-04: a material's `emissiveSide`, an
+  emitting side in the triangle flags apart from culling.
 - **Never cache a failed load.** The archive scene cache stored a 3 GB graph from a load the engine then rejected; the next
   load would have restored it. Store only once the engine has accepted the scene (done 2026-10-14), and derive the cache
   revision from the loader's code instead of a hand-bumped `PBRT_BUILD_REVISION` (open: no build-tool-free way found; a
