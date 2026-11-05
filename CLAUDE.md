@@ -986,8 +986,8 @@ change. A bucket left empty points at its node's own placeholder (`refreshBucket
 
 **Material images are decoded only to be packed.** Every glTF image three's ImageBitmapLoader would read, embedded or a
 file of its own (`browserImagesPlugin`; in Node every glTF image, `platformImagesPlugin`; Safari's TextureLoader is not
-covered), and every image of a folder or archive carry a reader (`setImageReader`, `materials/TextureCreator.js`); a PNG
-or JPEG arrives without pixels, its size from its header (`imageHeaderSize`), and the packer holds a group's images while
+covered), and every image of a folder or archive carry a reader (`setImageReader`, `materials/TextureCreator.js`); a PNG,
+JPEG or WebP arrives without pixels, its size from its header (`imageHeaderSize`), and the packer holds a group's images while
 it packs them (`holdImages` / `releaseImages`, counted per source) and lets them go, `image` then `{ width, height, data:
 null, thumbnail }` (128 px, the app's preview). A rebuild decodes them again (24155522.glb 0.68 → 0.79 s). Chrome, tab
 after a GC: Bistro 5.2 → 1.5–1.8 GB, peak 6.3 → 3.4–3.6 GB, load 15–20 → 9–11 s; 24155522.glb 1.56 → 1.13 GB (peak 2.6 →

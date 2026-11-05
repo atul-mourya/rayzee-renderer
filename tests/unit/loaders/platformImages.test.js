@@ -33,6 +33,19 @@ function jpeg( width, height, { marker = 0xC0, before = [] } = {} ) {
 
 }
 
+// A WebP's first chunk: lossy ('VP8 '), lossless ('VP8L') or extended ('VP8X', `flags` 0x08 = EXIF).
+function webp( kind, width, height, flags = 0 ) {
+
+	const le = ( n, bytes ) => Array.from( { length: bytes }, ( _, i ) => ( n >>> ( 8 * i ) ) & 255 );
+	const body = {
+		'VP8 ': [ 0x50, 0x02, 0x00, 0x9D, 0x01, 0x2A, ...le( width, 2 ), ...le( height, 2 ) ],
+		'VP8L': [ 0x2F, ...le( ( width - 1 ) | ( ( height - 1 ) << 14 ), 4 ), 0 ],
+		'VP8X': [ flags, 0, 0, 0, ...le( width - 1, 3 ), ...le( height - 1, 3 ) ],
+	}[ kind ];
+	return new Uint8Array( [ ...ascii( 'RIFF' ), ...le( body.length + 12, 4 ), ...ascii( 'WEBP' ), ...ascii( kind ), ...le( body.length, 4 ), ...body ] );
+
+}
+
 function fakeParser( images, buffers ) {
 
 	return {
@@ -171,6 +184,14 @@ describe( 'platform image decoding', () => {
 
 describe( 'an image\'s size from its header', () => {
 
+	it( 'reads a WebP\'s, lossy, lossless or extended', () => {
+
+		expect( imageHeaderSize( webp( 'VP8 ', 2048, 1024 ) ) ).toEqual( { width: 2048, height: 1024 } );
+		expect( imageHeaderSize( webp( 'VP8L', 16383, 3 ) ) ).toEqual( { width: 16383, height: 3 } );
+		expect( imageHeaderSize( webp( 'VP8X', 20000, 640, 0x10 ) ) ).toEqual( { width: 20000, height: 640 } );
+
+	} );
+
 	it( 'reads a PNG\'s and a JPEG\'s, baseline or progressive, past other segments', () => {
 
 		expect( imageHeaderSize( png( 2048, 1024, [ 'iCCP', 'tEXt' ] ) ) ).toEqual( { width: 2048, height: 1024 } );
@@ -186,6 +207,8 @@ describe( 'an image\'s size from its header', () => {
 		expect( imageHeaderSize( png( 8, 8 ).subarray( 0, 30 ) ) ).toBeNull();
 		expect( imageHeaderSize( jpeg( 8, 8 ).subarray( 0, 8 ) ) ).toBeNull();
 		expect( imageHeaderSize( new Uint8Array( [ ...ascii( 'RIFF' ), 0, 0, 0, 0, ...ascii( 'WEBPVP8 ' ) ] ) ) ).toBeNull();
+		expect( imageHeaderSize( webp( 'VP8X', 8, 8, 0x08 ) ) ).toBeNull();
+		expect( imageHeaderSize( webp( 'VP8 ', 8, 8 ).subarray( 0, 29 ) ) ).toBeNull();
 		expect( imageHeaderSize( new Uint8Array( 0 ) ) ).toBeNull();
 
 	} );

@@ -32,8 +32,8 @@ function trimPNG( bytes ) {
 }
 
 /**
- * A PNG's or JPEG's size from its header, or null: other formats, a header past `bytes`, and an image whose metadata may
- * turn it (a JPEG's Exif, a PNG's eXIf) are decoded to learn it.
+ * A PNG's, JPEG's or WebP's size from its header, or null: other formats, a header past `bytes`, and an image whose
+ * metadata may turn it (a JPEG's Exif, a PNG's eXIf, a WebP's EXIF) are decoded to learn it.
  */
 export function imageHeaderSize( bytes ) {
 
@@ -51,6 +51,29 @@ export function imageHeaderSize( bytes ) {
 		}
 
 		return null;
+
+	}
+
+	if ( bytes.length >= 16 && tag( 0, 'RIFF' ) && tag( 8, 'WEBP' ) ) {
+
+		const le16 = ( i ) => bytes[ i ] | ( bytes[ i + 1 ] << 8 );
+		if ( tag( 12, 'VP8 ' ) ) {
+
+			if ( bytes.length < 30 || bytes[ 23 ] !== 0x9D || bytes[ 24 ] !== 0x01 || bytes[ 25 ] !== 0x2A ) return null;
+			return { width: le16( 26 ) & 0x3FFF, height: le16( 28 ) & 0x3FFF };
+
+		}
+
+		if ( tag( 12, 'VP8L' ) ) {
+
+			if ( bytes.length < 25 || bytes[ 20 ] !== 0x2F ) return null;
+			const bits = ( le16( 21 ) | ( le16( 23 ) << 16 ) ) >>> 0;
+			return { width: ( bits & 0x3FFF ) + 1, height: ( ( bits >>> 14 ) & 0x3FFF ) + 1 };
+
+		}
+
+		if ( ! tag( 12, 'VP8X' ) || bytes.length < 30 || bytes[ 20 ] & 0x08 ) return null;
+		return { width: ( le16( 24 ) | ( bytes[ 26 ] << 16 ) ) + 1, height: ( le16( 27 ) | ( bytes[ 29 ] << 16 ) ) + 1 };
 
 	}
 
@@ -241,7 +264,7 @@ async function rereadableImage( bytes, read, def, onFailure ) {
 
 /**
  * A GLTFLoader plugin for the browser: an image three's ImageBitmapLoader would read, embedded or a file of its own, is
- * fetched and decoded as that loader does it, but decoded only when the texture arrays are packed (a PNG or JPEG), and
+ * fetched and decoded as that loader does it, but decoded only when the texture arrays are packed (a PNG, JPEG or WebP), and
  * let go once they are. A file that cannot be fetched fails as it does there, through the loading manager.
  */
 export function browserImagesPlugin( parser, onFailure = null ) {
