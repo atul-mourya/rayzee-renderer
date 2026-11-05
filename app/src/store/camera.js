@@ -5,6 +5,10 @@ import { getApp } from '@/lib/appProxy';
 // Simple ('look') or Pro ('physical') depth of field — who is using the app, so it is kept across sessions.
 const DOF_MODE_KEY = 'rayzee-dof-mode';
 
+// Width × height × depth in metres, at the scale Subject Size sets.
+export const modelSizeMetres = ( { modelDimensions, unitsPerMetre } ) =>
+	modelDimensions.map( d => Number( ( d / unitsPerMetre ).toPrecision( 3 ) ) ).join( ' × ' );
+
 function readDofMode() {
 
 	try {

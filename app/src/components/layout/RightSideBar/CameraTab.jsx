@@ -9,7 +9,7 @@ import { NumberInput } from "@/components/ui/number-input";
 import AspectRatioControl from './AspectRatioControl';
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { CAMERA_RANGES, CAMERA_PRESETS, isOrthographic, isPanorama, orthoHeightRange, walkSpeedRange } from '@/Constants';
-import { useCameraStore, usePathTracerStore } from '@/store';
+import { modelSizeMetres, useCameraStore, usePathTracerStore } from '@/store';
 import { useEffect } from 'react';
 import { getApp } from '@/lib/appProxy';
 import { useActiveApp } from '@/hooks/useActiveApp';
@@ -108,7 +108,7 @@ const CameraTab = () => {
 
 	const modelSize = Math.max( ...modelDimensions );
 	const longestAxis = AXIS_NAMES[ modelDimensions.indexOf( modelSize ) ];
-	const realDimensions = modelDimensions.map( d => threeDigits( d / unitsPerMetre ) ).join( ' × ' );
+	const realDimensions = modelSizeMetres( { modelDimensions, unitsPerMetre } );
 
 	const activeApp = useActiveApp();
 

@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect } from 'react';
 import { Check, Sparkles } from 'lucide-react';
-import { useStore, usePathTracerStore } from '@/store';
+import { useStore, usePathTracerStore, useCameraStore, modelSizeMetres } from '@/store';
 import { getApp } from '@/lib/appProxy';
 import { cn } from "@/lib/utils";
 
@@ -100,6 +100,7 @@ const StatsMeter = ( { viewportMode } ) => {
 
 	const completionReason = useStore( state => state.completionReason );
 	const stats = useStore( state => state.stats );
+	const modelSize = useCameraStore( modelSizeMetres );
 
 	const [ sceneStats, setSceneStats ] = useState( null );
 
@@ -226,6 +227,12 @@ const StatsMeter = ( { viewportMode } ) => {
 				<span className="mx-1">|</span>
 				<span>Peak: <span className="text-white">{formatBytes( stats.memoryPeak )}</span></span>
 			</div>
+
+			{sceneStats?.triangleCount > 0 && (
+				<span title="The model's width × height × depth, as its file gives them. If that is not its real size, set Subject Size in the Camera tab (Depth of Field, Pro).">
+					Size: <span className="text-white">{modelSize}</span> m
+				</span>
+			)}
 		</div>
 	);
 
