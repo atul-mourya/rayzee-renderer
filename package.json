@@ -47,7 +47,8 @@
     "example:render": "npm run build:engine && node rayzee/examples/render.mjs",
     "example:browser": "vite --config rayzee/examples/vite.config.js",
     "example:viewer": "vite rayzee/examples/viewer-browser --config rayzee/examples/vite.config.js",
-    "color:bake": "node app/scripts/bake-default-view.mjs"
+    "color:bake": "node app/scripts/bake-default-view.mjs",
+    "abo:index": "node app/scripts/build-abo-index.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^9.11.1",

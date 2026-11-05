@@ -196,7 +196,7 @@ export const useAssetsStore = create( set => ( {
 	polyHavenLoading: false,
 	polyHavenResolution: '2k',
 	materialsSource: 'current', // 'current' or 'polyhaven'
-	modelsSource: 'featured', // 'featured' (built-in catalog) or 'sketchfab'
+	modelsSource: 'featured', // 'featured' (built-in catalog), 'sketchfab' or 'abo'
 
 	// Traditional setters
 	setMaterials: materials => set( { materials } ),

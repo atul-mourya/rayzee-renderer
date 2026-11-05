@@ -6,7 +6,21 @@ import { MODEL_FILES } from '@/Constants';
 import { useAssetsStore } from '@/store';
 import { useAssetLoader } from '@/hooks/useAssetLoader';
 import { isArchiveUrl } from '@/lib/archives';
-import SketchfabBrowser from './SketchfabBrowser';
+import { SketchfabService } from '@/services/SketchfabService';
+import { AboService } from '@/services/AboService';
+import ModelSourceBrowser from './ModelSourceBrowser';
+
+const SKETCHFAB_NOTICE = SketchfabService.getToken() ? null : (
+	<>Browse only — set <code className="text-[10px]">VITE_SKETCHFAB_TOKEN</code> to download models.</>
+);
+
+// CC BY 4.0 asks for the credit and a link to the licence.
+const ABO_NOTICE = (
+	<>
+		Models © Amazon.com, from <a className="underline" href={AboService.SOURCE_URL} target="_blank" rel="noopener noreferrer">Amazon Berkeley Objects</a>,{' '}
+		<a className="underline" href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener noreferrer">CC BY 4.0</a>.
+	</>
+);
 
 const ModelsTab = () => {
 
@@ -48,12 +62,15 @@ const ModelsTab = () => {
 				onValueChange={setModelsSource}
 				className="flex flex-col h-full"
 			>
-				<TabsList className="grid w-full grid-cols-2 h-auto p-0 border">
+				<TabsList className="grid w-full grid-cols-3 h-auto p-0 border">
 					<TabsTrigger value="featured" className="text-xs rounded-full">
 						Featured
 					</TabsTrigger>
 					<TabsTrigger value="sketchfab" className="text-xs rounded-full">
 						Sketchfab
+					</TabsTrigger>
+					<TabsTrigger value="abo" className="text-xs rounded-full">
+						Amazon
 					</TabsTrigger>
 				</TabsList>
 
@@ -67,7 +84,18 @@ const ModelsTab = () => {
 				</TabsContent>
 
 				<TabsContent value="sketchfab" className="flex-1 min-h-0 mt-2">
-					<SketchfabBrowser
+					<ModelSourceBrowser
+						source={SketchfabService}
+						notice={SKETCHFAB_NOTICE}
+						onReplace={( url, name, item, options ) => loadModelUrl( url, name, options )}
+						onAdd={( url, name, item, options ) => addModel( url, name, options )}
+					/>
+				</TabsContent>
+
+				<TabsContent value="abo" className="flex-1 min-h-0 mt-2">
+					<ModelSourceBrowser
+						source={AboService}
+						notice={ABO_NOTICE}
 						onReplace={( url, name, item, options ) => loadModelUrl( url, name, options )}
 						onAdd={( url, name, item, options ) => addModel( url, name, options )}
 					/>

@@ -3,20 +3,21 @@ import { Search, Loader2, ArrowLeft, Package, Plus } from 'lucide-react';
 import { ItemsCatalog } from '@/components/ui/items-catalog';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { SketchfabService } from '@/services/SketchfabService';
 import { useToast } from '@/hooks/use-toast';
 import { getApp } from '@/lib/appProxy';
 
 /**
- * Reusable Sketchfab browse surface. Category-first (like PolyHaven): the primary
- * listing is model categories; selecting one shows that category's models with a
- * within-category search. Each model card reveals Replace / Add actions on hover;
- * the action resolves the model's GLB URL, then hands it to onReplace / onAdd.
+ * Browse surface for an online model source (SketchfabService, AboService). Category-first
+ * (like PolyHaven): the primary listing is model categories; selecting one shows that
+ * category's models with a within-category search. Each model card reveals Replace / Add
+ * actions on hover; the action resolves the model's file, then hands it to onReplace / onAdd.
  *
+ * @param {object} source - NAME, CATALOG, getCategories(), search(), canDownload( item ), resolveDownload( item )
+ * @param {import('react').ReactNode} [notice] - a line above the listing (token hint, credit)
  * @param {(url:string, name:string, item:object) => Promise<any>} onReplace - swap the scene
  * @param {(url:string, name:string, item:object) => Promise<any>} onAdd - append to the scene
  */
-const SketchfabBrowser = ( { onReplace, onAdd } ) => {
+const ModelSourceBrowser = ( { source, notice, onReplace, onAdd } ) => {
 
 	const { toast } = useToast();
 
@@ -34,7 +35,6 @@ const SketchfabBrowser = ( { onReplace, onAdd } ) => {
 	const [ isLoadingMore, setIsLoadingMore ] = useState( false );
 	const [ error, setError ] = useState( null );
 
-	const hasToken = !! SketchfabService.getToken();
 	const debounceRef = useRef( null );
 
 	// Load categories once (the primary listing).
@@ -43,7 +43,7 @@ const SketchfabBrowser = ( { onReplace, onAdd } ) => {
 		let cancelled = false;
 		setIsLoadingCategories( true );
 		setCategoriesError( null );
-		SketchfabService.getCategories()
+		source.getCategories()
 			.then( cats => {
 
 				if ( ! cancelled ) setCategories( cats );
@@ -65,7 +65,7 @@ const SketchfabBrowser = ( { onReplace, onAdd } ) => {
 
 		};
 
-	}, [] );
+	}, [ source ] );
 
 	// Fetch models whenever a category is open (and re-fetch on within-category query change).
 	useEffect( () => {
@@ -80,7 +80,7 @@ const SketchfabBrowser = ( { onReplace, onAdd } ) => {
 			setError( null );
 			try {
 
-				const { items: results, nextCursor } = await SketchfabService.search( { query, category: selectedCategory.slug } );
+				const { items: results, nextCursor } = await source.search( { query, category: selectedCategory.slug } );
 				if ( cancelled ) return; // a newer category/query superseded this request
 				setItems( results );
 				setCursor( nextCursor );
@@ -107,7 +107,7 @@ const SketchfabBrowser = ( { onReplace, onAdd } ) => {
 
 		};
 
-	}, [ selectedCategory, query ] );
+	}, [ source, selectedCategory, query ] );
 
 	const handlePickCategory = useCallback( ( indexStr ) => {
 
@@ -135,13 +135,13 @@ const SketchfabBrowser = ( { onReplace, onAdd } ) => {
 		setIsLoadingMore( true );
 		try {
 
-			const { items: more, nextCursor } = await SketchfabService.search( { query, category: selectedCategory.slug, cursor } );
+			const { items: more, nextCursor } = await source.search( { query, category: selectedCategory.slug, cursor } );
 			setItems( prev => [ ...prev, ...more ] );
 			setCursor( nextCursor );
 
 		} catch ( e ) {
 
-			toast( { title: 'Sketchfab', description: e.message, variant: 'destructive' } );
+			toast( { title: source.NAME, description: e.message, variant: 'destructive' } );
 
 		} finally {
 
@@ -149,25 +149,17 @@ const SketchfabBrowser = ( { onReplace, onAdd } ) => {
 
 		}
 
-	}, [ cursor, isLoadingMore, query, selectedCategory, toast ] );
+	}, [ source, cursor, isLoadingMore, query, selectedCategory, toast ] );
 
-	// Resolve a model's short-lived GLB URL, then run the caller's replace/append.
+	// Resolve the model's file, then run the caller's replace/append.
 	const resolveAndRun = useCallback( async ( item, run ) => {
-
-		if ( ! hasToken ) {
-
-			toast( { title: 'Sketchfab token required', description: 'Set VITE_SKETCHFAB_TOKEN to download models.', variant: 'destructive' } );
-			return;
-
-		}
 
 		try {
 
-			const download = await SketchfabService.getDownload( item.uid );
-			const picked = SketchfabService.pickDownloadUrl( download );
+			const picked = await source.resolveDownload( item );
 			if ( ! picked.url ) {
 
-				toast( { title: 'No download', description: 'Sketchfab offers no downloadable file for this model.', variant: 'destructive' } );
+				toast( { title: 'No download', description: `${source.NAME} offers no downloadable file for this model.`, variant: 'destructive' } );
 
 			} else if ( picked.format === 'zip' ) {
 
@@ -178,44 +170,38 @@ const SketchfabBrowser = ( { onReplace, onAdd } ) => {
 
 				}
 
-				await getApp()?.loadFile( picked.url, { filename: `${item.uid}.zip`, cacheKey: `sketchfab:${item.uid}:gltf` } );
+				await getApp()?.loadFile( picked.url, { filename: `${item.id}.zip`, cacheKey: picked.cacheKey } );
 
 			} else {
 
-				await run( picked.url, item.name, item, { cacheKey: `sketchfab:${item.uid}:glb` } );
+				await run( picked.url, item.name, item, { cacheKey: picked.cacheKey } );
 
 			}
 
 		} catch ( e ) {
 
-			toast( {
-				title: e.code === 'SKETCHFAB_NO_TOKEN' ? 'Sketchfab token required' : 'Error loading model',
-				description: e.message,
-				variant: 'destructive',
-			} );
+			toast( { title: 'Error loading model', description: e.message, variant: 'destructive' } );
 
 		}
 
-	}, [ hasToken, toast, onReplace ] );
+	}, [ source, toast, onReplace ] );
 
 	// Per-card hover actions. Disabled (with a hint) when the model can't be downloaded.
 	const modelActions = useMemo( () => {
 
-		const disabled = ( item ) => ! hasToken || ! item.isDownloadable;
+		const disabled = ( item ) => ! source.canDownload( item );
 		return [
 			{ key: 'replace', label: 'Replace', variant: 'default', disabled, onClick: ( item ) => resolveAndRun( item, onReplace ) },
 			{ key: 'add', label: 'Add', variant: 'secondary', icon: <Plus size={12} />, disabled, onClick: ( item ) => resolveAndRun( item, onAdd ) },
 		];
 
-	}, [ hasToken, resolveAndRun, onReplace, onAdd ] );
+	}, [ source, resolveAndRun, onReplace, onAdd ] );
 
 	return (
 		<div className="flex flex-col h-full w-full">
 
-			{ ! hasToken && (
-				<p className="px-2 pt-2 text-[10px] leading-tight text-muted-foreground">
-					Browse only — set <code className="text-[10px]">VITE_SKETCHFAB_TOKEN</code> to download models.
-				</p>
+			{notice && (
+				<p className="px-2 pt-2 text-[10px] leading-tight text-muted-foreground">{notice}</p>
 			)}
 
 			{ ! selectedCategory ? (
@@ -227,7 +213,7 @@ const SketchfabBrowser = ( { onReplace, onAdd } ) => {
 						onValueChange={handlePickCategory}
 						isLoading={isLoadingCategories}
 						error={categoriesError}
-						catalogType="sketchfab-categories"
+						catalogType={`${source.CATALOG}-categories`}
 					/>
 				</div>
 			) : (
@@ -265,7 +251,7 @@ const SketchfabBrowser = ( { onReplace, onAdd } ) => {
 							isLoading={isSearching}
 							error={error}
 							hideSearch
-							catalogType="sketchfab"
+							catalogType={source.CATALOG}
 						/>
 					</div>
 
@@ -289,4 +275,4 @@ const SketchfabBrowser = ( { onReplace, onAdd } ) => {
 
 };
 
-export default SketchfabBrowser;
+export default ModelSourceBrowser;

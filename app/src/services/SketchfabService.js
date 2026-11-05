@@ -7,6 +7,8 @@
  */
 export class SketchfabService {
 
+	static NAME = 'Sketchfab';
+	static CATALOG = 'sketchfab';
 	static API_BASE = 'https://api.sketchfab.com/v3';
 	static VIEWER_BASE = 'https://sketchfab.com/models';
 
@@ -179,6 +181,24 @@ export class SketchfabService {
 		if ( download?.glb?.url ) return { url: download.glb.url, format: 'glb' };
 		if ( download?.gltf?.url ) return { url: download.gltf.url, format: 'zip' };
 		return { url: null };
+
+	}
+
+	static canDownload( item ) {
+
+		return !! this.getToken() && !! item.isDownloadable;
+
+	}
+
+	/**
+	 * The model's file, keyed by uid for the download cache (the signed link changes each time).
+	 * @returns {Promise<{url: string|null, format?: 'glb'|'zip', cacheKey?: string}>}
+	 */
+	static async resolveDownload( item ) {
+
+		const picked = this.pickDownloadUrl( await this.getDownload( item.uid ) );
+		if ( ! picked.url ) return picked;
+		return { ...picked, cacheKey: `sketchfab:${item.uid}:${picked.format === 'zip' ? 'gltf' : 'glb'}` };
 
 	}
 
