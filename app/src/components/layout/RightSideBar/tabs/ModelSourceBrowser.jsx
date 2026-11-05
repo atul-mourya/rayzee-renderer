@@ -3,8 +3,10 @@ import { Search, Loader2, ArrowLeft, Package, Plus } from 'lucide-react';
 import { ItemsCatalog } from '@/components/ui/items-catalog';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
 import { getApp } from '@/lib/appProxy';
+import { cn } from '@/lib/utils';
 
 /**
  * Browse surface for an online model source (SketchfabService, AboService). Category-first
@@ -12,12 +14,15 @@ import { getApp } from '@/lib/appProxy';
  * category's models with a within-category search. Each model card reveals Replace / Add
  * actions on hover; the action resolves the model's file, then hands it to onReplace / onAdd.
  *
- * @param {object} source - NAME, CATALOG, getCategories(), search(), canDownload( item ), resolveDownload( item )
+ * @param {object} source - NAME, CATALOG, getCategories(), search(), canDownload( item ),
+ *   resolveDownload( item, { variant } ), and VARIANTS ({ value, label }[]) when it offers more than one file
  * @param {import('react').ReactNode} [notice] - a line above the listing (token hint, credit)
+ * @param {string} [variant] - the VARIANTS value models load as
+ * @param {(value:string) => void} [onVariantChange]
  * @param {(url:string, name:string, item:object) => Promise<any>} onReplace - swap the scene
  * @param {(url:string, name:string, item:object) => Promise<any>} onAdd - append to the scene
  */
-const ModelSourceBrowser = ( { source, notice, onReplace, onAdd } ) => {
+const ModelSourceBrowser = ( { source, notice, variant, onVariantChange, onReplace, onAdd } ) => {
 
 	const { toast } = useToast();
 
@@ -156,7 +161,7 @@ const ModelSourceBrowser = ( { source, notice, onReplace, onAdd } ) => {
 
 		try {
 
-			const picked = await source.resolveDownload( item );
+			const picked = await source.resolveDownload( item, { variant } );
 			if ( ! picked.url ) {
 
 				toast( { title: 'No download', description: `${source.NAME} offers no downloadable file for this model.`, variant: 'destructive' } );
@@ -184,7 +189,7 @@ const ModelSourceBrowser = ( { source, notice, onReplace, onAdd } ) => {
 
 		}
 
-	}, [ source, toast, onReplace ] );
+	}, [ source, variant, toast, onReplace ] );
 
 	// Per-card hover actions. Disabled (with a hint) when the model can't be downloaded.
 	const modelActions = useMemo( () => {
@@ -223,10 +228,20 @@ const ModelSourceBrowser = ( { source, notice, onReplace, onAdd } ) => {
 						<Button variant="ghost" size="sm" className="h-6 px-2 text-xs text-muted-foreground" onClick={handleBack}>
 							<ArrowLeft size={12} className="mr-1" /> Back
 						</Button>
-						<div className="flex items-center gap-1 text-xs text-primary ml-auto">
+						<div className={cn( 'flex items-center gap-1 text-xs text-primary', source.VARIANTS ? 'mx-auto' : 'ml-auto' )}>
 							<Package size={12} />
 							{selectedCategory.name}
 						</div>
+						{source.VARIANTS && (
+							<Select value={variant} onValueChange={onVariantChange}>
+								<SelectTrigger className="w-auto shrink-0 gap-1 h-6 px-2 rounded-full text-xs hover:cursor-pointer" aria-label="Model file">
+									<SelectValue />
+								</SelectTrigger>
+								<SelectContent>
+									{source.VARIANTS.map( r => <SelectItem key={r.value} value={r.value}>{r.label}</SelectItem> )}
+								</SelectContent>
+							</Select>
+						)}
 					</div>
 
 					<div className="px-2 pt-2">

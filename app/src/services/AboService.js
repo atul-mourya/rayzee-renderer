@@ -1,7 +1,9 @@
 /**
  * Amazon Berkeley Objects: ~7,900 product models (GLB, metres, Y up), CC BY 4.0, credit Amazon.com.
  * The dataset is a static bucket with no search API, so browsing and search run in the browser over
- * abo-index.json (built by `npm run abo:index`). Downloads need no token and the links do not expire.
+ * abo-index.json (built by `npm run abo:index`). Each model comes two ways: CodePawl's compressed copy
+ * (WebP up to 2048 px, ~1 MB) or Amazon's original file (textures mostly 2K or 4K, ~10 MB, up to 330).
+ * Downloads need no token and the links do not expire.
  */
 export class AboService {
 
@@ -11,8 +13,11 @@ export class AboService {
 	static MODEL_BASE = 'https://amazon-berkeley-objects.s3.amazonaws.com/3dmodels/original';
 	static IMAGE_BASE = 'https://m.media-amazon.com/images/I';
 	static INDEX_URL = `${import.meta.env.BASE_URL}abo-index.json`;
+	static CODEPAWL_URL = 'https://huggingface.co/datasets/codepawl/abo-glb';
 	static PAGE_SIZE = 24;
 	static ALL = 'all';
+	static VARIANTS = [ { value: 'compressed', label: 'Compressed' }, { value: 'original', label: 'Original' } ];
+	static COMPRESSED_TEXTURE_PX = 2048;
 
 	static _index = null;
 
@@ -49,19 +54,23 @@ export class AboService {
 
 	}
 
-	static _parseIndex( { categories, items } ) {
+	static _parseIndex( { categories, items, pack } ) {
 
-		const models = items.map( ( [ id, category, name, image, triangles, texture, bytes ] ) => ( {
+		const models = items.map( ( [ id, category, name, image, triangles, bytes, packBytes, texturePx ] ) => ( {
 			id,
 			name,
 			preview: this.imageUrl( image ),
-			label: [ categories[ category ], `${formatCount( triangles )} triangles`, texture && `${Math.round( texture / 1024 )}K textures`, formatBytes( bytes ) ].filter( Boolean ).join( ' · ' ),
+			label: `${categories[ category ]} · ${formatCount( triangles )} triangles`,
+			details: [
+				[ 'Compressed', fileSummary( Math.min( texturePx, this.COMPRESSED_TEXTURE_PX ), packBytes ) ],
+				[ 'Original', fileSummary( texturePx, bytes ) ],
+			],
 			tags: [],
 			isDownloadable: true,
 			categoryIndex: category,
 			search: name.toLowerCase(),
 		} ) );
-		return { categories, models };
+		return { categories, models, pack };
 
 	}
 
@@ -109,10 +118,12 @@ export class AboService {
 
 	}
 
-	/** The model's GLB; the link is stable, so the download cache keys it by URL. */
-	static async resolveDownload( item ) {
+	/** The model's GLB, compressed or original; the links are stable, so the download cache keys them by URL. */
+	static async resolveDownload( item, { variant = 'compressed' } = {} ) {
 
-		return { url: this.modelUrl( item.id ), format: 'glb' };
+		if ( variant === 'original' ) return { url: this.modelUrl( item.id ), format: 'glb' };
+		const { pack } = await this.loadIndex();
+		return { url: `${pack}/${item.id}/${item.id}.glb`, format: 'glb' };
 
 	}
 
@@ -121,6 +132,15 @@ export class AboService {
 function formatCount( n ) {
 
 	return n >= 1e6 ? `${( n / 1e6 ).toFixed( 1 )}M` : n >= 1e3 ? `${Math.round( n / 1e3 )}k` : String( n );
+
+}
+
+// "4K textures · 43.6 MB"; a model without textures gives its size alone.
+function fileSummary( texturePx, bytes ) {
+
+	if ( ! texturePx ) return formatBytes( bytes );
+	const side = texturePx >= 1024 ? `${Math.round( texturePx / 1024 )}K` : `${texturePx} px`;
+	return `${side} textures · ${formatBytes( bytes )}`;
 
 }
 

@@ -197,6 +197,7 @@ export const useAssetsStore = create( set => ( {
 	polyHavenResolution: '2k',
 	materialsSource: 'current', // 'current' or 'polyhaven'
 	modelsSource: 'featured', // 'featured' (built-in catalog), 'sketchfab' or 'abo'
+	aboVariant: 'compressed', // 'compressed' (CodePawl's copy) or 'original' (Amazon's file)
 
 	// Traditional setters
 	setMaterials: materials => set( { materials } ),
@@ -220,6 +221,7 @@ export const useAssetsStore = create( set => ( {
 	setPolyHavenResolution: resolution => set( { polyHavenResolution: resolution } ),
 	setMaterialsSource: source => set( { materialsSource: source } ),
 	setModelsSource: source => set( { modelsSource: source } ),
+	setAboVariant: variant => set( { aboVariant: variant } ),
 } ) );
 
 // Environment store

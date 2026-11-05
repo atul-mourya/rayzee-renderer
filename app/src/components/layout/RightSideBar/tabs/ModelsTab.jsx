@@ -14,17 +14,18 @@ const SKETCHFAB_NOTICE = SketchfabService.getToken() ? null : (
 	<>Browse only — set <code className="text-[10px]">VITE_SKETCHFAB_TOKEN</code> to download models.</>
 );
 
-// CC BY 4.0 asks for the credit and a link to the licence.
+// CC BY 4.0 asks for the credit, a link to the licence and to say what was changed.
 const ABO_NOTICE = (
 	<>
-		Models © Amazon.com, from <a className="underline" href={AboService.SOURCE_URL} target="_blank" rel="noopener noreferrer">Amazon Berkeley Objects</a>,{' '}
+		Models © Amazon.com, from <a className="underline" href={AboService.SOURCE_URL} target="_blank" rel="noopener noreferrer">Amazon Berkeley Objects</a>;
+		compressed copies by <a className="underline" href={AboService.CODEPAWL_URL} target="_blank" rel="noopener noreferrer">CodePawl</a>.{' '}
 		<a className="underline" href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener noreferrer">CC BY 4.0</a>.
 	</>
 );
 
 const ModelsTab = () => {
 
-	const { model, setModel, modelsSource, setModelsSource } = useAssetsStore();
+	const { model, setModel, modelsSource, setModelsSource, aboVariant, setAboVariant } = useAssetsStore();
 	const { loadModel, loadModelUrl, addModel, appendCatalogModel } = useAssetLoader();
 
 	// Featured catalog: each card offers Replace (swap the scene) and Add (append).
@@ -96,6 +97,8 @@ const ModelsTab = () => {
 					<ModelSourceBrowser
 						source={AboService}
 						notice={ABO_NOTICE}
+						variant={aboVariant}
+						onVariantChange={setAboVariant}
 						onReplace={( url, name, item, options ) => loadModelUrl( url, name, options )}
 						onAdd={( url, name, item, options ) => addModel( url, name, options )}
 					/>

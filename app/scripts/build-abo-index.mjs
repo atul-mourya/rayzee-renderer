@@ -1,7 +1,8 @@
 /**
  * Build app/public/abo-index.json, the Models tab's list of the Amazon Berkeley Objects models: the dataset is a
- * static bucket with no search API, and its own listings are 84 MB. Joins the model metadata (ids, triangles,
- * textures) with the product listings (names, types, photos) and each file's size.
+ * static bucket with no search API, and its own listings are 84 MB. Joins the model metadata (ids, triangles) with the
+ * product listings (names, types, photos) with both copies' file sizes and the original's largest texture: Amazon's
+ * file (textures mostly 2K or 4K) and CodePawl's compressed copy (WebP up to 2K, meshopt geometry), pinned to one commit.
  *
  *   npm run abo:index
  */
@@ -13,6 +14,7 @@ import { writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 const BUCKET = 'https://amazon-berkeley-objects.s3.amazonaws.com';
+const PACK = 'https://huggingface.co/datasets/codepawl/abo-glb/resolve/c6ac66142ecec2a2973b6e00072ec74940e1bec4';
 const OUT = fileURLToPath( new URL( '../public/abo-index.json', import.meta.url ) );
 const MIN_CATEGORY = 15;
 
@@ -39,22 +41,23 @@ const NAME_CATEGORY = [
 	[ /\bplanters?\b/, 'Planters' ],
 ];
 
-// "Amazon Brand – Rivet …" → "Rivet …"
-const BRAND_PREFIX = /^(an )?(amazon brand|marque amazon|marca amazon|marchio amazon|amazon marke|amazon merk)\s*[-–—:]\s*|^amazon ?basics\s*[-–—:]?\s*/i;
+// "Amazon Brand – Rivet …", "A Brand of Amazon Movian …" → "Rivet …", "Movian …"
+const BRAND_PREFIX = /^(an? )?(amazon brand|brand of amazon|marque amazon|marca amazon|marchio amazon|amazon[- ]m(a|ä)rke|amazon merk)\s*[-–—:,]?\s*|^amazon ?basics\s*[-–—:,]?\s*/i;
 
 const englishFirst = tag => tag === 'en_US' ? 0 : tag.startsWith( 'en_' ) ? 1 : 2;
 
-async function lines( path ) {
+async function lines( url ) {
 
-	const response = await fetch( `${BUCKET}/${path}` );
-	if ( ! response.ok ) throw new Error( `${path}: HTTP ${response.status}` );
-	return createInterface( { input: Readable.fromWeb( response.body ).pipe( createGunzip() ), crlfDelay: Infinity } );
+	const response = await fetch( url );
+	if ( ! response.ok ) throw new Error( `${url}: HTTP ${response.status}` );
+	const body = Readable.fromWeb( response.body );
+	return createInterface( { input: url.endsWith( '.gz' ) ? body.pipe( createGunzip() ) : body, crlfDelay: Infinity } );
 
 }
 
 const models = new Map();
 let header;
-for await ( const line of await lines( '3dmodels/metadata/3dmodels.csv.gz' ) ) {
+for await ( const line of await lines( `${BUCKET}/3dmodels/metadata/3dmodels.csv.gz` ) ) {
 
 	const cells = line.split( ',' );
 	if ( ! header ) {
@@ -71,7 +74,7 @@ for await ( const line of await lines( '3dmodels/metadata/3dmodels.csv.gz' ) ) {
 
 console.log( `${models.size} models` );
 
-for await ( const line of await lines( 'listings/listings.json.gz' ) ) {
+for await ( const line of await lines( `${BUCKET}/listings/listings.json.gz` ) ) {
 
 	const listing = JSON.parse( line );
 	const model = models.get( listing[ '3dmodel_id' ] );
@@ -92,42 +95,26 @@ for await ( const line of await lines( 'listings/listings.json.gz' ) ) {
 
 }
 
-async function fileSize( id ) {
+// Both copies' sizes and the original's largest texture (null: none); CodePawl checked Amazon's against the bucket.
+for await ( const line of await lines( `${PACK}/metadata.jsonl` ) ) {
 
-	for ( let attempt = 0; attempt < 3; attempt ++ ) {
-
-		const response = await fetch( `${BUCKET}/3dmodels/original/${id.at( - 1 )}/${id}.glb`, { method: 'HEAD' } ).catch( () => null );
-		if ( response?.ok ) return Number( response.headers.get( 'content-length' ) );
-
-	}
-
-	throw new Error( `${id}: no size` );
+	const { id, source_bytes, pack_bytes, source_texture_px } = JSON.parse( line );
+	Object.assign( models.get( id ) ?? {}, { bytes: source_bytes, packBytes: pack_bytes, texturePx: source_texture_px ?? 0 } );
 
 }
 
-const ids = [ ...models.keys() ];
-let next = 0;
-await Promise.all( Array.from( { length: 32 }, async () => {
+const unsized = [ ...models ].filter( ( [ , m ] ) => ! m.packBytes ).map( ( [ id ] ) => id );
+if ( unsized.length ) throw new Error( `no compressed copy of ${unsized.length} models: ${unsized.slice( 0, 5 ).join( ', ' )}` );
 
-	while ( next < ids.length ) {
-
-		const id = ids[ next ++ ];
-		models.get( id ).bytes = await fileSize( id );
-
-	}
-
-} ) );
-
-const entries = [ ...models ].map( ( [ id, { row, name, type, image, bytes } ] ) => {
+const entries = [ ...models ].map( ( [ id, { row, name, type, image, bytes, packBytes, texturePx } ] ) => {
 
 	const english = ( name ?? '' ).toLowerCase();
 	let category = TYPE_CATEGORY[ type ] ?? 'Other';
 	if ( VAGUE_TYPES.has( type ) ) category = NAME_CATEGORY.find( ( [ re ] ) => re.test( english ) )?.[ 1 ] ?? 'Home decor';
 	return {
-		id, category, image, bytes,
+		id, category, image, bytes, packBytes, texturePx,
 		name: ( name ?? id ).replace( BRAND_PREFIX, '' ).trim(),
 		triangles: Number( row.faces ),
-		texture: Number( row.image_width_max ) || 0,
 	};
 
 } );
@@ -145,9 +132,10 @@ entries.sort( ( a, b ) => order.get( a.category ) - order.get( b.category ) || a
 const index = {
 	source: `${BUCKET}/index.html`,
 	license: 'CC BY 4.0, credit Amazon.com',
-	columns: [ 'id', 'category', 'name', 'image', 'triangles', 'texture', 'bytes' ],
+	pack: `${PACK}/objects`,
+	columns: [ 'id', 'category', 'name', 'image', 'triangles', 'bytes', 'packBytes', 'texturePx' ],
 	categories,
-	items: entries.map( e => [ e.id, order.get( e.category ), e.name, e.image, e.triangles, e.texture, e.bytes ] ),
+	items: entries.map( e => [ e.id, order.get( e.category ), e.name, e.image, e.triangles, e.bytes, e.packBytes, e.texturePx ] ),
 };
 
 const json = JSON.stringify( index );

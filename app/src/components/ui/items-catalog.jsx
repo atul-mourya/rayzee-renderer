@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback, useRef, useEffect } from 'react';
+import { Fragment, useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { InfoIcon, Search, Loader2, Filter, X, Clock, Trash2, Star } from 'lucide-react';
@@ -24,6 +24,7 @@ const getItemKey = ( item ) => item.id || item.name;
 	preview: string;   // URL/path to item's preview image
 	// Optional Properties
 	label?: string;    // Alternative display text (shown in tooltip)
+	details?: [string, string][];  // Tooltip rows, a term beside its value
 	category?: string[];  // Array of categories for filtering
 	tags?: string[];      // Array of tags for filtering
 	redirection?: string;  // URL for "More Info" button link
@@ -724,10 +725,17 @@ export const ItemsCatalog = ( {
 												</CardContent>
 											</Card>
 										</TooltipTrigger>
-										<TooltipContent>
+										<TooltipContent className="max-w-72">
 											<div>
 												<p className="font-medium">{item.name}</p>
-												{item.label && <p className="text-sm opacity-75">{item.label}</p>}
+												{item.label && <p className="opacity-75">{item.label}</p>}
+												{item.details?.length > 0 && (
+													<dl className="mt-1 grid grid-cols-[auto_1fr] gap-x-3 opacity-75">
+														{item.details.map( ( [ term, value ] ) => (
+															<Fragment key={term}><dt>{term}</dt><dd>{value}</dd></Fragment>
+														) )}
+													</dl>
+												)}
 												{item.tags && item.tags.length > 0 && (
 													<p className="text-xs opacity-75 mt-1">Tags: {item.tags.join( ', ' )}</p>
 												)}
