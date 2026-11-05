@@ -200,8 +200,8 @@ export const generateRayFromCamera = Fn( ( [
 		);
 
 		const randomPoint = RandomPointInCircle( rngState );
-		// Anamorphic squeeze — stretch horizontally for oval bokeh
-		const lensX = randomPoint.x.mul( anamorphicRatio.max( 0.01 ) );
+		// Anamorphic: tall oval bokeh, as Cycles' aperture ratio. Widening it smeared the image sideways.
+		const lensX = randomPoint.x.div( anamorphicRatio.max( 0.01 ) );
 		const lensY = randomPoint.y;
 
 		const lensOffset = vec3( 0.0 ).toVar();

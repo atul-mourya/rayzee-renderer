@@ -480,7 +480,7 @@ const CameraTab = () => {
 								<Row>
 									<Slider
 										label={"Bokeh Stretch"}
-										tip="Stretches the blurry spots of light into wide ovals. 1 keeps them round."
+										tip="Stretches the blurry spots of light into tall ovals, as a widescreen film lens does. 1 keeps them round."
 										icon={Ellipsis}
 										min={1.0}
 										max={2.0}
