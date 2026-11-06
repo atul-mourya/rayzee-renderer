@@ -84,13 +84,14 @@ describe( 'AboService', () => {
 
 	} );
 
-	it( 'filters by category and by every word of the query, in any case', async () => {
+	it( 'filters by category and by every word of the query, in any case, shorter names first', async () => {
 
 		serve();
 		const names = async opts => ( await AboService.search( opts ) ).items.map( i => i.id );
 		expect( await names( { category: '0' } ) ).toEqual( [ 'B000000001', 'B000000002' ] );
 		expect( await names( { category: '1' } ) ).toEqual( [ 'B000000003', 'B000000004' ] );
-		expect( await names( { query: 'rivet' } ) ).toEqual( [ 'B000000001', 'B000000003', 'B000000004' ] );
+		expect( await names( { query: 'rivet' } ) ).toEqual( [ 'B000000004', 'B000000003', 'B000000001' ] );
+		expect( await names( { query: 'sofas' } ) ).toEqual( [ 'B000000004', 'B000000003' ] );
 		expect( await names( { query: '  RIVET   chair ' } ) ).toEqual( [ 'B000000001' ] );
 		expect( await names( { query: 'rivet', category: '0' } ) ).toEqual( [ 'B000000001' ] );
 		expect( await names( { query: 'ottoman' } ) ).toEqual( [] );

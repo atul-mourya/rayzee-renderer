@@ -1,5 +1,6 @@
 import { getApp } from '@/lib/appProxy';
 import { isArchiveUrl } from '@/lib/archives';
+import { listSource } from '@/lib/catalog';
 
 /**
  * Service class for handling asset loading operations
@@ -238,99 +239,6 @@ export class AssetLoaderService {
 	}
 
 	/**
-	 * Extract categories from current materials dataset
-	 * @param {Array} materials - Array of materials
-	 * @returns {Object} Categories with material counts
-	 */
-	static extractCategoriesFromMaterials( materials ) {
-
-		const categoryCount = {};
-
-		materials.forEach( material => {
-
-			if ( material.categories && Array.isArray( material.categories ) ) {
-
-				material.categories.forEach( category => {
-
-					if ( category && typeof category === 'string' ) {
-
-						categoryCount[ category ] = ( categoryCount[ category ] || 0 ) + 1;
-
-					}
-
-				} );
-
-			}
-
-		} );
-
-		return categoryCount;
-
-	}
-
-	/**
-	 * Filter materials by category
-	 * @param {Array} materials - Array of materials
-	 * @param {Array<string>} categories - Categories to filter by
-	 * @returns {Array} Filtered materials
-	 */
-	static filterMaterialsByCategories( materials, categories = null ) {
-
-		if ( ! categories || categories.length === 0 ) {
-
-			return materials;
-
-		}
-
-		return materials.filter( material => {
-
-			if ( ! material.categories || ! Array.isArray( material.categories ) ) {
-
-				return false;
-
-			}
-
-			// Check if material has any of the specified categories
-			return categories.some( category =>
-				material.categories.some( matCategory =>
-					matCategory.toLowerCase() === category.toLowerCase()
-				)
-			);
-
-		} );
-
-	}
-
-	/**
-	 * Fetch materials filtered by categories
-	 * @param {Array<string>} categories - Optional categories to filter by
-	 * @param {number} limit - Maximum number of materials to return
-	 * @returns {Promise<Array>} Filtered materials array
-	 */
-	static async fetchMaterialsByCategories( categories = null, limit = 50 ) {
-
-		try {
-
-			// Fetch all materials
-			const allMaterials = await this.fetchMaterialCatalog();
-
-			// Filter by categories if specified
-			const filteredMaterials = this.filterMaterialsByCategories( allMaterials, categories );
-
-			// Apply limit
-			const limitedMaterials = limit > 0 ? filteredMaterials.slice( 0, limit ) : filteredMaterials;
-
-			return limitedMaterials;
-
-		} catch ( error ) {
-
-			throw new Error( `Failed to fetch materials by categories: ${error.message}` );
-
-		}
-
-	}
-
-	/**
 	 * Reset path tracer after loading operations
 	 */
 	static resetPathTracer() {
@@ -345,3 +253,11 @@ export class AssetLoaderService {
 	}
 
 }
+
+export const PhysicallyBasedMaterials = listSource( {
+	NAME: 'Physically Based',
+	CATALOG: 'current-source-materials',
+	CATEGORY_CATALOG: 'current-source-categories',
+	noun: 'materials',
+	load: () => AssetLoaderService.fetchMaterialCatalog(),
+} );

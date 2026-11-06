@@ -1,6 +1,6 @@
 import { useCallback } from 'react';
 import { useToast } from '@/hooks/use-toast';
-import { useStore, useAssetsStore } from '@/store';
+import { useStore } from '@/store';
 import { PolyHavenService } from '@/services/PolyHavenService';
 import { PolyHavenMaterialLoader } from '@/services/PolyHavenMaterialLoader';
 
@@ -13,14 +13,7 @@ export const usePolyHavenMaterialApplicator = () => {
 	const selectedObject = useStore( ( state ) => state.selectedObject );
 	const setLoading = useStore( ( state ) => state.setLoading );
 
-	const applyPolyHavenMaterial = useCallback( async ( value ) => {
-
-		if ( ! value || value === '' ) {
-
-			console.warn( 'No material value provided' );
-			return;
-
-		}
+	const applyPolyHavenMaterial = useCallback( async ( materialData ) => {
 
 		const { selectedObject } = useStore.getState();
 		if ( ! selectedObject ) {
@@ -39,23 +32,6 @@ export const usePolyHavenMaterialApplicator = () => {
 
 		try {
 
-			const materialIndex = parseInt( value );
-
-			// Get materials from the assets store instead of global cache
-			const { polyHavenMaterials } = useAssetsStore.getState();
-			if ( ! polyHavenMaterials || polyHavenMaterials.length === 0 ) {
-
-				throw new Error( 'No PolyHaven materials loaded' );
-
-			}
-
-			if ( materialIndex < 0 || materialIndex >= polyHavenMaterials.length ) {
-
-				throw new Error( `Invalid material index: ${materialIndex} (available: 0-${polyHavenMaterials.length - 1})` );
-
-			}
-
-			const materialData = polyHavenMaterials[ materialIndex ];
 			setLoading( {
 				isLoading: true,
 				title: "Loading PolyHaven Material",

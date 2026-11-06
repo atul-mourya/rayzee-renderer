@@ -1,6 +1,7 @@
 import localEnvironmentsData from '../data/local_environments.json';
 import { getApp } from '@/lib/appProxy';
 import { ASSETS_BASE_URL } from '@/Constants';
+import { listSource } from '@/lib/catalog';
 
 /**
  * Service class for handling environment/HDRI operations
@@ -73,34 +74,6 @@ export class EnvironmentService {
 
 		const environments = this._getAllEnvironments();
 		return this.extractCategoriesFromEnvironments( environments );
-
-	}
-
-	/**
-	 * Get local environments filtered by categories
-	 * @param {Array<string>|null} categories - Categories to filter by (case-insensitive)
-	 * @returns {Array} Filtered environment objects with full URLs
-	 */
-	static getLocalEnvironmentsByCategories( categories = null ) {
-
-		const allEnvironments = this._getAllEnvironments();
-
-		// Return all if no filter specified
-		if ( ! categories || categories.length === 0 ) {
-
-			return allEnvironments;
-
-		}
-
-		// Normalize filter categories to lowercase for case-insensitive matching
-		const normalizedFilters = categories.map( cat => cat.toLowerCase() );
-
-		// Filter environments that have at least one matching category
-		return allEnvironments.filter( env =>
-			env.categories.some( cat =>
-				normalizedFilters.includes( cat.toLowerCase() )
-			)
-		);
 
 	}
 
@@ -330,3 +303,11 @@ export class EnvironmentService {
 	}
 
 }
+
+export const FeaturedEnvironments = listSource( {
+	NAME: 'Featured',
+	CATALOG: 'current-source-environments',
+	CATEGORY_CATALOG: 'current-source-environment-categories',
+	noun: 'environments',
+	load: () => EnvironmentService._getAllEnvironments(),
+} );

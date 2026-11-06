@@ -1,3 +1,5 @@
+import { listSource } from '@/lib/catalog';
+
 /**
  * Service class for handling Poly Haven API operations
  */
@@ -262,10 +264,9 @@ export class PolyHavenService {
 	/**
 	 * Process texture materials from Poly Haven API response
 	 * @param {Object} assetsData - Raw assets data from API
-	 * @param {string} resolution - Texture resolution ('1k', '2k', '4k', '8k')
 	 * @returns {Array} Processed materials array
 	 */
-	static processTextureMaterials( assetsData, resolution = '2k' ) {
+	static processTextureMaterials( assetsData ) {
 
 		if ( ! assetsData || typeof assetsData !== 'object' ) {
 
@@ -291,8 +292,6 @@ export class PolyHavenService {
 				assetId: id,
 				// Mark as Poly Haven source
 				source: 'polyhaven',
-				// Resolution for texture downloads
-				targetResolution: resolution
 			} ) )
 			.sort( ( a, b ) => b.downloadCount - a.downloadCount ); // Sort by popularity
 
@@ -556,37 +555,6 @@ export class PolyHavenService {
 	}
 
 	/**
-	 * Fetch and process texture materials from Poly Haven
-	 * @param {string} resolution - Target resolution
-	 * @param {Array<string>} categories - Optional categories to filter
-	 * @param {number} limit - Maximum number of materials to return
-	 * @returns {Promise<Array>} Array of processed material objects
-	 */
-	static async fetchTextureMaterials( resolution = '2k', categories = null, limit = 50 ) {
-
-		try {
-
-			// Fetch texture assets
-			const assetsData = await this.getAssets( 'textures', categories );
-
-			// Process materials
-			const materials = this.processTextureMaterials( assetsData, resolution );
-
-			// Limit results if specified
-			const limitedMaterials = limit > 0 ? materials.slice( 0, limit ) : materials;
-
-			return limitedMaterials;
-
-		} catch ( error ) {
-
-			console.error( 'Error fetching Poly Haven materials:', error );
-			throw new Error( `Failed to fetch Poly Haven materials: ${error.message}` );
-
-		}
-
-	}
-
-	/**
 	 * Load a complete material with all its texture files
 	 * @param {Object} materialData - Material data object
 	 * @returns {Promise<Object>} Complete material with loaded textures
@@ -616,3 +584,34 @@ export class PolyHavenService {
 	}
 
 }
+
+const RESOLUTIONS = [ '1k', '2k', '4k', '8k' ].map( value => ( { value, label: value.toUpperCase() } ) );
+
+/** PolyHaven's textures, most downloaded first; a material's resolution is chosen when it is applied. */
+export const PolyHavenTextures = listSource( {
+	NAME: 'PolyHaven',
+	CATALOG: 'polyhaven-materials',
+	CATEGORY_CATALOG: 'polyhaven-categories',
+	VARIANTS: RESOLUTIONS,
+	noun: 'materials',
+	load: async () => PolyHavenService.processTextureMaterials( await PolyHavenService.getAssets( 'textures' ) ),
+} );
+
+/** PolyHaven's HDRIs; the file is resolved at the chosen resolution when one is loaded. */
+export const PolyHavenHDRIs = listSource( {
+	NAME: 'PolyHaven',
+	CATALOG: 'polyhaven-environments',
+	CATEGORY_CATALOG: 'polyhaven-environment-categories',
+	VARIANTS: RESOLUTIONS.slice( 0, 3 ),
+	noun: 'environments',
+	load: async () => Object.entries( await PolyHavenService.getAssets( 'hdris' ) ).map( ( [ id, info ] ) => ( {
+		id,
+		name: info.name,
+		preview: `${PolyHavenService.CDN_BASE_URL}/asset_img/thumbs/${id}.png?height=170`,
+		categories: info.categories ?? [],
+		tags: info.tags ?? [],
+		redirection: `https://polyhaven.com/a/${id}`,
+		assetId: id,
+		source: 'polyhaven',
+	} ) ),
+} );

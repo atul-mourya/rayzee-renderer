@@ -1,3 +1,5 @@
+import { pageAfter, rankSearch, searchEntries } from '@/lib/catalog';
+
 /**
  * Amazon Berkeley Objects: ~7,900 product models (GLB, metres, Y up), CC BY 4.0, credit Amazon.com.
  * The dataset is a static bucket with no search API, so browsing and search run in the browser over
@@ -14,7 +16,6 @@ export class AboService {
 	static IMAGE_BASE = 'https://m.media-amazon.com/images/I';
 	static INDEX_URL = `${import.meta.env.BASE_URL}abo-index.json`;
 	static CODEPAWL_URL = 'https://huggingface.co/datasets/codepawl/abo-glb';
-	static PAGE_SIZE = 24;
 	static ALL = 'all';
 	static VARIANTS = [ { value: 'compressed', label: 'Compressed' }, { value: 'original', label: 'Original' } ];
 	static COMPRESSED_TEXTURE_PX = 2048;
@@ -68,9 +69,9 @@ export class AboService {
 			tags: [],
 			isDownloadable: true,
 			categoryIndex: category,
-			search: name.toLowerCase(),
 		} ) );
-		return { categories, models, pack };
+		const entries = searchEntries( models, m => [[ m.name, 4 ], [ categories[ m.categoryIndex ], 1 ]] );
+		return { categories, models, entries, pack };
 
 	}
 
@@ -95,20 +96,16 @@ export class AboService {
 	}
 
 	/**
-	 * Models in a category whose name holds every word of the query, a page at a time.
-	 * @param {{query?: string, category?: string, cursor?: string|null}} opts
+	 * Models in a category matching the query by name or category (rankSearch), a page at a time.
+	 * @param {{query?: string, category?: string, cursor?: string|null, pinned?: string[]}} opts
 	 * @returns {Promise<{items: Array, nextCursor: string|null}>}
 	 */
-	static async search( { query = '', category = this.ALL, cursor = null } = {} ) {
+	static async search( { query = '', category = this.ALL, cursor = null, pinned } = {} ) {
 
-		const { models } = await this.loadIndex();
-		const words = query.toLowerCase().split( /\s+/ ).filter( Boolean );
-		const inCategory = category === this.ALL || category === null ? null : Number( category );
-		const matches = models.filter( m =>
-			( inCategory === null || m.categoryIndex === inCategory ) && words.every( w => m.search.includes( w ) ) );
-		const start = cursor ? Number( cursor ) : 0;
-		const end = start + this.PAGE_SIZE;
-		return { items: matches.slice( start, end ), nextCursor: end < matches.length ? String( end ) : null };
+		const { entries } = await this.loadIndex();
+		const only = category === this.ALL || category === null ? null : Number( category );
+		const inCategory = only === null ? entries : entries.filter( ( { item } ) => item.categoryIndex === only );
+		return pageAfter( rankSearch( inCategory, query ), cursor, pinned );
 
 	}
 

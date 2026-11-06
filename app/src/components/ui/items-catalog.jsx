@@ -11,11 +11,18 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { useRecentSearches } from '@/hooks/useRecentSearches';
 import { useFavoritesStore } from '@/store';
+import { itemKey as getItemKey, rankSearch, searchEntries } from '@/lib/catalog';
 
-// Stable per-item identity: prefer an explicit unique id (e.g. Sketchfab uid),
-// else the name. Names are NOT guaranteed unique (Sketchfab returns dupes), so
-// keys/selection must not rely on name alone.
-const getItemKey = ( item ) => item.id || item.name;
+const viewportOf = ( scrollArea ) => scrollArea?.querySelector( '[data-radix-scroll-area-viewport]' ) ?? null;
+
+// Words to highlight, singulars too; longest first, as the regex takes the first alternative that fits.
+const searchWords = ( term ) => {
+
+	const words = term.toLowerCase().split( /\s+/ ).filter( w => w.length >= 2 );
+	const singulars = words.map( w => w.replace( /e?s$/, '' ) ).filter( w => w.length >= 3 );
+	return [ ...new Set( [ ...words, ...singulars ] ) ].sort( ( a, b ) => b.length - a.length );
+
+};
 
 
 /** data []: Array of objects representing items to display in the catalog {
@@ -45,6 +52,8 @@ export const ItemsCatalog = ( {
 	// { key, label, icon?, variant?, onClick(item), disabled?(item) }. onClick may
 	// be async; the card shows a spinner and blocks re-entry until it settles.
 	actions = null,
+	// Called as the end of the grid scrolls near: the next page's loader.
+	onEndReached = null,
 	...props
 } ) => {
 
@@ -71,6 +80,8 @@ export const ItemsCatalog = ( {
 	const itemRefs = useRef( {} );
 	const debounceTimeoutRef = useRef( null );
 	const searchInputRef = useRef( null );
+	const endRef = useRef( null );
+	const shownData = useRef( data );
 
 	// Debounce search input
 	useEffect( () => {
@@ -115,64 +126,32 @@ export const ItemsCatalog = ( {
 
 	}, [ data ] );
 
-	// Pre-process search strings for better performance
-	const searchIndex = useMemo( () => {
-
-		return data.map( item => {
-
-			const searchableText = [
-				item.name || '',
-				item.label || '',
-				...( item.category || [] ),
-				...( item.tags || [] )
-			].join( ' ' ).toLowerCase();
-
-			return {
-				item,
-				searchableText,
-				name: ( item.name || '' ).toLowerCase(),
-				tags: ( item.tags || [] ).map( tag => tag.toLowerCase() ),
-				categories: ( item.category || [] ).map( cat => cat.toLowerCase() )
-			};
-
-		} );
-
-	}, [ data ] );
+	const searchIndex = useMemo( () => hideSearch ? [] : searchEntries( data, item => [
+		[ item.name, 4 ], [ item.tags ?? [], 2 ], [ item.label, 1 ], [ item.category ?? [], 1 ],
+	] ), [ data, hideSearch ] );
 
 	// Optimized filtering with pre-computed search index and favorites sorting
 	const filteredItems = useMemo( () => {
 
-		let results = searchIndex;
-
-		// Apply search filter
-		if ( debouncedSearchTerm ) {
-
-			const searchLower = debouncedSearchTerm.toLowerCase();
-			results = results.filter( ( { searchableText } ) =>
-				searchableText.includes( searchLower )
-			);
-
-		}
+		let results = debouncedSearchTerm ? rankSearch( searchIndex, debouncedSearchTerm ) : data;
 
 		// Apply category/tag filters
 		if ( filterType === 'category' && filterValue ) {
 
-			results = results.filter( ( { categories } ) =>
-				categories.includes( filterValue.toLowerCase() )
+			results = results.filter( item =>
+				( item.category || [] ).some( cat => cat.toLowerCase() === filterValue.toLowerCase() )
 			);
 
 		} else if ( filterType === 'tag' && filterValue ) {
 
-			results = results.filter( ( { tags } ) =>
-				tags.includes( filterValue.toLowerCase() )
+			results = results.filter( item =>
+				( item.tags || [] ).some( tag => tag.toLowerCase() === filterValue.toLowerCase() )
 			);
 
 		}
 
-		// Sort by favorites first, then by original order
-		const items = results.map( ( { item } ) => item );
-
-		return items.sort( ( a, b ) => {
+		// Favorites first, then the search's order
+		return [ ...results ].sort( ( a, b ) => {
 
 			const aIsFavorite = isFavorite( catalogType, a.id || a.name );
 			const bIsFavorite = isFavorite( catalogType, b.id || b.name );
@@ -186,7 +165,7 @@ export const ItemsCatalog = ( {
 
 		} );
 
-	}, [ searchIndex, debouncedSearchTerm, filterType, filterValue, catalogType, isFavorite ] );
+	}, [ data, searchIndex, debouncedSearchTerm, filterType, filterValue, catalogType, isFavorite ] );
 
 	const handleItemSelection = useCallback( ( key ) => {
 
@@ -314,8 +293,18 @@ export const ItemsCatalog = ( {
 
 	}, [ value, data ] );
 
-	// Auto-scroll to selected item
+	// A new list starts at the top and auto-scrolls to the selected item; a page appended to it does neither.
 	useEffect( () => {
+
+		const previous = shownData.current;
+		shownData.current = data;
+		if ( data !== previous ) {
+
+			if ( previous.length > 0 && data.length > previous.length && previous.every( ( item, i ) => data[ i ] === item ) ) return undefined;
+			const viewport = viewportOf( scrollAreaRef.current );
+			if ( viewport ) viewport.scrollTop = 0;
+
+		}
 
 		if ( value !== null && value !== undefined && data.length > 0 ) {
 
@@ -349,6 +338,21 @@ export const ItemsCatalog = ( {
 
 	}, [ value, data, filteredItems ] );
 
+	// Observed afresh per list, so a page that leaves the end in view asks for the next.
+	useEffect( () => {
+
+		const end = endRef.current;
+		if ( ! onEndReached || ! end ) return undefined;
+		const observer = new IntersectionObserver( ( [ entry ] ) => {
+
+			if ( entry.isIntersecting ) onEndReached();
+
+		}, { root: viewportOf( scrollAreaRef.current ), rootMargin: '0px 0px 400px 0px' } );
+		observer.observe( end );
+		return () => observer.disconnect();
+
+	}, [ onEndReached, filteredItems, isLoading ] );
+
 	// Clean up refs when data changes. Refs are stored under getItemKey(item)
 	// (id||name), so prune by the same key — pruning by name would delete every
 	// ref for id-bearing catalogs (e.g. Sketchfab, where id=uid != name).
@@ -370,17 +374,19 @@ export const ItemsCatalog = ( {
 	// Optimized highlight function - only compute when needed
 	const highlightSearchTerm = useCallback( ( text, searchTerm ) => {
 
-		if ( ! searchTerm || ! text || searchTerm.length < 2 ) return text;
+		const words = searchWords( searchTerm );
+		if ( ! text || words.length === 0 ) return text;
 
 		try {
 
-			const regex = new RegExp( `(${searchTerm.replace( /[.*+?^${}()|[\]\\]/g, '\\$&' )})`, 'gi' );
+			const regex = new RegExp( `(${words.map( w => w.replace( /[.*+?^${}()|[\]\\]/g, '\\$&' ) ).join( '|' )})`, 'gi' );
 			const parts = text.split( regex );
 
 			if ( parts.length === 1 ) return text;
 
+			// split() puts the captured matches at odd indices
 			return parts.map( ( part, index ) =>
-				regex.test( part ) ?
+				index % 2 === 1 ?
 					<mark key={index} className="bg-yellow-200 dark:bg-yellow-800 px-0.5 rounded">{part}</mark> :
 					part
 			);
@@ -606,11 +612,11 @@ export const ItemsCatalog = ( {
 							{filteredItems.map( ( item ) => {
 
 								// Only compute matching data for items that will be highlighted
-								const shouldHighlight = debouncedSearchTerm && debouncedSearchTerm.length >= 2;
-								const matchingTags = shouldHighlight ?
-									( item.tags || [] ).filter( tag => tag.toLowerCase().includes( debouncedSearchTerm.toLowerCase() ) ).slice( 0, 2 ) : [];
-								const matchingCategories = shouldHighlight ?
-									( item.category || [] ).filter( cat => cat.toLowerCase().includes( debouncedSearchTerm.toLowerCase() ) ).slice( 0, 2 ) : [];
+								const highlightWords = searchWords( debouncedSearchTerm );
+								const shouldHighlight = highlightWords.length > 0;
+								const holdsWord = text => highlightWords.some( w => text.toLowerCase().includes( w ) );
+								const matchingTags = shouldHighlight ? ( item.tags || [] ).filter( holdsWord ).slice( 0, 2 ) : [];
+								const matchingCategories = shouldHighlight ? ( item.category || [] ).filter( holdsWord ).slice( 0, 2 ) : [];
 
 								const itemKey = getItemKey( item );
 								return (
@@ -750,6 +756,7 @@ export const ItemsCatalog = ( {
 							} )}
 						</div>
 					)}
+					{onEndReached && ! isLoading && filteredItems.length > 0 && <div ref={endRef} className="h-px" />}
 				</ScrollArea>
 			</div>
 		</TooltipProvider>

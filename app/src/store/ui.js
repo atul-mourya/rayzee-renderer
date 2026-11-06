@@ -192,7 +192,6 @@ export const useAssetsStore = create( set => ( {
 	selectedEnvironmentIndex: null,
 
 	// PolyHaven-specific state
-	polyHavenMaterials: [],
 	polyHavenLoading: false,
 	polyHavenResolution: '2k',
 	materialsSource: 'current', // 'current' or 'polyhaven'
@@ -216,7 +215,6 @@ export const useAssetsStore = create( set => ( {
 	setDebugModel: model => set( { debugModel: model } ),
 
 	// PolyHaven setters
-	setPolyHavenMaterials: materials => set( { polyHavenMaterials: materials } ),
 	setPolyHavenLoading: loading => set( { polyHavenLoading: loading } ),
 	setPolyHavenResolution: resolution => set( { polyHavenResolution: resolution } ),
 	setMaterialsSource: source => set( { materialsSource: source } ),
