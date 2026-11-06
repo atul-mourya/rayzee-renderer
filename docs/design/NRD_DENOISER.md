@@ -95,6 +95,36 @@ at 1 spp the denoised image was further from ground truth than the raw one on `m
 
 `tests/gpu/nrdDemodulation.test.js` holds a flat, evenly lit wall to its input under each case.
 
+## Handing back to the input
+
+ReBLUR's blur is sized for one sample, and its weights see no shadow or highlight edge. At 4–16 samples it cost more
+than it removed on six bench scenes (alpha-cutout's holed shadows smeared to 2.22× raw's error at 16 spp, sheen 1.38,
+shadow-catcher 1.37, clearcoat 1.35, iridescence 1.08, anisotropy 1.03). After the stabilization pass a blend leans each
+pixel back to the input where NRD moved it by more than the input's own noise explains: over 3×3, `change` is the mean
+squared luminance change and `variance` the input's variance of the mean, change − variance is NRD's bias², and NRD
+keeps variance / change of its change — the blend with the least squared error (`DENOISE_BLEND_WGSL`, shared with
+OIDN's output pass). It writes `tmpB`, which nothing reads by then.
+
+The variance comes from the input's luminance at the last two powers of two of its samples, which NRD snapshots as
+they pass (`_blendTowardsInput`, 8 B a pixel). Each half of a power of two of Owen-scrambled Sobol' samples is a whole
+net, so the snapshots' difference, squared and scaled by 2^k / N, is the input's real error: 0.64–1.0 of it against a
+4096-sample reference, where the samples' variance (FinalWrite's m2, which takes them as independent) overstated it
+1.4–12×, more with samples, and let the blur through (sheen stayed 1.16× at 16 spp). Not even and odd frames: Sobol'
+puts even and odd samples in opposite halves of every dimension, so their difference is the picture, not its noise.
+From 2 samples; at 1, and while the camera moves, nothing changes.
+
+| scene, 16 spp | before | after |
+|---|---|---|
+| `alpha-cutout` | 2.217 | 0.619 |
+| `sheen-velvet` | 1.382 | 0.908 |
+| `shadow-catcher-ground` | 1.367 | 0.848 |
+| `clearcoat-carpaint` | 1.354 | 0.773 |
+| `iridescence-thinfilm` | 1.076 | 0.721 |
+| `anisotropy-brushed` | 1.033 | 0.731 |
+
+Every bench scene now sits below raw at 1–32 spp (worst `spheres-gradient` 0.999 at 4). 5×5 measured within 1 % of
+3×3 for three times the taps.
+
 ## Deviations from NRD, and why
 
 - **One fused signal.** The wavefront outputs one radiance buffer. NRD's `REBLUR_DIFFUSE_SPECULAR`
@@ -157,6 +187,9 @@ wall clock on `spheres-gradient` (Apple M-series, medium preset, includes CPU di
 
 At 256² all three are dominated by fixed dispatch overhead; 1024² is where the tap count shows.
 
+The blend towards the input costs 8 B a pixel (NRD's snapshots) while NRD is on, and +0.15 ms a frame at 1024²
+(M-series) while it accumulates.
+
 The guards in "What the blur may not spread" add no texture: the emitter bit rides in the roughness
 guide, and the black-sample bit in `dataT.z` above the occlusion bits, so HistoryFix's 20 taps read it
 from the texel they already load. TemporalAccumulation binds the albedo guide to set it. GPU time,
@@ -179,9 +212,10 @@ are soft resets and are handled by the motion-vector reprojection.
 ## Validation
 
 `npm run bench:denoise` includes an `nrd` rung (`bench/runner/config.js`). The metric is
-RMSE(denoised) / RMSE(raw) against ground truth at 1 and 64 spp on three scenes; below 1.0 means the
+RMSE(denoised) / RMSE(raw) against ground truth at 1, 16, 64 and 150 spp on nine scenes; below 1.0 means the
 denoiser helped. The 1-spp rung is an absolute gate, the rest ratchet against
-`bench/baselines/denoise.json`. Medium preset, 256² render:
+`bench/baselines/denoise.json`. Medium preset, 256² render (the first three scenes, before the blend; the rest in
+"Handing back to the input"):
 
 | scene | nrd @1 | nrd @64 | asvgf @1 | asvgf @64 | edgeaware @1 | edgeaware @64 |
 |---|---|---|---|---|---|---|

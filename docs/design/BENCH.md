@@ -526,9 +526,10 @@ Both renders happen in the same session, on the same build, at the same sample c
 comparison is self-normalising: a genuine path-tracer improvement moves numerator and denominator
 together. There is no golden to re-bless into looking fine.
 
-**Two rungs, because the failure is a crossover.** That regression *helped* at low sample counts and
+**A ladder, because the failure is a crossover.** That regression *helped* at low sample counts and
 *hurt* at high ones — any single sample count would have missed it in one direction or the other.
-`DENOISE_GATES.sppLadder` is `[1, 64]`: the real-time regime the denoiser exists for, and a converged one.
+`DENOISE_GATES.sppLadder` is `[1, 16, 64, 150]`: the real-time regime the denoiser exists for, where NRD's blur once
+cost more than it removed (16), and where OIDN once moved a converging render off it (150).
 
 | gate | kind | what it catches |
 |---|---|---|
@@ -540,13 +541,24 @@ gating absolutely there would leave the suite permanently red — which is how a
 Blessed ratios may only shrink, and the absolute ratio is printed on every line, pass or fail, so a
 scene sitting at 2.0× never reads as clean.
 
-Standing state as of the last bless (`baselines/denoise.json`):
+Standing state as of the last bless (`baselines/denoise.json`; `nrd` is 1.000 at 64 and 150, `oidn-tiled` matches
+`oidn` within 0.002):
 
-| scene | nrd @1 | nrd @64 | oidn @1 | oidn @64 | oidn-tiled @1 | oidn-tiled @64 |
+| scene | nrd @1 | nrd @16 | oidn @1 | oidn @16 | oidn @64 | oidn @150 |
 |---|---|---|---|---|---|---|
-| `spheres-gradient` | 0.935 | 1.000 | 0.553 | 0.974 | 0.553 | 0.974 |
-| `glass-transmission` | 0.622 | 1.000 | 0.521 | 0.783 | 0.521 | 0.783 |
-| `textured-normalmap` | 0.897 | 1.000 | 0.504 | 0.852 | 0.504 | 0.852 |
+| `spheres-gradient` | 0.935 | 0.983 | 0.553 | 0.705 | 0.915 | 1.036 |
+| `glass-transmission` | 0.628 | 0.850 | 0.504 | 0.424 | 0.644 | 0.736 |
+| `textured-normalmap` | 0.897 | 0.969 | 0.504 | 0.698 | 0.837 | 0.918 |
+| `alpha-cutout` | 0.717 | 0.619 | 0.408 | 0.517 | 0.671 | 0.775 |
+| `sheen-velvet` | 0.650 | 0.908 | 0.334 | 0.667 | 0.858 | 0.934 |
+| `shadow-catcher-ground` | 0.873 | 0.848 | 0.465 | 0.656 | 0.864 | 0.996 |
+| `clearcoat-carpaint` | 0.638 | 0.773 | 0.299 | 0.553 | 0.491 | 0.581 |
+| `iridescence-thinfilm` | 0.663 | 0.721 | 0.378 | 0.671 | 0.543 | 0.634 |
+| `anisotropy-brushed` | 0.852 | 0.731 | 0.296 | 0.395 | 0.489 | 0.577 |
+
+Before both denoisers leaned back towards their input (2026-11-06; NRD_DENOISER.md → Handing back to the input), NRD
+read 1.03–2.22 at 16 spp on the last six scenes and OIDN 1.153 / 1.209 at 150 on `spheres-gradient` /
+`shadow-catcher-ground`.
 
 `nrd` (the ReBLUR port, `docs/design/NRD_DENOISER.md`) is 1.000 at 64 spp by construction: past its
 handover point it republishes the path tracer's own texture, so a converged render is never touched.
@@ -585,6 +597,8 @@ non-finite output, or `mustHelpAtLowSpp` at 1 spp.
 Scene choice is about what the edge-stops key on, not coverage breadth: diffuse GI (the baseline
 case), high-variance transmission (the noisiest input the denoiser sees), and textures (albedo
 demodulation plus mapped normals — the two G-buffer signals NRD's edge-stops and OIDN's aux inputs weigh).
+`crossoverScenes` adds the six where NRD's geometry-only blur once lost to raw at 16 spp; `bench:node` checks OIDN on
+the first three only (OIDN in Node reads `shadow-catcher-ground` 0.016 off Chrome at 1 spp).
 
 **`cornell-emissive` is deliberately absent, and why is worth reading.** It is the best firefly scene
 in the corpus and the natural fourth entry. Its render is not load-order stable: mean luminance flips

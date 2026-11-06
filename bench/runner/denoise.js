@@ -73,7 +73,7 @@ export async function runDenoise( bench, { bless = false, only, log = () => {} }
 	}
 
 	const allScenes = await bench.scenes();
-	const wanted = only?.length ? only : DENOISE_GATES.scenes;
+	const wanted = only?.length ? only : [ ...DENOISE_GATES.scenes, ...DENOISE_GATES.crossoverScenes ];
 	const scenes = allScenes.filter( ( s ) => wanted.includes( s.id ) );
 
 	if ( ! scenes.length ) throw new Error( `no matching denoise scenes (asked for: ${wanted.join( ', ' )})` );

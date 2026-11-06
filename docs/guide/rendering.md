@@ -184,8 +184,9 @@ engine.denoisingManager.setUpscalerScaleFactor(2)         // 2 or 4
 engine.denoisingManager.setUpscalerQuality('quality')     // 'fast' | 'balanced' | 'quality'
 ```
 
-OIDN leans back towards the render from 8 samples a pixel, wherever it changed the render by more than its own noise
-explains: the slight blur it gives an almost converged render comes back from the render itself.
+Both denoisers lean back towards the render wherever they changed it by more than its own noise explains: OIDN from
+8 samples a pixel, NRD from 2. A sharp shadow NRD would have smeared, or the slight blur OIDN gives an almost
+converged render, comes back from the render itself.
 
 ## Local exposure
 

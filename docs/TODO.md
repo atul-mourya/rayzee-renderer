@@ -47,11 +47,11 @@
   0.996, and better than before on every gated scene at 64–150. Left: `spheres-gradient` 1.036 at 150 and ~1.14 at
   256 — OIDN shifts colour slightly (the blend reads luminance) and keeps part of the noise at high spp; per-channel and
   per-tile corrections each cost the noisy scenes more than they won (`~/RayzeeScratch/denoise-2026-11-06/`).
-- [ ] NRD is still worse than raw at 16 spp on several scenes (re-measured 2026-11-04, unchanged since 10-14):
-  alpha-cutout 2.22, sheen 1.38, shadow-catcher 1.37, clearcoat 1.35, iridescence 1.08, anisotropy 1.03; at 1 spp it
-  helps on all (0.64–0.87) and at 64 it hands over (1.000). `bench:denoise` has a 16 rung since 2026-11-04 (`sppLadder
-  [1, 16, 64]`), but these scenes are not in its list (`bench:denoise -- --only alpha-cutout,…` measures them); its
-  three gate NRD at 0.87–0.98 there.
+- [x] NRD worse than raw at 16 spp (alpha-cutout 2.22, sheen 1.38, shadow-catcher 1.37, clearcoat 1.35, iridescence
+  1.08, anisotropy 1.03). Fixed 2026-11-06: NRD leans back to its input where it moved a pixel more than the input's
+  noise, measured from snapshots at the last two powers of two of samples: 0.62 / 0.91 / 0.85 / 0.77 / 0.72 / 0.73,
+  every bench scene below raw at 1–32 spp. The six scenes are in `bench:denoise` now (`crossoverScenes`, ladder
+  `[1, 16, 64, 150]`).
 - [ ] NRD treats a whole emissive material as an emitter (never blurred), so a surface with a mostly-black emissive map is left noisy; a one-pixel ring can still leak at a non-black emitter's edge (needs per-sample emission, no free G-buffer lane).
 - [ ] Shadow rays cross glass in a straight line (coloured since 11.16, see `docs/design/SHADING.md` → Light through
   glass): within ~1 % of refraction for panes, but a thick block lands ±7 % off, as the light really bends through it.

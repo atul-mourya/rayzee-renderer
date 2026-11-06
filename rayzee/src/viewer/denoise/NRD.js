@@ -1,15 +1,18 @@
-import { Fn, vec2, vec3, vec4, float, int, uint, ivec2, uvec2, uniform,
+import { Fn, vec2, vec3, vec4, float, int, uint, ivec2, uvec2, uniform, storage, wgslFn, clamp,
 	If, select, mix, max, min, dot, sqrt, exp2, pow, floor, fract, round, atan, normalize,
 	saturate, smoothstep, textureLoad, textureStore, localId, workgroupId, Return } from 'three/tsl';
 import { RenderTarget, TextureNode } from 'three/webgpu';
 import { DataTexture, HalfFloatType, FloatType, RGBAFormat, LinearFilter, Matrix4, Vector2, Vector3, Vector4 } from 'three';
 import { RenderStage, StageExecutionMode } from '../../pipeline/RenderStage.js';
 import { createStorageTexture } from '../../pathtracer/StorageTexturePool.js';
-import { sanitizeRGB, sanitize1, FP16_MAX } from '../../shaders/Common.js';
+import { sanitizeRGB, sanitize1, FP16_MAX, luminance } from '../../shaders/Common.js';
+import { gpuOnlyStorageAttribute } from '../../shaders/ThreePatches.js';
 import { cameraRayPoint, cameraRayUniforms, isOrthographic } from '../../shaders/CameraRay.js';
 import {
-	NRD_DEFAULTS, NRD_HIT_DIST_A, NRD_HIT_DIST_B, GBUFFER_MISS_THRESHOLD as MISS_THRESHOLD,
+	NRD_DEFAULTS, NRD_HIT_DIST_A, NRD_HIT_DIST_B, GBUFFER_MISS_THRESHOLD as MISS_THRESHOLD, DENOISE_BLEND_WGSL,
 } from './DenoiserSettings.js';
+
+const denoiseBlend = /*@__PURE__*/ wgslFn( DENOISE_BLEND_WGSL );
 
 const NRD_EPS = 1e-6;
 const NORMAL_ENCODING_ERROR = 1.5 / 255.0;
@@ -32,6 +35,8 @@ const BLACK_ALBEDO = 0.1 * SPECULAR_F0;
 // Carried past the pre-pass in dataT.z, above the four occlusion bits.
 const BLACK_BIT = 16;
 const WG_SIZE = 16;
+// The blend towards the input runs every accumulating frame: a smaller window than OIDN's.
+const BLEND_RADIUS = 1;
 
 const PASS = {
 	pre: { radiusScale: 1.0, fractionScale: 2.0 },
@@ -250,6 +255,17 @@ export class NRD extends RenderStage {
 
 		this._buildKernels();
 
+		// The input's luminance when its samples reach a power of two, the last two kept (_buildBlend).
+		this._snapAttr = null;
+		this._snapCapacity = 0;
+		this._snapshots = [ null, null ];
+		this._kSnap = null;
+		this._kBlend = null;
+		this.snapOffset = uniform( 0, 'uint' );
+		this.newerOffset = uniform( 0, 'uint' );
+		this.olderOffset = uniform( 0, 'uint' );
+		this.varianceScale = uniform( 0.0 );
+
 	}
 
 	// ── Storage ───────────────────────────────────────────────────────────────
@@ -285,6 +301,17 @@ export class NRD extends RenderStage {
 	_disposeKernels() {
 
 		for ( const k of this._kernels ?? [] ) k?.dispose();
+
+	}
+
+	_disposeBlend() {
+
+		this._kSnap?.dispose();
+		this._kBlend?.dispose();
+		this._snapAttr?.dispose?.();
+		this._kSnap = this._kBlend = this._snapAttr = null;
+		this._snapCapacity = 0;
+		this._snapshots = [ null, null ];
 
 	}
 
@@ -1218,6 +1245,128 @@ export class NRD extends RenderStage {
 
 	}
 
+	// ── Lean towards the input ────────────────────────────────────────────────
+
+	/**
+	 * The snapshot pass and the blend reading it, over a buffer of two snapshots of `pixels` each. The two halves of a
+	 * power of two of samples are each a whole Sobol' net, so the snapshots' difference is the input's own error, which
+	 * the samples' variance overstates (NRD_DENOISER.md → Handing back to the input).
+	 */
+	_buildBlend( pixels ) {
+
+		this._kSnap?.dispose();
+		this._kBlend?.dispose();
+		this._snapAttr?.dispose?.();
+		this._snapAttr = gpuOnlyStorageAttribute( pixels * 2, 1 );
+		this._snapCapacity = pixels;
+		this._snapshots = [ null, null ];
+
+		const snapRW = storage( this._snapAttr, 'float' );
+		const snapRO = storage( this._snapAttr, 'float' ).toReadOnly();
+		const colorTex = this._colorTexNode;
+		const denoisedTex = this._nTmpA;
+		const outTex = this._tmpB;
+		const resW = this.resW;
+		const resH = this.resH;
+		const r = BLEND_RADIUS;
+		const taps = ( 2 * r + 1 ) ** 2;
+
+		const pixel = ( body ) => Fn( () => {
+
+			const gx = int( workgroupId.x ).mul( WG_SIZE ).add( int( localId.x ) );
+			const gy = int( workgroupId.y ).mul( WG_SIZE ).add( int( localId.y ) );
+			If( gx.lessThan( int( resW ) ).and( gy.lessThan( int( resH ) ) ), () => body( gx, gy ) );
+
+		} )().compute( [ this._dispatchX, this._dispatchY, 1 ], [ WG_SIZE, WG_SIZE, 1 ] );
+		const index = ( x, y ) => uint( y ).mul( uint( resW ) ).add( uint( x ) );
+
+		this._kSnap = pixel( ( gx, gy ) => {
+
+			snapRW.element( this.snapOffset.add( index( gx, gy ) ) ).assign( luminance( textureLoad( colorTex, ivec2( gx, gy ) ).xyz ) );
+
+		} );
+
+		this._kBlend = pixel( ( gx, gy ) => {
+
+			const change = float( 0.0 ).toVar();
+			const variance = float( 0.0 ).toVar();
+			const maxX = int( resW ).sub( 1 );
+			const maxY = int( resH ).sub( 1 );
+
+			for ( let dy = - r; dy <= r; dy ++ ) {
+
+				for ( let dx = - r; dx <= r; dx ++ ) {
+
+					const qx = clamp( gx.add( dx ), 0, maxX );
+					const qy = clamp( gy.add( dy ), 0, maxY );
+					const q = ivec2( qx, qy );
+					const d = luminance( textureLoad( denoisedTex, q ).xyz ).sub( luminance( textureLoad( colorTex, q ).xyz ) );
+					change.addAssign( d.mul( d ) );
+					const i = index( qx, qy );
+					const s = snapRO.element( this.newerOffset.add( i ) ).sub( snapRO.element( this.olderOffset.add( i ) ) );
+					variance.addAssign( s.mul( s ) );
+
+				}
+
+			}
+
+			const coord = ivec2( gx, gy );
+			const denoised = textureLoad( denoisedTex, coord );
+			const color = denoiseBlend( {
+				denoised: denoised.xyz, input: textureLoad( colorTex, coord ).xyz,
+				change: change.div( taps ), variance: variance.mul( this.varianceScale ).div( taps ), weight: float( 1.0 ),
+			} );
+			textureStore( outTex, uvec2( uint( gx ), uint( gy ) ), vec4( color, denoised.w ) ).toWriteOnly();
+
+		} );
+
+		// Compiled while the denoised read holds its placeholder, as _compiled does for the others.
+		const held = denoisedTex.value;
+		denoisedTex.value = this._placeholder;
+		for ( const k of [ this._kSnap, this._kBlend ] ) this.renderer.compute( k );
+		denoisedTex.value = held;
+
+	}
+
+	/**
+	 * Takes the input's snapshot at a power of two of samples, then blends the denoised picture (in _tmpA) towards the
+	 * input into _tmpB. @returns {boolean} whether _tmpB holds the result: false without two snapshots of this input
+	 */
+	_blendTowardsInput( samples ) {
+
+		const pt = this.pathTracer;
+		const pixels = this.resW.value * this.resH.value;
+		if ( ! pt || ! ( pixels > 0 ) ) return false;
+		if ( this._snapCapacity < pixels ) this._buildBlend( pixels );
+
+		// The accumulation is the one that started at this traced frame; while the camera moves it restarts every frame.
+		const start = pt.tracedFrames - samples;
+		const k = 31 - Math.clz32( samples );
+		if ( ( samples & ( samples - 1 ) ) === 0 ) {
+
+			const slot = this._snapshots[ k & 1 ];
+			if ( slot?.samples !== samples || slot.start !== start ) {
+
+				this.snapOffset.value = ( k & 1 ) * this._snapCapacity;
+				this.renderer.compute( this._kSnap );
+				this._snapshots[ k & 1 ] = { samples, start };
+
+			}
+
+		}
+
+		const newer = this._snapshots[ k & 1 ];
+		const older = this._snapshots[ ( k - 1 ) & 1 ];
+		if ( k < 1 || newer?.samples !== 2 ** k || newer.start !== start || older?.samples !== 2 ** ( k - 1 ) || older.start !== start ) return false;
+
+		this.newerOffset.value = ( k & 1 ) * this._snapCapacity;
+		this.olderOffset.value = ( ( k - 1 ) & 1 ) * this._snapCapacity;
+		this.varianceScale.value = 2 ** k / samples;
+		this.renderer.compute( this._kBlend );
+		return true;
+
+	}
+
 	// ── Lifecycle ─────────────────────────────────────────────────────────────
 
 	setupEventListeners() {
@@ -1363,7 +1512,8 @@ export class NRD extends RenderStage {
 		this.renderer.compute( this._kPost );
 		this.renderer.compute( this._stabPing === 0 ? this._kTsA : this._kTsB );
 
-		this.renderer.copyTextureToTexture( this._tmpA, this.outputTarget.texture );
+		const blended = this._blendTowardsInput( inputFrames + 1 );
+		this.renderer.copyTextureToTexture( blended ? this._tmpB : this._tmpA, this.outputTarget.texture );
 		context.setTexture( 'nrd:output', this.outputTarget.texture );
 
 		this._stabPing = 1 - this._stabPing;
@@ -1384,11 +1534,13 @@ export class NRD extends RenderStage {
 		this._dispatchX = Math.ceil( width / WG_SIZE );
 		this._dispatchY = Math.ceil( height / WG_SIZE );
 		const size = [ this._dispatchX, this._dispatchY, 1 ];
-		for ( const k of this._kernels ) {
+		for ( const k of [ ...this._kernels, this._kSnap, this._kBlend ] ) {
 
 			if ( k ) k.dispatchSize = size;
 
 		}
+
+		this._snapshots = [ null, null ];
 
 		// History from another size is meaningless.
 		this._needsReset = true;
@@ -1399,6 +1551,7 @@ export class NRD extends RenderStage {
 	releaseGPUMemory() {
 
 		this._disposeStorage();
+		this._disposeBlend();
 		this.context?.removeTexture( 'nrd:output' );
 		this.outputTarget?.texture?.dispose();
 		this._needsReset = true;
@@ -1411,6 +1564,7 @@ export class NRD extends RenderStage {
 		this._releaseHitDistance = null;
 		this._disposeKernels();
 		this._disposeStorage();
+		this._disposeBlend();
 		this.outputTarget?.dispose();
 		for ( const n of [
 			this._colorTexNode, this._albedoTexNode, this._ndTexNode, this._snTexNode, this._motionTexNode,

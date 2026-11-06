@@ -235,10 +235,9 @@ export const MEMORY_GATES = {
  */
 export const DENOISE_GATES = {
 	// A ladder, not a single point: that regression was a CROSSOVER — it helped at low
-	// sample counts and hurt at high ones, so either rung alone would have missed it. The middle
-	// rung is where NRD loses to raw on several scenes (4–16 spp, docs/TODO.md), which 1 and 64
-	// never saw.
-	sppLadder: [ 1, 16, 64 ],
+	// sample counts and hurt at high ones, so either rung alone would have missed it. 16 is where
+	// NRD's blur once cost more than it removed; 150 where OIDN once did.
+	sppLadder: [ 1, 16, 64, 150 ],
 	strategies: [
 		// ReBLUR port: temporal + recurrent-blur chain on the fused signal (viewer/denoise/NRD.js).
 		{ id: 'nrd', preset: 'medium' },
@@ -263,6 +262,9 @@ export const DENOISE_GATES = {
 	// stays flipped), so the ratio would depend on whether this ran standalone or after
 	// `bench quality`. Engine bug, not a suite one — see docs/design/BENCH.md. Put it back once fixed.
 	scenes: [ 'spheres-gradient', 'glass-transmission', 'textured-normalmap' ],
+	// Where NRD's blur once smeared shadows, coats and sheen at 4–16 spp, worse than raw. Not in bench:node's OIDN check:
+	// there shadow-catcher-ground reads 0.016 off Chrome at 1 spp, before any of this.
+	crossoverScenes: [ 'alpha-cutout', 'sheen-velvet', 'shadow-catcher-ground', 'clearcoat-carpaint', 'iridescence-thinfilm', 'anisotropy-brushed' ],
 	// Denoised RMSE must be below raw at the cheapest rung. Absolute, not blessed — but the
 	// margin is thinner than it looks: the tightest observed combination is
 	// spheres-gradient/nrd at 0.972. That is deliberate rather than lucky. Deterministic

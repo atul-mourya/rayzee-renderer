@@ -131,7 +131,7 @@ that moved on the same GPU.
 **Execution order matters** - stages run sequentially. The renderer core builds only PathTracer → Compositor; the viewer's
 `_createExtraStages()` inserts NormalDepth, MotionVector, NRD, AutoExposure and LocalExposure between them:
 - **`PathTracer.js`** + **`PathTracerStage.js`**: Pure-wavefront Monte Carlo path tracer with MRT outputs. `PathTracer` (the wavefront renderer) extends the `PathTracerStage` base (shared engine/scene infrastructure).
-- **`NRD.js`**: Port of NVIDIA NRD's ReBLUR (recurrent blur) denoiser — strategy `'nrd'`; reads roughness from `pathtracer:shadingNormal.w` (NormalDepth; negated on an emitter, NRD's material-ID slot) and the secondary hit distance from `pathtracer:albedo.w` (written by Shade at camera depth 1, only because NRD asks for it: `pathTracer.requestOutput( 'hitDistance', { encode } )`, with its own normalisation). Progressive-aware: passes the frame through untouched once the input has `handoverFrames` samples. ⚠️ ReBLUR's weights are geometry only, so whatever the blur reaches must hold the same lighting: the fused radiance is demodulated by both lobes' albedo, emitters never feed a neighbour, nor black-albedo samples (emission, sky or specular alone) a lit one. See `docs/design/NRD_DENOISER.md`. ⚠️ TSL shares texture bindings by texture uuid — a deferred-read `TextureNode` is non-mergeable (`mergeable = false`, three r187) so the reads can share one placeholder (see `readNode()` there).
+- **`NRD.js`**: Port of NVIDIA NRD's ReBLUR (recurrent blur) denoiser — strategy `'nrd'`; reads roughness from `pathtracer:shadingNormal.w` (NormalDepth; negated on an emitter, NRD's material-ID slot) and the secondary hit distance from `pathtracer:albedo.w` (written by Shade at camera depth 1, only because NRD asks for it: `pathTracer.requestOutput( 'hitDistance', { encode } )`, with its own normalisation). Progressive-aware: passes the frame through untouched once the input has `handoverFrames` samples. ⚠️ ReBLUR's weights are geometry only, so whatever the blur reaches must hold the same lighting: the fused radiance is demodulated by both lobes' albedo, emitters never feed a neighbour, nor black-albedo samples (emission, sky or specular alone) a lit one. Its output then leans back to the input where it moved more than the input's noise (the denoisers' blend, below), on a variance from snapshots at the last two powers of two of samples. See `docs/design/NRD_DENOISER.md`. ⚠️ TSL shares texture bindings by texture uuid — a deferred-read `TextureNode` is non-mergeable (`mergeable = false`, three r187) so the reads can share one placeholder (see `readNode()` there).
 - **`LocalExposure.js`**: Unreal Engine 5's local exposure — a display-only per-pixel gain (see Local exposure below)
 - **`OverlayManager.js`** and its helpers (in `viewer/overlays/`): visual helpers, drawn at **view resolution** (canvas bounding rect × DPR — so viewport zoom counts), never at the path tracer's render resolution. Two layers: a 3D scene layer (`ViewOverlayRenderer` — a transparent canvas with its own WebGPURenderer sharing the main `GPUDevice`; hosts light gizmos, the transform gizmo, and `OutlineHelper`) and a 2D HUD canvas (`TileHelper` — OIDN-denoise / AI-upscale progress borders). Both are separate canvases, so helpers can never be baked into saved images. The scene layer's renderer is created and initialised at startup, but its surface (~30 MiB) is allocated only when a helper first becomes visible, and it parks itself (`display:none`) when none are.
 
@@ -766,11 +766,15 @@ environment's exact table (`environment/EnvironmentExactTable.js`) serves both i
   `renderToBuffer`'s sRGB readback (float texture input, alpha kept). `tests/gpu/toneMapParity.test.js` checks the two on
   Dawn in Node, and `bench:upscale` again in Chrome before anything else. Its `output: 'planar'` mode feeds the
   AI upscaler's network float planes encoded with a 2.2 power, not the sRGB curve — what the upscaler always used.
-- **OIDN leans back towards its input** where it moved a pixel by more than its noise explains: over 5×5, the
-  denoised colour keeps variance / (mean squared luminance change) of its change, the least-squares blend
-  (`DENOISE_BLEND_WGSL`, `viewer/denoise/DenoiserSettings.js`), in its output pass from 8 samples on the path tracer's
-  m2 (`getPixelVariance()`, kept live while the aux G-buffer is on). OIDN at 150 spp went 1.153 / 1.209 → 1.036 /
-  0.996 of raw's error.
+- **Both denoisers lean back towards their input** where they moved a pixel by more than its noise explains: over a
+  window, the denoised colour keeps variance / (mean squared luminance change) of its change, the least-squares blend
+  (`DENOISE_BLEND_WGSL`, `viewer/denoise/DenoiserSettings.js`). OIDN does it in its output pass from 8 samples on the
+  path tracer's m2 (`getPixelVariance()`, kept live while the aux G-buffer is on), 5×5; NRD after its last pass from 2
+  samples on its power-of-two snapshots, 3×3. ⚠️ m2 takes samples as independent and overstates a Sobol' render's
+  error 1.4–12×, too loose for NRD's blur; the snapshots' one difference a pixel reads low on noisy scenes and pulled
+  OIDN back to noise (mixed-lights at 150 spp 0.30 → 0.41), so OIDN keeps m2. ⚠️ Never even and odd frames as halves:
+  Sobol' puts them in opposite halves of every dimension. NRD at 16 spp went 1.03–2.22 → 0.62–0.91 of raw's error;
+  OIDN at 150 spp 1.153 / 1.209 → 1.036 / 0.996.
 - **The guide behind smooth glass follows its likelier branch**: a path that took the other one is flagged
   `RAY_FLAG.AUX_UNLIKELY` and FinalWrite averages the guide over unflagged samples per pixel (`guideWeights`). Following
   the sampled branch speckled the guide behind thick glass and the clean-guide OIDN models kept the speckle. See "Render
