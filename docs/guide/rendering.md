@@ -186,7 +186,9 @@ engine.denoisingManager.setUpscalerQuality('quality')     // 'fast' | 'balanced'
 
 Both denoisers lean back towards the render wherever they changed it by more than its own noise explains: OIDN from
 8 samples a pixel, NRD from 2. A sharp shadow NRD would have smeared, or the slight blur OIDN gives an almost
-converged render, comes back from the render itself.
+converged render, comes back from the render itself. NRD also leaves the light the camera sees directly on an emitter
+unblurred and denoises only the light the emitter's surface reflects, so a glowing pattern on a lit surface stays crisp
+while the surface around it is denoised.
 
 ## Local exposure
 

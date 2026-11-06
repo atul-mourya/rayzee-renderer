@@ -83,9 +83,15 @@ at 1 spp the denoised image was further from ground truth than the raw one on `m
   The full form (`EnvironmentTerm_Rtg` of NoV and roughness, NRD's 0.02 floors) was measured too:
   within 1.2 % on 20 scenes, 3 % worse on `dispersion-glass`, for a view vector and a polynomial per tap.
 - **Emitters.** An emitter's radiance is not lighting its albedo reflects; with a black base colour it
-  demodulated to 2000 and the blur spread it across the coplanar ceiling. A pixel whose primary hit
-  emits (NormalDepth's negated roughness) is neither filtered nor a tap. Its own radiance passes
-  through, so emissive detail stays sharp.
+  demodulated to 2000 and the blur spread it across the coplanar ceiling. The path tracer keeps the emission the
+  camera sees directly apart, sample by sample (`requestOutput( 'emission' )`, which NRD asks for; Shade adds it to the
+  path's RNG slot's spare lanes, FinalWrite averages it like the colour into a render-size buffer that exists only
+  while `setEmissionOutput( true )`; `getEmission()`). The front end takes it out of the pixel and every tap, the
+  stabilization pass adds it back: emission is never blurred, and the light an emissive surface reflects is denoised
+  like any other. Before, a pixel was an emitter when its material emitted at all, so a surface with a mostly black
+  emissive map stayed raw noise, and a pixel half on an emitter's edge spread its glow. Under the bidirectional
+  integrator, whose paths hold MIS sums in those lanes, NormalDepth's flag stands in: a pixel whose primary hit's
+  material emits (negated roughness) is neither filtered nor a tap.
 - **Samples that reflect nothing diffusely.** The path tracer's albedo is per sample and jittered;
   NormalDepth's guides are not. A sample with a black albedo (below `0.1·F0`) at a pixel whose guide is
   a lit wall saw the sky past a silhouette, or an emitter's edge, or a black material — emission,
@@ -187,8 +193,10 @@ wall clock on `spheres-gradient` (Apple M-series, medium preset, includes CPU di
 
 At 256² all three are dominated by fixed dispatch overhead; 1024² is where the tap count shows.
 
-The blend towards the input costs 8 B a pixel (NRD's snapshots) while NRD is on, and +0.15 ms a frame at 1024²
-(M-series) while it accumulates.
+The blend towards the input and the emission kept apart cost 8 B a pixel (NRD's snapshots) and 16 B (the path
+tracer's emission), both only while NRD is on; a frame at 1024² (M-series) +0.15 ms for the blend and +0.27 ms for the
+emission, only while it accumulates. With NRD off the kernels compile the emission code in but measured unchanged
+(`bench:ab` against the previous build, 8 scenes, all within ±1 %).
 
 The guards in "What the blur may not spread" add no texture: the emitter bit rides in the roughness
 guide, and the black-sample bit in `dataT.z` above the occlusion bits, so HistoryFix's 20 taps read it

@@ -17,7 +17,7 @@ import {
 } from 'three/tsl';
 
 import {
-	readRayRadiance, readGBuffer, gbDecodeNormalDepth, gbDecodeAlbedo, gbDecodeHitDist, gbDecodeUnlikely,
+	readRayRadiance, readGBuffer, gbDecodeNormalDepth, gbDecodeAlbedo, gbDecodeHitDist, gbDecodeUnlikely, readPathEmission,
 } from '../../pathtracer/PackedRayBuffer.js';
 import { COUNTER } from '../../pathtracer/QueueManager.js';
 import { luminance } from '../Common.js';
@@ -85,6 +85,8 @@ export function buildFinalWriteKernel( params ) {
 		// Display-only convergence overlay (Compositor). Only keeps m2 updated so the overlay has a live
 		// error field with adaptive sampling off — the counter and the freeze streak stay under convOn.
 		convergenceOverlay,
+		// The emission the camera saw directly, averaged like the colour while the uniform is on (requestOutput( 'emission' )).
+		emissionRW = null, emissionOutput = null,
 	} = params;
 
 	const auxOn = auxGBufferEnabled.greaterThan( uint( 0 ) );
@@ -297,6 +299,19 @@ export function buildFinalWriteKernel( params ) {
 			If( visMode.equal( int( 11 ) ), () => {
 
 				finalColor.assign( nanInfToRed( finalColor ) );
+
+			} );
+
+			if ( emissionRW ) If( emissionOutput.greaterThan( uint( 0 ) ), () => {
+
+				const emission = readPathEmission( gBufferRO, rayID ).toVar();
+				const prev = emissionRW.element( pixelId ).xyz;
+				If( enableAccumulation.and( cameraIsMoving.not() ).and( frame.greaterThan( uint( 0 ) ) ).and( hasPreviousAccumulated ), () => {
+
+					emission.assign( select( wasFrozen, prev, mix( prev, emission, accumulationAlpha ) ) );
+
+				} );
+				emissionRW.element( pixelId ).assign( vec4( emission, 0.0 ) );
 
 			} );
 

@@ -49,8 +49,8 @@ are the only way to one.
 2. **The core announces every restart of accumulation, with its reason** (camera, scene, setting). Each capability
    decides what of its own history to keep.
 3. **A capability names the outputs it needs; the core writes them.** An extra per-pixel output is compiled into the
-   core's GPU programs only when something asks for it (`requestOutput`): the hit distance, and the
-   normal/depth/albedo G-buffer the denoisers read.
+   core's GPU programs only when something asks for it (`requestOutput`): the hit distance, the
+   normal/depth/albedo G-buffer the denoisers read, and the emission the camera sees directly.
 4. **A missing capability costs nothing.** Nothing is built for it, and the core runs without it.
 
 The viewer plugs into the core through a fixed set of protected methods on `RayzeeRenderer`, listed under "Hooks" at
@@ -78,6 +78,10 @@ normalisation, so the core's shading program holds no NRD code and leaves the ou
 `'gBuffer'` compiles the denoisers' normal/depth/albedo writes into Generate, Shade and FinalWrite; the viewer asks for
 it at start-up (so switching a denoiser on never rebuilds), and the first `setAuxGBufferEnabled( true )` asks for it on
 the core. Without it the core's programs carry none of that code, and still render byte for byte as the full engine.
+`'emission'` (NRD asks for it at construction) compiles a per-path store into Shade and a per-pixel average into
+FinalWrite, live only while `setEmissionOutput( true )`, which allocates its render-size buffer (FinalWrite binds a
+one-pixel stand-in otherwise; three.js rebinds a swapped storage attribute). It moves the shared expression into a
+variable, so `bench:node -- --core` asks for it too: then both run the same programs.
 
 ## Decisions
 

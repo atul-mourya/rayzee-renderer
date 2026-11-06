@@ -5,6 +5,7 @@
 
 import { afterAll, beforeAll, expect, it } from 'vitest';
 import { DataTexture, RGBAFormat, FloatType, PerspectiveCamera, Vector2, Vector3 } from 'three';
+import { StorageInstancedBufferAttribute } from 'three/webgpu';
 import { describeGPU, createRenderer } from './gpu.js';
 import { NRD } from '@/core/viewer/denoise/NRD.js';
 import { TextureReadback } from '@/core/output/TextureReadback.js';
@@ -43,7 +44,12 @@ const uniforms = {
 	cameraProjection: 0, cameraClipStart: 0, panoLonRange: new Vector2(), panoLatRange: new Vector2(), panoLevelHorizon: 1,
 	seedFrame: 0,
 };
-const pathTracer = { uniforms: { get: ( name ) => ( { value: uniforms[ name ] } ) }, requestOutput: () => () => {}, frameCount: 0 };
+// The path tracer's emission the camera saw directly (getEmission), when a test sets one.
+let emission = null;
+const pathTracer = {
+	uniforms: { get: ( name ) => ( { value: uniforms[ name ] } ) }, requestOutput: () => () => {}, frameCount: 0,
+	getEmission: () => emission,
+};
 
 let renderer, readback, stage;
 
@@ -63,8 +69,12 @@ afterAll( () => {
 
 } );
 
-/** One fresh NRD frame over the wall; `pixel( x, y )` gives { color, albedo, emitter }. */
+/** One fresh NRD frame over the wall; `pixel( x, y )` gives { color, albedo, emitter, emission }. */
 async function denoise( pixel ) {
+
+	const kept = new Float32Array( W * H * 4 );
+	for ( let y = 0; y < H; y ++ ) for ( let x = 0; x < W; x ++ ) kept.set( [ ...( pixel( x, y ).emission ?? [ 0, 0, 0 ] ), 0 ], ( y * W + x ) * 4 );
+	emission = kept.some( ( v ) => v > 0 ) ? { attr: new StorageInstancedBufferAttribute( kept, 4 ), width: W } : null;
 
 	const textures = {
 		'pathtracer:color': texture( ( x, y ) => [ ...pixel( x, y ).color, 1 ] ),
@@ -82,6 +92,8 @@ async function denoise( pixel ) {
 	} );
 	const px = await readback.read( out[ 'nrd:output' ], W, H );
 	for ( const t of Object.values( textures ) ) t.dispose();
+	emission?.attr.dispose();
+	emission = null;
 	return ( x, y ) => px[ ( y * W + x ) * 4 + 1 ];
 
 }
@@ -183,6 +195,35 @@ describeGPU( 'NRD demodulation', () => {
 		const all = [];
 		for ( let y = 0; y < H; y ++ ) for ( let x = 0; x < W; x ++ ) all.push( [ x, y ] );
 		expect( worst( read, all, ( x, y ) => albedo( x, y ) + 0.04 ) ).toBeLessThan( 0.05 );
+
+	}, 30000 );
+
+	it( 'blurs the light an emitter reflects and puts its own emission back, when the path tracer keeps it apart', async () => {
+
+		const noise = ( x, y ) => ( ( x * 37 + y * 101 ) % 17 ) / 16 - 0.5;
+		const lit = ( x, y ) => 0.6 * ( 1 + noise( x, y ) );
+		const read = await denoise( ( x, y ) => {
+
+			if ( ! panel( x, y ) ) return { color: [ 0.6, 0.6, 0.6 ], albedo: [ 0.6, 0.6, 0.6 ], emitter: false };
+			const c = 20 + lit( x, y );
+			return { color: [ c, c, c ], albedo: [ 0.6, 0.6, 0.6 ], emitter: true, emission: [ 20, 20, 20 ] };
+
+		} );
+		const { outside, inside } = regions( panel, 1 );
+		expect( worst( read, outside, () => 0.6 ) ).toBeLessThan( 0.01 );
+
+		const spread = ( f ) => {
+
+			const v = inside.map( ( [ x, y ] ) => f( x, y ) );
+			const mean = v.reduce( ( a, b ) => a + b, 0 ) / v.length;
+			return { mean, sd: Math.sqrt( v.reduce( ( a, b ) => a + ( b - mean ) ** 2, 0 ) / v.length ) };
+
+		};
+
+		const before = spread( lit );
+		const after = spread( ( x, y ) => read( x, y ) - 20 );
+		expect( after.mean ).toBeCloseTo( before.mean, 1 );
+		expect( after.sd ).toBeLessThan( 0.5 * before.sd );
 
 	}, 30000 );
 

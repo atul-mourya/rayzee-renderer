@@ -85,6 +85,13 @@ export class PathTracer extends PathTracerStage {
 		// uniform — NOT baked — so DenoisingManager can toggle it without a (UI-freezing) kernel rebuild.
 		this._auxGBufferEnabled = false;
 		this._auxGBufferUniform = uniform( 0, 'uint' );
+		// requestOutput( 'emission' ): the buffer exists only while setEmissionOutput( true ); FinalWrite binds a stand-in otherwise.
+		this._emissionUniform = uniform( 0, 'uint' );
+		this._emissionWanted = false;
+		this._emissionValid = false;
+		this._emissionAttr = null;
+		this._emissionStandIn = gpuOnlyStorageAttribute( 1, 4 );
+		this._emissionNode = storage( this._emissionStandIn, 'vec4' );
 		// Clean-aux mode: temporally accumulate + renormalize the aux NORMAL (like albedo) so a clean-aux
 		// OIDN model (calb_cnrm/high, alb_nrm/balanced) gets the prefiltered-ish normal it expects instead
 		// of the point-sampled per-frame value that leaks noise. Off otherwise: the fast model wants the bump normal.
@@ -284,8 +291,9 @@ export class PathTracer extends PathTracerStage {
 	 * next frame. `'gBuffer'`: the denoisers' normal/depth (`pathtracer:normalDepth`) and albedo (`pathtracer:albedo`),
 	 * written while setAuxGBufferEnabled( true ). `'hitDistance'`: the first bounce's segment plus any alpha-skip run,
 	 * at camera depth 1, as `encode( distance, viewZ )` returns it — a [0, 1] value, in `pathtracer:albedo.w`; it
-	 * brings the G-buffer with it.
-	 * @param {'gBuffer'|'hitDistance'} name
+	 * brings the G-buffer with it. `'emission'`: the emission the camera sees directly, averaged per pixel like the colour
+	 * while setEmissionOutput( true ) (getEmission); path tracing only.
+	 * @param {'gBuffer'|'hitDistance'|'emission'} name
 	 * @param {{encode?: function(Node, Node): Node}} [options]
 	 * @returns {function(): void} withdraws the request
 	 */
@@ -547,6 +555,7 @@ export class PathTracer extends PathTracerStage {
 		const debugView = this.visMode.value > 0 && this.visMode.value !== 11;
 		const statsLive = ( this.useAdaptiveSampling.value > 0 || this.usePixelFreeze.value > 0 || this.convergenceOverlay.value > 0 ) && ! debugView;
 		this._pixelStatsValid = statsLive && ( frameValue === 0 || this._pixelStatsValid );
+		this._syncEmissionOutput( frameValue, debugView );
 		this.frame.value = frameValue;
 		this.seedFrame.value = this._seedTick ++;
 		this.tracedFrames ++;
@@ -1599,6 +1608,58 @@ export class PathTracer extends PathTracerStage {
 
 	}
 
+	get _emissionCompiled() {
+
+		return this._outputs.has( 'emission' ) && ! this._integrator;
+
+	}
+
+	/**
+	 * Keeps the emission the camera sees directly apart, per pixel, while enabled (requestOutput( 'emission' ) compiles it
+	 * in): a render-size buffer of four floats a pixel, freed when disabled. It follows the colour from the next restart.
+	 */
+	setEmissionOutput( enabled ) {
+
+		this._emissionWanted = !! enabled;
+
+	}
+
+	/**
+	 * The emission the camera saw directly, averaged per pixel over the accumulation (vec4 a pixel, row-major at `width`),
+	 * or null unless it followed every sample. The buffer changes with the next frame.
+	 * @returns {{ attr: import('three/webgpu').StorageBufferAttribute, width: number }|null}
+	 */
+	getEmission() {
+
+		return this._emissionValid ? { attr: this._emissionAttr, width: this._wfRenderWidth.value } : null;
+
+	}
+
+	// Points FinalWrite at the buffer while the output is wanted, else at the stand-in, before a frame's dispatches.
+	_syncEmissionOutput( frameValue, debugView ) {
+
+		const live = this._emissionWanted && this._emissionCompiled;
+		const pixels = this._wfRenderWidth.value * this._wfRenderHeight.value;
+		if ( live && ! ( this._emissionAttr?.count >= pixels ) ) {
+
+			this._emissionAttr?.dispose();
+			this._emissionAttr = gpuOnlyStorageAttribute( pixels, 4 );
+			this._emissionValid = false;
+
+		} else if ( ! live && this._emissionAttr ) {
+
+			this._emissionNode.value = this._emissionStandIn;
+			this._emissionAttr.dispose();
+			this._emissionAttr = null;
+
+		}
+
+		if ( live ) this._emissionNode.value = this._emissionAttr;
+		this._emissionUniform.value = live ? 1 : 0;
+		this._emissionValid = live && ! debugView && ( frameValue === 0 || this._emissionValid );
+
+	}
+
 	/** Whether the kernels write the G-buffer: asked for directly, or for the hit distance that rides in it. */
 	get _gBufferCompiled() {
 
@@ -2012,6 +2073,7 @@ export class PathTracer extends PathTracerStage {
 			sunParams: this.sunParams,
 			bidirectional: this._integrator?.uniforms ?? null,
 			hitDistanceEncode: this._outputs.get( 'hitDistance' )?.encode ?? null,
+			emissionOutput: this._emissionCompiled ? this._emissionUniform : null,
 			materialLayers: this._compiledLayers,
 			shadowRays: picked,
 			cameraWorldMatrix: this.cameraWorldMatrix,
@@ -2108,6 +2170,8 @@ export class PathTracer extends PathTracerStage {
 			streakBufferRW: streakRW,
 			frozenMaskRO, // dilated frozen mask (read-only; matches the active-list decision)
 			convergenceOverlay: this.convergenceOverlay,
+			emissionRW: this._emissionCompiled ? this._emissionNode : null,
+			emissionOutput: this._emissionUniform,
 			chunkRowBase: this._wfChunkRowBase,
 			chunkRows: this._wfChunkRows,
 		} );
@@ -2239,6 +2303,10 @@ export class PathTracer extends PathTracerStage {
 		this._kernelManager?.dispose();
 		this._m2Attr?.dispose?.();
 		this._streakAttr?.dispose?.();
+		this._emissionAttr?.dispose();
+		this._emissionStandIn.dispose();
+		this._emissionAttr = null;
+		this._emissionValid = false;
 		for ( const sizes of this._bounceSizes ?? [] ) sizes?.dispose();
 		this._bounceSizes = null;
 		this._frozenMaskAttr?.dispose?.();

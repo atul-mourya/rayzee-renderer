@@ -125,8 +125,6 @@ const rotate2 = ( rot, v ) => vec2( rot.x.mul( v.x ).add( rot.y.mul( v.y ) ), ro
 const demodAlbedo = ( a ) => a.mul( 1.0 - SPECULAR_F0 ).add( SPECULAR_F0 );
 const isBlack = ( a ) => max( a.x, max( a.y, a.z ) ).lessThan( BLACK_ALBEDO );
 const isBlackData = ( data ) => data.z.greaterThan( BLACK_BIT - 0.5 );
-// NormalDepth negates an emitter's roughness, as NRD packs a material ID into its normal-roughness guide.
-const isEmitter = ( guideW ) => guideW.lessThan( 0.0 );
 const guideRoughness = ( guideW ) => guideW.abs().clamp( 0.05, 1.0 );
 const denanify = ( w, s ) => select( w.equal( 0.0 ), vec4( 0.0 ), s );
 
@@ -168,6 +166,11 @@ export class NRD extends RenderStage {
 		this._releaseHitDistance = this.pathTracer?.requestOutput?.( 'hitDistance', {
 			encode: ( distance, viewZ ) => distance.div( max( viewZ.mul( NRD_HIT_DIST_B ).add( NRD_HIT_DIST_A ), float( 1e-4 ) ) ).clamp( 0.0, 1.0 ),
 		} ) ?? null;
+		// The emission the camera saw directly, kept apart per sample: taken out before the blur and put back after.
+		this._releaseEmission = this.pathTracer?.requestOutput?.( 'emission' ) ?? null;
+		this._emissionStandIn = gpuOnlyStorageAttribute( 1, 4 );
+		this._emissionNode = storage( this._emissionStandIn, 'vec4' ).toReadOnly();
+		this.emissionOn = uniform( 0.0 );
 
 		const w = options.width || 1;
 		const h = options.height || 1;
@@ -428,7 +431,23 @@ export class NRD extends RenderStage {
 	// Taps whose radiance is no estimate of the centre's lighting.
 	_excluded( zs, guideW, tapBlack, centerBlack ) {
 
-		return zs.greaterThanEqual( MISS_THRESHOLD ).or( isEmitter( guideW ) ).or( tapBlack.and( centerBlack.not() ) );
+		return zs.greaterThanEqual( MISS_THRESHOLD ).or( this._emitter( guideW ) ).or( tapBlack.and( centerBlack.not() ) );
+
+	}
+
+	// NormalDepth negates an emitter's roughness, as NRD packs a material ID into its normal-roughness guide. Such a pixel
+	// is neither filtered nor a tap, unless the path tracer keeps the emission apart (getEmission): then it is lighting.
+	_emitter( guideW ) {
+
+		return guideW.lessThan( 0.0 ).and( this.emissionOn.lessThan( 0.5 ) );
+
+	}
+
+	// The emission the camera saw directly at a pixel, averaged like the input; zero while the path tracer keeps none.
+	_emissionAt( c ) {
+
+		const e = this._emissionNode.element( uint( c.y ).mul( uint( this.resW ) ).add( uint( c.x ) ) ).xyz;
+		return select( this.emissionOn.greaterThan( 0.5 ), e, vec3( 0.0 ) );
 
 	}
 
@@ -576,7 +595,7 @@ export class NRD extends RenderStage {
 		const readSignal = isPre
 			? ( c, alb ) => {
 
-				const lighting = sanitizeRGB( textureLoad( colorTex, c ).xyz.div( demodAlbedo( alb.xyz ) ) );
+				const lighting = sanitizeRGB( textureLoad( colorTex, c ).xyz.sub( this._emissionAt( c ) ).div( demodAlbedo( alb.xyz ) ) );
 				return vec4( linearToYCoCg( lighting ), sanitize1( alb.w, FP16_MAX ).min( 1.0 ) );
 
 			}
@@ -608,7 +627,7 @@ export class NRD extends RenderStage {
 					const X = this._worldPosAt( pixelUv, dist, cwm, cpi ).toVar();
 					viewZ.assign( camView.mul( vec4( X, 1.0 ) ).z.abs() );
 
-					If( maxRadiusU.greaterThan( 0.0 ).and( isEmitter( sn.w ).not() ), () => {
+					If( maxRadiusU.greaterThan( 0.0 ).and( this._emitter( sn.w ).not() ), () => {
 
 						const V = this._viewVector( X, camPos, this.viewVector );
 						const NoV = dot( N, V ).abs().toVar();
@@ -935,7 +954,7 @@ export class NRD extends RenderStage {
 					.mul( mix( float( 0.25 ).add( sqrt( hitDistFactor ).mul( 0.75 ) ), float( 1.0 ), nonLinear ) );
 				const strideR = round( stride ).toVar();
 
-				const emitter = isEmitter( sn.w ).toVar();
+				const emitter = this._emitter( sn.w ).toVar();
 
 				If( strideR.notEqual( 0.0 ).and( emitter.not() ), () => {
 
@@ -1167,7 +1186,7 @@ export class NRD extends RenderStage {
 				m2.divAssign( 9.0 );
 				const sigma = stdDev( m1, m2 ).toVar();
 
-				If( accumSpeed.lessThan( u.historyFixFrameNum ).and( isEmitter( guideW ).not() ), () => {
+				If( accumSpeed.lessThan( u.historyFixFrameNum ).and( this._emitter( guideW ).not() ), () => {
 
 					diffLuma.assign( min( diffLuma, m1.mul( float( 1.2 ).add( float( 1.0 ).div( accumSpeed.add( 1.0 ) ) ) ) ) );
 
@@ -1205,7 +1224,7 @@ export class NRD extends RenderStage {
 
 				// Alpha stays the path tracer's coverage — Compositor reads it under transparentBackground.
 				const albedo = textureLoad( albedoTex, coord );
-				const lighting = yCoCgToLinear( diff.xyz ).mul( demodAlbedo( albedo.xyz ) );
+				const lighting = yCoCgToLinear( diff.xyz ).mul( demodAlbedo( albedo.xyz ) ).add( this._emissionAt( coord ) );
 				const out = vec4( lighting, color.w ).toVar();
 
 				If( debugMode.equal( int( 1 ) ), () => {
@@ -1477,6 +1496,9 @@ export class NRD extends RenderStage {
 
 		}
 
+		const emission = this.pathTracer?.getEmission?.() ?? null;
+		this._emissionNode.value = emission?.attr ?? this._emissionStandIn;
+		this.emissionOn.value = emission ? 1.0 : 0.0;
 		this._colorTexNode.value = colorTex;
 		this._albedoTexNode.value = albedoTex;
 		this._ndTexNode.value = ndTex;
@@ -1562,6 +1584,9 @@ export class NRD extends RenderStage {
 
 		this._releaseHitDistance?.();
 		this._releaseHitDistance = null;
+		this._releaseEmission?.();
+		this._releaseEmission = null;
+		this._emissionStandIn.dispose();
 		this._disposeKernels();
 		this._disposeStorage();
 		this._disposeBlend();

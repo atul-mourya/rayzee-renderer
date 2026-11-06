@@ -164,7 +164,9 @@ To run between the path tracer and the compositor, subclass the renderer and ret
 `'my-stage:output'` in `_displaySources()`. `pipeline.addStage()` after `init()` appends after the
 compositor. A stage that needs an extra path-tracer output asks for it with
 `stages.pathTracer.requestOutput( name, options )` — `'gBuffer'` (the normal/depth and albedo a denoiser reads; the
-viewer asks for it itself) or `'hitDistance'`. Each is compiled into the path tracer only while asked for.
+viewer asks for it itself), `'hitDistance'`, or `'emission'` (the emission the camera sees directly, averaged per pixel
+while `setEmissionOutput( true )`, read with `getEmission()`; path tracing only). Each is compiled into the path tracer
+only while asked for.
 
 ## All Exports
 

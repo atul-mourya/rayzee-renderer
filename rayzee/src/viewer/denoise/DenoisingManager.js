@@ -600,6 +600,8 @@ export class DenoisingManager extends EventDispatcher {
 
 		}
 
+		s.pathTracer?.setEmissionOutput?.( !! s.nrd?.enabled );
+
 		// PathTracer's aux MRT (normalDepth + albedo) is consumed by NRD (albedo, hit distance) and by
 		// OIDN (reads the MRT read-targets directly). When neither is active the wavefront skips those writes.
 		s.pathTracer?.setAuxGBufferEnabled?.( normalNeeded || !! this.denoiser?.enabled );

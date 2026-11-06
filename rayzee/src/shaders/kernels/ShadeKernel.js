@@ -80,7 +80,7 @@ import {
 	writeGBuffer, writeGBufferHitDist, readGBuffer, gbDecodeNormalDepth,
 	readRayRadiance,
 	readFeatureThroughput, writeFeatureThroughput,
-	readRngState, writeRngState,
+	readRngState, writeRngState, writeRngStateOnly, addPathEmission,
 	readMisState, writeRngMis, pendingVertex, cachedVertex, writeVertexRecord, writeLightPathLength, readLightOrigin,
 } from '../../pathtracer/PackedRayBuffer.js';
 
@@ -136,6 +136,8 @@ export function buildShadeKernel( params ) {
 		bidirectional: bdpt = null,
 		// The hit-distance output, when a stage asked for it (PathTracer.requestOutput).
 		hitDistanceEncode = null,
+		// The emission the camera sees directly, kept apart per path while this uniform is on (requestOutput( 'emission' )).
+		emissionOutput = null,
 		// The material layers some material uses (MaterialDataManager.materialLayers); the rest compile out.
 		materialLayers: layers = ALL_MATERIAL_LAYERS,
 		// Fewer shadow rays a hit, emitters included: null (one per light kind) or a lightPick variant; path tracing only.
@@ -280,7 +282,7 @@ export function buildShadeKernel( params ) {
 		const subpath = bdpt ? { dVCM: subpathState.dVCM.toVar(), dVC: subpathState.dVC.toVar(), vm: null } : null;
 		const persistRng = () => ( bdpt
 			? writeRngMis( hitBufferRW, rayID, rngState, subpath.dVCM, subpath.dVC )
-			: writeRngState( hitBufferRW, rayID, rngState ) );
+			: ( emissionOutput ? writeRngStateOnly : writeRngState )( hitBufferRW, rayID, rngState ) );
 
 		// Samples key on the GLOBAL pixel. pixelIndex is the LOCAL path slot; the global pixel
 		// = chunkRowBase·W + localSlot, so sequences stay aligned across row-band chunks
@@ -1703,15 +1705,17 @@ export function buildShadeKernel( params ) {
 
 			}
 
-			currentRadiance.assign( vec4(
-				currentRadiance.xyz.add(
-					regularizePathContribution(
-						emissive.mul( throughput ).mul( emissiveGiScale ).mul( emissiveMISWeight ),
-						float( bounceIndex ), fireflyThreshold, int( accumFrame ),
-					),
-				),
-				currentRadiance.w
-			) );
+			let emitted = regularizePathContribution(
+				emissive.mul( throughput ).mul( emissiveGiScale ).mul( emissiveMISWeight ),
+				float( bounceIndex ), fireflyThreshold, int( accumFrame ),
+			);
+			if ( emissionOutput ) emitted = emitted.toVar();
+			currentRadiance.assign( vec4( currentRadiance.xyz.add( emitted ), currentRadiance.w ) );
+			if ( emissionOutput ) If( isBackdropView.and( emissionOutput.greaterThan( uint( 0 ) ) ), () => {
+
+				addPathEmission( hitBufferRW, rayID, emitted );
+
+			} );
 
 		} );
 

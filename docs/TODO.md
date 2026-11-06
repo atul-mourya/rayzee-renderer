@@ -52,7 +52,10 @@
   noise, measured from snapshots at the last two powers of two of samples: 0.62 / 0.91 / 0.85 / 0.77 / 0.72 / 0.73,
   every bench scene below raw at 1–32 spp. The six scenes are in `bench:denoise` now (`crossoverScenes`, ladder
   `[1, 16, 64, 150]`).
-- [ ] NRD treats a whole emissive material as an emitter (never blurred), so a surface with a mostly-black emissive map is left noisy; a one-pixel ring can still leak at a non-black emitter's edge (needs per-sample emission, no free G-buffer lane).
+- [x] NRD treated a whole emissive material as an emitter (never blurred), so a mostly-black emissive map stayed noisy.
+  Fixed 2026-11-06: the path tracer keeps the directly seen emission apart per sample (`requestOutput( 'emission' )`),
+  NRD takes it out before the blur and puts it back after; no edge ring. Under the bidirectional integrator the old
+  material flag still stands in (its paths use those lanes).
 - [ ] Shadow rays cross glass in a straight line (coloured since 11.16, see `docs/design/SHADING.md` → Light through
   glass): within ~1 % of refraction for panes, but a thick block lands ±7 % off, as the light really bends through it.
 - [ ] Rough, part-transmissive glass reads 0.96–0.97 in a closed white furnace (T 0.25–0.75, IOR 1.5, roughness

@@ -297,6 +297,19 @@ export const readRngState = ( buf, id ) => buf.element( soa( id, HIT.RNG ) ).x;
 
 export const writeRngState = ( buf, id, state ) => buf.element( soa( id, HIT.RNG ) ).assign( uvec4( state, 0, 0, 0 ) );
 
+// The path integrator leaves the RNG slot's .yzw free: with requestOutput( 'emission' ) they carry the emission the camera
+// saw directly, which Generate's writeRngState clears and Shade then keeps (writeRngStateOnly).
+export const writeRngStateOnly = ( buf, id, state ) => buf.element( soa( id, HIT.RNG ) ).x.assign( state );
+
+export const readPathEmission = ( buf, id ) => uintBitsToFloat( buf.element( soa( id, HIT.RNG ) ).yzw );
+
+export const addPathEmission = ( buf, id, emission ) => {
+
+	const slot = buf.element( soa( id, HIT.RNG ) );
+	return slot.assign( uvec4( slot.x, floatBitsToUint( uintBitsToFloat( slot.yzw ).add( emission ) ) ) );
+
+};
+
 /** The subpath's MIS partial sums (Georgiev 2012, "Implementing Vertex Connection and Merging"). */
 export const readMisState = ( buf, id ) => {
 
