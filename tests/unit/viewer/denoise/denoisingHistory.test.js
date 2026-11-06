@@ -35,6 +35,7 @@ vi.mock( '@/core/viewer/denoise/OIDNTemporalHistory.js', () => ( {
 				this.valid = false;
 
 			} );
+			this.reserve = vi.fn();
 			this.dispose = vi.fn();
 
 		}
@@ -102,6 +103,7 @@ function makeManager() {
 		state: { isDenoising: false, isLoading: false },
 		abort: vi.fn(),
 		setSize: vi.fn(),
+		setFrameSize: vi.fn(),
 		invalidateOutput: vi.fn(),
 	};
 	manager._lastRenderWidth = 8;
@@ -281,15 +283,46 @@ describe( 'DenoisingManager — OIDN motion history', () => {
 
 	} );
 
-	it( 'falls back to the accumulation when the render size no longer matches the history', () => {
+	it( 'falls back to the accumulation when the traced frame no longer matches the history', () => {
 
-		const { manager, reset, trace } = makeManager();
+		const { manager, pt, reset, trace } = makeManager();
 
 		reset( true );
 		trace();
-		manager._lastRenderWidth = 16;
+		pt.width = 16;
 
 		expect( manager._historyTextures() ).toBeNull();
+
+	} );
+
+	// The moving-camera drop traces smaller frames than the render size; the history follows the frame.
+	it( 'keeps a history of the moving camera\'s smaller frames, sized for the render', () => {
+
+		const { manager, pt, reset, trace } = makeManager();
+
+		manager._lastRenderWidth = 16;
+		manager._lastRenderHeight = 16;
+		pt.viewIsChanging = true;
+		reset( true );
+		trace();
+
+		expect( manager._history.reserve ).toHaveBeenLastCalledWith( 16, 16 );
+		expect( manager._historyTextures() ).toEqual( { color: 'history' } );
+
+	} );
+
+	it( 'starts the history afresh when the frame size changes', () => {
+
+		const { manager, pt, reset, trace } = makeManager();
+
+		pt.viewIsChanging = true;
+		reset( true );
+		trace();
+		manager.setFrameSize( 4, 4 );
+
+		expect( manager._historyTextures() ).toBeNull();
+		trace();
+		expect( manager._history.invalidate ).toHaveBeenCalled();
 
 	} );
 

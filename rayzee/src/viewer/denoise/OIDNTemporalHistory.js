@@ -299,8 +299,11 @@ export class OIDNTemporalHistory {
 		this.device = device;
 		this.settings = { ...HISTORY_DEFAULTS, cleanAux: false, splitCopies: true };
 		this.valid = false;
+		// The frame the history describes; the textures are allocated at `_capacity`, which is at least that.
 		this.width = 0;
 		this.height = 0;
+		this._reserved = { width: 0, height: 0 };
+		this._capacity = { width: 0, height: 0 };
 
 		this._sets = null;
 		this._current = 0;
@@ -332,6 +335,14 @@ export class OIDNTemporalHistory {
 	invalidate() {
 
 		this.valid = false;
+
+	}
+
+	/** Sizes the textures for the render, so the smaller frames of a moving camera reuse them. */
+	reserve( width, height ) {
+
+		this._reserved.width = width;
+		this._reserved.height = height;
 
 	}
 
@@ -426,7 +437,8 @@ export class OIDNTemporalHistory {
 	gpuBytes() {
 
 		if ( ! this._sets ) return 0;
-		return this._sets.length * 3 * this.width * this.height * 16 + this._picked.size + this._copies.size;
+		const { width, height } = this._capacity;
+		return this._sets.length * 3 * width * height * 16 + this._picked.size + this._copies.size;
 
 	}
 
@@ -434,20 +446,30 @@ export class OIDNTemporalHistory {
 
 		if ( ! width || ! height ) return false;
 		this._ensurePipelines();
-		if ( this._sets && this.width === width && this.height === height ) return true;
 
-		this._releaseTextures();
+		// Every pass works in the frame's own pixels, so a smaller frame uses the corner of the textures.
+		const capWidth = Math.max( width, this._reserved.width );
+		const capHeight = Math.max( height, this._reserved.height );
+		if ( ! this._sets || this._capacity.width !== capWidth || this._capacity.height !== capHeight ) {
 
-		const device = this.device;
-		const usage = GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC;
-		const make = ( label ) => device.createTexture( { label, size: { width, height }, format: 'rgba32float', usage } );
-		this._sets = [ 0, 1 ].map( i => ( {
-			color: make( `oidn-history-color-${ i }` ),
-			albedo: make( `oidn-history-albedo-${ i }` ),
-			normal: make( `oidn-history-normal-${ i }` ),
-		} ) );
-		this._picked = device.createBuffer( { label: 'oidn-history-picked', size: width * height * 4, usage: GPUBufferUsage.STORAGE } );
-		this._copies = device.createBuffer( { label: 'oidn-history-copies', size: width * height * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST } );
+			this._releaseTextures();
+
+			const device = this.device;
+			const usage = GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC;
+			const make = ( label ) => device.createTexture( { label, size: { width: capWidth, height: capHeight }, format: 'rgba32float', usage } );
+			this._sets = [ 0, 1 ].map( i => ( {
+				color: make( `oidn-history-color-${ i }` ),
+				albedo: make( `oidn-history-albedo-${ i }` ),
+				normal: make( `oidn-history-normal-${ i }` ),
+			} ) );
+			const bytes = capWidth * capHeight * 4;
+			this._picked = device.createBuffer( { label: 'oidn-history-picked', size: bytes, usage: GPUBufferUsage.STORAGE } );
+			this._copies = device.createBuffer( { label: 'oidn-history-copies', size: bytes, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST } );
+			this._capacity = { width: capWidth, height: capHeight };
+
+		}
+
+		if ( this.width === width && this.height === height ) return true;
 
 		this.width = width;
 		this.height = height;
@@ -587,6 +609,7 @@ export class OIDNTemporalHistory {
 		this._copies = null;
 		this.width = 0;
 		this.height = 0;
+		this._capacity = { width: 0, height: 0 };
 		this.valid = false;
 
 	}

@@ -291,6 +291,21 @@ export class DenoisingManager extends EventDispatcher {
 
 	}
 
+	/**
+	 * The size frames are traced at: smaller than the render size while the camera moves (the viewer's
+	 * moving-camera drop), the render size again once it stops. Unlike a resize, the denoised picture
+	 * on screen stays up — the Compositor stretches it until the next refresh — and nothing sized for
+	 * the render is rebuilt.
+	 * @param {number} width
+	 * @param {number} height
+	 */
+	setFrameSize( width, height ) {
+
+		this._historyDirty = true;
+		this.denoiser?.setFrameSize( width, height );
+
+	}
+
 
 	/**
 	 * Puts the upscaler's canvas back to the render size — it leaves it two or four times larger.
@@ -1008,7 +1023,7 @@ export class DenoisingManager extends EventDispatcher {
 		const history = this._history;
 		if ( ! history?.valid || this._historyDirty || ! this.historyActive || pt.isComplete ) return null;
 		if ( pt.resetCount !== this._knownResetCount ) return null;
-		if ( history.width !== this._lastRenderWidth || history.height !== this._lastRenderHeight ) return null;
+		if ( history.width !== pt.width || history.height !== pt.height ) return null;
 		if ( pt.frameCount <= 1 ) return history.textures;
 		if ( pt.frameCount >= HISTORY_HANDOFF_SAMPLES ) return null;
 
@@ -1058,6 +1073,7 @@ export class DenoisingManager extends EventDispatcher {
 	_ensureHistory() {
 
 		this._history ??= new OIDNTemporalHistory( this.renderer.backend.device );
+		this._history.reserve( this._lastRenderWidth, this._lastRenderHeight );
 		this._history.settings.cleanAux = !! this.denoiser?.expectsCleanAux( this._finalQuality );
 		return this._history;
 

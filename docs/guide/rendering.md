@@ -54,7 +54,7 @@ Key settings:
 | `unitsPerMetre` | `number` | 1 | Physical mode: scene units per real metre, for files whose units are not metres. It carries over between model loads — reset it when the new file's units differ |
 | `transparentBackground` | `boolean` | false | Transparent canvas background |
 | `interactionModeEnabled` | `boolean` | true | Render at lower resolution while the camera moves, keeping the full bounce budget ("Fast Navigation" in the app) |
-| `interactionRenderScale` | `number` | 0.5 | Per-axis render scale while the camera moves (0.5 = a quarter of the pixels); `1` turns the drop off. Ignored while OIDN is the live denoiser. `PathTracerApp` only |
+| `interactionRenderScale` | `number` | 0.5 | Per-axis render scale while the camera moves (0.5 = a quarter of the pixels); `1` turns the drop off. With OIDN as the live denoiser it denoises the smaller frame too, so the moving view refreshes ~3× as often. `PathTracerApp` only |
 | `renderMode` | `number` | 0 | Internal preview(0)/production(1) flag driving accumulation & denoiser history — normally set via `configureForMode()`, not written directly |
 | `visMode` | `number` | 0 | Debug visualization mode (0 = off) |
 | `environmentMode` | `string` | 'hdri' | Sky mode: `'hdri'` \| `'procedural'` \| `'color'` — not routed through `engine.settings`; use `engine.environmentManager.setMode()` instead |

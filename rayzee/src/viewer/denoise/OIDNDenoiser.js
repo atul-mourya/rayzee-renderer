@@ -245,6 +245,11 @@ export class OIDNDenoiser extends EventDispatcher {
 		// picture handed to the pipeline, so this is the only size it knows.
 		this._renderWidth = renderer.domElement.width;
 		this._renderHeight = renderer.domElement.height;
+		// The frame being denoised: the render size, or smaller while the camera moves (setFrameSize).
+		this._frameWidth = this._renderWidth;
+		this._frameHeight = this._renderHeight;
+		// A run aborted by a frame-size change still submits for a microtask or two.
+		this._drainAborted = false;
 
 		// WebGPU GPU-native path (no CPU readback for inputs)
 		// backendParams: () => { device: GPUDevice, adapterInfo: GPUAdapterInfo|null }
@@ -285,6 +290,8 @@ export class OIDNDenoiser extends EventDispatcher {
 		this._outGPUTexture = null;
 		this._outTexture = null;
 		this._outTexSize = { width: 0, height: 0 };
+		// The picture of the other frame size, kept while it may still be on screen (_ensureOutputTexture).
+		this._retiredOut = null;
 
 		// Merge options with defaults
 		this.config = { ...MODEL_CONFIG.DEFAULT_OPTIONS, ...options };
@@ -648,6 +655,15 @@ export class OIDNDenoiser extends EventDispatcher {
 			// load) the Denoising badge, the closing upscaler and a video export waited forever.
 			if ( ! this.enabled || ! this.unet ) return false;
 
+			// Let it land before this run resizes oidn-webgpu's buffers for the new frame.
+			if ( this._drainAborted ) {
+
+				this._drainAborted = false;
+				await new Promise( resolve => setTimeout( resolve, 0 ) );
+				if ( this.state.abortController?.signal.aborted ) return false;
+
+			}
+
 			// The GPU path bails out early — no textures yet, no device — by returning false, and
 			// a caller that read that as success published a picture nothing had written to.
 			return await this._executeUNetGPU( continuous ) !== false;
@@ -691,8 +707,8 @@ export class OIDNDenoiser extends EventDispatcher {
 	 */
 	async _executeUNetGPU( continuous = false ) {
 
-		const width = this._renderWidth;
-		const height = this._renderHeight;
+		const width = this._frameWidth;
+		const height = this._frameHeight;
 
 		if ( ! this.getGPUTextures ) {
 
@@ -821,25 +837,26 @@ export class OIDNDenoiser extends EventDispatcher {
 	}
 
 	/**
-	 * Creates or recreates the GPU storage buffers used as oidn-webgpu inputs.
-	 * Reuses existing buffers if the resolution hasn't changed.
+	 * Creates or recreates the GPU storage buffers used as oidn-webgpu inputs. Sized for the render,
+	 * so a moving camera's smaller frames reuse them.
 	 */
 	_ensureGPUInputBuffers( width, height ) {
 
-		const { width: cw, height: ch } = this._gpuInputBufferSize;
-		if ( cw === width && ch === height && this._gpuInputBuffers.color ) return;
-
-		// Destroy stale buffers
-		this._destroyGPUInputBuffers();
-
-		const device = this.gpuDevice;
-		const input = oidnInputSize( width, height );
+		const input = oidnInputSize( Math.max( width, this._renderWidth ), Math.max( height, this._renderHeight ) );
 		const byteSize = input.width * input.height * 16; // rgba32float
-		const usage = GPUBufferUsage.COPY_DST | GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC;
 
-		this._gpuInputBuffers.color = device.createBuffer( { label: 'oidn-in-color', size: byteSize, usage } );
-		this._gpuInputBuffers.albedo = device.createBuffer( { label: 'oidn-in-albedo', size: byteSize, usage } );
-		this._gpuInputBuffers.normal = device.createBuffer( { label: 'oidn-in-normal', size: byteSize, usage } );
+		if ( this._gpuInputBuffers.color?.size !== byteSize ) {
+
+			this._destroyGPUInputBuffers();
+
+			const device = this.gpuDevice;
+			const usage = GPUBufferUsage.COPY_DST | GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC;
+			this._gpuInputBuffers.color = device.createBuffer( { label: 'oidn-in-color', size: byteSize, usage } );
+			this._gpuInputBuffers.albedo = device.createBuffer( { label: 'oidn-in-albedo', size: byteSize, usage } );
+			this._gpuInputBuffers.normal = device.createBuffer( { label: 'oidn-in-normal', size: byteSize, usage } );
+
+		}
+
 		this._gpuInputBufferSize = { width, height };
 
 	}
@@ -1082,20 +1099,37 @@ export class OIDNDenoiser extends EventDispatcher {
 
 		const { color, albedo, normal } = this._gpuInputBuffers;
 		const out = this._outGPUTexture ? this._outTexSize.width * this._outTexSize.height * 8 : 0; // rgba16float
-		return ( color?.size ?? 0 ) + ( albedo?.size ?? 0 ) + ( normal?.size ?? 0 ) + out;
+		const retired = this._retiredOut ? this._retiredOut.size.width * this._retiredOut.size.height * 8 : 0;
+		return ( color?.size ?? 0 ) + ( albedo?.size ?? 0 ) + ( normal?.size ?? 0 ) + out + retired;
 
 	}
 
 	/**
-	 * Makes sure the output picture exists at the render size. A resize makes a new one rather than
+	 * Makes sure the output picture exists at the frame size. A resize makes a new one rather than
 	 * resizing in place: three.js caches the card-side handle against the wrapper, so the wrapper
 	 * has to be new too.
+	 *
+	 * The one it replaces is still on screen until this run publishes, so it is kept as the retired
+	 * picture — and taken back when the frame returns to its size, as each camera move does.
 	 */
 	_ensureOutputTexture( device, width, height ) {
 
 		if ( this._outGPUTexture && this._outTexSize.width === width && this._outTexSize.height === height ) return;
 
-		this._releaseOutputTexture();
+		const retired = this._retiredOut;
+		this._retiredOut = this._outGPUTexture ? { texture: this._outTexture, gpu: this._outGPUTexture, size: this._outTexSize } : null;
+
+		if ( retired?.size.width === width && retired.size.height === height ) {
+
+			this._outTexture = retired.texture;
+			this._outGPUTexture = retired.gpu;
+			this._outTexSize = retired.size;
+			return;
+
+		}
+
+		retired?.texture.dispose();
+		retired?.gpu.destroy();
 
 		// Half float, like NRD's output: this picture is read once, by the display. Full float
 		// would double both the memory it holds and the bandwidth of writing and sampling it, to
@@ -1130,8 +1164,11 @@ export class OIDNDenoiser extends EventDispatcher {
 
 		this._outTexture?.dispose();
 		this._outGPUTexture?.destroy();
+		this._retiredOut?.texture.dispose();
+		this._retiredOut?.gpu.destroy();
 		this._outTexture = null;
 		this._outGPUTexture = null;
+		this._retiredOut = null;
 		this._outTexSize = { width: 0, height: 0 };
 
 	}
@@ -1150,7 +1187,7 @@ export class OIDNDenoiser extends EventDispatcher {
 
 		const { x, y, width, height } = rect;
 
-		this._ensureOutputTexture( device, this._renderWidth, this._renderHeight );
+		this._ensureOutputTexture( device, this._frameWidth, this._frameHeight );
 		if ( ! this._outGPUTexture ) return;
 
 		const params = device.createBuffer( {
@@ -1369,6 +1406,8 @@ export class OIDNDenoiser extends EventDispatcher {
 
 		this._renderWidth = width;
 		this._renderHeight = height;
+		this._frameWidth = width;
+		this._frameHeight = height;
 		this._hasOutput = false;
 		// The old measurement describes the old size, and callers size their policy on it.
 		this.lastDenoiseMs = 0;
@@ -1379,6 +1418,27 @@ export class OIDNDenoiser extends EventDispatcher {
 			log.error( 'reinitialize after size change failed:', error );
 
 		} );
+
+	}
+
+	/**
+	 * Denoises frames of this size from the next run on, with the network and buffers sized for the
+	 * render (oidn-webgpu keeps a plan for each of two sizes): the moving-camera drop traces smaller
+	 * frames. The picture already made stays up, and a larger frame is a resize.
+	 * @param {number} width
+	 * @param {number} height
+	 */
+	setFrameSize( width, height ) {
+
+		if ( width > this._renderWidth || height > this._renderHeight ) return this.setSize( width, height );
+		if ( width === this._frameWidth && height === this._frameHeight ) return;
+
+		// A run sized for the other frame cannot finish into this one.
+		this._drainAborted ||= this.state.isDenoising;
+		this.abort();
+		this._frameWidth = width;
+		this._frameHeight = height;
+		this.lastDenoiseMs = 0;
 
 	}
 

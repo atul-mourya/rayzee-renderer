@@ -578,10 +578,10 @@ export class PathTracerApp extends RayzeeRenderer {
 
 	}
 
-	// Full size: the denoiser only runs once the camera has stopped.
 	_renderSizeChanged( width, height ) {
 
 		this.denoisingManager?.setRenderSize( width, height );
+		this.denoisingManager?.setFrameSize( this._scaled( width ), this._scaled( height ) );
 
 	}
 
@@ -866,10 +866,8 @@ export class PathTracerApp extends RayzeeRenderer {
 
 	}
 
-	// Live OIDN keeps full size: a resize drops its motion history and shows the raw render until it denoises again.
 	_interactionRenderScale() {
 
-		if ( this.denoisingManager?.continuousDenoise ) return 1;
 		const scale = Number( this.settings.get( 'interactionRenderScale' ) );
 		return scale > 0 ? Math.min( 1, Math.max( 0.125, scale ) ) : 1;
 
@@ -900,6 +898,8 @@ export class PathTracerApp extends RayzeeRenderer {
 
 		this._setDisplaySize( this._displayWidth, this._displayHeight );
 		this.pipeline?.setSize( this._scaled( this._displayWidth ), this._scaled( this._displayHeight ) );
+		// A live denoise is the view while moving: at a quarter of the pixels it refreshes ~4× as often.
+		this.denoisingManager?.setFrameSize( this._scaled( this._displayWidth ), this._scaled( this._displayHeight ) );
 		// History from the other size would reproject garbage.
 		this.pipeline?.eventBus.emit( 'pipeline:historyReset' );
 		this.needsReset = true;

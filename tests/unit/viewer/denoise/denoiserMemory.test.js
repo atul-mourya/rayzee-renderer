@@ -16,6 +16,19 @@ describe( 'denoiser GPU memory', () => {
 
 	} );
 
+	it( 'counts the other frame size\'s picture while it is kept', () => {
+
+		const pass = Object.assign( Object.create( OIDNDenoiser.prototype ), {
+			_gpuInputBuffers: { color: null, albedo: null, normal: null },
+			_outGPUTexture: {},
+			_outTexSize: { width: 10, height: 5 },
+			_retiredOut: { size: { width: 4, height: 2 } },
+		} );
+
+		expect( pass.gpuBytes() ).toBe( 10 * 5 * 8 + 4 * 2 * 8 );
+
+	} );
+
 	it( 'counts nothing before a denoise has allocated', () => {
 
 		const pass = Object.assign( Object.create( OIDNDenoiser.prototype ), {
@@ -30,8 +43,9 @@ describe( 'denoiser GPU memory', () => {
 
 	it( 'counts both history sets and the pick buffers', () => {
 
+		// Allocated for the render; a moving camera's smaller frame uses a corner of it.
 		const history = Object.assign( Object.create( OIDNTemporalHistory.prototype ), {
-			_sets: [ {}, {} ], width: 4, height: 2, _picked: { size: 32 }, _copies: { size: 32 },
+			_sets: [ {}, {} ], width: 2, height: 1, _capacity: { width: 4, height: 2 }, _picked: { size: 32 }, _copies: { size: 32 },
 		} );
 
 		expect( history.gpuBytes() ).toBe( 2 * 3 * 4 * 2 * 16 + 64 );

@@ -53,6 +53,8 @@ describeGPU( 'OIDN input copy', () => {
 			gpuDevice: device,
 			_renderWidth: width,
 			_renderHeight: height,
+			_frameWidth: width,
+			_frameHeight: height,
 			_gpuInputBufferSize: { width, height },
 			_gpuInputBuffers: Object.fromEntries( [ 'color', 'albedo', 'normal' ].map( name => [ name, device.createBuffer( { size, usage } ) ] ) ),
 		} );
