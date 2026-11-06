@@ -283,7 +283,7 @@ export class RenderSettings extends EventDispatcher {
 
 			handleConvergenceOverlay: ( value ) => {
 
-				stages.pathTracer?.setUniform( 'convergenceOverlay', value );
+				stages.pathTracer?.setConvergenceOverlay?.( value );
 				stages.compositor?.setConvergenceOverlay( value );
 
 				// With adaptive sampling off nothing kept m2 current, so the estimate has no history to

@@ -41,7 +41,12 @@
   thin sheet (no bend, no medium, both faces' Fresnel 2R / (1 + R)) in the glass path, the opaque path's transmission
   lobe and shadow rays; importers mark solid glass with thickness 1; the app gets a "Thin" switch. Changes how glTF
   glass without a volume renders (it stops refracting).
-- [ ] (low priority) OIDN made 150-spp renders slightly worse than raw (2026-08, before oidn-web 0.5.0 — re-measure). Defaults stop at 30–60 spp, so only raised caps hit it. Fix if real: fade OIDN out as the image converges.
+- [x] OIDN made 150-spp renders slightly worse than raw — real with oidn-webgpu 0.6.0 (2026-11-06): 1.153 on
+  `spheres-gradient`, 1.209 on `shadow-catcher-ground`. Fixed 2026-11-06: OIDN's output pass leans each pixel back to
+  the render where OIDN moved it more than the render's own noise explains (the path tracer's m2, from 8 spp): 1.036 /
+  0.996, and better than before on every gated scene at 64–150. Left: `spheres-gradient` 1.036 at 150 and ~1.14 at
+  256 — OIDN shifts colour slightly (the blend reads luminance) and keeps part of the noise at high spp; per-channel and
+  per-tile corrections each cost the noisy scenes more than they won (`~/RayzeeScratch/denoise-2026-11-06/`).
 - [ ] NRD is still worse than raw at 16 spp on several scenes (re-measured 2026-11-04, unchanged since 10-14):
   alpha-cutout 2.22, sheen 1.38, shadow-catcher 1.37, clearcoat 1.35, iridescence 1.08, anisotropy 1.03; at 1 spp it
   helps on all (0.64–0.87) and at 64 it hands over (1.000). `bench:denoise` has a 16 rung since 2026-11-04 (`sppLadder

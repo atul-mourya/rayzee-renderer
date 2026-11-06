@@ -72,6 +72,8 @@ export class PathTracer extends PathTracerStage {
 		this._auxCountAttr = null; // per pixel: the samples the aux guide averages (not marked unlikely)
 		this.builtReserve = null; // the reserved render size the per-pixel buffers were built at (none before the first build)
 		this._convDebugSource = null; // memoized handle set for the Compositor's convergence overlay
+		this._convergenceOverlayOn = false;
+		this._pixelStatsValid = false; // m2 has followed the colour since its first sample (getPixelVariance)
 		this._dilateFrozenUniform = uniform( 1, 'int' ); // 1 = dilate (default); 0 = plain per-pixel freeze
 		this._wavefrontReady = false;
 		// The background compile of the kernels last built (_compileKernels), and its build's number.
@@ -541,6 +543,10 @@ export class PathTracer extends PathTracerStage {
 
 		this._updateAccumulationUniforms( frameValue );
 		const auxMixes = this._updateAuxAccumulationUniforms( frameValue );
+		// A debug view (modes 1–10) runs no FinalWrite.
+		const debugView = this.visMode.value > 0 && this.visMode.value !== 11;
+		const statsLive = ( this.useAdaptiveSampling.value > 0 || this.usePixelFreeze.value > 0 || this.convergenceOverlay.value > 0 ) && ! debugView;
+		this._pixelStatsValid = statsLive && ( frameValue === 0 || this._pixelStatsValid );
 		this.frame.value = frameValue;
 		this.seedFrame.value = this._seedTick ++;
 		this.tracedFrames ++;
@@ -822,6 +828,7 @@ export class PathTracer extends PathTracerStage {
 			convergedFraction: this._convergedFraction,
 			convergedGeometryFraction: this._convergedGeometryFraction,
 			isComplete: this.isComplete,
+			pixelStats: this._pixelStatsValid,
 		};
 		const reads = [
 			readAttachment( 0 ),
@@ -886,6 +893,7 @@ export class PathTracer extends PathTracerStage {
 		this._auxSeedPending = this._auxGBufferEnabled && ! checkpoint.normalDepth;
 		this._convergedFraction = state.convergedFraction ?? 0;
 		this._convergedGeometryFraction = state.convergedGeometryFraction ?? 0;
+		this._pixelStatsValid = !! state.pixelStats;
 		this.isComplete = false;
 		// The survivor curve is not in a checkpoint, so a continuation is not the lockstep render.
 		this._accumulationLockstep = false;
@@ -1063,7 +1071,34 @@ export class PathTracer extends PathTracerStage {
 		if ( this._auxGBufferEnabled === enabled ) return;
 		this._auxGBufferEnabled = enabled;
 		this._auxGBufferUniform.value = enabled ? 1 : 0;
+		this._syncPixelStats();
 		this.restartAuxAccumulation();
+
+	}
+
+	setConvergenceOverlay( enabled ) {
+
+		this._convergenceOverlayOn = !! enabled;
+		this._syncPixelStats();
+
+	}
+
+	// The `convergenceOverlay` uniform keeps FinalWrite's per-pixel statistics live, for the overlay and for a denoiser.
+	_syncPixelStats() {
+
+		this.uniforms.set( 'convergenceOverlay', this._convergenceOverlayOn || this._auxGBufferEnabled );
+
+	}
+
+	/**
+	 * The per-pixel luminance second moment behind the accumulation, or null unless it followed every sample. A
+	 * denoiser weighs its change against the noise it implies; the buffer changes with the next frame.
+	 * @returns {{ m2: import('three/webgpu').StorageBufferAttribute, samples: number, width: number }|null}
+	 */
+	getPixelVariance() {
+
+		if ( ! this._m2Attr || ! this._pixelStatsValid || this.frameCount < 2 ) return null;
+		return { m2: this._m2Attr, samples: this.frameCount, width: this._wfRenderWidth.value };
 
 	}
 

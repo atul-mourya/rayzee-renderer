@@ -73,6 +73,22 @@ export const NRD_QUALITY_PRESETS = {
 	},
 };
 
+// A denoised pixel leans back towards its input where the denoiser changed it by more than the input's noise explains:
+// over a window of (2·radius + 1)², `change` is the mean squared luminance change and `variance` the input's mean
+// variance of the mean, so change − variance is the denoiser's bias², and variance / change the share of the denoised
+// colour with the least squared error. OIDN starts blending at minSamples, where the per-pixel variance is fit to use.
+export const DENOISE_BLEND = { radius: 2, minSamples: 8 };
+
+export const DENOISE_BLEND_WGSL = /* wgsl */`
+fn denoiseBlend( denoised: vec3f, input: vec3f, change: f32, variance: f32, weight: f32 ) -> vec3f {
+	let share = select( 1.0, min( variance / change, 1.0 ), change > 0.0 );
+	return mix( denoised, input, weight * ( 1.0 - share ) );
+}`;
+
+/** How far OIDN's blend may lean towards the input at `samples` per pixel: 0 below minSamples, 1 from twice that. */
+export const denoiseBlendWeight = ( samples, minSamples = DENOISE_BLEND.minSamples ) =>
+	Math.min( Math.max( ( samples - minSamples ) / minSamples, 0 ), 1 );
+
 // What the live denoisers, the final OIDN pass and the AI upscaler start with; a host's own state seeds from these.
 export const DENOISER_DEFAULTS = {
 	denoiserStrategy: 'none', // the live view's denoiser, one of DENOISER_STRATEGIES

@@ -353,10 +353,12 @@ export class DenoisingManager extends EventDispatcher {
 				if ( history ) return history;
 				const readTextures = pt.storageTextures.getReadTextures();
 				const { backend } = this.renderer;
+				const variance = pt.getPixelVariance?.();
 				return {
 					color: backend.get( readTextures.color ).texture,
 					normal: backend.get( readTextures.normalDepth ).texture,
-					albedo: backend.get( readTextures.albedo ).texture
+					albedo: backend.get( readTextures.albedo ).texture,
+					variance: variance && { ...variance, buffer: backend.get( variance.m2 ).buffer },
 				};
 
 			},

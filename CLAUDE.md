@@ -766,6 +766,11 @@ environment's exact table (`environment/EnvironmentExactTable.js`) serves both i
   `renderToBuffer`'s sRGB readback (float texture input, alpha kept). `tests/gpu/toneMapParity.test.js` checks the two on
   Dawn in Node, and `bench:upscale` again in Chrome before anything else. Its `output: 'planar'` mode feeds the
   AI upscaler's network float planes encoded with a 2.2 power, not the sRGB curve — what the upscaler always used.
+- **OIDN leans back towards its input** where it moved a pixel by more than its noise explains: over 5×5, the
+  denoised colour keeps variance / (mean squared luminance change) of its change, the least-squares blend
+  (`DENOISE_BLEND_WGSL`, `viewer/denoise/DenoiserSettings.js`), in its output pass from 8 samples on the path tracer's
+  m2 (`getPixelVariance()`, kept live while the aux G-buffer is on). OIDN at 150 spp went 1.153 / 1.209 → 1.036 /
+  0.996 of raw's error.
 - **The guide behind smooth glass follows its likelier branch**: a path that took the other one is flagged
   `RAY_FLAG.AUX_UNLIKELY` and FinalWrite averages the guide over unflagged samples per pixel (`guideWeights`). Following
   the sampled branch speckled the guide behind thick glass and the clean-guide OIDN models kept the speckle. See "Render

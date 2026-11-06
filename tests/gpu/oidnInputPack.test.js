@@ -171,4 +171,100 @@ describeGPU( 'OIDN input copy', () => {
 
 	} );
 
+	function readHalfTexture( tex, width, height ) {
+
+		const rowBytes = Math.ceil( width * 8 / 256 ) * 256;
+		const map = device.createBuffer( { size: rowBytes * height, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ } );
+		const encoder = device.createCommandEncoder();
+		encoder.copyTextureToBuffer( { texture: tex }, { buffer: map, bytesPerRow: rowBytes }, [ width, height ] );
+		device.queue.submit( [ encoder.finish() ] );
+		return map.mapAsync( GPUMapMode.READ ).then( () => {
+
+			const half = new Uint16Array( map.getMappedRange().slice( 0 ) );
+			map.destroy();
+			const toFloat = h => {
+
+				const e = ( h >> 10 ) & 31, f = h & 1023;
+				return e ? ( 1 + f / 1024 ) * 2 ** ( e - 15 ) : f / 1024 * 2 ** - 14;
+
+			};
+
+			return ( x, y ) => toFloat( half[ y * rowBytes / 2 + x * 4 ] );
+
+		} );
+
+	}
+
+	it( 'puts each pixel\'s variance of the mean in the albedo\'s fourth channel', async () => {
+
+		const width = 21, height = 9, samples = 40;
+		const W = align( width );
+		const p = pass( width, height );
+		const color = new Float32Array( W * align( height ) * 4 );
+		const m2 = new Float32Array( width * height );
+		for ( let y = 0; y < height; y ++ ) for ( let x = 0; x < width; x ++ ) {
+
+			const c = 0.1 + x * 0.05, i = ( ( y + BORDER ) * W + x + BORDER ) * 4;
+			color.set( [ c, c, c, 1 ], i );
+			m2[ y * width + x ] = c * c + 0.001 * ( y + 1 );
+
+		}
+
+		device.queue.writeBuffer( p._gpuInputBuffers.color, 0, color );
+		const buffer = device.createBuffer( { size: m2.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST } );
+		device.queue.writeBuffer( buffer, 0, m2 );
+
+		expect( p._writeVariance( device, { buffer, samples, width }, width, height ) ).toEqual( { weight: 1, radius: 2 } );
+
+		const albedo = new Float32Array( await read( p._gpuInputBuffers.albedo ) );
+		for ( let y = 0; y < height; y ++ ) for ( let x = 0; x < width; x ++ ) {
+
+			expect( albedo[ ( ( y + BORDER ) * W + x + BORDER ) * 4 + 3 ] ).toBeCloseTo( 0.001 * ( y + 1 ) / ( samples - 1 ), 6 );
+
+		}
+
+		expect( p._writeVariance( device, { buffer, samples: 8, width }, width, height ) ).toBe( null );
+
+	} );
+
+	it( 'leans the denoised frame back to its input where it moved more than the input\'s noise', async () => {
+
+		const width = 24, height = 9;
+		const W = align( width ), H = align( height );
+		const p = pass( width, height );
+		p._ensureScalePipelines( device );
+		device.queue.writeBuffer( p._inputScaleBuffer, 0, new Float32Array( [ 1 ] ) );
+
+		// Left: the denoiser moved every pixel 0.5 against a variance of 1e-4, a bias. Right: 0.01 against 1, noise.
+		const input = new Float32Array( W * H * 4 ), albedo = new Float32Array( W * H * 4 ), denoised = new Float32Array( W * H * 4 );
+		for ( let y = 0; y < H; y ++ ) for ( let x = 0; x < W; x ++ ) {
+
+			const i = ( y * W + x ) * 4, left = x - BORDER < width / 2;
+			input.set( [ 0.3, 0.3, 0.3, 1 ], i );
+			albedo.set( [ 0.5, 0.5, 0.5, left ? 1e-4 : 1 ], i );
+			const d = left ? 0.8 : 0.31;
+			denoised.set( [ d, d, d, 1 ], i );
+
+		}
+
+		device.queue.writeBuffer( p._gpuInputBuffers.color, 0, input );
+		device.queue.writeBuffer( p._gpuInputBuffers.albedo, 0, albedo );
+		const src = device.createBuffer( { size: denoised.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST } );
+		device.queue.writeBuffer( src, 0, denoised );
+
+		p._unpackToTexture( src, { x: 0, y: 0, width, height }, true, { weight: 1, radius: 2 } );
+		const blended = await readHalfTexture( p._outGPUTexture, width, height );
+		for ( let y = 0; y < height; y ++ ) {
+
+			for ( let x = 0; x < 9; x ++ ) expect( blended( x, y ) ).toBeCloseTo( 0.3, 3 );
+			for ( let x = 15; x < width; x ++ ) expect( blended( x, y ) ).toBeCloseTo( 0.31, 3 );
+
+		}
+
+		p._unpackToTexture( src, { x: 0, y: 0, width, height }, true, null );
+		const plain = await readHalfTexture( p._outGPUTexture, width, height );
+		expect( plain( 0, 0 ) ).toBeCloseTo( 0.8, 3 );
+
+	} );
+
 } );

@@ -1,6 +1,7 @@
 import { EventDispatcher, HalfFloatType, RGBAFormat, NearestFilter, NoColorSpace, ClampToEdgeWrapping } from 'three';
 import { ExternalTexture } from 'three/webgpu';
 import { createLogger, fmt } from '../../Logger.js';
+import { DENOISE_BLEND, DENOISE_BLEND_WGSL, denoiseBlendWeight } from './DenoiserSettings.js';
 
 const log = createLogger( 'oidn' );
 
@@ -166,6 +167,35 @@ const SCALE_MAX_WG_X = 32768;
 // pass apply those to this picture exactly as they do to the raw one.
 const UNPACK_WG_SIZE = 16;
 const UNPACK_PARAMS_BYTES = 32;
+// The weights FinalWrite's second moment uses (shaders/Common.js luminance).
+const LUMINANCE_WGSL = 'vec3<f32>( 0.2126, 0.7152, 0.0722 )';
+const VARIANCE_WG_SIZE = 8;
+
+// The variance of each pixel's mean luminance, from the path tracer's second moment, into the albedo input's spare
+// fourth channel (the network reads three): the output pass weighs the denoised change against it.
+const VARIANCE_WGSL = /* wgsl */`
+struct VarianceParams {
+	bufWidth: u32,
+	frameW: u32,
+	frameH: u32,
+	renderW: u32,
+	samples: f32,
+};
+
+@group(0) @binding(0) var<storage, read> m2: array<f32>;
+@group(0) @binding(1) var<storage, read> col: array<vec4<f32>>;
+@group(0) @binding(2) var<storage, read_write> alb: array<vec4<f32>>;
+@group(0) @binding(3) var<uniform> P: VarianceParams;
+
+@compute @workgroup_size(${VARIANCE_WG_SIZE}, ${VARIANCE_WG_SIZE})
+fn main( @builtin(global_invocation_id) gid: vec3<u32> ) {
+
+	if ( gid.x >= P.frameW || gid.y >= P.frameH ) { return; }
+	let i = ( gid.y + ${OIDN_BORDER}u ) * P.bufWidth + gid.x + ${OIDN_BORDER}u;
+	let mean = dot( col[ i ].xyz, ${LUMINANCE_WGSL} );
+	alb[ i ].w = max( m2[ gid.y * P.renderW + gid.x ] - mean * mean, 0.0 ) / ( P.samples - 1.0 );
+}
+`;
 
 const UNPACK_WGSL = /* wgsl */`
 struct UnpackParams {
@@ -175,8 +205,9 @@ struct UnpackParams {
 	tileW: u32,
 	tileH: u32,
 	border: u32,
-	pad1: u32,
-	pad2: u32,
+	radius: u32,
+	// How far the blend below may lean towards the input; 0 leaves the denoised picture as it is.
+	weight: f32,
 };
 
 @group(0) @binding(0) var<storage, read> src: array<vec4<f32>>;
@@ -184,6 +215,9 @@ struct UnpackParams {
 @group(0) @binding(2) var<storage, read> scaleBuf: array<f32>;
 @group(0) @binding(3) var<storage, read> inColor: array<vec4<f32>>;
 @group(0) @binding(4) var dst: texture_storage_2d<rgba16float, write>;
+@group(0) @binding(5) var<storage, read> inAlbedo: array<vec4<f32>>;
+
+${DENOISE_BLEND_WGSL}
 
 @compute @workgroup_size(${UNPACK_WG_SIZE}, ${UNPACK_WG_SIZE})
 fn main( @builtin(global_invocation_id) gid: vec3<u32> ) {
@@ -197,7 +231,31 @@ fn main( @builtin(global_invocation_id) gid: vec3<u32> ) {
 	// scaleBuf is the autoexposure factor the input was multiplied by; dividing it out returns
 	// the renderer's units. Alpha rides through from the path tracer so a transparent background
 	// survives the denoise.
-	textureStore( dst, vec2<u32>( px, py ), vec4<f32>( src[ si ].xyz / scaleBuf[ 0 ], inColor[ si ].w ) );
+	let scale = scaleBuf[ 0 ];
+	var color = src[ si ].xyz / scale;
+
+	if ( P.weight > 0.0 ) {
+
+		// The window stays in this tile: the rest of the output may not be written yet.
+		var change = 0.0;
+		var variance = 0.0;
+		let r = i32( P.radius );
+		for ( var dy = - r; dy <= r; dy ++ ) {
+			for ( var dx = - r; dx <= r; dx ++ ) {
+				let qx = u32( clamp( i32( px ) + dx, i32( P.tileX ), i32( P.tileX + P.tileW ) - 1 ) );
+				let qy = u32( clamp( i32( py ) + dy, i32( P.tileY ), i32( P.tileY + P.tileH ) - 1 ) );
+				let qi = ( qy + P.border ) * P.srcWidth + qx + P.border;
+				let d = dot( src[ qi ].xyz - inColor[ qi ].xyz, ${LUMINANCE_WGSL} ) / scale;
+				change += d * d;
+				variance += inAlbedo[ qi ].w;
+			}
+		}
+		let taps = f32( ( 2 * r + 1 ) * ( 2 * r + 1 ) );
+		color = denoiseBlend( color, inColor[ si ].xyz / scale, change / taps, variance / taps, P.weight );
+
+	}
+
+	textureStore( dst, vec2<u32>( px, py ), vec4<f32>( color, inColor[ si ].w ) );
 }
 `;
 
@@ -737,6 +795,7 @@ export class OIDNDenoiser extends EventDispatcher {
 		this._ensureGPUInputBuffers( width, height );
 
 		this._copyInputs( device, textures, width, height );
+		const blend = textures.variance ? this._writeVariance( device, textures.variance, width, height ) : null;
 
 		// Autoexposure and the pre-multiply it drives, both on the GPU and both queued behind the
 		// copies above. Nothing is awaited here — an await would drain the queue before the UNet.
@@ -759,7 +818,54 @@ export class OIDNDenoiser extends EventDispatcher {
 			normal: image( this._gpuInputBuffers.normal )
 		};
 
-		return this._executeWithAbortGPU( config, continuous );
+		return this._executeWithAbortGPU( config, continuous, blend );
+
+	}
+
+	/**
+	 * Each pixel's variance of the mean into the albedo input's fourth channel, while the colour is still in the renderer's
+	 * units. @returns {{ weight: number, radius: number }|null} the output pass's blend, null when it would do nothing
+	 * @private
+	 */
+	_writeVariance( device, { buffer, samples, width: renderWidth }, width, height ) {
+
+		const weight = denoiseBlendWeight( samples );
+		if ( weight <= 0 ) return null;
+
+		if ( ! this._variancePipeline ) {
+
+			this._variancePipeline = device.createComputePipeline( {
+				label: 'oidn-variance',
+				layout: 'auto',
+				compute: { module: device.createShaderModule( { label: 'oidn-variance', code: VARIANCE_WGSL } ), entryPoint: 'main' },
+			} );
+			this._varianceParams = device.createBuffer( { label: 'oidn-variance-params', size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST } );
+
+		}
+
+		const input = oidnInputSize( width, height );
+		const params = new ArrayBuffer( 32 );
+		new Uint32Array( params, 0, 4 ).set( [ input.width, width, height, renderWidth ] );
+		new Float32Array( params, 16, 1 )[ 0 ] = samples;
+		device.queue.writeBuffer( this._varianceParams, 0, params );
+
+		const encoder = device.createCommandEncoder( { label: 'oidn-variance' } );
+		const pass = encoder.beginComputePass( { label: 'oidn-variance' } );
+		pass.setPipeline( this._variancePipeline );
+		pass.setBindGroup( 0, device.createBindGroup( {
+			layout: this._variancePipeline.getBindGroupLayout( 0 ),
+			entries: [
+				{ binding: 0, resource: { buffer } },
+				{ binding: 1, resource: { buffer: this._gpuInputBuffers.color } },
+				{ binding: 2, resource: { buffer: this._gpuInputBuffers.albedo } },
+				{ binding: 3, resource: { buffer: this._varianceParams } },
+			],
+		} ) );
+		pass.dispatchWorkgroups( Math.ceil( width / VARIANCE_WG_SIZE ), Math.ceil( height / VARIANCE_WG_SIZE ) );
+		pass.end();
+		device.queue.submit( [ encoder.finish() ] );
+
+		return { weight, radius: DENOISE_BLEND.radius };
 
 	}
 
@@ -1179,8 +1285,9 @@ export class OIDNDenoiser extends EventDispatcher {
 	 * @param {GPUBuffer} src - rgba32float, the bordered input size, scaled by the input autoexposure
 	 * @param {{x: number, y: number, width: number, height: number}} rect - in frame pixels
 	 * @param {boolean} [denoised=true] - false for the raw render laid under a tiled run
+	 * @param {{ weight: number, radius: number }|null} [blend] - lean towards the input where the change exceeds its noise
 	 */
-	_unpackToTexture( src, rect, denoised = true ) {
+	_unpackToTexture( src, rect, denoised = true, blend = null ) {
 
 		const device = this.gpuDevice;
 		if ( ! device || ! this._ensureScalePipelines( device ) ) return;
@@ -1199,7 +1306,10 @@ export class OIDNDenoiser extends EventDispatcher {
 		try {
 
 			const srcWidth = oidnInputSize( this._gpuInputBufferSize.width, this._gpuInputBufferSize.height ).width;
-			device.queue.writeBuffer( params, 0, new Uint32Array( [ srcWidth, x, y, width, height, OIDN_BORDER, 0, 0 ] ) );
+			const values = new ArrayBuffer( UNPACK_PARAMS_BYTES );
+			new Uint32Array( values, 0, 7 ).set( [ srcWidth, x, y, width, height, OIDN_BORDER, blend?.radius ?? 0 ] );
+			new Float32Array( values, 28, 1 )[ 0 ] = denoised && blend ? blend.weight : 0;
+			device.queue.writeBuffer( params, 0, values );
 
 			const bindGroup = device.createBindGroup( {
 				label: 'oidn-output-unpack',
@@ -1209,7 +1319,8 @@ export class OIDNDenoiser extends EventDispatcher {
 					{ binding: 1, resource: { buffer: params } },
 					{ binding: 2, resource: { buffer: this._inputScaleBuffer } },
 					{ binding: 3, resource: { buffer: this._gpuInputBuffers.color } },
-					{ binding: 4, resource: this._outGPUTexture.createView() }
+					{ binding: 4, resource: this._outGPUTexture.createView() },
+					{ binding: 5, resource: { buffer: this._gpuInputBuffers.albedo } },
 				]
 			} );
 
@@ -1243,7 +1354,7 @@ export class OIDNDenoiser extends EventDispatcher {
 	 * Promise wrapper around tileExecute for the GPU path. Each tile is written straight into the
 	 * output picture on the card; 'tileProgress' is what puts it on screen.
 	 */
-	_executeWithAbortGPU( config, continuous = false ) {
+	_executeWithAbortGPU( config, continuous = false, blend = null ) {
 
 		return new Promise( ( resolve, reject ) => {
 
@@ -1295,7 +1406,7 @@ export class OIDNDenoiser extends EventDispatcher {
 
 						// Nothing to wait for on the normal path: the progress callback wrote every
 						// tile straight into the output picture, and tiles cover the image exactly.
-						if ( this._tilesWritten === 0 ) this._displayGPUOutput( output );
+						if ( this._tilesWritten === 0 ) this._displayGPUOutput( output, blend );
 
 						// DENOISING_END (which gates screenshot/video capture) fires only after this
 						// resolves, so what a capture reads is always a complete picture.
@@ -1325,7 +1436,7 @@ export class OIDNDenoiser extends EventDispatcher {
 
 					const rect = { x, y, width, height };
 
-					this._unpackToTexture( outputData.data, rect );
+					this._unpackToTexture( outputData.data, rect, true, blend );
 					this._tilesWritten ++;
 
 					this.dispatchEvent( {
@@ -1347,7 +1458,7 @@ export class OIDNDenoiser extends EventDispatcher {
 	 * Degenerate fallback when no per-tile progress was emitted: one authoritative full paint.
 	 * @param {{ data: GPUBuffer }} output
 	 */
-	_displayGPUOutput( { data: gpuBuffer } ) {
+	_displayGPUOutput( { data: gpuBuffer }, blend = null ) {
 
 		if ( ! this.gpuDevice ) {
 
@@ -1357,7 +1468,7 @@ export class OIDNDenoiser extends EventDispatcher {
 		}
 
 		const { width, height } = this._gpuInputBufferSize;
-		this._unpackToTexture( gpuBuffer, { x: 0, y: 0, width, height } );
+		this._unpackToTexture( gpuBuffer, { x: 0, y: 0, width, height }, true, blend );
 
 	}
 
@@ -1454,6 +1565,8 @@ export class OIDNDenoiser extends EventDispatcher {
 		this._broken?.destroy();
 		this._brokenRead?.destroy();
 		this._broken = this._brokenRead = null;
+		this._varianceParams?.destroy();
+		this._varianceParams = this._variancePipeline = null;
 		this._colorScalePipeline = null;
 		this._lumReducePipeline = null;
 		this._lumFinalizePipeline = null;

@@ -184,6 +184,9 @@ engine.denoisingManager.setUpscalerScaleFactor(2)         // 2 or 4
 engine.denoisingManager.setUpscalerQuality('quality')     // 'fast' | 'balanced' | 'quality'
 ```
 
+OIDN leans back towards the render from 8 samples a pixel, wherever it changed the render by more than its own noise
+explains: the slight blur it gives an almost converged render comes back from the render itself.
+
 ## Local exposure
 
 Unreal Engine 5's local exposure: brings large bright (and, if asked, dark) areas toward middle grey while keeping their
