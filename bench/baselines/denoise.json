@@ -310,34 +310,34 @@
 		"denoisedRmse": 0.0013894614034466477
 	},
 	"clearcoat-carpaint/nrd/1": {
-		"ratio": 0.6378703095211926,
-		"rawRmse": 0.026933236152781447,
-		"denoisedRmse": 0.017179911681182075
+		"ratio": 0.648911143169738,
+		"rawRmse": 0.025722947320831267,
+		"denoisedRmse": 0.016691907151655565
 	},
 	"clearcoat-carpaint/oidn/1": {
-		"ratio": 0.2990138551744384,
-		"rawRmse": 0.026933236152781447,
-		"denoisedRmse": 0.00805341077436674
+		"ratio": 0.30321979520041614,
+		"rawRmse": 0.025722947320831267,
+		"denoisedRmse": 0.00779970681857355
 	},
 	"clearcoat-carpaint/oidn-tiled/1": {
-		"ratio": 0.2990138551744384,
-		"rawRmse": 0.026933236152781447,
-		"denoisedRmse": 0.00805341077436674
+		"ratio": 0.30321979520041614,
+		"rawRmse": 0.025722947320831267,
+		"denoisedRmse": 0.00779970681857355
 	},
 	"clearcoat-carpaint/nrd/64": {
 		"ratio": 1,
-		"rawRmse": 0.004584094040467724,
-		"denoisedRmse": 0.004584094040467724
+		"rawRmse": 0.004537706908142103,
+		"denoisedRmse": 0.004537706908142103
 	},
 	"clearcoat-carpaint/oidn/64": {
-		"ratio": 0.4940233340856632,
-		"rawRmse": 0.004584094040467724,
-		"denoisedRmse": 0.002264649421634084
+		"ratio": 0.48251432788626725,
+		"rawRmse": 0.004537706908142103,
+		"denoisedRmse": 0.0021895085989270587
 	},
 	"clearcoat-carpaint/oidn-tiled/64": {
-		"ratio": 0.4940216776417403,
-		"rawRmse": 0.004584094040467724,
-		"denoisedRmse": 0.002264641828339369
+		"ratio": 0.48251441620410934,
+		"rawRmse": 0.004537706908142103,
+		"denoisedRmse": 0.002189508999687541
 	},
 	"furnace-diffuse-transmission/nrd/1": {
 		"ratio": 0.07419244431693571,
@@ -1230,34 +1230,34 @@
 		"denoisedRmse": 0.0010303627637820519
 	},
 	"clearcoat-carpaint/nrd/16": {
-		"ratio": 0.7733723915361883,
-		"rawRmse": 0.0049052827684448845,
-		"denoisedRmse": 0.003793610265793475
+		"ratio": 0.709225571750934,
+		"rawRmse": 0.004997149009583905,
+		"denoisedRmse": 0.0035441058634467586
 	},
 	"clearcoat-carpaint/oidn/16": {
-		"ratio": 0.5571863369918942,
-		"rawRmse": 0.0049052827684448845,
-		"denoisedRmse": 0.002733156537659263
+		"ratio": 0.5181994576214376,
+		"rawRmse": 0.004997149009583905,
+		"denoisedRmse": 0.002589519906419884
 	},
 	"clearcoat-carpaint/oidn-tiled/16": {
-		"ratio": 0.5571861224069822,
-		"rawRmse": 0.0049052827684448845,
-		"denoisedRmse": 0.0027331554850595916
+		"ratio": 0.5182048762221328,
+		"rawRmse": 0.004997149009583905,
+		"denoisedRmse": 0.0025895469839749812
 	},
 	"clearcoat-carpaint/nrd/150": {
 		"ratio": 1,
-		"rawRmse": 0.003596572868296421,
-		"denoisedRmse": 0.003596572868296421
+		"rawRmse": 0.0033993061983666082,
+		"denoisedRmse": 0.0033993061983666082
 	},
 	"clearcoat-carpaint/oidn/150": {
-		"ratio": 0.5834616749738479,
-		"rawRmse": 0.003596572868296421,
-		"denoisedRmse": 0.0020984624299017264
+		"ratio": 0.6128868212785924,
+		"rawRmse": 0.0033993061983666082,
+		"denoisedRmse": 0.002083389970469527
 	},
 	"clearcoat-carpaint/oidn-tiled/150": {
-		"ratio": 0.5834652976717157,
-		"rawRmse": 0.003596572868296421,
-		"denoisedRmse": 0.002098475459198588
+		"ratio": 0.6128868212785924,
+		"rawRmse": 0.0033993061983666082,
+		"denoisedRmse": 0.002083389970469527
 	},
 	"alpha-cutout/nrd/16": {
 		"ratio": 0.6188069931582091,

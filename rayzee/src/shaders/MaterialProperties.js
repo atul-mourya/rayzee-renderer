@@ -3,7 +3,7 @@ import { ClampToEdgeWrapping, DataTexture, FloatType, LinearFilter, RGBAFormat }
 
 import { BRDFWeights, MaterialCache, MaterialClassification, DFGResult, BaseFresnel } from './Struct.js';
 
-import { PI, PI_INV, TWO_PI, EPSILON, MIN_ROUGHNESS, MIN_CLEARCOAT_ROUGHNESS, MAX_ROUGHNESS, XYZ_TO_REC709, square, classifyMaterial } from './Common.js';
+import { PI, PI_INV, TWO_PI, EPSILON, MIN_ROUGHNESS, MIN_CLEARCOAT_ROUGHNESS, MAX_ROUGHNESS, XYZ_TO_REC709, REC709_LUMINANCE_COEFFICIENTS, square, classifyMaterial } from './Common.js';
 
 import { fresnelSchlickFloat, fresnel0ToIor, iorToFresnel0Vec3, iorToFresnel0, dielectricF0 } from './Fresnel.js';
 import { materialLayers } from './SceneResources.js';
@@ -479,18 +479,19 @@ export const calculateBRDFWeights = Fn( ( [ material, mc, cache ], builder ) => 
 		.mul( float( 1.0 ).sub( material.transmission ) ).toVar();
 	const sheen = ( layers.sheen ? material.sheen.mul( cache.maxSheenColor ) : float( 0.0 ) ).toVar();
 
-	// The coat's own smoothness: by the base's, a coat over a matte base was never drawn.
+	// A smooth coat carries more of the light the darker its base is.
 	const clearcoat = float( 0.0 ).toVar();
 	if ( layers.clearcoat ) {
 
-		const coatSmoothness = float( 1.0 ).sub( material.clearcoatRoughness );
+		const baseLuminance = dot( material.color.xyz, REC709_LUMINANCE_COEFFICIENTS );
+		const share = max( invRoughness, float( 1.0 ).sub( material.clearcoatRoughness ).mul( max( float( 1.0 ).sub( baseLuminance ), 0.25 ) ) );
 		If( mc.hasClearcoat, () => {
 
-			clearcoat.assign( material.clearcoat.mul( coatSmoothness ).mul( 0.4 ) );
+			clearcoat.assign( material.clearcoat.mul( share ).mul( 0.4 ) );
 
 		} ).Else( () => {
 
-			clearcoat.assign( material.clearcoat.mul( coatSmoothness ).mul( 0.35 ) );
+			clearcoat.assign( material.clearcoat.mul( share ).mul( 0.35 ) );
 
 		} );
 

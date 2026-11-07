@@ -262,15 +262,15 @@
 			"samples": 2048
 		},
 		"golden": {
-			"meanR": 0.16417215228142368,
-			"meanG": 0.13188437410466491,
-			"meanB": 0.15145018629439022,
-			"meanLuminance": 0.14016140738514066,
-			"maxLuminance": 21.416558083343507,
+			"meanR": 0.1641739734477028,
+			"meanG": 0.1318825048788952,
+			"meanB": 0.15144771558868086,
+			"meanLuminance": 0.1401602793098703,
+			"maxLuminance": 21.406615061569212,
 			"nonFinite": 0,
 			"samples": 64
 		},
-		"rmseVsTruth": 0.004584094040467724
+		"rmseVsTruth": 0.004537706908142103
 	},
 	"alpha-cutout": {
 		"truth": {
