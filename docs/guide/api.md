@@ -224,6 +224,11 @@ import {
   displayCanvasFit,
 } from 'rayzee';
 
+// A material's subsurface inputs (`subsurfaceColor`, the single-scatter albedo; `subsurfaceRadius`, the mean free path
+// 1 / σt) from the colour it shows and its diffuse mean free path — the subsurface radius of RenderMan and the
+// Physically Based database — and its IOR; the radius comes back in the path's unit
+import { subsurfaceFromDiffuse } from 'rayzee';
+
 // Where the sun stands for a solar time, date and latitude (degrees; azimuth clockwise from north)
 import { sunPosition, timeForSunElevation, dayOfYearForMonth } from 'rayzee';
 

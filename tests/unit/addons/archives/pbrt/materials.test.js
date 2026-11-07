@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { Texture } from 'three';
 import { buildMaterial } from '@/core/addons/archives/pbrt/PBRTMaterials.js';
-import { albedoForReflectance, dipoleReflectance } from '@/core/addons/archives/pbrt/PBRTScattering.js';
+import { albedoForReflectance, dipoleReflectance } from '@/core/materials/Scattering.js';
 
 const ctx = { resolveNamedTexture: async () => null, warn: () => {} };
 const param = ( type, ...value ) => ( { type, value } );

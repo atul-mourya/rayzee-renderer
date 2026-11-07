@@ -1,6 +1,6 @@
 /**
- * Scattering coefficients for pbrt's `subsurface` material: its named media and the inversion from a diffuse
- * reflectance to the albedo that produces it.
+ * Scattering coefficients for pbrt's `subsurface` material: its named media. The dipole that turns a reflectance into an
+ * albedo is the engine's (materials/Scattering.js).
  */
 
 // pbrt-v4's table (media.cpp): [ σ′s, σa ] in mm⁻¹, from Jensen et al. 2001 and Narasimhan et al. 2006.
@@ -59,35 +59,5 @@ export function namedScattering( name ) {
 
 	const entry = MEASURED[ name ];
 	return entry ? { sigmaS: entry[ 0 ].slice(), sigmaA: entry[ 1 ].slice() } : null;
-
-}
-
-/**
- * Total diffuse reflectance of a half space of reduced albedo α′ and relative index η under the classical dipole
- * (Jensen et al. 2001): (α′ / 2) (1 + e^(−4/3 A √(3(1 − α′)))) e^(−√(3(1 − α′))).
- */
-export function dipoleReflectance( albedo, eta ) {
-
-	const fdr = - 1.440 / ( eta * eta ) + 0.710 / eta + 0.668 + 0.0636 * eta;
-	const A = ( 1 + fdr ) / ( 1 - fdr );
-	const s = Math.sqrt( 3 * ( 1 - albedo ) );
-	return albedo / 2 * ( 1 + Math.exp( - 4 / 3 * A * s ) ) * Math.exp( - s );
-
-}
-
-/** The reduced albedo whose dipole reflectance is `reflectance` (pbrt inverts its own table the same way). */
-export function albedoForReflectance( reflectance, eta ) {
-
-	const target = Math.min( Math.max( reflectance, 0 ), dipoleReflectance( 1, eta ) );
-	let lo = 0, hi = 1;
-	for ( let i = 0; i < 48; i ++ ) {
-
-		const mid = ( lo + hi ) / 2;
-		if ( dipoleReflectance( mid, eta ) < target ) lo = mid;
-		else hi = mid;
-
-	}
-
-	return ( lo + hi ) / 2;
 
 }

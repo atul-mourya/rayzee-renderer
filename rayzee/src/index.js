@@ -50,6 +50,9 @@ export { toPortable, fromPortable } from './Portable.js';
 // glTF alphaMode derivation — the one definition, shared with hosts that edit materials
 export { deriveAlphaMode, MATERIAL_VALUE_SOURCE } from './scene/GeometryExtractor.js';
 
+// Subsurface inputs from the colour a material shows and how far its light spreads (RenderMan, Physically Based)
+export { subsurfaceFromDiffuse } from './materials/Scattering.js';
+
 // Scene-level authoring metadata embedded in model files (glTF `extras`)
 export { extractSceneMetadata, parseSceneMetadata } from './loaders/SceneMetadata.js';
 

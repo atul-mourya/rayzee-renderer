@@ -9,7 +9,8 @@
  */
 
 import { MeshPhysicalMaterial, Color, DoubleSide } from 'three';
-import { namedScattering, dipoleReflectance, albedoForReflectance } from './PBRTScattering.js';
+import { namedScattering } from './PBRTScattering.js';
+import { dipoleReflectance, albedoForReflectance } from '../../../materials/Scattering.js';
 import { approximated, param } from './PBRTParser.js';
 import { uvKey } from './PBRTTextureBake.js';
 
