@@ -998,6 +998,44 @@ describe( 'PBRT scene builder: pbrt-v4 fidelity', () => {
 
 	} );
 
+	it( 'decodes a PNG colour map by its `encoding`, and any other 8-bit image as sRGB whatever it says', async () => {
+
+		const shape = ( z ) => `Shape "trianglemesh" "point3 P" [ 0 0 ${z}  1 0 ${z}  0 1 ${z} ] "integer indices" [ 0 1 2 ] "point2 uv" [ 0 0 1 0 0 1 ]`;
+		const { meshes } = await meshesOf( `
+			Texture "linear" "spectrum" "imagemap" "string filename" "a.png" "string encoding" "linear"
+			Texture "gamma" "spectrum" "imagemap" "string filename" "a.png" "string encoding" "gamma 2"
+			Texture "srgb" "spectrum" "imagemap" "string filename" "a.png"
+			Texture "jpeg" "spectrum" "imagemap" "string filename" "b.jpg" "string encoding" "linear"
+			Material "diffuse" "texture reflectance" "linear"
+			${shape( 0 )}
+			Material "diffuse" "texture reflectance" "gamma"
+			${shape( 1 )}
+			Material "diffuse" "texture reflectance" "srgb"
+			${shape( 2 )}
+			Material "diffuse" "texture reflectance" "jpeg"
+			${shape( 3 )}
+			Texture "rough" "float" "imagemap" "string filename" "b.jpg" "string encoding" "linear"
+			Texture "roughAsSRGB" "float" "imagemap" "string filename" "b.jpg"
+			Material "conductor" "texture roughness" "rough"
+			${shape( 4 )}
+			Material "conductor" "texture roughness" "roughAsSRGB"
+			${shape( 5 )}
+		`, {}, { 'a.png': image( 0, 64, 255 ), 'b.jpg': image( 0, 64, 255 ) } );
+
+		const reds = ( mesh ) => Array.from( mesh.material.map.image.data.filter( ( _, i ) => i % 4 === 0 ) );
+		const srgb = ( v ) => Math.round( 255 * ( v <= 0.0031308 ? 12.92 * v : 1.055 * v ** ( 1 / 2.4 ) - 0.055 ) );
+		// The map is sampled as sRGB: a linear or gamma PNG is decoded, then encoded as sRGB.
+		expect( reds( meshes[ 0 ] ) ).toEqual( [ 0, srgb( 64 / 255 ), 255 ] );
+		expect( reds( meshes[ 1 ] ) ).toEqual( [ 0, srgb( ( 64 / 255 ) ** 2 ), 255 ] );
+		expect( reds( meshes[ 2 ] ) ).toEqual( [ 0, 64, 255 ] );
+		expect( reds( meshes[ 3 ] ) ).toEqual( [ 0, 64, 255 ] );
+		// Baked as data too, a JPEG's "linear" is read as sRGB.
+		const greens = ( map ) => Array.from( map.image.data.filter( ( _, i ) => i % 4 === 1 ) );
+		expect( greens( meshes[ 4 ].material.roughnessMap ) ).toEqual( greens( meshes[ 5 ].material.roughnessMap ) );
+		expect( greens( meshes[ 4 ].material.roughnessMap )[ 1 ] ).not.toBe( 128 );
+
+	} );
+
 	// One row of RGBA texels.
 	const rgba = ( ...texels ) => new DataTexture( new Uint8Array( texels.flat() ), texels.length, 1 );
 

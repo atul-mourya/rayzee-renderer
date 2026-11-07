@@ -198,7 +198,7 @@ once looked at. How it should have been built so they could not happen:
   unless `twosided`), `alpha` ignored, a `mix` clamping after mixing (pbrt clamps each albedo first). A default read off
   one file misleads too: `textures.cpp` gives a non-PNG image the encoding `linear`, but `Image::Read` (`util/image.cpp`)
   decodes JPG and TGA through stb_image as sRGB whatever it says, so reading every 8-bit image as sRGB matches pbrt.
-  Still differs: an explicit `encoding` on a PNG colour map is ignored here (no local scene sets one). Keep one table
+  An explicit `encoding` on a PNG colour map is honoured since 2026-11-07 (decoded and baked to sRGB). Keep one table
   per directive — pbrt's parameter names, types, defaults, and the `file:line` in pbrt-v4 they came from — and derive
   the translators and their tests from it.
 - **Account for every parameter.** pbrt itself calls `ReportUnused()` on each directive. A translator that marks what it

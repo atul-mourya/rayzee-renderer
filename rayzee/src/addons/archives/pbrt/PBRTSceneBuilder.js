@@ -112,7 +112,7 @@ const DEFAULT_CURVE_SIDES = { flat: 1, ribbon: 1, cylinder: 2 };
 const DEFAULT_CURVE_TOLERANCE = 0.05;
 
 /** Bumped whenever the same scene files build a different graph, so a stored graph is not reused. */
-export const PBRT_BUILD_REVISION = 23;
+export const PBRT_BUILD_REVISION = 24;
 
 function samePlacements( a, b ) {
 
@@ -194,15 +194,19 @@ function texturePixels( texture ) {
 
 }
 
-// pbrt's `encoding`: an 8-bit image is sRGB unless it says "linear" (or "gamma g").
-function decoderFor( params ) {
+// pbrt's `encoding` of an 8-bit image, when not sRGB: a PNG's "linear" or "gamma g". Any other 8-bit image is sRGB
+// whatever it says, as Image::Read decodes JPG and TGA through stb_image (util/image.cpp).
+function encodingCurve( params ) {
 
 	const encoding = pString( params, 'encoding', 'sRGB' );
+	if ( ! /\.png$/i.test( pString( params, 'filename', '' ) ) ) return null;
 	if ( encoding === 'linear' ) return ( v ) => v;
 	const gamma = /^gamma\s+([\d.]+)$/.exec( encoding );
-	return gamma ? ( v ) => v ** Number( gamma[ 1 ] ) : srgbToLinear;
+	return gamma ? ( v ) => v ** Number( gamma[ 1 ] ) : null;
 
 }
+
+const decoderFor = ( params ) => encodingCurve( params ) ?? srgbToLinear;
 
 function uvMapping( params ) {
 
@@ -2426,12 +2430,13 @@ export class PBRTSceneBuilder {
 
 		const mapping = this._textureMapping( name, def );
 		const scale = pFloat( def.params, 'scale', 1 );
-		if ( scale > 1 || pBool( def.params, 'invert', false ) ) {
+		// A colour map is sampled as sRGB: one encoded otherwise is decoded and baked to it.
+		if ( scale > 1 || pBool( def.params, 'invert', false ) || encodingCurve( def.params ) ) {
 
 			const term = await this._bakeTerm( name, 3 );
 			const baked = term?.layer && this._bake( `texture "${name}"`, [ { ...term, clamp: true } ], ( [ v ] ) => v );
 			if ( baked ) return { texture: bakedTexture( baked ) };
-			this.warn( `texture "${name}": its scale or invert could not be baked here — ignored` );
+			this.warn( `texture "${name}": its scale, invert or encoding could not be baked here — ignored` );
 
 		}
 
