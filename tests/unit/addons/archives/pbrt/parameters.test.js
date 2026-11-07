@@ -103,13 +103,12 @@ describe( 'pbrt parameters the loader does not honour', () => {
 			`Material "conductor" "spectrum eta" "metal-Au-eta" "rgb k" [ 3.9 2.4 2.1 ]\n${tri( 4 )}`;
 		const { parameters } = await loadPBRTScene( { vfs: { 'scene.pbrt': enc.encode( scene ) }, plyParser: () => null, imageFromBytes: async () => null } );
 
-		// A number beside a named metal changes nothing: unused. A named k alone is that metal's colour.
+		// A number beside a named metal changes nothing: unused. A named k alone is that metal's colour; one metal's eta
+		// and k together are its colour exactly, as are a measured eta and k.
 		expect( parameters.unused ).toEqual( { 'Material conductor: k': 1 } );
 		expect( parameters.approximated ).toEqual( {
-			'Material coatedconductor: conductor.eta': 1,
-			'Material coatedconductor: conductor.k': 1,
-			'Material conductor: eta': 2,
-			'Material conductor: k': 2,
+			'Material conductor: eta': 1,
+			'Material conductor: k': 1,
 		} );
 
 	} );

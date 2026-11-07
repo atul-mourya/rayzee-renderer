@@ -38,7 +38,7 @@ describe( 'pbrt materials', () => {
 		} }, ctx );
 		expect( gold.metalness ).toBe( 1 );
 		expect( gold.clearcoat ).toBe( 1 );
-		expect( gold.color.toArray() ).toEqual( [ 1.0, 0.78, 0.34 ] );
+		expect( gold.color.toArray() ).toEqual( [ 1, 0.7657, 0.3360 ] );
 		expect( gold.roughness ** 4 ).toBeCloseTo( 0.01, 6 );
 		expect( gold.clearcoatRoughness ** 4 ).toBeCloseTo( 0.1, 6 );
 
@@ -169,6 +169,25 @@ describe( 'pbrt materials', () => {
 		const silver = await buildMaterial( { type: 'conductor', params: { k: param( 'spectrum', 'metal-Ag-k' ) } }, ctx );
 		const gold = await buildMaterial( { type: 'conductor', params: { eta: param( 'spectrum', 'metal-Au-eta' ) } }, ctx );
 		expect( silver.color.toArray() ).not.toEqual( gold.color.toArray() );
+
+	} );
+
+	it( 'colours pbrt\'s named metals by their measured eta and k, as Real-Time Rendering\'s table has them', async () => {
+
+		// Hoffman's linear-sRGB F0 table (Real-Time Rendering, 4th ed.), from other measurements than pbrt's.
+		const RTR = { Ag: [ 0.972, 0.960, 0.915 ], Al: [ 0.913, 0.922, 0.924 ], Au: [ 1.000, 0.766, 0.336 ], Cu: [ 0.955, 0.638, 0.538 ], CuZn: [ 0.910, 0.778, 0.423 ] };
+		const metal = async ( name ) => ( await buildMaterial( { type: 'conductor', params: {
+			eta: param( 'spectrum', `metal-${name}-eta` ), k: param( 'spectrum', `metal-${name}-k` )
+		} }, ctx ) ).color.toArray();
+		for ( const [ name, f0 ] of Object.entries( RTR ) ) ( await metal( name ) ).forEach( ( v, c ) => expect( v ).toBeCloseTo( f0[ c ], 2 ) );
+
+		// TiO2 and MgO are clear in the visible (k ≈ 0): a dielectric's ( (η−1) / (η+1) )², η ≈ 2.9 and 1.74 — never grey metal.
+		for ( const [ name, eta ] of [[ 'TiO2', 2.9 ], [ 'MgO', 1.74 ]] ) {
+
+			const f0 = ( ( eta - 1 ) / ( eta + 1 ) ) ** 2;
+			( await metal( name ) ).forEach( ( v ) => expect( Math.abs( v / f0 - 1 ) ).toBeLessThan( 0.15 ) );
+
+		}
 
 	} );
 

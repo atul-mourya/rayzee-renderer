@@ -13,13 +13,13 @@ import { namedScattering, dipoleReflectance, albedoForReflectance } from './PBRT
 import { approximated, param } from './PBRTParser.js';
 import { uvKey } from './PBRTTextureBake.js';
 
-// Normal-incidence reflectance approximations for pbrt's named conductor spectra.
+// pbrt's named metals at normal incidence, ( (η−1)² + k² ) / ( (η+1)² + k² ) of their `metal-X-eta` and `metal-X-k`
+// tables (pbrt-v4 src/pbrt/util/spectrum.cpp) through CIE 1931 under D65, as linear Rec.709. Gold leaves the gamut
+// (red 1.022) and is scaled to 1, as Real-Time Rendering's table has it; Ag, Al, Cu and brass match that table.
+const AU = [ 1, 0.7657, 0.3360 ], CU = [ 0.9553, 0.6376, 0.5382 ], AG = [ 0.9715, 0.9599, 0.9153 ], AL = [ 0.9132, 0.9215, 0.9245 ];
 const METAL_ALBEDO = {
-	au: [ 1.0, 0.78, 0.34 ], gold: [ 1.0, 0.78, 0.34 ],
-	cu: [ 0.95, 0.64, 0.54 ], copper: [ 0.95, 0.64, 0.54 ],
-	ag: [ 0.97, 0.96, 0.91 ], silver: [ 0.97, 0.96, 0.91 ],
-	al: [ 0.91, 0.92, 0.92 ], aluminium: [ 0.91, 0.92, 0.92 ], aluminum: [ 0.91, 0.92, 0.92 ],
-	mgo: [ 0.9, 0.9, 0.9 ], tio2: [ 0.9, 0.9, 0.9 ]
+	au: AU, gold: AU, cu: CU, copper: CU, ag: AG, silver: AG, al: AL, aluminium: AL, aluminum: AL,
+	cuzn: [ 0.9096, 0.7783, 0.4228 ], mgo: [ 0.0720, 0.0731, 0.0749 ], tio2: [ 0.2322, 0.2446, 0.2727 ]
 };
 
 const DEFAULT_METAL = [ 0.92, 0.92, 0.92 ];
@@ -256,7 +256,7 @@ export async function resolveSpectrum( params, name, ctx, dfltRGB = null ) {
 
 function namedMetalKey( s ) {
 
-	const m = s.toLowerCase().match( /metal-([a-z]+)/ );
+	const m = s.toLowerCase().match( /metal-([a-z0-9]+)/ );
 	if ( m ) return m[ 1 ];
 	for ( const k of Object.keys( METAL_ALBEDO ) ) if ( s.toLowerCase().includes( k ) ) return k;
 	return null;
@@ -433,9 +433,10 @@ const oneMapping = ( a, b ) => a === b || ( a.repeat.x === ( b?.repeat.x ?? 1 ) 
 const COPPER_ETA = [ 0.2, 0.92, 1.1 ], COPPER_K = [ 3.9, 2.45, 2.14 ];
 const isNamedSpectrum = ( p ) => p?.type === 'spectrum' && typeof p.value[ 0 ] === 'string';
 
-// A conductor's colour: `reflectance`; else the metal table for a named eta or k, which stands for that metal's eta and
-// k alike (another metal's, or a number, beside it is unused); else normal-incidence Fresnel of a measured eta and k,
-// copper's for one not given (under `prefix` for a coated conductor). Neither given is copper.
+// A conductor's colour: `reflectance`; else the metal table for a named eta or k — exact for one metal's pair, and
+// standing for that metal's eta and k alike when alone (another metal's, or a number, beside it is unused); else
+// normal-incidence Fresnel of a measured eta and k, copper's for one not given (under `prefix` for a coated
+// conductor). Neither given is copper.
 async function applyConductorColor( mat, params, ctx, prefix, applyAlbedo, setColor ) {
 
 	const refl = await resolveSpectrum( params, 'reflectance', ctx, null );
@@ -449,8 +450,19 @@ async function applyConductorColor( mat, params, ctx, prefix, applyAlbedo, setCo
 	} else if ( isNamedSpectrum( etaP ) || isNamedSpectrum( kP ) ) {
 
 		const [ key, other, otherKey ] = isNamedSpectrum( etaP ) ? [ etaKey, kP, kKey ] : [ kKey, etaP, etaKey ];
-		setColor( ( await resolveSpectrum( params, key, ctx, DEFAULT_METAL ) ).rgb || DEFAULT_METAL );
-		if ( isNamedSpectrum( other ) && namedMetalKey( other.value[ 0 ] ) === namedMetalKey( params[ key ].value[ 0 ] ) ) approximated( params, otherKey );
+		const metal = namedMetalKey( param( params, key ).value[ 0 ] );
+		const paired = isNamedSpectrum( other ) && namedMetalKey( other.value[ 0 ] ) === metal;
+		if ( paired && METAL_ALBEDO[ metal ] ) {
+
+			param( params, otherKey );
+			setColor( METAL_ALBEDO[ metal ] );
+
+		} else {
+
+			setColor( ( await resolveSpectrum( params, key, ctx, DEFAULT_METAL ) ).rgb || DEFAULT_METAL );
+			if ( paired ) approximated( params, otherKey );
+
+		}
 
 	} else if ( etaP || kP ) {
 

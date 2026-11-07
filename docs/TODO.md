@@ -252,9 +252,11 @@ once looked at. How it should have been built so they could not happen:
 - [ ] **Single-sheet dielectric**: kroken's picture glass is one quad of `dielectric`; the card behind it renders very
   noisy at 512 spp and OIDN turns the noise into a bumpy texture. See Known → `thickness` / thin-walled; check how the
   medium stack treats an open sheet against pbrt's per-interface orientation.
-- [ ] **Named spectra**: `METAL_ALBEDO` is a five-metal table and blackbody is a curve fit. Port pbrt's named metal
-  spectra and integrate against CIE for exact F0 and blackbody colour (kroken reads warmer partly here). Named glasses
-  done 2026-11-07: pbrt's seven tables (`GLASS_ETA`), read like any spectral `eta` (kroken's F11 was 1.5, now 1.78).
+- [ ] **Blackbody** is a curve fit (`blackbodyToRGB`): integrate Planck's law against CIE as pbrt does (kroken reads
+  warmer partly here). The rest of the named spectra done 2026-11-07: pbrt's seven glasses (`GLASS_ETA`, read like any
+  spectral `eta`; kroken's F11 was 1.5, now 1.78) and seven metals (`METAL_ALBEDO`: normal-incidence reflectance of each
+  one's eta and k through CIE 1931 under D65, Real-Time Rendering's table to 3 digits; brass was grey, TiO2 50 % grey
+  metal where it reflects 24 %, MgO 90 % where it reflects 7 %).
 - [ ] **A second infinite light** is dropped (watercolor has two); the engine has one environment.
 - [x] **Spectral `eta`** (crown's gems were IOR 200 before 2026-10-14). Done 2026-11-07: a spectrum, inline or a named
   glass, is glTF's glass — its IOR at the d line and `dispersion` 20 / its Abbe number (Schott's catalogue within 0.5 %);
