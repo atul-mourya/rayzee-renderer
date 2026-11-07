@@ -167,8 +167,10 @@
 
 - [ ] implement pending Physical material properties
 - [ ] **Dispersion grain** — a path through dispersive glass carries one wavelength, so even BK7 (Abbe 64), whose split
-  is barely visible once converged, doubles transparent-machines' error at 64 spp (0.022 → 0.047, rainbow speckle on
-  every edge). pbrt traces four wavelengths a path (hero wavelength) and drops the others only at a dispersive interface.
+  is barely visible once converged, doubled transparent-machines' error at 64 spp (0.022 → 0.047, rainbow speckle on
+  every edge). Since 2026-11-07 the wavelength is drawn by how much it adds to the picture (`sampleWavelengthForDispersion`,
+  three logistic lobes on the CIE → sRGB weights; weight variance 7.5 → 4.6): 0.047 → 0.039. Hero wavelengths would not
+  help: pbrt too drops to one at a dispersive interface (`TerminateSecondary`). Left: following one wavelength is the cost.
   Also not glTF's: `MaterialEvaluation` saturates the base colour of a dispersive transmissive material.
 - [ ] Supporting GPU-compressed texture arrays requires adding  per-scene format selection at build time - the TSL compiler doesn't support clean teardown/rebuild of compute pipelines when texture binding types change.
 

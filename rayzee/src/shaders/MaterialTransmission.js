@@ -1,7 +1,7 @@
 // Material Transmission & Refraction - Ported from material_transmission.fs
 // Handles both volumetric transmission AND opacity-based transparency
 
-import { Fn, wgslFn, vec3, float, int, bool as tslBool, If, select, abs, dot, reflect, refract, max, mix, clamp, exp, sqrt, normalize } from 'three/tsl';
+import { Fn, wgslFn, vec3, float, int, bool as tslBool, If, select, abs, dot, reflect, refract, max, clamp, exp, log, sqrt, normalize } from 'three/tsl';
 
 import { struct } from './Struct.js';
 import { EPSILON, MIN_ROUGHNESS, MIN_PDF, constructTBN, transmissionTint } from './Common.js';
@@ -43,7 +43,7 @@ export const Medium = struct( {
 	dispersion: 'float',
 } );
 
-const SpectralSample = struct( {
+export const SpectralSample = struct( {
 	wavelength: 'float', // Wavelength in nanometers
 	ior: 'float', // IOR at this wavelength
 	colorWeight: 'vec3', // Color contribution weight
@@ -97,12 +97,33 @@ const wavelengthToXYZ = /*@__PURE__*/ Fn( ( [ wl ] ) => {
 
 } );
 
-// Sample a wavelength on [380,700]nm and return its IOR + sRGB colorWeight (CIE 1931 →
-// sRGB, gamut-clipped). The (1.819, 2.773, 2.928) factors normalize the clipped per-λ
-// average to vec3(1), so clear glass converges to white as samples accumulate.
-const sampleWavelengthForDispersion = Fn( ( [ baseIOR, dispersionStrength, random ] ) => {
+// A wavelength is drawn in proportion to the sum of its colour weights, each channel's normalised to integrate to 1
+// (RGB_PER_NM), which holds every channel's weight within 0–3: three logistic lobes fitted to that sum, each inverted in
+// closed form. For a white path the weights' variance falls from 7.53 (uniform on 380–700 nm) to 4.59, the sum's own
+// 4.60. Unbiased: the weight divides by the lobes' density. [ weight, centre nm, scale nm ].
+const LOBES = [[ 0.33735, 449.012, 11.7660 ], [ 0.35157, 538.664, 19.0550 ], [ 0.31109, 609.940, 15.8311 ]];
+const RGB_PER_NM = [ 0.0056806, 0.0086612, 0.0091464 ];
 
-	const wl = mix( float( 380.0 ), float( 700.0 ), random ).toVar();
+// A lobe's share of the density at λ: weight / ( 4 s cosh²( ( λ − centre ) / 2s ) ), stable at any distance.
+const lobeDensity = ( wl, [ weight, centre, scale ] ) => {
+
+	const t = exp( abs( wl.sub( centre ) ).div( - scale ) );
+	return t.mul( weight / scale ).div( t.add( 1.0 ).mul( t.add( 1.0 ) ) );
+
+};
+
+// A wavelength and its IOR, with the sRGB colour weight it carries (CIE 1931 → sRGB, gamut-clipped).
+export const sampleWavelengthForDispersion = Fn( ( [ baseIOR, dispersionStrength, random ] ) => {
+
+	// One stratified number picks the lobe and, rescaled, the wavelength within it.
+	const [ a, b, c ] = LOBES;
+	const inA = random.lessThan( a[ 0 ] );
+	const inB = random.lessThan( a[ 0 ] + b[ 0 ] );
+	const pick = ( i ) => select( inA, float( a[ i ] ), select( inB, float( b[ i ] ), float( c[ i ] ) ) );
+	const start = select( inA, float( 0.0 ), select( inB, float( a[ 0 ] ), float( a[ 0 ] + b[ 0 ] ) ) );
+	const u = clamp( random.sub( start ).div( pick( 0 ) ), 1e-6, 1.0 - 1e-6 );
+	const wl = pick( 1 ).add( pick( 2 ).mul( log( u.div( float( 1.0 ).sub( u ) ) ) ) ).toVar();
+	const density = lobeDensity( wl, a ).add( lobeDensity( wl, b ) ).add( lobeDensity( wl, c ) );
 	const sampledIOR = iorFromWavelength( baseIOR, dispersionStrength, wl );
 
 	const xyz = wavelengthToXYZ( wl ).toVar();
@@ -112,7 +133,7 @@ const sampleWavelengthForDispersion = Fn( ( [ baseIOR, dispersionStrength, rando
 		xyz.x.mul( 0.0557 ).sub( xyz.y.mul( 0.2040 ) ).add( xyz.z.mul( 1.0570 ) ),
 	);
 
-	const colorWeight = max( rgb, vec3( 0.0 ) ).mul( vec3( 1.819, 2.773, 2.928 ) );
+	const colorWeight = max( rgb, vec3( 0.0 ) ).mul( vec3( ...RGB_PER_NM ) ).div( density );
 
 	return SpectralSample( {
 		wavelength: wl,

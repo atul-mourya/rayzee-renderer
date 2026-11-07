@@ -517,7 +517,9 @@ bench gates and measurements.
   own ratio, and only a surface with a volume changes the medium. pbrt glass with its medium outside is turned over.
 - **Dispersion** is glTF's, as three.js reads it: `ior` at the d line, the F–C spread ( ior − 1 ) · dispersion / 20
   (`iorFromWavelength`, `tests/gpu/dispersion.test.js`); pbrt's spectral `eta` maps onto it. ⚠️ A path carries one
-  wavelength, so dispersive glass adds colour grain however small its split (BK7 doubled transparent-machines' 64-spp error).
+  wavelength (pbrt's too, past a dispersive interface), drawn by its weight in the picture
+  (`sampleWavelengthForDispersion`), so dispersive glass adds colour grain however small its split (BK7: transparent-machines'
+  64-spp error 0.022 → 0.039; 0.047 drawn uniformly).
 - **Light through glass**: `traceShadowRay` crosses glass straight and returns a **colour** (`transmissionTint` of base
   colour × map per face, absorption per channel); `traceShadowRayRefractiveOpaque` (bidirectional) stays a float. A path
   refracted to an emitter is MIS-weighed from the last opaque scatter: the MIS ray length runs on across a refraction
