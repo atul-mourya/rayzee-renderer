@@ -186,7 +186,7 @@ add( 'Exported, and used only by tests: dead code a test keeps alive, unless a d
 // Docs
 
 const DOCS = tracked.filter( f => f.endsWith( '.md' ) && ! f.startsWith( 'docs/internal/' ) && f !== 'docs/design/CONVENTIONS.md'
-	&& ( /^(CLAUDE|CONTRIBUTING|README|AGENTS)\.md$/.test( f ) || /^(docs|bench|rayzee|\.github|\.claude\/agents|\.claude\/skills\/(check-tsl|debug-pipeline|review-stage|maintainer))\//.test( f ) ) );
+	&& ( /^(CLAUDE|CONTRIBUTING|README)\.md$/.test( f ) || /^(docs|bench|rayzee|\.github|\.claude\/agents|\.claude\/skills\/(check-tsl|debug-pipeline|review-stage|maintainer))\//.test( f ) ) );
 const byBase = new Map();
 for ( const f of tracked ) {
 

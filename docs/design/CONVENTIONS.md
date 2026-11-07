@@ -110,8 +110,8 @@ A class that grows past what one person can read is split **by job**, not by siz
 - `docs/guide/` is for people using the engine; a public API change updates it. `docs/design/` is how it works inside.
 - `rayzee/README.md` is the npm page: install, a quick start, links. `bench/README.md` is a how-to; its detail is
   `docs/design/BENCH.md`. *Check* (length).
-- `AGENTS.md` points at `CLAUDE.md`; `.github/copilot-instructions.md` repeats only the easiest rules to break, and
-  where it disagrees `CLAUDE.md` is right. A rule changed in `CLAUDE.md` is changed in both. *Review.*
+- `.github/copilot-instructions.md` repeats only the easiest rules to break, and where it disagrees `CLAUDE.md` is
+  right. A rule changed in `CLAUDE.md` is changed there, in `CONTRIBUTING.md` and in `.claude/agents/` too. *Review.*
 - A doc that names a file names one that exists. *Check.*
 
 ### 9. Comments

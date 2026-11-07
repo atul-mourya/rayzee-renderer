@@ -32,7 +32,7 @@ Asked only "where should this go?" or "is this file/note in the right place?": a
      `memory/SceneSpill.js`, `storage/BLASCache.js`, `materials/TextureCreator.js`); `Fn(` kernels added inline to
      `PathTracer.js`; each new file the script lists — does it earn its place, or does an existing file own it?
    - *Docs:* which `CLAUDE.md` sections grew, and whether the growth is rules and traps or measurements and history
-     that belong in `docs/design/`; whether `.github/copilot-instructions.md`, `AGENTS.md`, `CONTRIBUTING.md` and
+     that belong in `docs/design/`; whether `.github/copilot-instructions.md`, `CONTRIBUTING.md` and
      `.claude/agents/*.md` still agree with `CLAUDE.md`; whether a public API change updated `docs/guide/`.
    - *Comments:* read each block the script lists. Keep API documentation and tables; flag stories, measurements,
      "added for X" and restatements of the code.
