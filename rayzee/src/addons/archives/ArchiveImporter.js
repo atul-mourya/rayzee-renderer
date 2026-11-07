@@ -7,7 +7,7 @@
  * renderer.assetLoader.setArchiveImporter( new ArchiveImporter( renderer.assetLoader ) );
  */
 
-import { FloatType, EquirectangularReflectionMapping, Texture, SRGBColorSpace, RepeatWrapping, LoadingManager } from 'three';
+import { FloatType, EquirectangularReflectionMapping, Texture, SRGBColorSpace, NoColorSpace, RepeatWrapping, LoadingManager, Group, Box3, MeshPhysicalMaterial, DataTexture, DoubleSide } from 'three';
 import { HDRLoader } from 'three/addons/loaders/HDRLoader.js';
 import { EXRLoader } from 'three/addons/loaders/EXRLoader.js';
 import { strFromU8 } from 'three/addons/libs/fflate.module.js';
@@ -20,7 +20,7 @@ import { fileIdentity, folderIdentity, identityKey, sampleHash } from '../../sto
 import { ENGINE_AREAS, worthStoring } from '../../storage/StorageAreas.js';
 import { encodeSceneGraph, writeSceneGraph, decodeSceneGraph, SceneGraphUnsupported, SCENE_GRAPH_FORMAT, ARCHIVE_PATH, ARCHIVE_LOADER } from './SceneGraphCodec.js';
 import { VERSION } from '../../Version.js';
-import { loadPBRTScene, pickEntryPath, VirtualFS, PBRT_BUILD_REVISION } from './pbrt/index.js';
+import { loadPBRTScene, pickEntryPath, VirtualFS, PBRT_BUILD_REVISION, texturePixels } from './pbrt/index.js';
 import { loadUSDScene, listUSDRootLayers, listUSDParts, USDFiles, USDStage, USD_LAYER } from './usd/index.js';
 import { pfmTexture } from './pbrt/PFM.js';
 import { extractSceneMetadata } from '../../loaders/SceneMetadata.js';
@@ -89,6 +89,150 @@ export const ARCHIVE_ELEMENT_PROMPT_BYTES = 4_000_000_000;
 
 /** The same question for a USD scene, in USD layer bytes: binary layers hold far more geometry a byte than pbrt text. */
 const USD_ELEMENT_PROMPT_BYTES = 1_000_000_000;
+
+const dirOf = ( path ) => path.slice( 0, path.lastIndexOf( '/' ) + 1 );
+const stemOf = ( path ) => path.slice( path.lastIndexOf( '/' ) + 1 ).replace( /\.[^.]+$/, '' );
+const LOD_SUFFIX = /_LOD(\d+)$/i;
+const IMAGE_FILE = /\.(png|jpe?g|webp|tga|bmp|gif|exr)$/i;
+const OWN_MAPS = [ 'map', 'normalMap', 'roughnessMap', 'metalnessMap', 'emissiveMap', 'bumpMap', 'alphaMap' ];
+
+// A texture's role by the last word(s) of its name: Megascans, Poly Haven and ambientCG name them so.
+const TEXTURE_ROLES = [
+	[ 'map', /^(base_?colou?r|albedo|diffuse|diff|colou?r)$/i ],
+	[ 'normalMap', /^(normal|normal_?gl|nor_?gl)$/i ],
+	[ 'normalDX', /^(normal_?dx|nor_?dx)$/i ],
+	[ 'roughnessMap', /^(roughness|rough)$/i ],
+	[ 'metalnessMap', /^(metal|metallic|metalness)$/i ],
+	[ 'opacity', /^(opacity|alpha)$/i ],
+	[ 'translucency', /^translucency$/i ],
+];
+
+function textureRole( path ) {
+
+	// Resolution and format words go; a billboard's maps are for its lowest-detail card.
+	const words = stemOf( path ).split( /[_\-. ]+/ ).filter( ( w ) => w && ! /^(\d+k|lod\d+|jpe?g|png)$/i.test( w ) );
+	if ( words.some( ( w ) => /^billboard$/i.test( w ) ) ) return null;
+	for ( const n of [ 2, 1 ] ) {
+
+		if ( words.length < n ) continue;
+		const role = TEXTURE_ROLES.find( ( [ , pattern ] ) => pattern.test( words.slice( - n ).join( '_' ) ) );
+		if ( role ) return { role: role[ 0 ], prefix: words.slice( 0, - n ).join( '_' ).toLowerCase() };
+
+	}
+
+	return null;
+
+}
+
+/** The textures in a model's folder by role, each the one sharing most of the model's name, then the largest. */
+function textureSet( modelPath, files ) {
+
+	const dir = dirOf( modelPath );
+	const stem = stemOf( modelPath ).replace( LOD_SUFFIX, '' ).toLowerCase();
+	const shared = ( s ) => {
+
+		let n = 0;
+		while ( n < s.length && s[ n ] === stem[ n ] ) n ++;
+		return n;
+
+	};
+
+	const best = {};
+	for ( const file of files ) {
+
+		if ( dirOf( file ) !== dir || ! IMAGE_FILE.test( file ) ) continue;
+		const found = textureRole( file );
+		if ( ! found ) continue;
+		const score = shared( found.prefix ) * 1e6 + Number( /(?:^|[_-])(\d+)k(?=[_.-]|$)/i.exec( stemOf( file ) )?.[ 1 ] ?? 0 );
+		if ( ! best[ found.role ] || score > best[ found.role ].score ) best[ found.role ] = { file, score };
+
+	}
+
+	const roles = Object.keys( best );
+	return roles.length ? Object.fromEntries( roles.map( ( role ) => [ role, best[ role ].file ] ) ) : null;
+
+}
+
+/**
+ * An asset kit's models — no scene file, the shallowest models in two or more folders — each object once: its lowest
+ * LOD, and glTF first where one object comes in several formats. Null when the archive is not one.
+ */
+function kitPaths( models ) {
+
+	const byObject = new Map();
+	for ( const path of models ) {
+
+		if ( USD_LAYER.test( path ) ) continue;
+		const object = stemOf( path ).replace( LOD_SUFFIX, '' ).toLowerCase();
+		if ( ! byObject.has( object ) ) byObject.set( object, [] );
+		byObject.get( object ).push( path );
+
+	}
+
+	const picked = [];
+	const lod = ( path ) => Number( LOD_SUFFIX.exec( stemOf( path ) )?.[ 1 ] ?? 0 );
+	for ( const paths of byObject.values() ) {
+
+		const extension = ( paths.find( ( p ) => /\.(gltf|glb)$/i.test( p ) ) ?? paths[ 0 ] ).split( '.' ).pop().toLowerCase();
+		const byFolder = new Map();
+		for ( const path of paths ) {
+
+			if ( path.split( '.' ).pop().toLowerCase() !== extension ) continue;
+			const held = byFolder.get( dirOf( path ) );
+			if ( ! held || lod( path ) < lod( held ) ) byFolder.set( dirOf( path ), path );
+
+		}
+
+		picked.push( ...byFolder.values() );
+
+	}
+
+	const depth = ( path ) => path.split( '/' ).length;
+	const top = Math.min( ...picked.map( depth ) );
+	const kit = picked.filter( ( path ) => depth( path ) === top );
+	return new Set( kit.map( dirOf ) ).size > 1 ? kit : null;
+
+}
+
+/** Sets models out in rows on the ground, largest first, a quarter of a typical one's width apart. */
+function layOut( models ) {
+
+	const items = models.map( ( model ) => {
+
+		model.updateMatrixWorld( true );
+		const box = new Box3().setFromObject( model );
+		return { model, box, width: box.max.x - box.min.x, depth: box.max.z - box.min.z };
+
+	} ).filter( ( item ) => ! item.box.isEmpty() );
+	if ( items.length === 0 ) return models;
+
+	items.sort( ( a, b ) => Math.max( b.width, b.depth ) - Math.max( a.width, a.depth ) );
+	const sizes = items.map( ( item ) => Math.max( item.width, item.depth ) ).sort( ( a, b ) => a - b );
+	const gap = 0.25 * sizes[ sizes.length >> 1 ];
+	const rowLength = Math.sqrt( items.reduce( ( sum, item ) => sum + ( item.width + gap ) * ( item.depth + gap ), 0 ) );
+
+	let x = 0, z = 0, rowDepth = 0;
+	for ( const item of items ) {
+
+		if ( x > 0 && x + item.width > rowLength ) {
+
+			x = 0;
+			z += rowDepth + gap;
+			rowDepth = 0;
+
+		}
+
+		item.model.position.x += x - item.box.min.x;
+		item.model.position.y -= item.box.min.y;
+		item.model.position.z += z - item.box.min.z;
+		x += item.width + gap;
+		rowDepth = Math.max( rowDepth, item.depth );
+
+	}
+
+	return models;
+
+}
 
 /** The .pbrt file a chosen part names, if one does: that scene is the one to load. */
 const sceneFileElement = ( element ) => ( Array.isArray( element ) ? element : [ element ] ).find( isSceneFileElement ) ?? null;
@@ -1179,6 +1323,17 @@ export class ArchiveImporter {
 		if ( found.usd ) return await this.loadUSDScene( zip, filename );
 
 		const { path, models } = found;
+		const kit = found.main ? null : kitPaths( models );
+		if ( kit ) {
+
+			console.info( `${filename} is a kit of ${kit.length} models, loaded side by side; ${models.length - kit.length} lower-detail or duplicate files left out` );
+			updateLoading( { isLoading: true, status: `Processing ${kit.length} models from ${filename}...`, progress: 5 } );
+			const model = await this._loadZipModels( zip, kit, filename );
+			this.loader.dispatchEvent( { type: 'load', model, filename } );
+			return model;
+
+		}
+
 		const others = models.filter( p => p !== path && ! USD_LAYER.test( p ) );
 		if ( others.length > 0 ) {
 
@@ -1214,7 +1369,7 @@ export class ArchiveImporter {
 					result = await this.handleObjFromZip( fileContent, filePath, zipContents );
 					break;
 				default:
-					result = await this.loader._loadModelFileByExtension( new File( [ fileContent ], filePath ), filePath );
+					result = await this._loadZipModels( zipContents ?? { [ filePath ]: fileContent }, [ filePath ] );
 
 			}
 
@@ -1237,41 +1392,53 @@ export class ArchiveImporter {
 
 	async handleGltfFromZip( extension, fileContent, filePath, zipContents ) {
 
-		if ( extension === 'gltf' ) {
+		if ( extension !== 'gltf' ) return await this.loader.loadGLBFromArrayBuffer( await bufferOf( fileContent ), filePath );
 
-			const gltfContent = await textOf( fileContent );
-			const manager = new LoadingManager();
-			const gltfDir = filePath.split( '/' ).slice( 0, - 1 ).join( '/' );
+		const gltf = await this._parseGltfFromZip( extension, fileContent, filePath, zipContents );
+		this.loader.releaseTargetModel();
+		this.loader.targetModel = gltf.scene;
+		this.loader.sceneMetadata = extractSceneMetadata( gltf );
+		await this.loader.onModelLoad( this.loader.targetModel );
+		return gltf;
 
-			manager.setURLModifier( url => this.resolveZipResource( url, gltfDir, zipContents ) );
-			const loader = await this.loader.createGLTFLoader();
-			loader.manager = manager;
+	}
 
-			try {
+	/** A glTF or GLB from an archive, its other files read out of it; nothing handed to the engine. @private */
+	async _parseGltfFromZip( extension, fileContent, filePath, zipContents ) {
 
-				const gltf = await withHostWorker( () => new Promise( ( resolve, reject ) => loader.parse( gltfContent, '', resolve, reject ) ) );
-				this.loader._throwDeferred();
-				this.loader.releaseTargetModel();
-				this.loader.targetModel = gltf.scene;
-				this.loader.sceneMetadata = extractSceneMetadata( gltf );
-				await this.loader.onModelLoad( this.loader.targetModel );
-				return gltf;
+		const manager = new LoadingManager();
+		const gltfDir = filePath.split( '/' ).slice( 0, - 1 ).join( '/' );
+		manager.setURLModifier( url => this.resolveZipResource( url, gltfDir, zipContents ) );
+		const loader = await this.loader.createGLTFLoader();
+		loader.manager = manager;
 
-			} finally {
+		try {
 
-				this.loader._disposeGLTFLoader( loader );
+			const data = extension === 'gltf' ? await textOf( fileContent ) : await bufferOf( fileContent );
+			const gltf = await withHostWorker( () => new Promise( ( resolve, reject ) => loader.parse( data, '', resolve, reject ) ) );
+			this.loader._throwDeferred();
+			return gltf;
 
-			}
+		} finally {
 
-		} else {
-
-			return await this.loader.loadGLBFromArrayBuffer( await bufferOf( fileContent ), filePath );
+			this.loader._disposeGLTFLoader( loader );
 
 		}
 
 	}
 
 	async handleObjFromZip( fileContent, filePath, zipContents ) {
+
+		const object = await this._parseObjFromZip( fileContent, filePath, zipContents );
+		this.loader.releaseTargetModel();
+		this.loader.targetModel = object;
+		await this.loader.onModelLoad( this.loader.targetModel );
+		return object;
+
+	}
+
+	/** An OBJ from an archive with the MTL it names; nothing handed to the engine. @private */
+	async _parseObjFromZip( fileContent, filePath, zipContents ) {
 
 		const objContent = await textOf( fileContent );
 		const mtlMatch = objContent.match( /mtllib\s+([^\s]+)/ );
@@ -1289,11 +1456,178 @@ export class ArchiveImporter {
 
 		const object = objLoader.parse( objContent );
 		object.name = filePath;
+		return object;
+
+	}
+
+	/**
+	 * Models from an archive as one scene, each given the textures beside it when it names none; more than one are set
+	 * out side by side on the ground.
+	 * @private
+	 */
+	async _loadZipModels( zip, paths, name ) {
+
+		const files = Object.keys( zip );
+		const cache = { textures: new Map(), materials: new Map() };
+		const models = [];
+		for ( const path of paths ) {
+
+			const model = await this._parseZipModel( path, zip );
+			if ( paths.length > 1 ) model.name = stemOf( path ).replace( LOD_SUFFIX, '' );
+			await this._textureFromFolder( model, path, files, zip, cache );
+			models.push( model );
+
+		}
+
+		let model = models[ 0 ];
+		if ( models.length > 1 ) {
+
+			model = new Group();
+			model.name = name;
+			model.add( ...layOut( models ) );
+
+		}
 
 		this.loader.releaseTargetModel();
-		this.loader.targetModel = object;
-		await this.loader.onModelLoad( this.loader.targetModel );
-		return object;
+		this.loader.targetModel = model;
+		await this.loader.onModelLoad( model );
+		return model;
+
+	}
+
+	/** @private */
+	async _parseZipModel( path, zip ) {
+
+		const extension = path.split( '.' ).pop().toLowerCase();
+		if ( extension === 'gltf' || extension === 'glb' ) return ( await this._parseGltfFromZip( extension, zip[ path ], path, zip ) ).scene;
+		if ( extension === 'obj' ) return await this._parseObjFromZip( zip[ path ], path, zip );
+		const format = this.loader.getFileFormat( path );
+		if ( format?.type !== 'model' ) throw this.loader.formatError( path );
+		return ( await format.parse( new File( [ zip[ path ] ], path ), { filename: path, cache: this.loader.loaderCache } ) ).model;
+
+	}
+
+	/** Gives a model's untextured materials the texture set in its folder (Megascans and most asset kits). @private */
+	async _textureFromFolder( model, path, files, zip, cache ) {
+
+		const set = textureSet( path, files );
+		if ( ! set ) return;
+
+		const meshes = [];
+		model.traverse( ( o ) => o.isMesh && meshes.push( o ) );
+		const swaps = new Map();
+		for ( const mesh of meshes ) {
+
+			const slots = Array.isArray( mesh.material ) ? mesh.material : [ mesh.material ];
+			for ( const [ i, material ] of slots.entries() ) {
+
+				if ( ! material || OWN_MAPS.some( ( key ) => material[ key ]?.image ) ) continue;
+				if ( ! swaps.has( material ) ) swaps.set( material, await this._folderMaterial( material, set, zip, cache ) );
+				slots[ i ] = swaps.get( material );
+
+			}
+
+			if ( ! Array.isArray( mesh.material ) ) mesh.material = slots[ 0 ];
+
+		}
+
+	}
+
+	/** @private */
+	async _folderMaterial( original, set, zip, cache ) {
+
+		const key = `${original.side}|${Object.entries( set ).join( '|' )}`;
+		if ( cache.materials.has( key ) ) return cache.materials.get( key );
+
+		const texture = async ( path, srgb ) => {
+
+			if ( ! path ) return null;
+			if ( ! cache.textures.has( path ) ) cache.textures.set( path, this._archiveImage( zip[ path ], path ).then( ( t ) => {
+
+				if ( t && ! srgb ) t.colorSpace = NoColorSpace;
+				return t;
+
+			} ) );
+			return await cache.textures.get( path );
+
+		};
+
+		const material = new MeshPhysicalMaterial( { name: original.name, side: original.side, roughness: 1, metalness: 0 } );
+		if ( ! set.map ) material.color.copy( original.color ?? material.color );
+		material.map = set.opacity ? await this._withOpacity( set.map, set.opacity, zip ) : await texture( set.map, true );
+		if ( set.opacity ) {
+
+			material.alphaTest = 0.5;
+			material.side = DoubleSide;
+
+		}
+
+		material.normalMap = await texture( set.normalMap ?? set.normalDX, false );
+		if ( ! set.normalMap && set.normalDX ) material.normalScale.set( 1, - 1 );
+		material.roughnessMap = await texture( set.roughnessMap, false );
+		material.metalnessMap = await texture( set.metalnessMap, false );
+		if ( material.metalnessMap ) material.metalness = 1;
+		if ( set.translucency ) {
+
+			// Leaves pass about as much light as they reflect.
+			material.diffuseTransmission = 0.5;
+			material.diffuseTransmissionColorMap = await texture( set.translucency, true );
+
+		}
+
+		cache.materials.set( key, material );
+		return material;
+
+	}
+
+	/** A colour map (white when none) with an opacity map in its alpha, or the colour map alone when either cannot be read. @private */
+	async _withOpacity( colorPath, opacityPath, zip ) {
+
+		const decode = async ( path ) => {
+
+			try {
+
+				return path ? await this._pbrtTextureFromBytes( await bytesOf( zip[ path ] ), path ) : null;
+
+			} catch ( error ) {
+
+				if ( error instanceof EngineIssueError ) throw error;
+				this.loader._reportImageFailure( path, error );
+				return null;
+
+			}
+
+		};
+
+		const [ color, opacity ] = await Promise.all( [ decode( colorPath ), decode( opacityPath ) ] );
+		const c = texturePixels( color ), a = texturePixels( opacity );
+		color?.image?.close?.();
+		opacity?.image?.close?.();
+		if ( ( colorPath && ! c ) || ! a || c?.float || a.float ) return colorPath ? this._archiveImage( zip[ colorPath ], colorPath ) : null;
+
+		const width = c?.width ?? a.width, height = c?.height ?? a.height;
+		const row = ( p, y ) => ( p.topDown ? y : p.height - 1 - y );
+		const out = new Uint8Array( width * height * 4 ).fill( 255 );
+		for ( let y = 0; y < height; y ++ ) {
+
+			const ay = row( a, Math.floor( y * a.height / height ) ) * a.width;
+			const cy = c && row( c, y ) * width;
+			for ( let x = 0; x < width; x ++ ) {
+
+				const o = ( y * width + x ) * 4;
+				if ( c ) out.set( c.data.subarray( ( cy + x ) * 4, ( cy + x ) * 4 + 3 ), o );
+				out[ o + 3 ] = a.data[ ( ay + Math.floor( x * a.width / width ) ) * 4 ];
+
+			}
+
+		}
+
+		const texture = new DataTexture( out, width, height );
+		texture.flipY = true;
+		texture.colorSpace = SRGBColorSpace;
+		texture.wrapS = texture.wrapT = RepeatWrapping;
+		texture.needsUpdate = true;
+		return texture;
 
 	}
 

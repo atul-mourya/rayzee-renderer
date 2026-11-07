@@ -909,6 +909,9 @@ Moana island measurements), and what Blender's glTF exporter loses of a scene's 
 
 - **Folders**: `loadFile( { files } )` loads a folder as the same folder zipped would (`localFolder()` →
   `ArchiveImporter.loadFolder` → the archive path). Archive entries are lazy Blobs, read only when a loader asks.
+- **Asset kits** (Megascans / Fab packs: no main file, models in two or more folders) load every object once, lowest
+  LOD, in rows (`kitPaths`, `layOut`); untextured materials take their folder's texture set by name (`textureSet`).
+  FBX loads in metres (`fbxFormat` applies FBXLoader's `unitScaleFactor`).
 - **Archives and pbrt** are an add-on (`rayzee/addons/archives`, `addons/archives/ArchiveImporter.js`), reached through
   `assetLoader.setArchiveImporter()` or `setArchiveImporterLoader( load, ARCHIVE_FORMATS )`. `.tar` is read in place,
   `.tar.gz` unpacked once into OPFS `archives/`, `.zip` read through its central directory. `loadFile( file, { element } )`

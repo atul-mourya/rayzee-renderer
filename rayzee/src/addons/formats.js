@@ -21,7 +21,11 @@ export const fbxFormat = {
 	async parse( file, { cache } ) {
 
 		cache.fbx ??= new ( await import( 'three/addons/loaders/FBXLoader.js' ) ).FBXLoader();
-		return { model: cache.fbx.parse( await file.arrayBuffer() ) };
+		const model = cache.fbx.parse( await file.arrayBuffer() );
+		// FBXLoader reads the file's unit (centimetres a unit) but leaves the model in it; the engine's is the metre.
+		const unit = model.userData.unitScaleFactor;
+		if ( unit > 0 && unit !== 100 ) model.scale.multiplyScalar( unit / 100 );
+		return { model };
 
 	},
 };

@@ -14,6 +14,7 @@ import { AssetLoader } from '@/core/loaders/AssetLoader.js';
 import { RayzeeRenderer } from '@/core/RayzeeRenderer.js';
 import { IssueLog, ISSUE_CODES } from '@/core/EngineIssues.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { Box3, DoubleSide, NoColorSpace } from 'three';
 import { configurePlatform } from '@/core/Platform.js';
 import { holdImages, releaseImages } from '@/core/materials/TextureCreator.js';
 
@@ -218,6 +219,56 @@ describe( 'loading a folder', () => {
 		expect( ambiguous[ 0 ].detail ).toEqual( { loaded: 'Car/scene.gltf', alternatives: [ 'Car/car.fbx', 'Car/variants/scene.glb' ] } );
 
 		await expect( importer.findAndLoadModelFromZip( { 'Car/readme.txt': new Blob( [ 'x' ] ) }, 'Car' ) ).rejects.toThrow( /No supported model files found in Car/ );
+
+	} );
+
+	// A Megascans kit: an object a folder, each at three LODs, its textures beside it, and folders of surface textures.
+	it( 'loads an asset kit\'s objects side by side, each at its best detail with the textures in its folder', async () => {
+
+		// A texture's pixels are its file's first byte, so each map shows which file it came from.
+		configurePlatform( { decodeImage: async ( bytes ) => ( { data: new Uint8Array( 8 ).fill( bytes[ 0 ] ), width: 2, height: 1 } ) } );
+		try {
+
+			const tri = 'v 0 0 0\nv 1 0 0\nv 0 1 0\nvt 0 0\nvt 1 0\nvt 0 1\nf 1/1 2/2 3/3\n';
+			const files = {
+				'Kit/rock/rock_LOD0.obj': tri, 'Kit/rock/rock_LOD1.obj': tri,
+				'Kit/rock/rock_1K_BaseColor.jpg': 'c', 'Kit/rock/rock_1K_Normal.jpg': 'n', 'Kit/rock/rock_1K_Roughness.jpg': 'r',
+				'Kit/rock/rock_1K_Gloss.jpg': 'g',
+				'Kit/bush/bush_VarA_LOD0.obj': tri, 'Kit/bush/bush_VarA_LOD1.obj': tri, 'Kit/bush/bush_VarB_LOD0.obj': tri,
+				'Kit/bush/bush_1K_Basecolor.jpg': 'c', 'Kit/bush/bush_1K_Opacity.jpg': 'o', 'Kit/bush/bush_1K_Translucency.jpg': 't',
+				'Kit/bush/bush_1K_Billboard_Basecolor.jpg': 'b',
+				'Kit/sand/sand_1K_Albedo.jpg': 'a',
+			};
+			const folder = localFolder( { name: 'Kit', files: Object.entries( files ).map( ( [ path, body ] ) => ( { path, file: new File( [ body ], path.split( '/' ).pop() ) } ) ) } );
+
+			const { importer, loaded } = importerWith();
+			await importer.loadFolder( folder );
+
+			const kit = loaded[ 0 ];
+			expect( kit.name ).toBe( 'Kit' );
+			expect( kit.children.map( ( c ) => c.name ) ).toEqual( [ 'bush_VarA', 'bush_VarB', 'rock' ] );
+			const boxes = kit.children.map( ( c ) => new Box3().setFromObject( c ) );
+			expect( boxes.every( ( box ) => box.min.y === 0 ) ).toBe( true );
+			expect( boxes.some( ( a, i ) => boxes.some( ( b, j ) => i !== j && a.intersectsBox( b ) ) ) ).toBe( false );
+
+			const [ bushA, bushB, rock ] = kit.children.map( ( c ) => c.children[ 0 ].material );
+			const from = ( texture ) => texture?.userData.__rayzeeArchivePath;
+			expect( [ from( rock.map ), from( rock.normalMap ), from( rock.roughnessMap ) ] )
+				.toEqual( [ 'Kit/rock/rock_1K_BaseColor.jpg', 'Kit/rock/rock_1K_Normal.jpg', 'Kit/rock/rock_1K_Roughness.jpg' ] );
+			expect( rock.normalMap.colorSpace ).toBe( NoColorSpace );
+			expect( rock.color.getHex() ).toBe( 0xffffff );
+
+			// The variants share one material; its colour map carries the opacity map, cut out at half.
+			expect( bushB ).toBe( bushA );
+			expect( Array.from( bushA.map.image.data.subarray( 0, 4 ) ) ).toEqual( [ 99, 99, 99, 111 ] );
+			expect( [ bushA.alphaTest, bushA.side, bushA.diffuseTransmission ] ).toEqual( [ 0.5, DoubleSide, 0.5 ] );
+			expect( from( bushA.diffuseTransmissionColorMap ) ).toBe( 'Kit/bush/bush_1K_Translucency.jpg' );
+
+		} finally {
+
+			configurePlatform( { decodeImage: null } );
+
+		}
 
 	} );
 

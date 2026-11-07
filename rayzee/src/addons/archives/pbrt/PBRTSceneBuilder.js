@@ -156,7 +156,7 @@ function pixelsFromDrawable( image, srgb ) {
  * A texture's pixels, for baking: `{ data, width, height, channels: 4, topDown, float }`, or null where this runtime
  * cannot read them. A DataTexture's rows run bottom up unless it says flipY; a drawable's top down.
  */
-function texturePixels( texture ) {
+export function texturePixels( texture ) {
 
 	const image = texture?.image;
 	if ( ! image ) return null;

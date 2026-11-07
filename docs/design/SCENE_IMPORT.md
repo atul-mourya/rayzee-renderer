@@ -13,6 +13,16 @@ on Chrome, `FileSystemHandle`s), picks folders (`showDirectoryPicker`, else a `w
 handles in IndexedDB (`RayzeeFolders`) under the scene source's key, so a session or a resumed render reopens the
 folder itself (`SessionDialog` asks only when access lapsed); `.rayzee` projects embed a folder under `sources/folder/`.
 
+## Asset kits
+`findAndLoadModelFromZip` takes an archive with no main file whose shallowest models sit in two or more folders as a
+kit (`kitPaths`): each object once (`_LOD<n>` stripped, the lowest kept; glTF first across formats), all parsed
+without the engine (`_parseZipModel`), set out by `layOut` (rows, largest first, a quarter of the median width apart,
+on y = 0) and handed over as one group. A single non-glTF, non-OBJ model goes through the same `_loadZipModels`.
+Untextured materials take their folder's texture set (`textureSet`, by the name's last words, the set sharing most of
+the model's name); an opacity map is baked into the colour map's alpha (`_withOpacity`), as the engine reads alpha
+there only. Megascans normal maps are OpenGL's (measured against their height maps: +0.67–0.74 correlation).
+FBXLoader records `unitScaleFactor` (centimetres a unit) without applying it; `fbxFormat` scales the root to metres.
+
 ## Loading part of a scene archive
 Archives and pbrt are an add-on (`rayzee/addons/archives`): the code lives in `addons/archives/ArchiveImporter.js`, which
 the loader reaches only through `assetLoader.setArchiveImporter( new ArchiveImporter( assetLoader ) )`, or

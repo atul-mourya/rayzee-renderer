@@ -85,6 +85,12 @@ describe( 'file formats', () => {
 		await fbxFormat.parse( new File( [ FBX ], 'b.fbx' ), { filename: 'b.fbx', cache } );
 		expect( cache.fbx ).toBe( loader );
 		expect( loader.constructor.name ).toBe( 'FBXLoader' );
+		expect( fbx.model.scale.x ).toBe( 1 );
+
+		// Centimetres (Maya, Max, Megascans) come out in metres; a file in metres (Blender's 100) as it is.
+		const inUnit = async ( cm ) => ( await fbxFormat.parse( new File( [ FBX.replace( 'Objects:', `GlobalSettings:  {\n\tProperties70:  {\n\t\tP: "UnitScaleFactor", "double", "Number", "",${cm}\n\t}\n}\nObjects:` ) ], 'u.fbx' ), { filename: 'u.fbx', cache } ) ).model.scale.x;
+		expect( await inUnit( 1 ) ).toBe( 0.01 );
+		expect( await inUnit( 100 ) ).toBe( 1 );
 
 		const { model } = await usdFormat.parse( new File( [ USDA ], 'tri.usda' ), { filename: 'tri.usda', cache } );
 		expect( model.name ).toBe( 'tri.usda' );

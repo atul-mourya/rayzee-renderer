@@ -65,6 +65,12 @@ that loads is a `scene` / `model` / `main` / `asset` glTF when there is one, els
 others are named in an `asset.ambiguous_entry` warning. A large pbrt or USD folder of several parts asks which to load,
 as an archive does (below).
 
+An asset kit — no such main file, and its shallowest models in two or more folders, as a Megascans or Fab pack comes —
+loads every object, set out in rows on the ground: each once, at its lowest `_LOD<n>`, glTF first where one comes in
+several formats. A model whose materials name no texture (Megascans FBX) takes the texture set beside it by name:
+base colour / albedo, normal (`_NormalDX` read as DirectX), roughness, metalness, opacity (cut out at half) and
+translucency; billboard maps are left out. FBX loads in metres, from the unit the file records.
+
 A USD scene — a folder or archive whose main model is a `.usd` / `.usda` / `.usdc` layer, or a loose layer — loads
 through the engine's own USD importer, part of the archives add-on: composition (sublayers, references, payloads,
 inherits, specializes, variants), meshes, curves, point instancers, PxrDisneyBsdf / PxrSurface / UsdPreviewSurface
