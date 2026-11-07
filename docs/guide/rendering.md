@@ -42,7 +42,7 @@ Key settings:
 | `fogBounds` | `{min, max}` \| `null` | null | The box the fog fills, as `{ min: [x, y, z], max: [x, y, z] }`; `null` fills the loaded models' bounds (`getModelBounds()`) |
 | `fogHeightFalloff` | `number` | 0 | Per scene unit: above `fogFloor` the density falls as `e^(−falloff · height)`, so the fog lies low; `0` is even fog |
 | `fogFloor` | `number` \| `null` | null | The height the falloff starts from, full density below it; `null` is the loaded models' floor |
-| `transmissiveBounces` | `number` | 5 | Max bounces for transmissive materials |
+| `transmissiveBounces` | `number` | 12 | Glass events a path may have (a crossing or a reflection off glass); past it the glass shades opaque, so nested glass goes dark below it (raised to 24 by `configureForMode('production')`) |
 | `maxSubsurfaceSteps` | `number` | 8 | Max random-walk steps for subsurface scattering (raised to 64 by `configureForMode('production')`) |
 | `enableAlphaShadows` | `boolean` | false | Alpha-tested shadow rays (enabled by `configureForMode('production')`) |
 | `enableDOF` | `boolean` | false | Enable depth of field |

@@ -8,7 +8,7 @@ export const ENGINE_DEFAULTS = deepFreeze( {
 
 	// Light paths
 	maxBounces: 3,
-	transmissiveBounces: 5,
+	transmissiveBounces: 12, // not 5: a spent budget leaves nested glass dark and costs more — the ray then bounces diffusely
 	maxSubsurfaceSteps: 8, // a low cap on the subsurface random walk; the final tier raises it
 	maxTransparentBounces: 32, // alpha skips are free bounces; uncapped, cutout foliage eats the loop
 	integrator: 'path', // 'path' | 'bidirectional' | 'vcm'
@@ -180,8 +180,7 @@ export const PRODUCTION_RENDER_CONFIG = {
 export const INTERACTIVE_RENDER_CONFIG = {
 	maxSamples: ENGINE_DEFAULTS.maxSamples, bounces: ENGINE_DEFAULTS.maxBounces,
 	renderMode: ENGINE_DEFAULTS.renderMode, enableAlphaShadows: ENGINE_DEFAULTS.enableAlphaShadows,
-	// 12, not 5: a spent budget leaves black glass and costs MORE — the ray then bounces diffusely.
-	transmissiveBounces: 12,
+	transmissiveBounces: ENGINE_DEFAULTS.transmissiveBounces,
 	maxSubsurfaceSteps: ENGINE_DEFAULTS.maxSubsurfaceSteps,
 	// On, like production. The final pass costs one cheap denoise when the preview settles, and both
 	// neural passes need a denoised frame to be worth running — on Monte-Carlo noise the upscaler

@@ -68,7 +68,7 @@ exports[`defaults that shape pixels — a change here says how renders change in
   "shadowRays": "two",
   "shadowTerminatorOffset": 0.1,
   "showBackground": true,
-  "transmissiveBounces": 5,
+  "transmissiveBounces": 12,
   "transparentBackground": false,
   "unitsPerMetre": 1,
   "useAdaptiveSampling": true,
