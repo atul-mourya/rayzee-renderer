@@ -8,14 +8,17 @@
 -   Fast compilation on windows devices
 -   pbrt camera all info parsing
 -   pbrt folliage
+-   make bvh an independent library
 
 ### MVP
+- [x] drag and drop material without need to select a mesh
+- [ ] color schema of the pbrt renders reference images are so different then rayzee. Example: watercolor scene
 - [ ] dynamic max stack in bvhtraversal
 - [ ] https://github.com/DennisSmolek/Fsr3 - branch already created
 - [ ] tiled output for lower vram — Blender Cycles-style render-region tiling; VRAM-bounded 4K/8K final render + video. See docs/internal/specs/wavefront-tiled-output.md
 
 ### pbrt: read but not used (audit of the 26 catalog scenes, 2026-11-01)
-- [ ] `sceneMetadata.render` (bounces, samples, film size, integrator) is applied by nothing; the canvas keeps its own aspect, so framing differs from 16:9 previews
+- [x] `sceneMetadata.render` (bounces, samples, film size, integrator) is applied by nothing; the canvas keeps its own aspect, so framing differs from 16:9 previews. Done 2026-11-07: the app opens a scene at its shape and integrator (see Render settings a file asks for, below)
 - [ ] PixelFilter (triangle, radius 1; 25 scenes) — engine uses its own pixel reconstruction
 - [ ] volpath `regularize` (BMW), sppm `radius` (Cornell Caustic)
 - [ ] Not read, not in the catalog: spherical / realistic cameras (spherical becomes perspective), perspective `screenwindow`, `frameaspectratio`, shutter (motion blur), Film white balance / sensor / `cropwindow` / `maxcomponentvalue`, CameraMedium and space-filling media, non-homogeneous media, scattering inside media (σs folds into absorption)
@@ -29,40 +32,28 @@
 
 ### Known
 
+- [ ] A scene whose file asks for bidirectional and has glass loses light through the glass: glass blocks the
+  bidirectional shadow rays (see CLAUDE.md, Bidirectional integrator), and since 2026-11-07 the file's integrator is
+  applied. Volumetric Caustic's glass ball renders dark where path tracing lights it; Glass of Water opens bidirectional
+  too (path matched or beat it, 60268c36).
+- [ ] FBX and Collada cameras' own shape is not used for the picture's (`userData.aspect`): three.js's FBXLoader puts in
+  the window's when a file gives none (`AspectWidth` / `AspectHeight`) and the ColladaLoader leaves its default, so a
+  given shape cannot be told from a missing one without the raw values.
+
 - [ ] Tar: GNU sparse members (old `S` and pax 0.0 / 0.1 / 1.0) are not understood: in Python's `testtar.tar` their maps
   read as three garbage entries. Every other local tar (86 of 97 Python can read) lists and reads as Python's `tarfile`
   does, apart from a leading `./` we drop (2026-11-07). Sparse files are rare in scene archives.
-- [x] Any PNG with an eXIf chunk or JPEG with Exif was decoded at load to learn its size and kept decoded, though most
-  never turn (2,342 baked-texture PNGs here had no orientation tag; 1.1 GB decoded in one folder). Fixed 2026-11-07:
-  the orientation is read, and only 5–8 or an unreadable block go to the decoder. 7,886 of 7,959 local images now
-  sized from the header (was 5,159), every one matching macOS `sips`.
 - [ ] **Light radius, what is left** (point and spot lights with a radius, and USD's sphere radius and sun angle, done
   2026-10-12; see Light radius in `CLAUDE.md`): the bidirectional and VCM integrators still treat them as points; glTF
   has no field for a radius (`docs/SCENE_IMPORT.md` → Lights from Blender's glTF exporter); the app has no control for it. ⚠️ Blender
   writes half its sun angle (10° → `angle` 5) though USD defines the full width, so its suns read half as soft.
 
-- [ ] `usePixelFreeze` is inert on 24155522.glb — bit-identical to uniform at 150 spp, nothing reaches `pixelFreezeThreshold` 0.02, so the shipping adaptive default saves nothing on real interiors
 - [ ] `thickness` is inert, so every transmissive surface is treated as a volume boundary. glTF uses `thicknessFactor == 0` to mean **thin-walled** — no refraction, tint once, attenuation ignored. A hollow thin-walled shell therefore tints at every interface crossed (√ baseColor each since 11.16, as Cycles: 4 crossings on the Gelatinous Cube give blue 0.168² = 0.028; before, 0.168⁴ = 0.0008 and it rendered black). Fix = branch on thickness, and re-add the Thickness control with a scene-relative range (three.js specifies it in local space x model scale), not the old 0..1 slider. gap-plan Phase 4.4.
   **Proper fix on branch `feat/thin-glass` (ee108cf9, not merged) — merge it rather than redoing this** (it predates the
   11.16 glass colour: its sheet tint and shadow-ray branch need the colour transmittance and `transmissionTint`): thickness 0 is a
   thin sheet (no bend, no medium, both faces' Fresnel 2R / (1 + R)) in the glass path, the opaque path's transmission
   lobe and shadow rays; importers mark solid glass with thickness 1; the app gets a "Thin" switch. Changes how glTF
   glass without a volume renders (it stops refracting).
-- [x] OIDN made 150-spp renders slightly worse than raw — real with oidn-webgpu 0.6.0 (2026-11-06): 1.153 on
-  `spheres-gradient`, 1.209 on `shadow-catcher-ground`. Fixed 2026-11-06: OIDN's output pass leans each pixel back to
-  the render where OIDN moved it more than the render's own noise explains (the path tracer's m2, from 8 spp): 1.036 /
-  0.996, and better than before on every gated scene at 64–150. Left: `spheres-gradient` 1.036 at 150 and ~1.14 at
-  256 — OIDN shifts colour slightly (the blend reads luminance) and keeps part of the noise at high spp; per-channel and
-  per-tile corrections each cost the noisy scenes more than they won (`~/RayzeeScratch/denoise-2026-11-06/`).
-- [x] NRD worse than raw at 16 spp (alpha-cutout 2.22, sheen 1.38, shadow-catcher 1.37, clearcoat 1.35, iridescence
-  1.08, anisotropy 1.03). Fixed 2026-11-06: NRD leans back to its input where it moved a pixel more than the input's
-  noise, measured from snapshots at the last two powers of two of samples: 0.62 / 0.91 / 0.85 / 0.77 / 0.72 / 0.73,
-  every bench scene below raw at 1–32 spp. The six scenes are in `bench:denoise` now (`crossoverScenes`, ladder
-  `[1, 16, 64, 150]`).
-- [x] NRD treated a whole emissive material as an emitter (never blurred), so a mostly-black emissive map stayed noisy.
-  Fixed 2026-11-06: the path tracer keeps the directly seen emission apart per sample (`requestOutput( 'emission' )`),
-  NRD takes it out before the blur and puts it back after; no edge ring. Under the bidirectional integrator the old
-  material flag still stands in (its paths use those lanes).
 - [ ] Shadow rays cross glass in a straight line (coloured since 11.16, see `docs/design/SHADING.md` → Light through
   glass): within ~1 % of refraction for panes, but a thick block lands ±7 % off, as the light really bends through it.
 - [ ] Rough, part-transmissive glass reads 0.96–0.97 in a closed white furnace (T 0.25–0.75, IOR 1.5, roughness
@@ -159,9 +150,6 @@
 ### Camera
 
 ### Lighting
-
-- [x] An IES file listing its values with commas (LM-63 allows blanks or commas; LeoMoon's `star-focused.ies`) parsed
-  to NaN and its light gave no light, silently. Fixed 2026-11-07: all 49 `.ies` files on the test Mac parse.
 
 ### Materials
 
@@ -260,21 +248,17 @@ once looked at. How it should have been built so they could not happen:
   one's eta and k through CIE 1931 under D65, Real-Time Rendering's table to 3 digits; brass was grey, TiO2 50 % grey
   metal where it reflects 24 %, MgO 90 % where it reflects 7 %).
 - [ ] **A second infinite light** is dropped (watercolor has two); the engine has one environment.
-- [x] **Spectral `eta`** (crown's gems were IOR 200 before 2026-10-14). Done 2026-11-07: a spectrum, inline or a named
-  glass, is glTF's glass — its IOR at the d line and `dispersion` 20 / its Abbe number (Schott's catalogue within 0.5 %);
-  a thin dielectric and subsurface take the IOR alone. The engine's dispersion now means glTF's: the F–C spread is
-  ( ior − 1 ) · dispersion / 20, centred on the IOR (it was 0.057 · dispersion whatever the IOR, and raised the mean).
-  Exact beyond the three lines needs the sampled table in the shader; the grain it costs is Materials → Dispersion grain.
 - [ ] **Lights**: area light `filename` (an image that emits); `goniometric` → the engine's IES profiles; `projection` →
   its gobos; the infinite light's `portal`. Area light `power` done 2026-10-05.
 - [ ] **Cameras**: `spherical` → the engine's panorama (a panorama is global, not per camera: needs a per-camera
   projection); `realistic` (lens files). `lensradius` / `focaldistance` → the camera's own DOF done 2026-10-05.
-- [ ] **Render settings a file asks for — open question.** `Integrator` maxdepth, `Sampler` pixelsamples and the Film
-  resolution are read into `sceneMetadata.render` (2026-10-05; glTF extras may carry `rayzee.render` too) but nothing
-  applies them (watercolor asks for 15 bounces at 1920×1440). Undecided: apply them at all? Only to the final render
-  (bounces / samples / size), leaving Preview fast? Offer them in the UI ("this scene asks for …")? Applying changes how
-  those files render, and the mode presets own maxBounces and maxSamples today. Film `iso` / `exposuretime` /
-  `whitebalance` not read yet.
+- [x] **Render settings a file asks for.** Decided and done 2026-11-07 (f0efa681, fe5f9888): the app opens a scene at
+  the shape its file asks for and with its integrator, in Preview and Final Render alike; the next model gets back what
+  each replaced. The shape comes from pbrt's Film, USD's RenderSettings or authored apertures, a glTF camera's
+  `aspectRatio` (Livspace's too: three.js's exporter writes the browser window's shape). The file's integrator wins
+  over the catalogue's, so Glass of Water opens bidirectional and the Bathroom in vertex merging. Size, bounces and
+  samples are not applied (pbrt's counts assume no denoiser and no early stop): Final Render shows them in a line.
+  Left: Film `iso` / `exposuretime` / `whitebalance` not read.
 - [ ] **Materials** approximated as diffuse: `hair`, `measured`. `subsurface` → the engine's SSS done 2026-10-05
   (named media, σa/σs, reflectance + mfp through the dipole).
 - [ ] **Texture filtering** — see Features → Rendering → Texture filtering (kroken's brick dirt read patchy where pbrt's
@@ -285,19 +269,6 @@ once looked at. How it should have been built so they could not happen:
 
 ## USD import
 
-- [x] A `.usda` with a dictionary inside a dictionary (`customLayerData = { dictionary cameraSettings = { … } }`, as
-  Omniverse and OpenUSD write it) failed to load: "expected a name, found {". Fixed 2026-11-07; of the 392 `.usda` files
-  on this Mac (OpenUSD's, Apple's, Unreal's), 92 failed before and none now. Text and crate readers now agree on
-  `fixtures/syntax.usda` and OpenUSD's crate of it, except what nothing reads: doc strings (`doc` against `comment` /
-  `documentation`), child order (text `reorder`, crate `primOrder`), and relationships' `uniform`.
-- [x] A `.usda` with a spline (`double x.spline = { bezier, … }`, OpenUSD 0.25) failed to load; the text reader now
-  steps over it, as the crate reader already did (the attribute has no value; splines are not animated here).
-- [ ] Composition takes a variant set that is defined but not listed in `variantSets`; OpenUSD ignores it
-  (`fixtures/compose` against `usdcat --flatten`, which agrees on everything else). Left: a file relying on it would
-  change. Also from review: text strings do not decode `\r`, `\xHH` or escapes inside triple quotes.
-- [x] Crate `asset[]` arrays read as unrelated tokens (they hold string indices), and 64-bit integer arrays drifted by
-  one after a running total passed 2^53; the text reader wrapped `uint`, `int64` and `uint64` arrays into `Int32Array`
-  and gave bools as 1 / 0. Fixed 2026-11-07: `fixtures/types.*` (every value type, OpenUSD's crate of it) read alike.
 - [ ] **Ptex** — Moana's USD ships its .ptx (13 GB); a Ptex input reads the mesh's mean displayColor today.
 - [ ] **Vertex colours** — displayColor varies per vertex; the engine has none, so each mesh takes its mean.
 - [ ] **Light linking** — Moana's palm keys light only the palms (`collection:lightLink`); here every light lights everything.
@@ -424,7 +395,8 @@ minified + gzip of the three.js loader alone (three is external, so it lands in 
 - [ ] Experiment PLOC for maximum BVH performance scenarios
 - [x] tiered-material-buffer-access generalization - already at its practical optimum
 - [ ] Opacity micro map
-- [ ] Shader Execution Reordering
+- [ ] Shader Execution Reordering (hardware) — blocked until WebGPU has ray tracing (gpuweb #11054 / #11056 open). The software version shipped as the material sort (`SortGlobalKernels.js`): −8 % on the corpus, −2 % on 24155522.glb, where shading without shadow rays is ~8 % of the frame
+- [x] Sort rays before tracing — tried 2026-11-06 (stash "ray-sort trial"), no gain. 24155522.glb at 1024²: an origin key makes Extend's later bounces 7 % faster, a 16-bit origin × direction key 16 %, but the sort eats it (frame −0.3 % / −0.3 %). Shade ordered by hit position instead of material: −8 % frame on 24155522 (shadow rays), but +1.4–17 % on the 8 other models — same pattern as the shadow passes stash; needs a per-scene signal nobody has found
 - [ ] Mega Geometries - Compressed Clusters as input to BLAS
 - [ ] Mega Geometries - PTLAS - Partitioned TLAS
 - [ ] SHaRC - Spatial Hash Radiance Cache - observed issues: transparent objects blocky, glowing reflictive materials, color bleeding, baised. **Root cause measured**: single-scale hashing only covers 59% of first indirect hits from a 1/16 seed — see the ORCA probe below, where 6 levels take the same scene to 99.7%
