@@ -479,16 +479,22 @@ export const calculateBRDFWeights = Fn( ( [ material, mc, cache ], builder ) => 
 		.mul( float( 1.0 ).sub( material.transmission ) ).toVar();
 	const sheen = ( layers.sheen ? material.sheen.mul( cache.maxSheenColor ) : float( 0.0 ) ).toVar();
 
+	// The coat's own smoothness: by the base's, a coat over a matte base was never drawn.
 	const clearcoat = float( 0.0 ).toVar();
-	if ( layers.clearcoat ) If( mc.hasClearcoat, () => {
+	if ( layers.clearcoat ) {
 
-		clearcoat.assign( material.clearcoat.mul( invRoughness ).mul( 0.4 ) );
+		const coatSmoothness = float( 1.0 ).sub( material.clearcoatRoughness );
+		If( mc.hasClearcoat, () => {
 
-	} ).Else( () => {
+			clearcoat.assign( material.clearcoat.mul( coatSmoothness ).mul( 0.4 ) );
 
-		clearcoat.assign( material.clearcoat.mul( invRoughness ).mul( 0.35 ) );
+		} ).Else( () => {
 
-	} );
+			clearcoat.assign( material.clearcoat.mul( coatSmoothness ).mul( 0.35 ) );
+
+		} );
+
+	}
 
 	const transmission = float( 0.0 ).toVar();
 	If( mc.isTransmissive, () => {
