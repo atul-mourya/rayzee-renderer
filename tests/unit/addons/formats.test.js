@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { Group, Mesh, PerspectiveCamera, Points, Scene, Vector3 } from 'three';
 import { AssetLoader } from '@/core/loaders/AssetLoader.js';
 import { allFormats, objFormat, stlFormat, plyFormat, exrFormat, fbxFormat, usdFormat, colladaFormat, threeMFFormat } from '@/core/addons/formats.js';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { decodersOnDemand } from '@/core/loaders/GLTFDecoders.js';
 
 const stubControls = () => ( { target: new Vector3(), maxDistance: 0, saveState() {}, update() {} } );
@@ -223,6 +224,18 @@ describe( 'glTF decoders on demand', () => {
 		const textDraco = await parsed( text.loader, json );
 		expect( textDraco?.constructor.name ).toBe( 'DRACOLoader' );
 		textDraco.dispose();
+
+	} );
+
+	it( 'fails what is not glTF rather than leaving the load running', async () => {
+
+		// A missing file a web server answers with its page.
+		const html = new TextEncoder().encode( '<!doctype html><html></html>' ).buffer;
+		const outcome = await Promise.race( [
+			decodersOnDemand( new GLTFLoader(), null ).parseAsync( html, '' ).then( () => 'loaded', ( error ) => error.name ),
+			new Promise( ( resolve ) => setTimeout( () => resolve( 'still running' ), 1000 ) ),
+		] );
+		expect( outcome ).toBe( 'SyntaxError' );
 
 	} );
 

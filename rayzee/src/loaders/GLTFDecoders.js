@@ -73,10 +73,11 @@ export function decodersOnDemand( loader, renderer ) {
 	const parse = loader.parse.bind( loader );
 	loader.parse = ( data, path, onLoad, onError ) => {
 
-		attachDecoders( loader, jsonText( data ), renderer ).then(
-			() => parse( data, path, onLoad, onError ),
-			( error ) => onError?.( error ),
-		);
+		// three's parse throws on what is not JSON, which GLTFLoader.load catches; a step later nothing would, and the load
+		// never ended (every later one refused as already in progress).
+		attachDecoders( loader, jsonText( data ), renderer )
+			.then( () => parse( data, path, onLoad, onError ) )
+			.catch( ( error ) => onError?.( error ) );
 
 	};
 
