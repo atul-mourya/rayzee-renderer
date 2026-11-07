@@ -113,6 +113,9 @@ that moved on the same GPU.
 **Docs**: `docs/guide/` is the engine's user guide and API reference (`rayzee/README.md`, the npm page, links there);
 `docs/design/` holds how it works inside. A public API change updates the guide.
 
+**Conventions**: [docs/design/CONVENTIONS.md](docs/design/CONVENTIONS.md) — where code goes (layers, folders, which file
+owns it), exports, test layout, docs and comments; how a cleanup is run; the audit log. `/maintainer` audits against it.
+
 **Key import patterns**:
 - Engine imports in app code: `import { PathTracerApp, EngineEvents } from 'rayzee'`
 - App proxy: `import { getApp } from '@/lib/appProxy'` (the `@` alias resolves to `app/src/`)

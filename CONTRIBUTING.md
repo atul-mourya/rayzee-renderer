@@ -59,7 +59,8 @@ docs/                     # guide/ for people using the engine, design/ for how 
 ```
 
 The engine has three layers: the **renderer core**, **add-ons**, and the **viewer** built on both. Viewer code never
-goes into the core; see `docs/design/CORE_AND_ADDONS.md`.
+goes into the core; see `docs/design/CORE_AND_ADDONS.md`. Where new code goes, and the other rules that keep this
+layout, are in `docs/design/CONVENTIONS.md`.
 
 ## 📝 Code Style
 
