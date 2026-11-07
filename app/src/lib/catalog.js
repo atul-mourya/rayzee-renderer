@@ -161,7 +161,7 @@ export function listSource( { load, noun, ...fields } ) {
 	return {
 		...fields,
 
-		/** Every category, largest first, each with its first item's preview. */
+		/** Every category, largest first, each with its first item's preview and the next ones' should it not load. */
 		async getCategories() {
 
 			const found = new Map();
@@ -169,9 +169,9 @@ export function listSource( { load, noun, ...fields } ) {
 
 				for ( const name of item.categories ) {
 
-					const category = found.get( name );
-					if ( category ) category.count ++;
-					else found.set( name, { count: 1, preview: item.preview } );
+					const category = found.get( name ) ?? found.set( name, { count: 0, previews: [] } ).get( name );
+					category.count ++;
+					if ( item.preview && category.previews.length < 4 ) category.previews.push( item.preview );
 
 				}
 
@@ -179,12 +179,13 @@ export function listSource( { load, noun, ...fields } ) {
 
 			return [ ...found ]
 				.sort( ( a, b ) => b[ 1 ].count - a[ 1 ].count )
-				.map( ( [ name, { count, preview } ] ) => ( {
+				.map( ( [ name, { count, previews } ] ) => ( {
 					id: name,
 					slug: name,
 					name: name.charAt( 0 ).toUpperCase() + name.slice( 1 ),
 					label: `${count} ${noun}`,
-					preview,
+					preview: previews[ 0 ] ?? null,
+					fallbackPreviews: previews.slice( 1 ),
 					tags: [],
 				} ) );
 

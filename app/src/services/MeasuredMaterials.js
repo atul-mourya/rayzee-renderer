@@ -12,8 +12,8 @@ const NARASIMHAN = 'Narasimhan et al. 2006, "Acquiring Scattering Properties of 
 const PBRT_MEDIA = 'https://github.com/mmp/pbrt-v4/blob/master/src/pbrt/media.cpp';
 const PBRT_SPECTRA = 'https://github.com/mmp/pbrt-v4/blob/master/src/pbrt/util/spectrum.cpp';
 
-// A ball in the colour, for the catalogue's thumbnail; a clear one is drawn as a ring.
-function swatch( color, clear = false ) {
+// A ball in the colour, for a catalogue thumbnail; a clear one is drawn as a ring.
+export function materialSwatch( color, clear = false ) {
 
 	const hex = `#${new Color().setRGB( ...color ).getHexString()}`;
 	const ball = clear
@@ -30,13 +30,13 @@ function swatch( color, clear = false ) {
 const medium = ( name, pbrt, category, color, subsurfaceRadius, roughness, source, tags ) => ( {
 	name, pbrt, color, metalness: 0, roughness, ior: 1.33, subsurfaceRadius,
 	category: [ category ], tags, description: `Measured by ${source}; pbrt's "${pbrt}" medium.`,
-	sources: [ PBRT_MEDIA ], reference: [], preview: swatch( color ),
+	sources: [ PBRT_MEDIA ], reference: [], preview: materialSwatch( color ),
 } );
 
 const glass = ( name, pbrt, ior, abbe, tags ) => ( {
 	name, pbrt, color: [ 1, 1, 1 ], metalness: 0, roughness: 0, ior, transmission: 1, transmissionDispersion: abbe,
 	category: [ 'Crystal' ], tags, description: `Schott's catalogue glass, from refractiveindex.info; pbrt's "${pbrt}" table.`,
-	sources: [ PBRT_SPECTRA ], reference: [], preview: swatch( [ 0.7, 0.8, 0.95 ], true ),
+	sources: [ PBRT_SPECTRA ], reference: [], preview: materialSwatch( [ 0.7, 0.8, 0.95 ], true ),
 } );
 
 export const MEASURED_MATERIALS = [

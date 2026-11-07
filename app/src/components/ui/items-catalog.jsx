@@ -642,6 +642,20 @@ export const ItemsCatalog = ( {
 														<img
 															src={item.preview}
 															alt={item.name}
+															// A preview that does not load gives way to the next the item offers.
+															onError={( e ) => {
+
+																const img = e.currentTarget;
+																const tried = Number( img.dataset.fallback ?? 0 );
+																const next = item.fallbackPreviews?.[ tried ];
+																if ( next ) {
+
+																	img.dataset.fallback = tried + 1;
+																	img.src = next;
+
+																}
+
+															}}
 															className="w-full h-full object-cover transition-transform group-hover/thumb:scale-105 rounded-lg"
 															loading="lazy"
 														/>

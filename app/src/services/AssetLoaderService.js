@@ -220,16 +220,19 @@ export class AssetLoaderService {
 
 			const data = await response.json();
 
-			// Process materials to add preview property and ensure categories are arrays
+			const { MEASURED_MATERIALS, materialSwatch } = await import( './MeasuredMaterials.js' );
+
+			// Process materials to add preview property and ensure categories are arrays; a swatch of the colour stands in
+			// for a reference render that does not load.
 			const processedMaterials = data.map( ( mData ) => ( {
 				...mData,
 				preview: mData.reference && mData.reference.length > 0 ? mData.reference[ 0 ] : null,
+				fallbackPreviews: mData.color ? [ materialSwatch( mData.color, mData.transmission > 0 ) ] : [],
 				categories: Array.isArray( mData.category ) ? mData.category : ( mData.category ? [ mData.category ] : [] ),
 				source: 'physicallybased'
 			} ) );
 
 			// pbrt's measured media and optical glasses, where the database has nothing of that name.
-			const { MEASURED_MATERIALS } = await import( './MeasuredMaterials.js' );
 			const names = new Set( processedMaterials.map( ( m ) => m.name.toLowerCase() ) );
 			for ( const mData of MEASURED_MATERIALS ) {
 

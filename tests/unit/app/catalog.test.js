@@ -121,7 +121,7 @@ describe( 'listSource', () => {
 		await source.search( { category: 'wood' } );
 		expect( load ).toHaveBeenCalledTimes( 1 );
 		expect( source.NAME ).toBe( 'Test' );
-		expect( categories[ 0 ] ).toEqual( { id: 'wood', slug: 'wood', name: 'Wood', label: '2 materials', preview: 'oak.png', tags: [] } );
+		expect( categories[ 0 ] ).toEqual( { id: 'wood', slug: 'wood', name: 'Wood', label: '2 materials', preview: 'oak.png', fallbackPreviews: [ 'pine.png' ], tags: [] } );
 		expect( categories.map( c => c.slug ) ).toEqual( [ 'wood', 'floor', 'brick', 'wall' ] );
 
 	} );
