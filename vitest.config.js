@@ -26,6 +26,8 @@ export default defineConfig( {
 					name: 'gpu',
 					environment: './tests/gpu/environment.js',
 					include: [ 'tests/gpu/**/*.test.js' ],
+					// Kernels compile inside the test: the diffuse transmission and EON ones take 2.5–5.3 s in a full run.
+					testTimeout: 60000,
 				},
 			},
 		],
