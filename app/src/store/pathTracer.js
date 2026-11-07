@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import * as THREE from 'three';
-import { DEFAULT_STATE, MODEL_FILES, NRD_QUALITY_PRESETS, computeOutputDimensions, isPanorama, DENOISER_STRATEGIES, SKY_PRESETS } from '@/Constants';
+import { DEFAULT_STATE, NRD_QUALITY_PRESETS, computeOutputDimensions, aspectPresetFor, isPanorama, DENOISER_STRATEGIES, SKY_PRESETS } from '@/Constants';
 import { PRODUCTION_RENDER_CONFIG, INTERACTIVE_RENDER_CONFIG, sunPosition, dayOfYearForMonth, timeForSunElevation } from 'rayzee';
 import { getApp } from '@/lib/appProxy';
 import { useCameraStore } from './camera.js';
@@ -493,21 +493,45 @@ export const usePathTracerStore = create( ( set, get ) => ( {
 
 	},
 
-	// The light transport the loaded catalog scene opened with, and what it replaced.
-	_sceneIntegrator: null,
+	// What the loaded scene's file set, each `{ value, previous }`: `integrator`, and `shape` (preset, orientation, scene
+	// ratio); and `asks`, the bounces and samples it asks for.
+	_sceneRequest: null,
 
 	/**
-	 * Gives a just-loaded model its catalog entry's `integrator`, if it names one. The next model gets back what the
-	 * scene replaced, unless the user changed it since.
-	 * @param {?string} url - where the model was loaded from
+	 * Gives a just-loaded model the light transport and the picture shape its file asks for (`app.sceneMetadata.render`:
+	 * `integrator`, `aspect`). The next model gets back what the scene replaced, unless the user changed it since.
+	 * @param {?{ integrator?: string, aspect?: number }} render
 	 */
-	applySceneIntegrator: url => {
+	applySceneRequest: render => {
 
-		const opened = get()._sceneIntegrator;
-		if ( opened && get().integrator === opened.integrator ) get().handleIntegratorChange( opened.previous );
-		const integrator = url ? MODEL_FILES.find( m => m.url === url )?.integrator : undefined;
-		set( { _sceneIntegrator: integrator ? { integrator, previous: get().integrator } : null } );
-		if ( integrator ) get().handleIntegratorChange( integrator );
+		const state = get();
+		const opened = state._sceneRequest ?? {};
+		const shapeOf = ( { aspectRatioPreset, orientation, sceneAspect } ) => ( { aspectRatioPreset, orientation, sceneAspect } );
+		const same = ( a, b ) => a.aspectRatioPreset === b.aspectRatioPreset && a.orientation === b.orientation && a.sceneAspect === b.sceneAspect;
+		let integrator = opened.integrator && state.integrator === opened.integrator.value ? opened.integrator.previous : state.integrator;
+		let shape = opened.shape && same( shapeOf( state ), opened.shape.value ) ? opened.shape.previous : shapeOf( state );
+
+		const request = {};
+		if ( render?.integrator ) {
+
+			request.integrator = { value: render.integrator, previous: integrator };
+			integrator = render.integrator;
+
+		}
+
+		if ( render?.aspect > 0 ) {
+
+			request.shape = { value: aspectPresetFor( render.aspect ), previous: shape };
+			shape = request.shape.value;
+
+		}
+
+		// Shown in Final Render, not applied: pbrt's counts assume no denoiser and no early stop.
+		if ( render?.maxBounces || render?.samples ) request.asks = { maxBounces: render.maxBounces, samples: render.samples };
+
+		set( { _sceneRequest: request } );
+		if ( integrator !== state.integrator ) state.handleIntegratorChange( integrator );
+		if ( ! same( shape, shapeOf( state ) ) ) state._applyCanvasDimensions( shape );
 
 	},
 

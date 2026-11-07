@@ -701,42 +701,81 @@ describe( 'Fog', () => {
 
 } );
 
-describe( 'a catalog scene\'s light transport', () => {
+describe( 'what a scene\'s file asks for', () => {
 
-	// Imported here, after the store: Constants reads `window` at import.
-	const at = async ( name ) => ( await import( '@/Constants' ) ).MODEL_FILES.find( m => m.name === name ).url;
+	const withApp = async () => {
 
-	it( 'opens with the scene\'s integrator and gives the next model back what it replaced', async () => {
+		const app = { settings: { set: vi.fn() }, setReservedRenderResolution: vi.fn(), setCanvasSize: vi.fn(), reset: vi.fn() };
+		( await import( '@/lib/appProxy.js' ) ).__setMockApp( app );
+		store.usePathTracerStore.setState( {
+			integrator: 'path', aspectRatioPreset: '1:1', orientation: 'landscape', sceneAspect: null, resolution: 1000,
+			cameraProjection: 'perspective', _sceneRequest: null,
+		} );
+		return app;
 
-		const settings = new Map();
-		( await import( '@/lib/appProxy.js' ) ).__setMockApp( { settings: { set: ( k, v ) => settings.set( k, v ) } } );
-		const pt = store.usePathTracerStore;
-		pt.setState( { integrator: 'path', _sceneIntegrator: null } );
+	};
 
-		pt.getState().applySceneIntegrator( await at( 'Veach Bidir' ) );
-		expect( [ pt.getState().integrator, settings.get( 'integrator' ) ] ).toEqual( [ 'bidirectional', 'bidirectional' ] );
+	const pt = () => store.usePathTracerStore.getState();
+	const shape = () => [ pt().aspectRatioPreset, pt().orientation, pt().sceneAspect ];
 
-		// One that names none keeps the usual setting: here, the one Veach Bidir replaced.
-		pt.getState().applySceneIntegrator( await at( 'Kitchen' ) );
-		expect( [ pt.getState().integrator, settings.get( 'integrator' ) ] ).toEqual( [ 'path', 'path' ] );
+	it( 'opens with the light transport it asks for and gives the next model back what it replaced', async () => {
 
-		pt.getState().applySceneIntegrator( await at( 'Cornell Caustic' ) );
-		expect( pt.getState().integrator ).toBe( 'vcm' );
-		pt.getState().applySceneIntegrator( null );
-		expect( pt.getState().integrator ).toBe( 'path' );
+		const app = await withApp();
+		pt().applySceneRequest( { integrator: 'bidirectional' } );
+		expect( [ pt().integrator, app.settings.set.mock.lastCall ] ).toEqual( [ 'bidirectional', [ 'integrator', 'bidirectional' ]] );
+		pt().applySceneRequest( null );
+		expect( pt().integrator ).toBe( 'path' );
+
+		// One scene after another: the last gives back what the first replaced.
+		pt().applySceneRequest( { integrator: 'vcm' } );
+		pt().applySceneRequest( { integrator: 'bidirectional' } );
+		expect( pt().integrator ).toBe( 'bidirectional' );
+		pt().applySceneRequest( {} );
+		expect( pt().integrator ).toBe( 'path' );
+
+	} );
+
+	it( 'opens at the picture shape it asks for, a preset where one is it, and gives it back after', async () => {
+
+		const app = await withApp();
+		pt().applySceneRequest( { aspect: 1280 / 720 } );
+		expect( shape() ).toEqual( [ '16:9', 'landscape', null ] );
+		expect( app.setCanvasSize.mock.lastCall ).toEqual( [ 1000, 563 ] );
+
+		// pbrt's coffee, 800 × 1000; a Livspace room exported from a browser window.
+		pt().applySceneRequest( { aspect: 0.8 } );
+		expect( shape() ).toEqual( [ 'scene', 'portrait', 1.25 ] );
+		expect( app.setCanvasSize.mock.lastCall ).toEqual( [ 800, 1000 ] );
+		const { aspectRatioLabel } = await import( '@/Constants' );
+		expect( aspectRatioLabel( 'scene', 'portrait', 1.25 ) ).toBe( '4:5' );
+		pt().applySceneRequest( { aspect: 1.7108307045215563 } );
+		expect( aspectRatioLabel( ...shape() ) ).toBe( '1.71:1' );
+
+		pt().applySceneRequest( null );
+		expect( shape() ).toEqual( [ '1:1', 'landscape', null ] );
+		expect( app.setCanvasSize.mock.lastCall ).toEqual( [ 1000, 1000 ] );
 
 	} );
 
 	it( 'keeps what the user chose after the scene opened', async () => {
 
-		( await import( '@/lib/appProxy.js' ) ).__setMockApp( { settings: { set: () => {} } } );
-		const pt = store.usePathTracerStore;
-		pt.setState( { integrator: 'path', _sceneIntegrator: null } );
+		await withApp();
+		pt().applySceneRequest( { integrator: 'bidirectional', aspect: 2.387 } );
+		expect( shape() ).toEqual( [ '2.39:1', 'landscape', null ] );
+		pt().handleIntegratorChange( 'vcm' );
+		pt().handleAspectPresetChange( '4:3' );
+		pt().applySceneRequest( null );
+		expect( [ pt().integrator, ...shape() ] ).toEqual( [ 'vcm', '4:3', 'landscape', null ] );
 
-		pt.getState().applySceneIntegrator( await at( 'Veach Bidir' ) );
-		pt.getState().handleIntegratorChange( 'vcm' );
-		pt.getState().applySceneIntegrator( await at( 'Kitchen' ) );
-		expect( pt.getState().integrator ).toBe( 'vcm' );
+	} );
+
+	it( 'keeps the bounces and samples it asks for to show, applying neither', async () => {
+
+		await withApp();
+		pt().applySceneRequest( { maxBounces: 17, samples: 64 } );
+		expect( pt()._sceneRequest.asks ).toEqual( { maxBounces: 17, samples: 64 } );
+		pt().applySceneRequest( { aspect: 1 } );
+		expect( pt()._sceneRequest.asks ).toBeUndefined();
 
 	} );
 

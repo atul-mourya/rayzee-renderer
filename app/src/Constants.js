@@ -56,6 +56,7 @@ export const DEFAULT_STATE = {
 	environment: 'aristea_wreck_puresky',
 	aspectRatioPreset: '1:1',
 	orientation: 'landscape',
+	sceneAspect: null, // the 'scene' entry's width ÷ height (≥ 1): a shape a loaded file asked for that no preset is
 	finalRenderResolution: 2048,
 	originalPixelRatio: window.devicePixelRatio / 2,
 	zoomToCursor: true,
@@ -163,14 +164,13 @@ export const CAMERA_PRESETS = {
 const PBRT_SCENES_URL = `${ASSETS_BASE_URL}/models/pbrt-scenes`;
 const RESEARCH_SCENES_URL = `${ASSETS_BASE_URL}/models/gltf-research-scenes`;
 const BITTERLI_RESOURCES = 'https://benedikt-bitterli.me/resources/';
-// `integrator`: the light transport the scene opens with, where the usual path tracing does it less justice.
-const pbrtScene = ( name, id, label, { redirection = BITTERLI_RESOURCES, integrator } = {} ) => ( {
+// Each opens with the light transport its file asks for (pathTracer store, applySceneRequest).
+const pbrtScene = ( name, id, label, { redirection = BITTERLI_RESOURCES } = {} ) => ( {
 	name,
 	url: `${PBRT_SCENES_URL}/${id}.zip`,
 	preview: `${RESEARCH_SCENES_URL}/webp/${id}.webp`,
 	label,
 	redirection,
-	...( integrator ? { integrator } : {} ),
 } );
 
 export const MODEL_FILES = [
@@ -190,8 +190,7 @@ export const MODEL_FILES = [
 	},
 	pbrtScene( "Coffee Maker", 			"coffee-maker", 		"“Coffee Maker” by cekuhnen · CC BY 3.0" ),
 	pbrtScene( "Cornell Box", 			"cornell-box", 			"“Cornell Box” by Benedikt Bitterli · CC0" ),
-	// Light through the water only reaches the walls by vertex merging.
-	pbrtScene( "Cornell Caustic", 		"cornell-caustic", 		"“Water Caustic” by Benedikt Bitterli · CC0", { integrator: 'vcm' } ),
+	pbrtScene( "Cornell Caustic", 		"cornell-caustic", 		"“Water Caustic” by Benedikt Bitterli · CC0" ),
 	pbrtScene( "Dragon Statue", 		"dragon", 				"“Dragon” by Delatronic · CC BY 3.0" ),
 	pbrtScene( "Glass of Water", 		"glass-of-water", 		"“Glass of Water” by aXel · CC0" ),
 	pbrtScene( "House", 				"house", 				"“Victorian Style House” by MrChimp2313 · CC0" ),
@@ -207,8 +206,7 @@ export const MODEL_FILES = [
 	pbrtScene( "Teapot", 				"teapot", 				"“Utah Teapot” by Benedikt Bitterli · CC0" ),
 	pbrtScene( "Teapot Full", 			"teapot-full", 			"“Utah Teapot (full)” by Benedikt Bitterli · CC0" ),
 	pbrtScene( "Veach Ajar", 			"veach-ajar", 			"“Veach, Ajar” by Benedikt Bitterli · CC0" ),
-	// Lit from inside a lamp shade, with a glass egg's caustic: bidirectional, as the file asks.
-	pbrtScene( "Veach Bidir", 			"veach-bidir", 			"“Veach, Bidir Room” by Benedikt Bitterli · CC0", { integrator: 'bidirectional' } ),
+	pbrtScene( "Veach Bidir", 			"veach-bidir", 			"“Veach, Bidir Room” by Benedikt Bitterli · CC0" ),
 	pbrtScene( "Veach MIS", 			"veach-mis", 			"“Veach, MIS” by Benedikt Bitterli · CC0" ),
 	pbrtScene( "Vintage Car", 			"vintage-car", 			"“Old vintage car” by piopis · CC0" ),
 ];
@@ -287,13 +285,38 @@ export const ASPECT_RATIO_PRESETS = {
 	'21:9': { label: '21:9', width: 21, height: 9 },
 };
 
-/** The ratio as the picture has it: 16:9 turned to portrait reads 9:16. */
-export const aspectRatioLabel = ( preset, orientation ) => {
+// A ratio of at least 1 as "a:b" in small whole numbers where it is one (16:7), else "2.12:1".
+const ratioLabel = ( ratio ) => {
 
-	const label = ASPECT_RATIO_PRESETS[ preset ]?.label ?? preset;
+	for ( let b = 1; b <= 12; b ++ ) {
+
+		const a = Math.round( ratio * b );
+		if ( Math.abs( a / b - ratio ) < ratio * 0.002 ) return `${a}:${b}`;
+
+	}
+
+	return `${ratio.toFixed( 2 )}:1`;
+
+};
+
+/** The ratio as the picture has it: 16:9 turned to portrait reads 9:16. */
+export const aspectRatioLabel = ( preset, orientation, sceneAspect ) => {
+
+	const label = preset === 'scene' && sceneAspect ? ratioLabel( sceneAspect ) : ASPECT_RATIO_PRESETS[ preset ]?.label ?? preset;
 	return orientation === 'portrait' ? label.split( ':' ).reverse().join( ':' ) : label;
 
 };
+
+/** The shape settings for a picture of `aspect` (width ÷ height): a preset within 0.5 %, else the 'scene' entry. */
+export function aspectPresetFor( aspect ) {
+
+	const orientation = aspect < 1 ? 'portrait' : 'landscape';
+	const wide = Math.max( aspect, 1 / aspect );
+	const preset = Object.entries( ASPECT_RATIO_PRESETS ).find( ( [ , p ] ) => Math.abs( p.width / p.height / wide - 1 ) < 0.005 )?.[ 0 ];
+	return preset ? { aspectRatioPreset: preset, orientation: preset === '1:1' ? 'landscape' : orientation, sceneAspect: null }
+		: { aspectRatioPreset: 'scene', orientation, sceneAspect: wide };
+
+}
 
 // A round step `decades` powers of ten below `fitted`, up to four times it. An empty scene fits nothing: size 1.
 const roundRange = ( fitted, decades ) => {
@@ -355,11 +378,11 @@ export const scaleToTranslucency = s => Math.max( 0, Math.min( 1, Math.log( Math
 
 /**
  * Compute canvas width/height from resolution + aspect ratio + orientation.
- * Resolution = longest edge. Aspect ratio defines the shape. Orientation flips it.
+ * Resolution = longest edge. Aspect ratio defines the shape (the 'scene' preset's is `sceneAspect`). Orientation flips it.
  */
-export function computeCanvasDimensions( resolution, aspectPreset, orientation ) {
+export function computeCanvasDimensions( resolution, aspectPreset, orientation, sceneAspect ) {
 
-	const preset = ASPECT_RATIO_PRESETS[ aspectPreset ];
+	const preset = aspectPreset === 'scene' && sceneAspect ? { width: sceneAspect, height: 1 } : ASPECT_RATIO_PRESETS[ aspectPreset ];
 	if ( ! preset ) return { width: resolution, height: resolution };
 
 	const maxRatio = Math.max( preset.width, preset.height );
@@ -392,7 +415,7 @@ export function computeOutputDimensions( state, resolution ) {
 
 	}
 
-	return computeCanvasDimensions( resolution, state?.aspectRatioPreset, state?.orientation );
+	return computeCanvasDimensions( resolution, state?.aspectRatioPreset, state?.orientation, state?.sceneAspect );
 
 }
 

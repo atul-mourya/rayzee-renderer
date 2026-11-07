@@ -23,7 +23,8 @@ const FinalRenderPanel = () => {
 		handleEnableOIDNChange,
 		handleOidnQualityChange,
 	} = useStore();
-
+	const asks = useStore( s => s._sceneRequest?.asks );
+	const asked = [ asks?.maxBounces && `${asks.maxBounces} bounces`, asks?.samples && `${asks.samples} samples` ].filter( Boolean ).join( ' and ' );
 
 	return (
 		<div className="">
@@ -31,6 +32,11 @@ const FinalRenderPanel = () => {
 				<Row>
 					<Slider label={"Bounces"} tip="How many times light may bounce between surfaces. More fills corners and rooms with light, but renders slower." min={0} max={20} step={1} value={[ bounces ]} onFinishChange={handleBouncesChange} />
 				</Row>
+				{asked && (
+					<Row>
+						<span className="opacity-50 text-xs" title="Not applied: its counts are for a renderer with no denoiser that never stops early. This one stops once the picture is clean, then removes the grain.">The scene&apos;s file asks for {asked}.</span>
+					</Row>
+				)}
 				<CanvasDimensionControls resolutionKey="finalRenderResolution" />
 			</ControlGroup>
 			{/* Same ControlGroup the Preview panel uses. Its open body supplies the padding and the

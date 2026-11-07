@@ -84,7 +84,7 @@ function createMockStores() {
 		setSelectMode: vi.fn(), handleAFScreenPointChange: vi.fn(), setAutoFocusDistance: vi.fn(), syncModelSize: vi.fn(),
 		setCameraNames: vi.fn(), setSelectedCameraIndex: vi.fn(), applyCameraEffects: vi.fn(), setOrthoHeight: vi.fn(),
 	};
-	const pathTracerState = { syncCameraProjection: vi.fn(), syncSceneEnvironment: vi.fn(), _applyFog: vi.fn(), fog: false, applySceneIntegrator: vi.fn() };
+	const pathTracerState = { syncCameraProjection: vi.fn(), syncSceneEnvironment: vi.fn(), _applyFog: vi.fn(), fog: false, applySceneRequest: vi.fn() };
 	const animationState = { setIsPlaying: vi.fn(), setIsPaused: vi.fn(), setClips: vi.fn(), syncTimeline: vi.fn() };
 	const state = {
 		setIsRenderComplete: vi.fn(),
@@ -265,15 +265,15 @@ describe( 'connectEngineToStore', () => {
 
 	} );
 
-	it( 'gives a new model its catalog entry\'s light transport, by where it was loaded from', () => {
+	it( 'gives a new model what its file asks the renderer for', () => {
 
 		connectEngineToStore( engine, stores );
-		engine.sceneSource = { kind: 'url', url: 'https://example.com/scene.zip' };
+		engine.sceneMetadata = { render: { integrator: 'bidirectional', aspect: 16 / 9 } };
 		engine._emit( 'MODEL_LOADED' );
-		engine.sceneSource = null;
+		engine.sceneMetadata = null;
 		engine._emit( 'MODEL_LOADED' );
 
-		expect( stores._pathTracerState.applySceneIntegrator.mock.calls ).toEqual( [[ 'https://example.com/scene.zip' ], [ null ]] );
+		expect( stores._pathTracerState.applySceneRequest.mock.calls ).toEqual( [[ { integrator: 'bidirectional', aspect: 16 / 9 } ], [ null ]] );
 
 	} );
 

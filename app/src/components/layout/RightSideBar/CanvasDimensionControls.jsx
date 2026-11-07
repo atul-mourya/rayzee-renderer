@@ -11,6 +11,7 @@ const CanvasDimensionControls = ( { disabled = false, resolutionKey = 'resolutio
 		resolution,
 		finalRenderResolution,
 		aspectRatioPreset,
+		sceneAspect,
 		orientation,
 		canvasWidth,
 		canvasHeight,
@@ -55,7 +56,7 @@ const CanvasDimensionControls = ( { disabled = false, resolutionKey = 'resolutio
 			<Row>
 				<span className="opacity-50 text-xs truncate" title="The size of the finished picture. Its shape comes from Aspect Ratio in the Camera tab.">Output</span>
 				<span className="text-xs text-muted-foreground">
-					{outputWidth} &times; {outputHeight} ({panorama ? '2:1, 360°' : aspectRatioLabel( aspectRatioPreset, orientation )})
+					{outputWidth} &times; {outputHeight} ({panorama ? '2:1, 360°' : aspectRatioLabel( aspectRatioPreset, orientation, sceneAspect )})
 				</span>
 			</Row>
 

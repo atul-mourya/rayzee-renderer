@@ -2,13 +2,14 @@ import { RectangleHorizontal, RectangleVertical } from 'lucide-react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Row } from "@/components/ui/row";
 import { usePathTracerStore } from '@/store';
-import { ASPECT_RATIO_PRESETS, isPanorama } from '@/Constants';
+import { ASPECT_RATIO_PRESETS, aspectRatioLabel, isPanorama } from '@/Constants';
 
 // Narrow selectors: this store takes a per-frame auto-exposure write.
 const AspectRatioControl = () => {
 
 	const aspectRatioPreset = usePathTracerStore( s => s.aspectRatioPreset );
 	const orientation = usePathTracerStore( s => s.orientation );
+	const sceneAspect = usePathTracerStore( s => s.sceneAspect );
 	const panorama = usePathTracerStore( s => isPanorama( s.cameraProjection ) );
 	const handleAspectPresetChange = usePathTracerStore( s => s.handleAspectPresetChange );
 	const handleOrientationToggle = usePathTracerStore( s => s.handleOrientationToggle );
@@ -40,6 +41,8 @@ const AspectRatioControl = () => {
 						{Object.entries( ASPECT_RATIO_PRESETS ).map( ( [ key, preset ] ) => (
 							<SelectItem key={key} value={key}>{preset.label}</SelectItem>
 						) )}
+						{/* The shape the loaded scene's file asked for, where no preset is it. */}
+						{sceneAspect && <SelectItem value="scene">Scene {aspectRatioLabel( 'scene', 'landscape', sceneAspect )}</SelectItem>}
 					</SelectContent>
 				</Select>
 			</div>

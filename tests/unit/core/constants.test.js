@@ -7,6 +7,7 @@ let computeCanvasDimensions;
 let computeOutputDimensions;
 let ASPECT_RATIO_PRESETS;
 let aspectRatioLabel;
+let aspectPresetFor;
 let walkSpeedRange;
 let orthoHeightRange;
 
@@ -18,6 +19,7 @@ beforeAll( async () => {
 	computeOutputDimensions = mod.computeOutputDimensions;
 	ASPECT_RATIO_PRESETS = mod.ASPECT_RATIO_PRESETS;
 	aspectRatioLabel = mod.aspectRatioLabel;
+	aspectPresetFor = mod.aspectPresetFor;
 	walkSpeedRange = mod.walkSpeedRange;
 	orthoHeightRange = mod.orthoHeightRange;
 
@@ -199,6 +201,29 @@ describe( 'aspectRatioLabel', () => {
 		expect( aspectRatioLabel( '16:9', 'portrait' ) ).toBe( '9:16' );
 		expect( aspectRatioLabel( '2.39:1', 'portrait' ) ).toBe( '1:2.39' );
 		expect( aspectRatioLabel( '1:1', 'portrait' ) ).toBe( '1:1' );
+
+	} );
+
+	it( 'names a scene\'s own shape in small whole numbers where it is one, else to two places', () => {
+
+		expect( aspectRatioLabel( 'scene', 'landscape', 1920 / 840 ) ).toBe( '16:7' );
+		expect( aspectRatioLabel( 'scene', 'portrait', 1.4 ) ).toBe( '5:7' );
+		expect( aspectRatioLabel( 'scene', 'landscape', 1.7108 ) ).toBe( '1.71:1' );
+
+	} );
+
+} );
+
+describe( 'aspectPresetFor', () => {
+
+	it( 'is the preset within half a percent, turned as the picture is, else the scene\'s own shape', () => {
+
+		expect( aspectPresetFor( 1280 / 720 ) ).toEqual( { aspectRatioPreset: '16:9', orientation: 'landscape', sceneAspect: null } );
+		expect( aspectPresetFor( 1024 / 429 ) ).toEqual( { aspectRatioPreset: '2.39:1', orientation: 'landscape', sceneAspect: null } );
+		expect( aspectPresetFor( 9 / 16 ) ).toEqual( { aspectRatioPreset: '16:9', orientation: 'portrait', sceneAspect: null } );
+		expect( aspectPresetFor( 1 ) ).toEqual( { aspectRatioPreset: '1:1', orientation: 'landscape', sceneAspect: null } );
+		expect( aspectPresetFor( 1000 / 1400 ) ).toEqual( { aspectRatioPreset: 'scene', orientation: 'portrait', sceneAspect: 1.4 } );
+		expect( computeCanvasDimensions( 1400, 'scene', 'portrait', 1.4 ) ).toEqual( { width: 1000, height: 1400 } );
 
 	} );
 

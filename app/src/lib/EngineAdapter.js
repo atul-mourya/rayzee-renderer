@@ -195,7 +195,7 @@ export function connectEngineToStore( engine, { useStore, useCameraStore, usePat
 	on( EngineEvents.MODEL_LOADED, () => {
 
 		useCameraStore.getState().syncModelSize( { resetUnits: true } );
-		usePathTracerStore?.getState().applySceneIntegrator?.( engine.sceneSource?.url ?? null );
+		usePathTracerStore?.getState().applySceneRequest?.( engine.sceneMetadata?.render ?? null );
 		// A caller's own notice after the load replaces this one (one at a time) and carries the same note.
 		if ( engine.sceneSpilled ) toast( { title: "Large scene", description: spillNote( engine ).trim() } );
 
