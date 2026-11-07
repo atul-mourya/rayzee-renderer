@@ -89,7 +89,9 @@ subtree per element, and the whole thing rarely fits: Moana is 29 GB unpacked.
 - **Templates.** A shape inside `ObjectBegin` keeps its whole transform and a placement's goes on top, as pbrt does —
   never relative to the transform at ObjectBegin. kroken defines its cushions, blanket and rug under a `Transform` and
   places them at `Identity`; the relative reading put all of them at the world origin.
-- **Materials.** `coatedconductor` is a metal under a clear coat (pbrt's roughnesses default to 0); a textured
+- **Materials.** `coateddiffuse` is a Lambertian base (no specular of its own) under a clear coat, `coatedconductor` a
+  metal under one (pbrt's roughnesses default to 0); both darken the base as pbrt's layer does (`coatDarkening` 1,
+  docs/design/SHADING.md), an `eta` other than 1.5 approximated (the engine's coat is 1.5); a textured
   roughness becomes a roughness map with pbrt's remap baked in (`applyRoughness`; the clear coat's too); `subsurface` is
   the engine's random walk (`applySubsurface`: albedo σs / σt, mean free path 1 / σt; pbrt's named media, `sigma_a`/
   `sigma_s`, or a `reflectance` inverted through the dipole at `mfp`); a sampled spectral `eta` (dielectric, subsurface)

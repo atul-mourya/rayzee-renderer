@@ -274,7 +274,7 @@ describe( 'SceneGraphCodec', () => {
 				relativeIOR: true, displacementScale: 0.3, displacementBias: 0.1, transparent: true, alphaTest: 0.25, side: DoubleSide,
 				depthWrite: false, emissiveIntensity: 2.5, anisotropy: 0.5, anisotropyRotation: 0.7, diffuseTransmission: 0.3,
 				diffuseRoughness: 0.4, subsurface: 0.6, subsurfaceRadius: [ 0.5, 0.25, 0.125 ], subsurfaceRadiusScale: 0.3,
-				subsurfaceAnisotropy: 0.2,
+				subsurfaceAnisotropy: 0.2, coatDarkening: 0.8,
 				subsurfaceColor: new Color( 0.9, 0.4, 0.3 ), diffuseTransmissionColor: new Color( 0.2, 0.7, 0.4 ),
 			}, extra );
 			material.color.setRGB( 0.6, 0.5, 0.4 );

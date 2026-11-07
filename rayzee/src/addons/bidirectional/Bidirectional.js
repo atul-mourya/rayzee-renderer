@@ -13,6 +13,7 @@ import {
 import { getMaterial, MIN_ROUGHNESS, REC709_LUMINANCE_COEFFICIENTS } from '../../shaders/Common.js';
 import { RayTracingMaterial, MaterialSamples, ExtMapResult } from '../../shaders/Struct.js';
 import { sampleAllMaterialTextures, processAnisotropyMap, applyExtensionMaps, getTransformedUV, NO_UV_AXES } from '../../shaders/TextureSampling.js';
+import { coatDarkenedColor } from '../../shaders/Clearcoat.js';
 import { SAMPLER_DIM_AUX_BASE } from '../../shaders/Random.js';
 
 // 1D dimensions of a camera vertex's bounce block (Random.js budget) picking its connection.
@@ -188,6 +189,7 @@ export function resolveSurfaceMaterial( materialIndex, uv, N, materialBuffer ) {
 	material.diffuseTransmission.assign( ext.diffuseTransmission );
 	material.diffuseTransmissionColor.assign( ext.diffuseTransmissionColor );
 	material.diffuseRoughness.assign( ext.diffuseRoughness );
+	material.color.assign( coatDarkenedColor( material, int( materialIndex ), materialBuffer ) );
 
 	If( rawRough.lessThan( MIN_ROUGHNESS ).and( material.anisotropy.equal( 0.0 ) ).and( material.clearcoat.equal( 0.0 ) )
 		.and( material.transmission.equal( 0.0 ) ).and( material.subsurface.equal( 0.0 ) ), () => {

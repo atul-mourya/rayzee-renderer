@@ -17,7 +17,7 @@ export const SCENE_GRAPH_FORMAT = 3;
 // What the engine reads off a material that three.js does not serialise (colours go through exactColors).
 const ENGINE_TEXTURES = [ 'diffuseTransmissionMap', 'diffuseTransmissionColorMap' ];
 const ENGINE_VALUES = [
-	'diffuseTransmission', 'diffuseRoughness', 'bumpDistance', 'relativeIOR', 'emissiveSide',
+	'diffuseTransmission', 'diffuseRoughness', 'coatDarkening', 'bumpDistance', 'relativeIOR', 'emissiveSide',
 	'subsurface', 'subsurfaceRadius', 'subsurfaceRadiusScale', 'subsurfaceAnisotropy',
 ];
 export const ARCHIVE_PATH = '__rayzeeArchivePath';

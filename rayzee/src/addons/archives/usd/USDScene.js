@@ -2041,6 +2041,7 @@ export class USDSceneReader {
 
 		mat.clearcoat = await num( 'coat_weight', 0 );
 		mat.clearcoatRoughness = await num( 'coat_roughness', 0 );
+		if ( mat.clearcoat > 0 ) mat.coatDarkening = await num( 'coat_darkening', 1 );
 
 		const fuzz = await num( 'fuzz_weight', 0 );
 		if ( fuzz > 0 ) {

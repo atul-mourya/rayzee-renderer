@@ -73,6 +73,7 @@ const SCALAR_PROPERTY_OFFSETS = {
 	anisotropyRotation: M.ANISOTROPY_ROTATION, // radians, unlike the degrees hosts usually show
 	diffuseTransmission: M.DIFFUSE_TRANSMISSION,
 	diffuseRoughness: M.DIFFUSE_ROUGHNESS,
+	coatDarkening: M.COAT_DARKENING,
 	bumpDistance: M.BUMP_DISTANCE,
 	relativeIOR: M.RELATIVE_IOR,
 };
@@ -596,6 +597,7 @@ export class MaterialDataManager {
 			case 'anisotropyRotation': data[ stride + M.ANISOTROPY_ROTATION ] = value; break;
 			case 'diffuseTransmission': data[ stride + M.DIFFUSE_TRANSMISSION ] = value; break;
 			case 'diffuseRoughness': data[ stride + M.DIFFUSE_ROUGHNESS ] = value; break;
+			case 'coatDarkening': data[ stride + M.COAT_DARKENING ] = value; break;
 			case 'diffuseTransmissionColor':
 				if ( value.r !== undefined ) {
 

@@ -120,8 +120,8 @@ export function unpackNormalOct( packed, out ) {
 // Shared between CPU writers (TextureCreator, MaterialDataManager) and GPU readers (Common.js getMaterial).
 export const MATERIAL_DATA_LAYOUT = {
 
-	SLOTS_PER_MATERIAL: 35, // vec4 slots per material
-	FLOATS_PER_MATERIAL: 140, // total floats per material (35 × 4)
+	SLOTS_PER_MATERIAL: 36, // vec4 slots per material
+	FLOATS_PER_MATERIAL: 144, // total floats per material (36 × 4)
 
 	// ── Flat float offsets (CPU side) ────────────────────────────────
 	// Used as: data[ materialIndex * FLOATS_PER_MATERIAL + offset ]
@@ -183,6 +183,8 @@ export const MATERIAL_DATA_LAYOUT = {
 	// Slot 34: bumpDistance + the bump map's own width and height + relativeIOR; read only for a bump-mapped material,
 	// or a transmissive one while some material has a relative IOR
 	BUMP_DISTANCE: 136, BUMP_MAP_WIDTH: 137, BUMP_MAP_HEIGHT: 138, RELATIVE_IOR: 139,
+	// Slot 35: coatDarkening (141–143 free); read only under a coat while some material darkens
+	COAT_DARKENING: 140,
 
 	// ── Vec4 slot indices (GPU/TSL side) ─────────────────────────────
 	// Used with getDatafromStorageBuffer( buf, matIdx, int(slot), int(SLOTS_PER_MATERIAL) )
@@ -215,6 +217,7 @@ export const MATERIAL_DATA_LAYOUT = {
 		EXT_MAP_INDICES_C: 32, // specularColor map index, diffuseTransmissionColor
 		EXT_MAP_INDICES_D: 33, // diffuseTransmission, diffuseTransmissionColor, clearcoatNormal map indices, clearcoatNormalScale
 		BUMP: 34, // bumpDistance, bump map width, height, relativeIOR
+		COAT: 35, // coatDarkening
 	},
 
 };

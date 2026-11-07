@@ -149,6 +149,8 @@ export const MATERIAL_DEFAULTS = deepFreeze( {
 	diffuseTransmissionColor: [ 1, 1, 1 ],
 	// The diffuse lobe's roughness (OpenPBR base_diffuse_roughness): 0 is Lambert, above it EON.
 	diffuseRoughness: 0,
+	// OpenPBR's coat_darkening: light the coat reflects back down deepens the base's colour. glTF's coat has none.
+	coatDarkening: 0,
 } );
 
 function deepFreeze( object ) {

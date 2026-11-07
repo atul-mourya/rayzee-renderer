@@ -78,8 +78,20 @@ the shadow terminator, shadow-ray picking, sized lights and fog. CLAUDE.md keeps
   `hasClearcoatNormals()`), never for the bidirectional integrators: their vertex records hold one normal, so there the
   coat follows N as before. pbrt's coated materials hand their normal map to the coat (pbrt shades both in one frame).
   `tests/gpu/clearcoatNormal.test.js`; Khronos' ClearCoatTest (BaseNorm / CoatNorm rows) shows both cases.
-- **Material layers** — clear coat, sheen, iridescence, anisotropy, subsurface, dispersion, diffuse transmission and
-  diffuse roughness (`MATERIAL_LAYERS`, `shaders/SceneResources.js`) are compiled into the kernels only while some material has the layer's
+- **Coat darkening** (`material.coatDarkening`, OpenPBR's `coat_darkening`; packed at 140, slot 35 of its own) — the
+  base takes back what the coat reflects down: its colour E becomes E · lerp( 1, ( 1 − K ) / ( 1 − E·K ), coat · δ ),
+  K = lerp( F0, 1 − ( 1 − Fdr ) / η², lerp( 1, roughness, metalness ) ) at the engine's coat IOR 1.5 (0.04 / 0.5963,
+  `COAT_INTERNAL_REFLECTANCE`). One site, `coatDarkenedColor` (`Clearcoat.js`), after the extension maps in Shade and in
+  the bidirectional `resolveSurfaceMaterial`, so every lobe, NEE and the OIDN albedo guide see it. glTF's coat has
+  none (0, the default); pbrt's coated materials set 1 (their layer simulates it) and lose the base specular the old
+  mapping gave them; USD reads OpenPBR's (default 1). Against TungstenRender.exr at 17 bounces, no firefly clamp:
+  coffee 0.67 → 0.13 stops (colour error 0.069 → 0.012), kitchen 0.41 → 0.19, classroom 0.48 → 0.34.
+  `tests/gpu/coatDarkening.test.js`. ⚠️ The coat's lobe-selection weight follows its own roughness
+  (`calculateBRDFWeights`): by the base's, a coat over a matte base was never drawn, and its mirror reflections came
+  only from NEE as specks the denoiser smeared into blotches (pbrt's Pontiac GTO). `clearcoat-carpaint`: same truth,
+  noise ×0.99–1.01.
+- **Material layers** — clear coat, sheen, iridescence, anisotropy, subsurface, dispersion, diffuse transmission,
+  diffuse roughness and coat darkening (`MATERIAL_LAYERS`, `shaders/SceneResources.js`) are compiled into the kernels only while some material has the layer's
   factor above 0 (`MaterialDataManager.materialLayers()`). The set rides in each kernel's build context
   (`resources.materialLayers`); a function body reads it with `materialLayers( builder )` and leaves the layer's code
   out with a plain JS `if` — the weight, density, sampling link, extension maps and Shade's paths (the coat sampler,

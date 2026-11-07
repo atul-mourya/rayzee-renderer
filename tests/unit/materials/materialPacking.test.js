@@ -39,6 +39,7 @@ import { SceneProcessor } from '@/core/scene/SceneProcessor.js';
 import { setWorkingMatrix } from '@/core/color/WorkingMatrix.js';
 
 const F = M.FLOATS_PER_MATERIAL;
+const UNUSED = new Set( [ M.COAT_DARKENING + 1, M.COAT_DARKENING + 2, M.COAT_DARKENING + 3 ] );
 
 function packed( mat ) {
 
@@ -76,7 +77,7 @@ function sentinel( k ) {
 		sheenRoughnessMap: v(), iridescenceMap: v(), iridescenceThicknessMap: v(), specularIntensityMap: v(),
 		specularColorMap: v(), diffuseTransmission: u(), diffuseTransmissionColor: rgb(),
 		diffuseTransmissionMap: v(), diffuseTransmissionColorMap: v(), diffuseRoughness: u(), diffuseRoughnessMap: v(),
-		clearcoatNormalMap: v(), clearcoatNormalScale: { x: v(), y: v() },
+		clearcoatNormalMap: v(), clearcoatNormalScale: { x: v(), y: v() }, coatDarkening: u(),
 	};
 
 }
@@ -129,6 +130,7 @@ describe( 'packMaterial', () => {
 		expectAt( M.DIFFUSE_ROUGHNESS, mat.diffuseRoughness );
 		expectAt( M.CLEARCOAT_NORMAL_MAP_INDEX, mat.clearcoatNormalMap );
 		expectAt( M.CLEARCOAT_NORMAL_SCALE, mat.clearcoatNormalScale.x );
+		expectAt( M.COAT_DARKENING, mat.coatDarkening );
 
 	} );
 
@@ -136,7 +138,7 @@ describe( 'packMaterial', () => {
 
 		const a = packed( sentinel( 1 ) );
 		const b = packed( sentinel( 2 ) );
-		for ( let i = 0; i < F; i ++ ) expect( a[ i ], `float ${i} ignores its input` ).not.toBe( b[ i ] );
+		for ( let i = 0; i < F; i ++ ) if ( ! UNUSED.has( i ) ) expect( a[ i ], `float ${i} ignores its input` ).not.toBe( b[ i ] );
 
 	} );
 

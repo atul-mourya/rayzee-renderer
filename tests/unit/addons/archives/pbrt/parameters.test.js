@@ -24,7 +24,7 @@ Texture "bump" "float" "imagemap" "string filename" "bump.png" "string wrap" "cl
 MakeNamedMaterial "red" "string type" "diffuse" "rgb reflectance" [ 0.8 0.1 0.1 ]
 MakeNamedMaterial "glass" "string type" "dielectric" "spectrum eta" "glass-BK7"
 MakeNamedMaterial "blend" "string type" "mix" "string materials" [ "red" "glass" ] "texture amount" "mask"
-MakeNamedMaterial "paint" "string type" "coateddiffuse" "rgb reflectance" [ 0.5 0.2 0.1 ] "float roughness" 0.1
+MakeNamedMaterial "paint" "string type" "coateddiffuse" "rgb reflectance" [ 0.5 0.2 0.1 ] "float roughness" 0.1 "float eta" 1.33
 	"texture displacement" "bump" "float thickness" 0.02
 MakeNamedMaterial "gem" "string type" "dielectric" "spectrum eta" [ 200 3.5 900 3.3 ]
 MakeNamedMaterial "spare" "string type" "diffuse" "float sigma" 4
@@ -54,6 +54,7 @@ const REPORT = {
 	},
 	approximated: {
 		'LightSource distant: L': 1,
+		'Material coateddiffuse: eta': 1,
 		'Material mix: amount': 1,
 	},
 };

@@ -318,6 +318,12 @@ ratio at each surface. A material with `relativeIOR: true` (set it on the three.
 do — a glass–water wall is 1.5 / 1.33 ≈ 1.13 — and only one with a volume (`attenuationDistance`) changes what absorbs
 the light behind it. The pbrt importer sets it on every material it builds.
 
+A clear coat (`clearcoat`) follows glTF: it reflects, and the base under it keeps its colour. A material with
+`coatDarkening` (0–1, set on the three.js material or with `setMaterialProperty`) also has what a real varnish does,
+OpenPBR's `coat_darkening`: light the coat reflects back down meets the base again, so the base turns deeper and darker
+— an orange plastic stays orange where it would turn peach. The pbrt importer sets it to 1 under every pbrt coat, and
+the USD importer reads it from OpenPBR materials (where it defaults to 1).
+
 An emissive material glows from the faces its `side` shows unless it has an `emissiveSide` (`FrontSide`, `BackSide` or
 `DoubleSide`, set on the three.js material before the model loads): then it glows from those faces only, and the others
 are an ordinary surface of its colour. A light panel with `side: DoubleSide, emissiveSide: FrontSide` is dark from

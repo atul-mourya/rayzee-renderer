@@ -1344,6 +1344,7 @@ export class GeometryExtractor {
 			diffuseTransmission: pick( 'diffuseTransmission' ),
 			diffuseTransmissionColor: pick( 'diffuseTransmissionColor' ),
 			diffuseRoughness: pick( 'diffuseRoughness' ),
+			coatDarkening: pick( 'coatDarkening' ),
 
 			normalScale: pick( 'normalScale' ),
 			bumpScale: pick( 'bumpScale' ),

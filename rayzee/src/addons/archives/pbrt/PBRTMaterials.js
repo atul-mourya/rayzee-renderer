@@ -491,6 +491,15 @@ async function applyConductorColor( mat, params, ctx, prefix, applyAlbedo, setCo
 
 }
 
+// pbrt's coat is a layer light bounces inside, so the base darkens under it; the engine's coat has IOR 1.5.
+function applyCoat( mat, params, prefix ) {
+
+	mat.clearcoat = 1;
+	mat.coatDarkening = 1;
+	if ( Math.abs( pFloat( params, `${prefix}eta`, 1.5 ) - 1.5 ) > 1e-3 ) approximated( params, `${prefix}eta` );
+
+}
+
 /**
  * Build a MeshPhysicalMaterial from a pbrt material definition.
  * @param {{type:string, params:object}} def
@@ -558,7 +567,7 @@ export async function buildMaterial( def, ctx ) {
 			// A conductor under a dielectric coat; pbrt's roughnesses default to 0 for both.
 			await applyConductorColor( mat, params, ctx, 'conductor.', applyAlbedo, setColor );
 			await applyRoughness( mat, 'roughness', params, 0, ctx, 'conductor.' );
-			mat.clearcoat = 1;
+			applyCoat( mat, params, 'interface.' );
 			await applyRoughness( mat, 'clearcoatRoughness', params, 0, ctx, 'interface.' );
 			break;
 
@@ -583,10 +592,12 @@ export async function buildMaterial( def, ctx ) {
 
 		case 'coateddiffuse': {
 
+			// A Lambertian base: no specular of its own under the coat.
 			applyAlbedo( await resolveSpectrum( params, 'reflectance', ctx, [ 0.5, 0.5, 0.5 ] ) );
-			mat.roughness = 0.6;
+			mat.roughness = 1;
 			mat.metalness = 0;
-			mat.clearcoat = 1;
+			mat.specularIntensity = 0;
+			applyCoat( mat, params, '' );
 			await applyRoughness( mat, 'clearcoatRoughness', params, 0, ctx );
 			break;
 
@@ -682,6 +693,7 @@ export async function buildMaterial( def, ctx ) {
 				mat.thickness = lerp( matA.thickness ?? 0, matB.thickness ?? 0 );
 				mat.clearcoat = lerp( matA.clearcoat ?? 0, matB.clearcoat ?? 0 );
 				mat.clearcoatRoughness = lerp( matA.clearcoatRoughness ?? 0, matB.clearcoatRoughness ?? 0 );
+				mat.coatDarkening = lerp( matA.coatDarkening ?? 0, matB.coatDarkening ?? 0 );
 				mat.emissive.lerpColors( matA.emissive, matB.emissive, t );
 				const dtA = matA.diffuseTransmission ?? 0, dtB = matB.diffuseTransmission ?? 0;
 				if ( dtA > 0 || dtB > 0 ) {

@@ -1,21 +1,52 @@
 import {
 	Fn,
+	float,
 	vec3,
+	vec4,
 	int,
 	dot,
 	normalize,
 	reflect,
 	max,
+	mix,
 	If,
 	bool as tslBool,
 } from 'three/tsl';
 
 import { struct, AnisoFrame, DotProducts, BRDFWeights } from './Struct.js';
-import { MIN_CLEARCOAT_ROUGHNESS, computeDotProductsAniso, anisoTangentFrame, constructTBN, coatNormal } from './Common.js';
+import { MIN_CLEARCOAT_ROUGHNESS, computeDotProductsAniso, anisoTangentFrame, constructTBN, coatNormal, getDatafromStorageBuffer, MATERIAL_SLOT, MATERIAL_SLOTS } from './Common.js';
+import { materialLayers } from './SceneResources.js';
 import { computeAnisoAlphas, calculateBRDFWeightsFromMaterial, calculateBSDFSamplingPDF, diffuseTransmissionPdf } from './MaterialProperties.js';
 import { ImportanceSampleCosine, sampleGGXVNDF, sampleGGXVNDFAniso } from './MaterialSampling.js';
 import { evaluateMaterialResponseFromDots, evaluateDiffuseTransmission } from './MaterialEvaluation.js';
 import { getRandomSample1D } from './Random.js';
+
+// The share of light leaving the base that a coat of IOR 1.5 sends back down: 1 − (1 − Fdr) / 1.5² over a rough base,
+// F0 over a smooth one.
+export const COAT_INTERNAL_REFLECTANCE = { rough: 0.5963, smooth: 0.04 };
+
+/**
+ * The base colour under a coat with OpenPBR's coat darkening: the base takes back what the coat reflects down, so its
+ * albedo E becomes E · lerp( 1, ( 1 − K ) / ( 1 − E·K ), coat · coatDarkening ), deeper and darker.
+ */
+export const coatDarkenedColor = Fn( ( [ material, materialIndex, materialBuffer ], builder ) => {
+
+	const color = material.color.toVar();
+	if ( ! materialLayers( builder ).coatDarkening ) return color;
+
+	If( material.clearcoat.greaterThan( 0.0 ), () => {
+
+		const darkening = getDatafromStorageBuffer( materialBuffer, materialIndex, int( MATERIAL_SLOT.COAT ), int( MATERIAL_SLOTS ) ).x;
+		const roughBase = mix( float( 1.0 ), material.roughness, material.metalness );
+		const k = mix( float( COAT_INTERNAL_REFLECTANCE.smooth ), float( COAT_INTERNAL_REFLECTANCE.rough ), roughBase );
+		const delta = float( 1.0 ).sub( k ).div( vec3( 1.0 ).sub( color.xyz.mul( k ) ) );
+		color.assign( vec4( color.xyz.mul( mix( vec3( 1.0 ), delta, material.clearcoat.mul( darkening ) ) ), color.w ) );
+
+	} );
+
+	return color;
+
+} );
 
 export const ClearcoatResult = struct( {
 	brdf: 'vec3',
