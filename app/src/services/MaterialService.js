@@ -208,6 +208,32 @@ export class MaterialService {
 	}
 
 	/**
+	 * Puts `newMaterial` wherever `oldMaterial` is used under `root`, so every part that shared it changes together.
+	 * A new material on one part only would sit beside the old one and shift every later material's index, which the
+	 * triangles keep through rebuildMaterials(): the scene would draw each part with its neighbour's material.
+	 * @returns {number} how many objects now use the new material
+	 */
+	static replaceMaterial( root, oldMaterial, newMaterial ) {
+
+		let replaced = 0;
+		const swap = ( m ) => {
+
+			if ( m !== oldMaterial ) return m;
+			replaced ++;
+			return newMaterial;
+
+		};
+
+		root?.traverse( ( object ) => {
+
+			if ( object.material ) object.material = Array.isArray( object.material ) ? object.material.map( swap ) : swap( object.material );
+
+		} );
+		return replaced;
+
+	}
+
+	/**
 	 * Update path tracer with new material properties
 	 * @param {Object} selectedObject - The selected object to update
 	 */

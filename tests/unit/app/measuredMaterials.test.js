@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
+import { Group, Mesh, BoxGeometry, MeshStandardMaterial, MeshPhysicalMaterial } from 'three';
 import { subsurfaceFromDiffuse } from '@/core/materials/Scattering.js';
 import { buildMaterial } from '@/core/addons/archives/pbrt/PBRTMaterials.js';
 import { MaterialService } from '@/services/MaterialService';
@@ -86,6 +87,29 @@ describe( 'the catalogue\'s additions from pbrt', () => {
 		}
 
 		expect( new Set( MEASURED_MATERIALS.map( ( m ) => m.name ) ).size ).toBe( MEASURED_MATERIALS.length );
+
+	} );
+
+} );
+
+describe( 'replacing a shared material', () => {
+
+	it( 'puts the new one on every part that shared the old, multi-material parts included, and nowhere else', () => {
+
+		const shared = new MeshStandardMaterial(), other = new MeshStandardMaterial(), fresh = new MeshPhysicalMaterial();
+		const geometry = new BoxGeometry();
+		const root = new Group();
+		const a = new Mesh( geometry, shared ), b = new Mesh( geometry, shared ), c = new Mesh( geometry, other ), d = new Mesh( geometry, [ other, shared ] );
+		root.add( a, c );
+		a.add( b, d );
+
+		expect( MaterialService.replaceMaterial( root, shared, fresh ) ).toBe( 3 );
+		expect( [ a.material, b.material, c.material ] ).toEqual( [ fresh, fresh, other ] );
+		expect( d.material ).toEqual( [ other, fresh ] );
+		// In first-use order the new material sits where the old one did, so no later index moves.
+		const order = [];
+		root.traverse( ( o ) => [ o.material ].flat().forEach( ( m ) => m && ! order.includes( m ) && order.push( m ) ) );
+		expect( order ).toEqual( [ fresh, other ] );
 
 	} );
 

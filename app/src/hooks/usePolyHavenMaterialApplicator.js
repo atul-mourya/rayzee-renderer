@@ -3,6 +3,8 @@ import { useToast } from '@/hooks/use-toast';
 import { useStore } from '@/store';
 import { PolyHavenService } from '@/services/PolyHavenService';
 import { PolyHavenMaterialLoader } from '@/services/PolyHavenMaterialLoader';
+import { MaterialService } from '@/services/MaterialService';
+import { getApp } from '@/lib/appProxy';
 
 /**
  * Custom hook for handling PolyHaven material application to objects
@@ -59,9 +61,10 @@ export const usePolyHavenMaterialApplicator = () => {
 				progress: 75
 			} );
 
-			// Apply to selected object
+			// Every part sharing the target's material takes the new one (MaterialService.replaceMaterial).
 			const oldMaterial = target.material;
 			PolyHavenMaterialLoader.fitDisplacement( target, threeMaterial );
+			MaterialService.replaceMaterial( getApp()?.meshScene, oldMaterial, threeMaterial );
 			target.material = threeMaterial;
 
 			// Dispose old material and its textures
