@@ -305,15 +305,16 @@ export function deriveIESPenumbra( profile, outerAngleRad, peakRatio = 0.7 ) {
 
 // ── helpers ─────────────────────────────────────────────────────────
 
+// LM-63 separates values with blanks or commas.
 function tokenize( text ) {
 
-	return text.split( /\s+/ ).filter( s => s.length > 0 );
+	return text.split( /[\s,]+/ ).filter( s => s.length > 0 );
 
 }
 
 function remainderAfterTokens( text, count ) {
 
-	const re = /\S+/g;
+	const re = /[^\s,]+/g;
 	let n = 0;
 	while ( re.exec( text ) !== null ) {
 

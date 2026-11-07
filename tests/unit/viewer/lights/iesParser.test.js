@@ -96,6 +96,19 @@ describe( 'parseIES', () => {
 
 	} );
 
+	// Lithonia-style files (LeoMoon's "star-focused.ies") list values with commas and CRLF line ends.
+	it( 'reads values separated by commas as it reads them separated by blanks', () => {
+
+		const plain = ies( [ 0, 2.5, 5, 90 ], [ 0, 22.5, 45 ], [[ 166, 160, 125, 0 ], [ 150, 140, 100, 0 ], [ 120, 110, 80, 0 ]] );
+		const commas = plain.split( '\n' ).map( ( line, k ) => ( k < 2 ? line : line.split( ' ' ).join( ',' ) ) ).join( '\r\n' );
+		expect( commas ).toContain( '0,2.5,5,90\r\n' );
+		expect( parseIES( commas ) ).toEqual( parseIES( plain ) );
+
+		const tilted = commas.replace( 'TILT=NONE', 'TILT=INCLUDE\r\n1\r\n3\r\n0,45,90\r\n1,0.9,0.8' );
+		expect( parseIES( tilted ) ).toEqual( parseIES( plain ) );
+
+	} );
+
 	it( 'refuses a file without a TILT line, a cut-off TILT line, or no angles', () => {
 
 		expect( () => parseIES( 'IESNA:LM-63\n1 1000 1', 'a' ) ).toThrow( 'IES (a): missing TILT line' );

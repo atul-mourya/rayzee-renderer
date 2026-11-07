@@ -142,6 +142,8 @@
 
 ### Lighting
 
+- [x] An IES file listing its values with commas (LM-63 allows blanks or commas; LeoMoon's `star-focused.ies`) parsed
+  to NaN and its light gave no light, silently. Fixed 2026-11-07: all 49 `.ies` files on the test Mac parse.
 
 ### Materials
 
