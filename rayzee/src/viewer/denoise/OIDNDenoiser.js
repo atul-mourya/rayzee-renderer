@@ -251,7 +251,7 @@ fn main( @builtin(global_invocation_id) gid: vec3<u32> ) {
 			}
 		}
 		let taps = f32( ( 2 * r + 1 ) * ( 2 * r + 1 ) );
-		color = denoiseBlend( color, inColor[ si ].xyz / scale, change / taps, variance / taps, P.weight );
+		color = denoiseBlend( color, inColor[ si ].xyz / scale, change / taps, variance / taps * ${DENOISE_BLEND.slack.toFixed( 4 )}, P.weight );
 
 	}
 

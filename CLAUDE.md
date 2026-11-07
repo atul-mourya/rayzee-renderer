@@ -771,12 +771,15 @@ environment's exact table (`environment/EnvironmentExactTable.js`) serves both i
 - **Both denoisers lean back towards their input** where they moved a pixel by more than its noise explains: over a
   window, the denoised colour keeps variance / (mean squared luminance change) of its change, the least-squares blend
   (`DENOISE_BLEND_WGSL`, `viewer/denoise/DenoiserSettings.js`). OIDN does it in its output pass from 8 samples on the
-  path tracer's m2 (`getPixelVariance()`, kept live while the aux G-buffer is on), 5×5; NRD after its last pass from 2
-  samples on its power-of-two snapshots, 3×3. ⚠️ m2 takes samples as independent and overstates a Sobol' render's
+  path tracer's m2 (`getPixelVariance()`, kept live while the aux G-buffer is on), 9×9, only where the change passes
+  1.25× the variance (`DENOISE_BLEND.slack`); NRD after its last pass from 2 samples on its power-of-two snapshots, 3×3.
+  ⚠️ OIDN at 5×5 with no slack speckled caustic-lit floors (glass-of-water, 1.4 % of pixels): a window's variance reads
+  low there by chance, and the lean pulls in the input pixel's own noise. ⚠️ m2 takes samples as independent and overstates a Sobol' render's
   error 1.4–12×, too loose for NRD's blur; the snapshots' one difference a pixel reads low on noisy scenes and pulled
   OIDN back to noise (mixed-lights at 150 spp 0.30 → 0.41), so OIDN keeps m2. ⚠️ Never even and odd frames as halves:
   Sobol' puts them in opposite halves of every dimension. NRD at 16 spp went 1.03–2.22 → 0.62–0.91 of raw's error;
-  OIDN at 150 spp 1.153 / 1.209 → 1.036 / 0.996.
+  OIDN at 150 spp 1.153 / 1.209 → 1.052 / 1.006 (1.036 / 0.996 at 5×5 without slack, which also had iridescence at 64
+  spp 0.54 where it is now 0.66).
 - **The guide behind smooth glass follows its likelier branch**: a path that took the other one is flagged
   `RAY_FLAG.AUX_UNLIKELY` and FinalWrite averages the guide over unflagged samples per pixel (`guideWeights`). Following
   the sampled branch speckled the guide behind thick glass and the clean-guide OIDN models kept the speckle. See "Render

@@ -77,7 +77,10 @@ export const NRD_QUALITY_PRESETS = {
 // over a window of (2·radius + 1)², `change` is the mean squared luminance change and `variance` the input's mean
 // variance of the mean, so change − variance is the denoiser's bias², and variance / change the share of the denoised
 // colour with the least squared error. OIDN starts blending at minSamples, where the per-pixel variance is fit to use.
-export const DENOISE_BLEND = { radius: 2, minSamples: 8 };
+// Its variance is scaled by `slack`: a window's estimate is noisy where a few samples carry the light (caustics), and
+// leaning on one that reads low pulls the input pixel's own noise back in as specks (glass-of-water's floor: 1.4 % of
+// pixels at 5×5 and no slack, 0.04 % here, for a quarter of the blend's gain against ground truth).
+export const DENOISE_BLEND = { radius: 4, minSamples: 8, slack: 1.25 };
 
 export const DENOISE_BLEND_WGSL = /* wgsl */`
 fn denoiseBlend( denoised: vec3f, input: vec3f, change: f32, variance: f32, weight: f32 ) -> vec3f {
