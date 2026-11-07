@@ -1,0 +1,7 @@
+#usda 1.0
+def Xform "VariantRef"
+{
+    float fromVariantRef = 18
+    float refOrder = 18
+    float variantVsRef = 18
+}

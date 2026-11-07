@@ -250,6 +250,19 @@ once looked at. How it should have been built so they could not happen:
 
 ## USD import
 
+- [x] A `.usda` with a dictionary inside a dictionary (`customLayerData = { dictionary cameraSettings = { … } }`, as
+  Omniverse and OpenUSD write it) failed to load: "expected a name, found {". Fixed 2026-11-07; of the 392 `.usda` files
+  on this Mac (OpenUSD's, Apple's, Unreal's), 92 failed before and none now. Text and crate readers now agree on
+  `fixtures/syntax.usda` and OpenUSD's crate of it, except what nothing reads: doc strings (`doc` against `comment` /
+  `documentation`), child order (text `reorder`, crate `primOrder`), and relationships' `uniform`.
+- [x] A `.usda` with a spline (`double x.spline = { bezier, … }`, OpenUSD 0.25) failed to load; the text reader now
+  steps over it, as the crate reader already did (the attribute has no value; splines are not animated here).
+- [ ] Composition takes a variant set that is defined but not listed in `variantSets`; OpenUSD ignores it
+  (`fixtures/compose` against `usdcat --flatten`, which agrees on everything else). Left: a file relying on it would
+  change. Also from review: text strings do not decode `\r`, `\xHH` or escapes inside triple quotes.
+- [x] Crate `asset[]` arrays read as unrelated tokens (they hold string indices), and 64-bit integer arrays drifted by
+  one after a running total passed 2^53; the text reader wrapped `uint`, `int64` and `uint64` arrays into `Int32Array`
+  and gave bools as 1 / 0. Fixed 2026-11-07: `fixtures/types.*` (every value type, OpenUSD's crate of it) read alike.
 - [ ] **Ptex** — Moana's USD ships its .ptx (13 GB); a Ptex input reads the mesh's mean displayColor today.
 - [ ] **Vertex colours** — displayColor varies per vertex; the engine has none, so each mesh takes its mean.
 - [ ] **Light linking** — Moana's palm keys light only the palms (`collection:lightLink`); here every light lights everything.

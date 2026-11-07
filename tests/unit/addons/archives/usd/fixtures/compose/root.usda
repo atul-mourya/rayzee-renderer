@@ -1,0 +1,64 @@
+#usda 1.0
+(
+    defaultPrim = "world"
+    subLayers = [@./strong.usda@, @./weak.usda@]
+)
+
+class "_class_Thing"
+{
+    float fromInherit = 3
+    float inheritVsVariant = 3
+    float layered = 3
+}
+
+def Xform "world" (
+    prepend references = @./lib/group.usda@</Group>
+)
+{
+    def Xform "a" (
+        prepend inherits = </_class_Thing>
+        prepend specializes = </world/base>
+        prepend references = [@./lib/asset.usda@</Asset>, @./lib/other.usda@]
+        append references = @./lib/late.usda@</Late>
+        payload = @./lib/payload.usda@</Payload>
+        variants = {
+            string look = "blue"
+        }
+        prepend variantSets = "look"
+    )
+    {
+        float local = 1
+        float layered = 1
+        variantSet "look" = {
+            "blue" (
+                prepend references = @./lib/variantref.usda@</VariantRef>
+            ) {
+                float fromVariant = 4
+                float inheritVsVariant = 4
+                float layered = 4
+                float variantVsRef = 4
+            }
+            "red" {
+                float fromVariant = 5
+            }
+        }
+    }
+
+    def Xform "base"
+    {
+        float fromSpecialize = 6
+        float payloadVsSpecialize = 6
+        float layered = 6
+        float refVsSpecialize = 6
+    }
+
+    def "b" (
+        references = @./lib/asset.usda@</Asset>
+        variants = {
+            string finish = "gloss"
+            string size = "big"
+        }
+    )
+    {
+    }
+}

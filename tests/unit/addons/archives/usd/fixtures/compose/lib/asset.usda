@@ -1,0 +1,65 @@
+#usda 1.0
+(
+    defaultPrim = "Asset"
+)
+class "_class_Inner"
+{
+    float fromInnerClass = 10
+}
+def Xform "Asset" (
+    prepend inherits = </_class_Inner>
+    variants = {
+        string size = "small"
+    }
+    prepend variantSets = "size"
+)
+{
+    float fromRef = 11
+    float refVsPayload = 11
+    float ancestralVsDirect = 11
+    float layered = 11
+    float variantVsRef = 11
+    float refVsSpecialize = 11
+    float refOrder = 11
+    variantSet "size" = {
+        "small" {
+            float sizeValue = 1
+            def Mesh "geo"
+            {
+            }
+        }
+        "big" (
+            prepend variantSets = "finish"
+        ) {
+            float sizeValue = 100
+            variantSet "finish" = {
+                "matte" {
+                    float finishValue = 1
+                }
+                "gloss" {
+                    float finishValue = 2
+                }
+            }
+            def Mesh "geo" (
+                variants = {
+                    string lod = "high"
+                }
+                prepend variantSets = "lod"
+            )
+            {
+                variantSet "lod" = {
+                    "high" {
+                        float lodValue = 2
+                    }
+                    "low" {
+                        float lodValue = 1
+                    }
+                }
+            }
+        }
+    }
+    def Scope "child"
+    {
+        float childValue = 12
+    }
+}

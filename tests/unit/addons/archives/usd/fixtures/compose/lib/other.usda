@@ -1,0 +1,9 @@
+#usda 1.0
+(
+    defaultPrim = "Other"
+)
+def Xform "Other"
+{
+    float fromOther = 13
+    float refOrder = 13
+}

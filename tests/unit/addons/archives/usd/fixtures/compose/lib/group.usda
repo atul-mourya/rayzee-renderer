@@ -1,0 +1,16 @@
+#usda 1.0
+def Xform "Group"
+{
+    float fromGroup = 16
+    def Xform "a"
+    {
+        float fromAncestral = 16
+        float ancestralVsDirect = 16
+        float refOrder = 16
+        float layered = 16
+    }
+    def Scope "fromGroupOnly"
+    {
+        float groupChild = 17
+    }
+}

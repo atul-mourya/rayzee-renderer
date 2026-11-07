@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { USDFiles, USDStage } from '@/core/addons/archives/usd/USDStage.js';
+import { parseUSDA } from '@/core/addons/archives/usd/USDText.js';
 
 /** A stage over in-memory text layers. */
 async function stageOf( layers, root = 'scene/root.usda', { omitted = [] } = {} ) {
@@ -227,6 +229,45 @@ def Xform "b" ( prepend references = @./left/out.usda@ )
 		}, 'root.usda' );
 		expect( ( await stage.primAt( '/a' ) ).isDefined ).toBe( true );
 		expect( warnings.some( w => w.includes( 'cycle' ) ) ).toBe( true );
+
+	} );
+
+	// fixtures/compose: one attribute per arc and some each arc competes for; flat.usda is OpenUSD's composition of it
+	// (`usdcat --flatten root.usda -o flat.usda`, its doc line naming the local path removed).
+	it( 'composes every kind of arc in the strength order OpenUSD does', async () => {
+
+		const dir = new URL( './fixtures/compose/', import.meta.url );
+		const names = [ 'root.usda', 'strong.usda', 'weak.usda', ...[ 'asset', 'other', 'late', 'payload', 'group', 'variantref' ].map( n => `lib/${n}.usda` ) ];
+		const warnings = [];
+		const stage = new USDStage( new USDFiles( names, async p => readFileSync( new URL( p, dir ) ) ), { warn: m => warnings.push( m ) } );
+		await stage.open( 'root.usda' );
+		const flat = parseUSDA( readFileSync( new URL( 'flat.usda', dir ), 'utf8' ), 'flat.usda' );
+
+		const composed = async ( path, spec, out = {} ) => {
+
+			const prim = await stage.primAt( path );
+			out[ path ] = {
+				type: prim.typeName, children: prim.childNames().slice().sort(),
+				values: Object.fromEntries( prim.propertyNames().slice().sort().map( n => [ n, prim.value( n ) ] ) ),
+			};
+			for ( const name of spec.children?.keys() ?? [] ) await composed( `${path}/${name}`, spec.children.get( name ), out );
+			return out;
+
+		};
+
+		const expected = ( path, spec, out = {} ) => {
+
+			out[ path ] = {
+				type: spec.typeName, children: [ ...( spec.children?.keys() ?? [] ) ].sort(),
+				values: Object.fromEntries( [ ...( spec.props ?? [] ) ].sort( ( a, b ) => ( a[ 0 ] < b[ 0 ] ? - 1 : 1 ) ).map( ( [ n, p ] ) => [ n, p.value ] ) ),
+			};
+			for ( const [ name, child ] of spec.children ?? [] ) expected( `${path}/${name}`, child, out );
+			return out;
+
+		};
+
+		for ( const [ name, spec ] of flat.root.children ) expect( await composed( `/${name}`, spec ) ).toEqual( expected( `/${name}`, spec ) );
+		expect( warnings ).toEqual( [] );
 
 	} );
 

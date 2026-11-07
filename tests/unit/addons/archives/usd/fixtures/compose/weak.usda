@@ -1,0 +1,13 @@
+#usda 1.0
+over "world"
+{
+    over "a"
+    {
+        float sublayerVsLocal = 8
+        float weakOnly = 8
+    }
+}
+over "_class_Thing"
+{
+    float fromWeakClass = 9
+}

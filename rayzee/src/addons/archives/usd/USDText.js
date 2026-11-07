@@ -9,7 +9,8 @@ const LIST_OPS = new Set( [ 'prepend', 'append', 'add', 'delete', 'reorder' ] );
 const SPECIFIERS = new Set( [ 'def', 'over', 'class' ] );
 const QUALIFIERS = new Set( [ 'custom', 'uniform', 'varying', 'config' ] );
 
-const INT_TYPES = new Set( [ 'int', 'int2', 'int3', 'int4', 'uint', 'int64', 'uint64', 'uchar' ] );
+// Arrays as the crate reader gives them: 64-bit integers as doubles, which hold them exactly up to 2^53.
+const INT_ARRAYS = { int: Int32Array, int2: Int32Array, int3: Int32Array, int4: Int32Array, uint: Uint32Array, uchar: Uint8Array, int64: Float64Array, uint64: Float64Array };
 const DOUBLE_TYPES = new Set( [ 'double', 'double2', 'double3', 'double4', 'matrix2d', 'matrix3d', 'matrix4d', 'quatd', 'timecode',
 	'point3d', 'vector3d', 'normal3d', 'color3d', 'color4d', 'texCoord2d', 'texCoord3d', 'frame4d' ] );
 const NON_NUMERIC = new Set( [ 'token', 'string', 'asset', 'bool', 'dictionary', 'opaque', 'pathExpression' ] );
@@ -99,6 +100,29 @@ class Reader {
 		const end = this.s.indexOf( ')', this.i );
 		if ( end < 0 ) this.fail( 'unterminated layer offset' );
 		this.i = end + 1;
+
+	}
+
+	/** Steps over a `{ … }` block nothing here reads (a spline), strings included. */
+	skipBlock() {
+
+		this.eat( '{' );
+		for ( let open = 1; open > 0; ) {
+
+			const c = this.skip();
+			if ( Number.isNaN( c ) ) this.fail( 'unterminated block' );
+			if ( c === 34 || c === 39 ) {
+
+				this.string();
+				continue;
+
+			}
+
+			if ( c === 123 ) open ++;
+			else if ( c === 125 ) open --;
+			this.i ++;
+
+		}
 
 	}
 
@@ -329,7 +353,7 @@ class Reader {
 
 			const key = this.peek() === 34 || this.peek() === 39 ? this.string() : this.ident();
 			this.eat( '=' );
-			out[ key ] = type === 'dictionary' ? this.dictionary() : this.value();
+			out[ key ] = typed( type, this.value() );
 			this.maybe( ',' );
 
 		}
@@ -399,6 +423,8 @@ function typed( type, value ) {
 	if ( value === null || value === undefined ) return value;
 	const array = type.endsWith( '[]' );
 	const base = array ? type.slice( 0, - 2 ) : type;
+	// OpenUSD writes a bool as 1 or 0.
+	if ( base === 'bool' ) return Array.isArray( value ) ? value.map( v => !! v ) : !! value;
 	if ( NON_NUMERIC.has( base ) || ! Array.isArray( value ) ) return plain( value );
 	const numbers = flatten( value, [] );
 	// Text writes a quaternion real part first; crate files and three.js keep it last.
@@ -409,7 +435,7 @@ function typed( type, value ) {
 	}
 
 	if ( ! array ) return numbers;
-	if ( INT_TYPES.has( base ) ) return Int32Array.from( numbers );
+	if ( INT_ARRAYS[ base ] ) return INT_ARRAYS[ base ].from( numbers );
 	if ( DOUBLE_TYPES.has( base ) ) return Float64Array.from( numbers );
 	return Float32Array.from( numbers );
 
@@ -640,7 +666,7 @@ class TextParser extends Reader {
 
 			} else if ( mode === 'spline' ) {
 
-				this.value();
+				this.skipBlock();
 
 			} else {
 

@@ -354,11 +354,13 @@ function decompress( src, maxSize ) {
 function decodeInts( data, n, wide ) {
 
 	const view = new DataView( data.buffer, data.byteOffset, data.byteLength );
-	const common = wide ? Number( view.getBigInt64( 0, true ) ) : view.getInt32( 0, true );
+	const common = wide ? view.getBigInt64( 0, true ) : view.getInt32( 0, true );
 	let codes = wide ? 8 : 4;
 	let at = codes + ( ( n * 2 + 7 ) >> 3 );
 	const out = wide ? new Float64Array( n ) : new Int32Array( n );
-	let value = 0;
+	// 64-bit values add up exactly, wrapping as OpenUSD's int64 deltas do: summed in doubles, a total past 2^53 rounded
+	// and every value after it was off.
+	let value = wide ? 0n : 0;
 	for ( let i = 0; i < n; ) {
 
 		const byte = data[ codes ++ ];
@@ -381,7 +383,7 @@ function decodeInts( data, n, wide ) {
 
 				} else {
 
-					delta = Number( view.getBigInt64( at, true ) );
+					delta = view.getBigInt64( at, true );
 					at += 8;
 
 				}
@@ -403,8 +405,17 @@ function decodeInts( data, n, wide ) {
 
 			}
 
-			value = wide ? value + delta : ( value + delta ) | 0;
-			out[ i ] = value;
+			if ( wide ) {
+
+				value = BigInt.asIntN( 64, value + BigInt( delta ) );
+				out[ i ] = Number( value );
+
+			} else {
+
+				value = ( value + delta ) | 0;
+				out[ i ] = value;
+
+			}
 
 		}
 
@@ -937,6 +948,8 @@ export class Crate {
 
 				}
 
+				case 'i64':
+				case 'u64': return Float64Array.from( { length: count }, () => this.element( kind ) );
 				default: return Array.from( { length: count }, () => this.element( kind ) );
 
 			}
@@ -945,9 +958,10 @@ export class Crate {
 
 		switch ( type ) {
 
-			case T.String: return Array.from( { length: n }, () => this.string() );
-			case T.Token:
-			case T.AssetPath: return Array.from( { length: n }, () => this.tokens[ this.u32() ] ?? '' );
+			// An asset path array holds string indices, though a single inlined asset path is a token.
+			case T.String:
+			case T.AssetPath: return Array.from( { length: n }, () => this.string() );
+			case T.Token: return Array.from( { length: n }, () => this.tokens[ this.u32() ] ?? '' );
 			default: return null;
 
 		}
@@ -960,8 +974,8 @@ export class Crate {
 
 			case T.Int: return this.ints( n );
 			case T.UInt: return new Uint32Array( this.ints( n ).buffer );
-			case T.Int64:
-			case T.UInt64: return this.ints( n, true );
+			case T.Int64: return this.ints( n, true );
+			case T.UInt64: return this.ints( n, true ).map( v => ( v < 0 ? v + 2 ** 64 : v ) );
 			case T.Half:
 			case T.Float:
 			case T.Double: {

@@ -1,0 +1,89 @@
+#usda 1.0
+(
+    """A doc string
+over two lines"""
+    defaultPrim = "world"
+    timeCodesPerSecond = 24
+    customLayerData = {
+        string "key with spaces" = "it's \"quoted\"\tand tabbed\non two lines"
+        asset logo = @./logo.png@
+        dictionary nested = {
+            double[] weights = [0.5, -1.25e-3, .75]
+            bool on = true
+        }
+    }
+)
+
+class "Template" (
+    apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    custom uniform token purpose = "render"
+}
+
+def Xform "world" (
+    inherits = </Template>
+    specializes = [</Template>]
+    append apiSchemas = ["CollectionAPI:lights"]
+    variants = {
+        string look = "red"
+    }
+    add variantSets = ["look"]
+)
+{
+    reorder nameChildren = ["b", "a"]
+    double3 xformOp:translate = (1.5, -2, 3e2)
+    quatf xformOp:orient = (0.7071068, 0, 0.7071068, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient"]
+    float opacity.timeSamples = {
+        -1: 0.25,
+        0.5: None,
+        2: 1,
+    }
+    float3[] extent.timeSamples = {
+        0: [(-1, -1, -1), (1, 1, 1)],
+        10: [(-2, -2, -2), (2, 2, 2)],
+    }
+    asset tex = @@@./has @ sign.png@@@
+    string note = 'single "quoted"'
+    float blocked = None
+    int big = -2147483647
+    float neg = -.5
+    double wave.spline = {
+        bezier,
+        pre: held,
+        1: 0; post held,
+        5: 10,
+    }
+    half h = -inf
+    rel proxy
+    prepend rel lights = [</world/a>, </world/b>]
+    color3f inputs:tint = (1, 0.5, 0.25) (
+        doc = "the tint"
+        displayName = "Tint"
+    )
+    color3f inputs:tint.connect = </world/a.outputs:rgb>
+    prepend color3f inputs:glow.connect = </world/a.outputs:rgb>
+
+    variantSet "look" = {
+        "blue" (
+            prepend references = @./blue.usda@
+        ) {
+            color3f inputs:tint = (0, 0, 1)
+        }
+        "red" {
+            color3f inputs:tint = (1, 0, 0)
+        }
+    }
+
+    def "a"
+    {
+        color3f outputs:rgb
+    }
+
+    over "b" (
+        delete references = [@./old.usda@</old>]
+    )
+    {
+    }
+}

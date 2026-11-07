@@ -1,0 +1,92 @@
+#usda 1.0
+(
+    defaultPrim = "world"
+)
+
+def Xform "world"
+{
+    float fromGroup = 16
+
+    def Xform "a"
+    {
+        float ancestralVsDirect = 11
+        float fromAncestral = 16
+        float fromInherit = 3
+        float fromInnerClass = 10
+        float fromLate = 14
+        float fromOther = 13
+        float fromPayload = 15
+        float fromRef = 11
+        float fromSpecialize = 6
+        float fromSublayer = 7
+        float fromVariant = 4
+        float fromVariantRef = 18
+        float fromWeakClass = 9
+        float inheritVsVariant = 3
+        float layered = 1
+        float local = 1
+        float payloadVsSpecialize = 15
+        float refOrder = 18
+        float refVsPayload = 11
+        float refVsSpecialize = 11
+        float sizeValue = 1
+        float sublayerVsLocal = 7
+        float variantVsRef = 4
+        float weakOnly = 8
+
+        def Mesh "geo"
+        {
+        }
+
+        def Scope "child"
+        {
+            float childValue = 12
+        }
+    }
+
+    def Scope "fromGroupOnly"
+    {
+        float groupChild = 17
+    }
+
+    def Xform "base"
+    {
+        float fromSpecialize = 6
+        float layered = 6
+        float payloadVsSpecialize = 6
+        float refVsSpecialize = 6
+    }
+
+    def Xform "b"
+    {
+        float ancestralVsDirect = 11
+        float finishValue = 2
+        float fromInnerClass = 10
+        float fromRef = 11
+        float layered = 11
+        float refOrder = 11
+        float refVsPayload = 11
+        float refVsSpecialize = 11
+        float sizeValue = 100
+        float variantVsRef = 11
+
+        def Mesh "geo"
+        {
+            float lodValue = 2
+        }
+
+        def Scope "child"
+        {
+            float childValue = 12
+        }
+    }
+}
+
+class "_class_Thing"
+{
+    float fromInherit = 3
+    float fromWeakClass = 9
+    float inheritVsVariant = 3
+    float layered = 3
+}
+

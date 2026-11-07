@@ -1,0 +1,29 @@
+#usda 1.0
+(
+    customLayerData = {
+        asset logo = @./logo.png@
+        asset[] logos = [@./a.png@, @./b.png@]
+        bool on = 1
+        dictionary nested = {
+            double3 where = (1, 2, 3)
+            int[] ids = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+            string[] names = ["x", "y"]
+            token t = "tok"
+        }
+        float f = 0.5
+        int64 big = 5000000000
+        uint u = 4294967295
+    }
+)
+def Xform "a" (
+    assetInfo = {
+        asset identifier = @./a.usda@
+        string name = "a"
+    }
+    customData = {
+        matrix4d m = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (5, 6, 7, 1) )
+        quatf q = (1, 0, 0, 0)
+    }
+)
+{
+}

@@ -1,0 +1,9 @@
+#usda 1.0
+def Xform "Payload"
+{
+    float fromPayload = 15
+    float refVsPayload = 15
+    float payloadVsSpecialize = 15
+    float layered = 15
+    float refOrder = 15
+}
