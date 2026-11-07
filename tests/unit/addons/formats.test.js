@@ -227,15 +227,17 @@ describe( 'glTF decoders on demand', () => {
 
 	} );
 
-	it( 'fails what is not glTF rather than leaving the load running', async () => {
+	it( 'fails what is not glTF, saying so plainly, rather than leaving the load running', async () => {
 
-		// A missing file a web server answers with its page.
-		const html = new TextEncoder().encode( '<!doctype html><html></html>' ).buffer;
-		const outcome = await Promise.race( [
-			decodersOnDemand( new GLTFLoader(), null ).parseAsync( html, '' ).then( () => 'loaded', ( error ) => error.name ),
+		const outcome = ( text ) => Promise.race( [
+			decodersOnDemand( new GLTFLoader(), null ).parseAsync( new TextEncoder().encode( text ).buffer, '' ).then( () => 'loaded', ( error ) => error ),
 			new Promise( ( resolve ) => setTimeout( () => resolve( 'still running' ), 1000 ) ),
 		] );
-		expect( outcome ).toBe( 'SyntaxError' );
+		// A missing file a web server answers with its page.
+		const page = await outcome( '\n  <!doctype html><html></html>' );
+		expect( page.message ).toBe( 'The address gave a web page, not a 3D model. The link may be wrong, or the file missing.' );
+		expect( page.cause ).toBeInstanceOf( SyntaxError );
+		expect( ( await outcome( 'solid t\nendsolid t\n' ) ).message ).toBe( 'This is not a glTF model: the file could not be read as one.' );
 
 	} );
 

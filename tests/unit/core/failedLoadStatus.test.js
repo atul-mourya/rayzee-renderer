@@ -28,7 +28,7 @@ describe( 'PathTracerApp — the loading status after a failed load', () => {
 		const events = await failWith( new TypeError( 'Cannot perform Construct on a detached ArrayBuffer' ) );
 		expect( events ).toEqual( [ {
 			type: EngineEvents.LOADING_UPDATE,
-			status: 'Error: Cannot perform Construct on a detached ArrayBuffer',
+			status: 'Cannot perform Construct on a detached ArrayBuffer',
 			failed: true,
 			progress: 100,
 		} ] );

@@ -263,7 +263,7 @@ export async function loadWithSceneRebuild( app, loadFn, eventPayload, source = 
 		// Only the scene build reported its own failure; one in the parse left a host's loading
 		// status spinning on its last step. A part prompt is not a failure, so it just ends it.
 		if ( error?.code === 'ARCHIVE_NEEDS_ELEMENT' ) resetLoading();
-		else if ( error?.code !== 'LOAD_IN_PROGRESS' ) updateLoading( { status: `Error: ${error?.message ?? error}`, failed: true, progress: 100 } );
+		else if ( error?.code !== 'LOAD_IN_PROGRESS' ) updateLoading( { status: error?.message ?? String( error ), failed: true, progress: 100 } );
 		throw error;
 
 	} finally {

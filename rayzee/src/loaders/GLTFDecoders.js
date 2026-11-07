@@ -62,6 +62,17 @@ async function attachDecoders( loader, text, renderer ) {
 
 }
 
+// A file JSON.parse refused, said plainly. A web page in a model's place is mostly a wrong address, or a missing file a
+// server answered with its page.
+function notGLTF( data, error ) {
+
+	const page = /^\s*</.test( jsonText( data ).slice( 0, 256 ) );
+	return new Error( page
+		? 'The address gave a web page, not a 3D model. The link may be wrong, or the file missing.'
+		: 'This is not a glTF model: the file could not be read as one.', { cause: error } );
+
+}
+
 /**
  * Gives a GLTFLoader the Draco, KTX2 and meshopt decoders only when the file it parses uses them, importing each then:
  * most glTFs use none, and the three are ~35 KB compressed a host would otherwise always ship.
@@ -77,7 +88,7 @@ export function decodersOnDemand( loader, renderer ) {
 		// never ended (every later one refused as already in progress).
 		attachDecoders( loader, jsonText( data ), renderer )
 			.then( () => parse( data, path, onLoad, onError ) )
-			.catch( ( error ) => onError?.( error ) );
+			.catch( ( error ) => onError?.( error instanceof SyntaxError ? notGLTF( data, error ) : error ) );
 
 	};
 

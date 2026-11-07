@@ -615,7 +615,7 @@ export class SceneProcessor {
 			this.processingStage = 'error';
 			log.error( 'processing failed:', error );
 			updateLoading( {
-				status: `Error: ${error.message}`,
+				status: error.message,
 				failed: true,
 				progress: 100
 			} );
