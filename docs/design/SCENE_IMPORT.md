@@ -84,7 +84,8 @@ subtree per element, and the whole thing rarely fits: Moana is 29 GB unpacked.
   dropped. A camera's `lensradius`/`focaldistance` become its own effects (`userData.__rayzeeEffects`, applied when it is
   chosen): the same aperture radius in both DOF modes, focused by hand. The `Integrator` (as the engine's `integrator`:
   bdpt → bidirectional, sppm → vcm) and its maxdepth, `Sampler` pixelsamples and the Film's resolution are
-  `sceneMetadata.render` — reported, not applied (glTF extras may carry it too).
+  `sceneMetadata.render` (glTF extras may carry it too), with `aspect` the picture's shape (`withSceneAspect`). The engine
+  applies none of it; the app opens the scene at that shape with that integrator and shows the rest in Final Render.
 - **Templates.** A shape inside `ObjectBegin` keeps its whole transform and a placement's goes on top, as pbrt does —
   never relative to the transform at ObjectBegin. kroken defines its cushions, blanket and rug under a `Transform` and
   places them at `Identity`; the relative reading put all of them at the world origin.
@@ -186,7 +187,10 @@ USDLoader. Each layer is read only when composition reaches it (`USDFiles` over 
   dropped — each said once. three's MaterialXLoader is not used: it reads `.mtlx` documents, translates only
   standard_surface / gltf_pbr / open_pbr (not Blender's BSDF graphs), and builds TSL materials the path tracer cannot run. Ptex is not read: a
   Ptex input becomes the mesh's mean displayColor, where Moana bakes its Ptex, on an 8-bit grid so meshes share materials
-  (the engine has no vertex colour). Cameras from apertures (vertical FOV), an authored `clippingRange` as the clip start
+  (the engine has no vertex colour). Cameras from apertures (vertical FOV; authored ones are the camera's `userData.aspect`:
+  Blender writes the render size's shape there, Moana its 2.39:1), the RenderSettings the stage names (else the only one)
+  as `sceneMetadata.render` (size, shape with `pixelAspectRatio`; its camera first, conformed by
+  `aspectRatioConformPolicy`; renderer namespaces such as `ri:` are not read), an authored `clippingRange` as the clip start
   (camera rays begin that far in front, as in Cycles), Rect/Disk/Sphere/Distant lights in the engine's
   units, and the first dome light that lights the scene as the environment: USD's lat-long centre faces +Z (OpenEXR), the
   engine's +X, so `environmentRotation` = 90° − the dome's yaw. Light linking is ignored. Light units follow UsdLux: the

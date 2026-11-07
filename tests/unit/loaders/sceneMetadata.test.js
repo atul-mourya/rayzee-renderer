@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { extractSceneMetadata, parseSceneMetadata } from '@/core/loaders/SceneMetadata.js';
+import { extractSceneMetadata, parseSceneMetadata, withSceneAspect } from '@/core/loaders/SceneMetadata.js';
+import { PerspectiveCamera } from 'three';
 
 const PAYLOAD = {
 	environment: {
@@ -109,6 +110,24 @@ describe( 'extractSceneMetadata', () => {
 
 		expect( extractSceneMetadata( { userData: {}, asset: { version: '2.0' }, scene: { userData: {} } } ) ).toBeNull();
 		expect( extractSceneMetadata( null ) ).toBeNull();
+
+	} );
+
+} );
+
+describe( 'withSceneAspect', () => {
+
+	it( 'asks for the shape of the size the file requests, else of the camera the scene opens on, where it has one', () => {
+
+		const camera = new PerspectiveCamera();
+		camera.userData.aspect = 2.39;
+		const pbrt = { environment: { enabled: false }, render: { integrator: 'path', width: 1280, height: 720 } };
+		expect( withSceneAspect( pbrt, camera ) ).toEqual( { ...pbrt, render: { ...pbrt.render, aspect: 1280 / 720 } } );
+		expect( withSceneAspect( null, camera ) ).toEqual( { render: { aspect: 2.39 } } );
+		// USD's RenderSettings give their own, the pixels' shape included.
+		expect( withSceneAspect( { render: { width: 500, height: 400, aspect: 2.5 } }, camera ).render.aspect ).toBe( 2.5 );
+		expect( withSceneAspect( PAYLOAD, new PerspectiveCamera() ) ).toBe( PAYLOAD );
+		expect( withSceneAspect( null ) ).toBeNull();
 
 	} );
 

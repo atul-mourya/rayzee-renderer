@@ -25,6 +25,21 @@ await engine.removeSceneObject(id)                                // Remove by i
 engine.setSceneObjectVisibility(id, visible)                      // Toggle visibility with an O(1) BVH-leaf patch, no rebuild
 ```
 
+What the file asks the renderer for is `engine.sceneMetadata?.render`, reported and never applied: the engine renders at
+whatever size you give it. `aspect` is the picture's shape, width ÷ height: of the size the file requests (pbrt's Film,
+USD's RenderSettings, a glTF's `extras.render` width and height), else of the camera the scene opens on, where the file
+gives it one — glTF's `aspectRatio` (or `xmag / ymag`), USD's authored apertures — kept on that camera as
+`userData.aspect`. A pbrt scene also carries `integrator`, `maxBounces` and `samples`, and USD's RenderSettings `width`
+and `height`. To render as the file frames it:
+
+```js
+const aspect = engine.sceneMetadata?.render?.aspect;
+if ( aspect ) engine.setCanvasSize( 1024, Math.round( 1024 / aspect ) );
+```
+
+Of USD's RenderSettings, the one the stage names (`renderSettingsPrimPath`) is read, else the only one: its camera opens
+the scene, its view fitted to the picture's shape as `aspectRatioConformPolicy` says (`expandAperture` by default).
+
 `engine.sceneModel` is the root of what is actually being rendered — for `loadObject3D` that is the engine's copy, and it is the object to mutate before `refitBVH()`.
 `engine.getModelBounds()` returns the loaded models' world bounds as a `Box3` (empty when nothing is loaded), leaving
 out the built-in ground plane — the box fog fills by default.

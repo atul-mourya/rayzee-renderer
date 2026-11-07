@@ -15,10 +15,13 @@
  *       "rotation": 0,      // degrees around Y, matches the environmentRotation setting
  *       "intensity": 1      // drives both environmentIntensity and backgroundIntensity
  *     },
- *     "render": {           // what the file asks the renderer for; reported, not applied
+ *     "render": {           // what the file asks the renderer for; the engine reports it and applies none of it
  *       "maxBounces": 15, "samples": 1024, "width": 1920, "height": 1080
  *     }
  *   }
+ *
+ * Once the model is read, `render.aspect` joins it (withSceneAspect, from AssetLoader.onModelLoad): width ÷ height of the
+ * size asked for, else of the camera the scene opens on. A pbrt scene's also carries `integrator`.
  *
  * Values may also arrive as JSON strings — DCC custom-property round-trips often
  * stringify nested objects — so every container is parsed leniently.
@@ -144,5 +147,19 @@ export function extractSceneMetadata( gltf ) {
 	}
 
 	return null;
+
+}
+
+/**
+ * `metadata` with `render.aspect`, the shape the scene asks for: width ÷ height of the size it requests, else of the
+ * camera it opens on, where that camera was given one (`userData.aspect`). Unchanged when it asks for none.
+ * @param {ReturnType<typeof parseSceneMetadata>} metadata
+ * @param {import('three').Camera} [camera] - the scene's first camera
+ */
+export function withSceneAspect( metadata, camera ) {
+
+	const render = metadata?.render;
+	const aspect = render?.aspect ?? ( render?.width && render?.height ? render.width / render.height : camera?.userData.aspect );
+	return aspect ? { ...metadata, render: { ...render, aspect } } : metadata;
 
 }

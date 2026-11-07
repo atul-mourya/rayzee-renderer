@@ -16,7 +16,7 @@ import { getPlatform, hasImageDecoder, withHostWorker } from '../Platform.js';
 import { loadPlatformImage, platformImagesPlugin, missingImageDecoderPlugin, browserImagesPlugin } from './PlatformImageLoader.js';
 import { diffuseTransmissionPlugin } from './GLTFDiffuseTransmission.js';
 import { decodersOnDemand } from './GLTFDecoders.js';
-import { extractSceneMetadata } from './SceneMetadata.js';
+import { extractSceneMetadata, withSceneAspect } from './SceneMetadata.js';
 import { ISSUE_CODES } from '../EngineIssues.js';
 import { ENGINE_DEFAULTS } from '../EngineDefaults.js';
 import { createLogger } from '../Logger.js';
@@ -156,14 +156,22 @@ function standInForSplit( source ) {
 
 }
 
-// glTF's znear is a camera's near clipping plane (Blender writes its clip start there): the path tracer honours it.
+// glTF's znear is a camera's near clipping plane (Blender writes its clip start there): the path tracer honours it. The
+// shape a camera is given (aspectRatio, or xmag / ymag) is its `userData.aspect`: three.js makes it 1 when there is none.
 export const cameraClipPlugin = {
 	name: 'RAYZEE_camera_clip',
 	afterRoot( result ) {
 
+		const { json, associations } = result.parser;
 		for ( const scene of result.scenes ) scene.traverse( ( object ) => {
 
-			if ( object.isCamera && object.near > 0 ) object.userData.clipStart = object.near;
+			if ( ! object.isCamera ) return;
+			if ( object.near > 0 ) object.userData.clipStart = object.near;
+			// A node with a camera and a mesh or light is a group holding them.
+			const node = json.nodes?.[ associations.get( object )?.nodes ?? associations.get( object.parent )?.nodes ];
+			const { perspective, orthographic } = json.cameras?.[ node?.camera ] ?? {};
+			const aspect = perspective ? perspective.aspectRatio : orthographic && orthographic.xmag / orthographic.ymag;
+			if ( aspect > 0 && Number.isFinite( aspect ) ) object.userData.aspect = aspect;
 
 		} );
 
@@ -1145,6 +1153,8 @@ export class AssetLoader extends EventDispatcher {
 		buildTimer.start( 'Camera extraction' );
 		const extractedCameras = this.extractCamerasFromModel( model );
 		buildTimer.end( 'Camera extraction' );
+
+		this.sceneMetadata = withSceneAspect( this.sceneMetadata, extractedCameras[ 0 ] );
 
 		// Center model and adjust camera
 		buildTimer.start( 'Camera setup' );

@@ -124,8 +124,9 @@ describe( 'PBRT scene builder', () => {
 	it( 'reports what the scene asks the renderer for: its integrator, depth, samples and film size', async () => {
 
 		const scene = 'Integrator "volpath" "integer maxdepth" 15\nSampler "zsobol" "integer pixelsamples" 1024\n' + SCENE;
-		const { render } = await loadPBRTScene( buildArgs( { vfs: { 'scene.pbrt': enc.encode( scene ) } } ) );
+		const { render, camera } = await loadPBRTScene( buildArgs( { vfs: { 'scene.pbrt': enc.encode( scene ) } } ) );
 		expect( render ).toEqual( { integrator: 'path', maxBounces: 15, samples: 1024, width: 800, height: 600 } );
+		expect( camera.userData.aspect ).toBe( 800 / 600 );
 		for ( const [ pbrt, engine ] of [[ 'bdpt', 'bidirectional' ], [ 'sppm', 'vcm' ], [ 'mlt', undefined ]] ) {
 
 			const asked = await loadPBRTScene( buildArgs( { vfs: { 'scene.pbrt': enc.encode( `Integrator "${pbrt}"\n` + SCENE ) } } ) );

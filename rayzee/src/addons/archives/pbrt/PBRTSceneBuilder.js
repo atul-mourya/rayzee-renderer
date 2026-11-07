@@ -112,7 +112,7 @@ const DEFAULT_CURVE_SIDES = { flat: 1, ribbon: 1, cylinder: 2 };
 const DEFAULT_CURVE_TOLERANCE = 0.05;
 
 /** Bumped whenever the same scene files build a different graph, so a stored graph is not reused. */
-export const PBRT_BUILD_REVISION = 26;
+export const PBRT_BUILD_REVISION = 27;
 
 function samePlacements( a, b ) {
 
@@ -2750,6 +2750,7 @@ export class PBRTSceneBuilder {
 		}
 
 		camera.name = 'PBRT Camera';
+		camera.userData.aspect = aspect;
 		this._poseCamera( camera, cam.cameraToWorld );
 		camera.updateMatrixWorld( true );
 		const lensRadius = pFloat( cam.params, 'lensradius', 0 );

@@ -366,6 +366,7 @@ export class USDStage {
 		this.upAxis = meta.upAxis ?? 'Y';
 		this.metersPerUnit = meta.metersPerUnit ?? 0.01;
 		this.defaultPrim = meta.defaultPrim ?? '';
+		this.renderSettingsPath = meta.renderSettingsPrimPath ?? '';
 		this.pseudoRoot = new Prim( this, '/', this.rootNode( this.root, identity, 'local', 0 ) );
 		this._prims.set( '/', this.pseudoRoot );
 		return this.pseudoRoot;

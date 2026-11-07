@@ -935,7 +935,7 @@ export class ArchiveImporter {
 		} );
 		this.loader._throwDeferred();
 
-		const { group, environment, warnings, triangleCount, placementCount, skippedForBudget, meshCount, parseMs, buildMs, fitNote } = built;
+		const { group, environment, render, warnings, triangleCount, placementCount, skippedForBudget, meshCount, parseMs, buildMs, fitNote } = built;
 		this.lastUSDStats = { parseMs, buildMs, loaderMs: performance.now() - start, triangleCount, placementCount, skippedForBudget, meshCount, fitNote };
 		if ( fitNote || skippedForBudget > 0 ) this.loader._issues?.record(
 			ISSUE_CODES.SCENE_MEMORY_BUDGET,
@@ -962,7 +962,10 @@ export class ArchiveImporter {
 		this.loader.targetModel = group;
 		this.loader.animations = [];
 		// Without a dome light the current environment stays: USD assets are usually lit by whatever views them.
-		this.loader.sceneMetadata = environment?.texture ? { environment: { rotation: environment.rotation, intensity: environment.intensity } } : null;
+		this.loader.sceneMetadata = environment?.texture || render ? {
+			...( environment?.texture ? { environment: { rotation: environment.rotation, intensity: environment.intensity } } : {} ),
+			...( render ? { render } : {} ),
+		} : null;
 
 		updateLoading( { isLoading: true, status: 'Processing USD geometry...', progress: 10 } );
 		await this.loader.onModelLoad( group );

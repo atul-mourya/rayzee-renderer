@@ -128,6 +128,7 @@ export async function loadUSDScene( args ) {
 		environment,
 		cameras: read.cameras,
 		lights: read.lights,
+		render: read.render,
 		cost: read.cost,
 		fitNote: reader.fitNote,
 		warnings: [ ...warnings, ...built.warnings ],

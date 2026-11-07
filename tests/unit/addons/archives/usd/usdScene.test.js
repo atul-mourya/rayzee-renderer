@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { Vector3, Matrix4, Texture, SRGBColorSpace, MirroredRepeatWrapping, ClampToEdgeWrapping } from 'three';
 import { USDFiles, loadUSDScene } from '@/core/addons/archives/usd/index.js';
 
@@ -882,6 +883,90 @@ ${clipping}    float focalLength = 35
 		expect( cameras[ 0 ].name ).toBe( 'shot' );
 		expect( cameras[ 0 ].fov ).toBeCloseTo( 2 * Math.atan( 20 / 70 ) * 180 / Math.PI, 5 );
 		expect( cameras[ 0 ].position.toArray() ).toEqual( [ 0, 1, 5 ] );
+
+	} );
+
+	it( 'gives a camera its apertures\' shape where the file sets them, and none from UsdGeom\'s fallback', async () => {
+
+		const { cameras, render } = await load( SCENE );
+		expect( cameras[ 0 ].userData.aspect ).toBeCloseTo( 36 / 20, 9 );
+		expect( render ).toBeNull();
+		expect( ( await load( { 'root.usda': usda( 'def Camera "shot"\n{\n    float focalLength = 35\n}' ) } ) ).cameras[ 0 ].userData.aspect ).toBeUndefined();
+
+	} );
+
+	it( 'takes the RenderSettings the stage names: its size, its camera first, the view fitted as its policy says', async () => {
+
+		// The aperture is 36 × 20 (1.8); 500 × 400 pixels twice as wide as tall make a 2.5 picture, 400 × 400 a square.
+		const scene = ( policy, [ w, h ], pixelAspect = 1, named = '/Render/final' ) => ( { 'root.usda': usda( `(
+    renderSettingsPrimPath = "${named}"
+)
+def Camera "wide"
+{
+    float focalLength = 20
+}
+def Camera "shot"
+{
+    float focalLength = 35
+    float horizontalAperture = 36
+    float verticalAperture = 20
+}
+def Scope "Render"
+{
+    def RenderSettings "draft"
+    {
+        uniform int2 resolution = (64, 64)
+        rel camera = </wide>
+    }
+    def RenderSettings "final"
+    {
+        uniform int2 resolution = (${w}, ${h})
+        uniform float pixelAspectRatio = ${pixelAspect}
+        uniform token aspectRatioConformPolicy = "${policy}"
+        rel camera = </shot>
+    }
+}` ) } );
+		// [ policy, resolution, pixel aspect, picture's aspect, vertical aperture after ]
+		const cases = [
+			[ 'expandAperture', [ 500, 400 ], 2, 2.5, 20 ],
+			[ 'expandAperture', [ 400, 400 ], 1, 1, 36 ],
+			[ 'cropAperture', [ 500, 400 ], 2, 2.5, 14.4 ],
+			[ 'cropAperture', [ 400, 400 ], 1, 1, 20 ],
+			[ 'adjustApertureWidth', [ 400, 400 ], 1, 1, 20 ],
+			[ 'adjustApertureHeight', [ 500, 400 ], 2, 2.5, 14.4 ],
+			[ 'adjustPixelAspectRatio', [ 500, 400 ], 2, 1.8, 20 ],
+			[ 'unknown', [ 400, 400 ], 1, 1, 36 ],
+		];
+		for ( const [ policy, size, pixelAspect, aspect, vertical ] of cases ) {
+
+			const { cameras, render } = await load( scene( policy, size, pixelAspect ) );
+			expect( cameras.map( ( c ) => c.name ) ).toEqual( [ 'shot', 'wide' ] );
+			expect( render ).toEqual( { width: size[ 0 ], height: size[ 1 ], aspect: expect.closeTo( aspect, 9 ) } );
+			expect( cameras[ 0 ].userData.aspect ).toBeCloseTo( aspect, 9 );
+			expect( cameras[ 0 ].fov ).toBeCloseTo( 2 * Math.atan( vertical / 70 ) * 180 / Math.PI, 6 );
+
+		}
+
+		// Two and none named: neither. The only one: that one.
+		expect( ( await load( scene( 'expandAperture', [ 500, 400 ], 2, '' ) ) ).render ).toBeNull();
+		const only = scene( 'expandAperture', [ 400, 400 ], 1, '' );
+		only[ 'root.usda' ] = only[ 'root.usda' ].replace( /def RenderSettings "draft"[^}]*}/, '' );
+		expect( ( await load( only ) ).render ).toEqual( { width: 400, height: 400, aspect: 1 } );
+
+	} );
+
+	it( 'reads RenderSettings alike from text and from OpenUSD\'s crate of it', async () => {
+
+		for ( const name of [ 'render.usda', 'render.usdc' ] ) {
+
+			const bytes = readFileSync( new URL( `./fixtures/${name}`, import.meta.url ) );
+			const files = new USDFiles( [ name ], async () => new Uint8Array( bytes ) );
+			const { cameras, render } = await loadUSDScene( { files, entryPath: name, resolveImage: async () => null, resolveEnvironment: async () => null } );
+			expect( render ).toEqual( { width: 500, height: 400, aspect: 2.5 } );
+			expect( cameras[ 0 ].name ).toBe( 'shot' );
+			expect( cameras[ 0 ].fov ).toBeCloseTo( 2 * Math.atan( 14.4 / 70 ) * 180 / Math.PI, 6 );
+
+		}
 
 	} );
 

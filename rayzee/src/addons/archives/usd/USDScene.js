@@ -129,6 +129,15 @@ function localTransform( prim ) {
 
 }
 
+// A camera's view through an aperture of h × v at `focal`. Apertures are in tenths of a scene unit.
+function frameAperture( camera, h, v, focal ) {
+
+	if ( camera.isOrthographicCamera ) Object.assign( camera, { left: - h / 20, right: h / 20, top: v / 20, bottom: - v / 20 } );
+	else Object.assign( camera, { fov: 2 * Math.atan( v / ( 2 * focal ) ) / DEG, aspect: h / v } );
+	camera.updateProjectionMatrix();
+
+}
+
 function primvar( prim, name ) {
 
 	const attr = `primvars:${name}`;
@@ -393,6 +402,8 @@ export class USDSceneReader {
 		this.warn = warn;
 		this.ir = emptyIR();
 		this.cameras = [];
+		this._cameraPrims = new Map();
+		this.renderSettings = [];
 		this.lights = [];
 		this.domes = [];
 		this.prototypes = new Map();
@@ -427,7 +438,8 @@ export class USDSceneReader {
 		if ( Number.isFinite( this.maxTriangles ) || Number.isFinite( this.maxPlacements ) ) await this.fit();
 		await this.walk();
 		this.shareGeometry();
-		return { ir: this.ir, cameras: this.cameras, lights: this.lights, dome: this.pickDome(), cost: this.cost };
+		const render = this.renderRequest();
+		return { ir: this.ir, cameras: this.cameras, lights: this.lights, dome: this.pickDome(), render, cost: this.cost };
 
 	}
 
@@ -568,6 +580,14 @@ export class USDSceneReader {
 		} else if ( type === 'Camera' ) {
 
 			if ( out.isWorld && ! this.dry ) this.camera( prim, matrix );
+
+		} else if ( type === 'RenderSettings' ) {
+
+			// UsdRender's fallbacks.
+			if ( ! this.dry ) this.renderSettings.push( {
+				path: prim.path, resolution: prim.value( 'resolution' ) ?? [ 2048, 1080 ], pixelAspectRatio: prim.value( 'pixelAspectRatio' ) ?? 1,
+				policy: prim.value( 'aspectRatioConformPolicy' ) ?? 'expandAperture', camera: prim.targets( 'camera' )[ 0 ],
+			} );
 
 		} else if ( LIGHT_TYPES.has( type ) ) {
 
@@ -2527,22 +2547,61 @@ export class USDSceneReader {
 
 	camera( prim, matrix ) {
 
-		const hAperture = prim.value( 'horizontalAperture' ) ?? 20.955;
-		const vAperture = prim.value( 'verticalAperture' ) ?? 15.2908;
+		const authored = [ prim.value( 'horizontalAperture' ), prim.value( 'verticalAperture' ) ];
+		const [ h, v ] = [ authored[ 0 ] ?? 20.955, authored[ 1 ] ?? 15.2908 ];
 		const focal = prim.value( 'focalLength' ) ?? 50;
 		const clipping = prim.value( 'clippingRange' );
 		const [ near, far ] = clipping ?? [ 1, 1000000 ];
-		const camera = prim.value( 'projection' ) === 'orthographic'
-			// Apertures are in tenths of a scene unit.
-			? new OrthographicCamera( - hAperture / 20, hAperture / 20, vAperture / 20, - vAperture / 20, near, far )
-			: new PerspectiveCamera( 2 * Math.atan( vAperture / ( 2 * focal ) ) / DEG, hAperture / vAperture, near, far );
+		const camera = prim.value( 'projection' ) === 'orthographic' ? new OrthographicCamera() : new PerspectiveCamera();
+		Object.assign( camera, { near, far } );
+		frameAperture( camera, h, v, focal );
 		camera.name = prim.name;
+		// The shape it is given (Blender writes the render size's there); the fallback's 1.37 is nobody's choice.
+		if ( authored.some( ( a ) => a !== undefined ) ) camera.userData.aspect = h / v;
 		// An authored near clip is a clip plane the path tracer honours (UsdGeom's fallback of 1 would clip every camera).
 		if ( clipping && near > 0 ) camera.userData.clipStart = near;
 		const scale = new Vector3();
 		matrix.decompose( camera.position, camera.quaternion, scale );
 		camera.updateMatrixWorld( true );
 		this.cameras.push( camera );
+		this._cameraPrims.set( prim.path, { camera, h, v, focal } );
+
+	}
+
+	/**
+	 * The RenderSettings the stage names (`renderSettingsPrimPath`), else its only one, as what the scene asks for: its
+	 * size, and its camera first, the view fitted to the image's shape as its `aspectRatioConformPolicy` says.
+	 */
+	renderRequest() {
+
+		const settings = this.renderSettings.find( ( s ) => s.path === this.stage.renderSettingsPath )
+			?? ( this.renderSettings.length === 1 ? this.renderSettings[ 0 ] : null );
+		if ( ! settings ) return null;
+		const [ width, height ] = settings.resolution;
+		let aspect = width * settings.pixelAspectRatio / height;
+		const shot = this._cameraPrims.get( settings.camera );
+		if ( shot ) {
+
+			const { camera, h, v, focal } = shot;
+			// Pixels stretched to cover the aperture: the picture has the aperture's shape.
+			if ( settings.policy === 'adjustPixelAspectRatio' ) aspect = h / v;
+			else {
+
+				// The aperture's height stays and its width follows the image, or the other way round. An unknown policy
+				// is expandAperture's, as in Hydra.
+				const wider = aspect > h / v;
+				const keepHeight = { cropAperture: ! wider, adjustApertureWidth: true, adjustApertureHeight: false }[ settings.policy ] ?? wider;
+				frameAperture( camera, keepHeight ? v * aspect : h, keepHeight ? v : h / aspect, focal );
+
+			}
+
+			camera.userData.aspect = aspect;
+			this.cameras.splice( this.cameras.indexOf( camera ), 1 );
+			this.cameras.unshift( camera );
+
+		}
+
+		return { width, height, aspect };
 
 	}
 

@@ -1,0 +1,30 @@
+#usda 1.0
+(
+    doc = "RenderSettings as the stage names them; render.usdc is usdcat 0.25.2 of this file"
+    renderSettingsPrimPath = "/Render/final"
+)
+def Camera "wide"
+{
+    float focalLength = 20
+}
+def Camera "shot"
+{
+    float focalLength = 35
+    float horizontalAperture = 36
+    float verticalAperture = 20
+}
+def Scope "Render"
+{
+    def RenderSettings "draft"
+    {
+        uniform int2 resolution = (64, 64)
+        rel camera = </wide>
+    }
+    def RenderSettings "final"
+    {
+        uniform int2 resolution = (500, 400)
+        uniform float pixelAspectRatio = 2
+        uniform token aspectRatioConformPolicy = "cropAperture"
+        rel camera = </shot>
+    }
+}
