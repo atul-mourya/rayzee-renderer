@@ -28,6 +28,7 @@ import { readProject, PROJECT_FORMAT } from '@/lib/project';
 import { zipInto } from '@/lib/zipSink';
 import { usePathTracerStore, useCameraStore } from '@/store';
 import { EngineEvents } from 'rayzee';
+import { MODEL_FILES } from '@/Constants';
 
 const encoder = new TextEncoder();
 
@@ -234,6 +235,60 @@ describe( 'sessions', () => {
 
 		await openSource( app, { kind: 'url', url: 'https://s.test/x.zip', filename: 'x.zip', cacheKey: 'sketchfab:1:gltf' }, { pickFile: vi.fn() } );
 		expect( app.loadFile ).toHaveBeenCalledWith( 'https://s.test/x.zip', { filename: 'x.zip', cacheKey: 'sketchfab:1:gltf' } );
+
+	} );
+
+	it( 'keeps the model on screen only when it is the session\'s, loaded the same way', async () => {
+
+		const url = MODEL_FILES.find( m => m.name === 'Classroom 2' ).url;
+		const saved = { kind: 'url', url: 'https://old.cdn/x.glb', catalog: 'Classroom 2', element: [ 'a', 'b' ], pbrtEntry: 'scene.pbrt' };
+		const record = { source: saved, scene: { v: 1 }, panels: {} };
+		const loaded = { kind: 'url', url, cacheKey: null, element: [ 'a', 'b' ], pbrtEntry: 'scene.pbrt' };
+		const opens = async ( sceneSource, reuseLoaded = true ) => {
+
+			const app = fakeApp( storage, { source: sceneSource } );
+			await restoreSession( app, record, { pickFile: vi.fn(), reuseLoaded } );
+			return app.loadModel.mock.calls.length + app.loadFile.mock.calls.length;
+
+		};
+
+		expect( await opens( loaded ) ).toBe( 0 );
+		expect( await opens( loaded, false ) ).toBe( 1 );
+		expect( await opens( { ...loaded, url: saved.url } ) ).toBe( 1 );
+		expect( await opens( { ...loaded, cacheKey: 'sketchfab:1:gltf' } ) ).toBe( 1 );
+		expect( await opens( { ...loaded, element: [ 'a' ] } ) ).toBe( 1 );
+		expect( await opens( { ...loaded, pbrtEntry: undefined } ) ).toBe( 1 );
+		expect( await opens( { ...loaded, kind: 'local-file' } ) ).toBe( 1 );
+
+	} );
+
+	it( 'asks for a session\'s sky file by the identity it saved, and refuses another', async () => {
+
+		const hdr = new File( [ encoder.encode( 'sky bytes' ) ], 'sky|night.hdr', { lastModified: 7 } );
+		const identity = await fileIdentity( hdr );
+		const app = fakeApp( storage );
+		let resolve;
+		app.importSceneState = vi.fn( async ( scene, options ) => ( resolve = options.resolve, { skipped: [] } ) );
+		const pickFile = vi.fn( async () => hdr );
+		await restoreSession( app, { source: app.sceneSource, scene: { v: 1 }, panels: {} }, { pickFile, reuseLoaded: true } );
+
+		expect( await resolve( { kind: 'environment', source: identityKey( identity ) } ) ).toBe( hdr );
+		expect( pickFile ).toHaveBeenCalledWith( identity, 'environment' );
+
+		pickFile.mockResolvedValueOnce( new File( [ encoder.encode( 'other sky' ) ], 'sky|night.hdr', { lastModified: 7 } ) );
+		await expect( resolve( { kind: 'environment', source: identityKey( identity ) } ) ).rejects.toMatchObject( { code: 'SESSION_FILE_MISMATCH' } );
+		pickFile.mockResolvedValueOnce( null );
+		expect( await resolve( { kind: 'environment', source: identityKey( identity ) } ) ).toBeNull();
+
+		pickFile.mockClear();
+		for ( const source of [ 'folder:sky|9|7|ab', 'file:sky.hdr|9|7', 'file:sky.hdr|9|7|AB', undefined ] ) {
+
+			expect( await resolve( { kind: 'environment', source } ) ).toBeNull();
+
+		}
+
+		expect( await resolve( { kind: 'texture', source: identityKey( identity ) } ) ).toBeNull();
+		expect( pickFile ).not.toHaveBeenCalled();
 
 	} );
 

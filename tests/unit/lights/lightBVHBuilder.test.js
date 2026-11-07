@@ -430,4 +430,134 @@ describe( 'LightBVHBuilder', () => {
 
 	} );
 
+	describe( 'what sampling reads', () => {
+
+		// Each node's range of sorted positions; leaves hold [start, start + count), inner nodes their children's.
+		function ranges( nodeData, node = 0, out = new Map() ) {
+
+			const o = node * 16;
+			const range = nodeData[ o + 7 ] === 1
+				? [ nodeData[ o + 8 ], nodeData[ o + 8 ] + nodeData[ o + 9 ] ]
+				: [ ranges( nodeData, nodeData[ o + 8 ], out )[ 0 ], ranges( nodeData, nodeData[ o + 9 ], out )[ 1 ] ];
+			out.set( node, range );
+			return range;
+
+		}
+
+		let seed = 1;
+		const random = () => ( seed = ( seed * 1103515245 + 12345 ) >>> 0 ) / 2 ** 32;
+
+		// Unit normals within `cap` radians of +Z (π: anywhere), scattered along `spread`.
+		function scene( count, { cap = Math.PI, spread = [ 100, 10, 1 ], twoSided = () => false } = {} ) {
+
+			return Array.from( { length: count }, ( _, i ) => {
+
+				const cos = 1 - random() * ( 1 - Math.cos( cap ) ), sin = Math.sqrt( 1 - cos * cos ), phi = random() * 2 * Math.PI;
+				const tri = makeEmissiveTri( i, random() * spread[ 0 ], random() * spread[ 1 ], random() * spread[ 2 ], 0.5 + random() );
+				return { ...tri, nx: sin * Math.cos( phi ), ny: sin * Math.sin( phi ), nz: cos, twoSided: twoSided( i ) };
+
+			} );
+
+		}
+
+		it( 'gives every triangle the root-to-leaf trail of the leaf that holds it', () => {
+
+			for ( const spread of [[ 100, 10, 1 ], [ 1, 100, 10 ], [ 10, 1, 100 ]] ) {
+
+				const tris = scene( 300, { spread } );
+				const { nodeData, bitTrails } = builder.build( tris );
+				let deepest = 0;
+				for ( let i = 0; i < tris.length; i ++ ) {
+
+					let node = 0, depth = 0;
+					while ( nodeData[ node * 16 + 7 ] !== 1 ) node = nodeData[ node * 16 + 8 + ( ( bitTrails[ i ] >> depth ++ ) & 1 ) ];
+					const start = nodeData[ node * 16 + 8 ];
+					expect( i >= start && i < start + nodeData[ node * 16 + 9 ] ).toBe( true );
+					deepest = Math.max( deepest, depth );
+
+				}
+
+				expect( deepest ).toBeGreaterThan( 4 );
+
+			}
+
+		} );
+
+		it( 'splits along the centroids\' longest axis', () => {
+
+			for ( const [ axis, spread ] of [[ 'cx', [ 100, 10, 1 ]], [ 'cy', [ 1, 100, 10 ]], [ 'cz', [ 10, 1, 100 ]]] ) {
+
+				const tris = scene( 40, { spread } );
+				const { nodeData, sortedPerm } = builder.build( tris );
+				const [ , mid ] = ranges( nodeData, nodeData[ 8 ] );
+				const left = Math.max( ...Array.from( sortedPerm.subarray( 0, mid ), i => tris[ i ][ axis ] ) );
+				const right = Math.min( ...Array.from( sortedPerm.subarray( mid ), i => tris[ i ][ axis ] ) );
+				expect( left ).toBeLessThanOrEqual( right );
+
+			}
+
+		} );
+
+		// Every direction a triangle under a node emits into lies inside the node's cone; a two-sided one's is the sphere.
+		function expectConesHold( tris, { nodeData, nodeCount, sortedPerm } ) {
+
+			const range = new Map();
+			ranges( nodeData, 0, range );
+			for ( let node = 0; node < nodeCount; node ++ ) {
+
+				const o = node * 16, cosO = nodeData[ o + 15 ];
+				const [ ax, ay, az ] = [ nodeData[ o + 12 ], nodeData[ o + 13 ], nodeData[ o + 14 ] ];
+				expect( Math.hypot( ax, ay, az ) ).toBeCloseTo( 1, 5 );
+				const [ start, end ] = range.get( node );
+				for ( let i = start; i < end; i ++ ) {
+
+					const t = tris[ sortedPerm[ i ] ];
+					if ( t.twoSided ) expect( cosO ).toBe( - 1 );
+					else expect( ax * t.nx + ay * t.ny + az * t.nz ).toBeGreaterThanOrEqual( cosO - 1e-5 );
+
+				}
+
+			}
+
+		}
+
+		// Unions taken two at a time widen up the tree: a root 1.2–1.6× the normals' spread at 200 triangles.
+		it( 'bounds the directions every triangle below a node faces, within twice their spread', () => {
+
+			for ( const cap of [ 0.05, 0.35, 1.2 ] ) {
+
+				const tris = scene( 200, { cap } );
+				const tree = builder.build( tris );
+				expectConesHold( tris, tree );
+				if ( cap < 1 ) expect( Math.acos( tree.nodeData[ 15 ] ) ).toBeLessThanOrEqual( 2 * cap );
+
+			}
+
+			// Two directions 60° apart: the cone between them, 30° wide.
+			const two = [ 0, Math.PI / 3 ].map( ( a, i ) => ( { ...makeEmissiveTri( i, i, 0, 0 ), nx: Math.sin( a ), ny: 0, nz: Math.cos( a ), twoSided: false } ) );
+			const { nodeData } = builder.build( two );
+			expect( nodeData[ 15 ] ).toBeCloseTo( Math.cos( Math.PI / 6 ), 6 );
+			[ Math.sin( Math.PI / 6 ), 0, Math.cos( Math.PI / 6 ) ].forEach( ( v, k ) => expect( nodeData[ 12 + k ] ).toBeCloseTo( v, 6 ) );
+
+			const anywhere = scene( 200 );
+			const tree = builder.build( anywhere );
+			expectConesHold( anywhere, tree );
+			expect( tree.nodeData[ 15 ] ).toBe( - 1 );
+
+		} );
+
+		it( 'covers the sphere for two-sided triangles and for opposite faces', () => {
+
+			const tris = scene( 120, { cap: 0.3, twoSided: i => i % 37 === 0 } );
+			expectConesHold( tris, builder.build( tris ) );
+
+			const pair = [ 1, - 1 ].map( ( z, i ) => ( { ...makeEmissiveTri( i, i, 0, 0 ), nx: 0, ny: 0, nz: z, twoSided: false } ) );
+			const tree = builder.build( pair );
+			expectConesHold( pair, tree );
+			expect( tree.nodeData[ 15 ] ).toBeLessThanOrEqual( 0 );
+
+		} );
+
+	} );
+
 } );

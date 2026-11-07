@@ -506,4 +506,149 @@ describe( 'a failed BVH build', () => {
 
 	} );
 
+
+	describe( 'are used only for what they were built over', () => {
+
+		const stored = async ( root ) => {
+
+			const sp = processor();
+			await sp._extractGeometry( root );
+			await sp._buildBVH();
+			expect( await sp._storeBLASes( 'test' ) ).toBe( true );
+			return sp;
+
+		};
+
+		const rebuilt = async ( root, edit = () => {} ) => {
+
+			const sp = processor();
+			edit( sp );
+			await sp._extractGeometry( root );
+			await sp._buildBVH();
+			const { problems } = inspectBVH( sp.bvh, sp.triangles, { table: sp.instanceTable } );
+			expect( problems ).toEqual( [] );
+			return sp;
+
+		};
+
+		it( 'rebuilds when the triangles changed under the same layout', async () => {
+
+			const first = await stored( scene() );
+			const moved = scene();
+			moved.children[ 1 ].position.x = 4;
+			moved.updateMatrixWorld( true );
+			const again = await rebuilt( moved );
+			expect( again._blasRestored ).toBeFalsy();
+			first.dispose();
+			again.dispose();
+
+		} );
+
+		it( 'rebuilds when the layout changed', async () => {
+
+			const first = await stored( scene() );
+			const finer = scene();
+			finer.children[ 0 ].geometry = new SphereGeometry( 1, 20, 10 );
+			const again = await rebuilt( finer );
+			expect( again._blasRestored ).toBeFalsy();
+			first.dispose();
+			again.dispose();
+
+		} );
+
+		// Rewrites the stored entry with its index changed by `edit`.
+		const tamper = async ( key, edit ) => {
+
+			const area = shared.storage.area( 'scenes' );
+			const entry = await area.open( key );
+			const index = await entry.json( 'index.json' );
+			const nodes = new Uint8Array( await ( await entry.file( 'nodes.f32' ) ).arrayBuffer() );
+			const order = new Uint8Array( await ( await entry.file( 'order.u32' ) ).arrayBuffer() );
+			entry.release();
+			const writer = await area.create( key );
+			await writer.write( 'nodes.f32', nodes );
+			await writer.write( 'order.u32', order );
+			await writer.writeJSON( 'index.json', edit( index ) );
+			await writer.commit();
+
+		};
+
+		it( 'refuses an entry stored in another format', async () => {
+
+			const first = await stored( scene() );
+			await tamper( first._blasKey, ( index ) => ( { ...index, v: index.v + 1 } ) );
+			const again = await rebuilt( scene() );
+			expect( again._blasRestored ).toBeFalsy();
+			first.dispose();
+			again.dispose();
+
+		} );
+
+		// The same triangles, so only the layout checks can tell.
+		it.each( [
+			[ 'the BLASes start elsewhere', ( index ) => ( { ...index, tlasNodeCount: index.tlasNodeCount + 1 } ) ],
+			[ 'a template sits elsewhere', ( index ) => ( { ...index, templates: index.templates.map( ( t, i ) => i === 1 ? [ t[ 0 ], t[ 1 ], t[ 2 ], t[ 3 ], t[ 4 ] + 1, ...t.slice( 5 ) ] : t ) } ) ],
+			[ 'the node count is off', ( index ) => ( { ...index, totalNodes: index.totalNodes + 1 } ) ],
+		] )( 'refuses an entry whose layout does not match: %s', async ( _, edit ) => {
+
+			const first = await stored( scene() );
+			await tamper( first._blasKey, edit );
+			const again = await rebuilt( scene() );
+			expect( again._blasRestored ).toBeFalsy();
+			first.dispose();
+			again.dispose();
+
+		} );
+
+		it( 'stores nothing for a scene that changed while it was being stored', async () => {
+
+			const first = processor();
+			await first._extractGeometry( scene() );
+			await first._buildBVH();
+			const area = shared.storage.area( 'scenes' );
+			const create = area.create;
+			area.create = async ( ...args ) => {
+
+				const writer = await create.apply( area, args );
+				const write = writer.write;
+				writer.write = ( ...a ) => {
+
+					first._geometryVersion ++;
+					return write.apply( writer, a );
+
+				};
+
+				return writer;
+
+			};
+
+			try {
+
+				expect( await first._storeBLASes( 'test' ) ).toBe( false );
+
+			} finally {
+
+				area.create = create;
+
+			}
+
+			const again = await rebuilt( scene() );
+			expect( again._blasRestored ).toBeFalsy();
+			first.dispose();
+			again.dispose();
+
+		} );
+
+		it( 'restores nothing with the scene cache off', async () => {
+
+			const first = await stored( scene() );
+			const again = await rebuilt( scene(), ( sp ) => void ( sp.config.sceneCache = false ) );
+			expect( again._blasRestored ).toBeFalsy();
+			first.dispose();
+			again.dispose();
+
+		} );
+
+	} );
+
 } );

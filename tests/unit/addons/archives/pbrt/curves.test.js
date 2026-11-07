@@ -252,3 +252,149 @@ describe( 'curve tessellation', () => {
 	} );
 
 } );
+
+describe( 'USD curves', () => {
+
+	// A one-sided strip's rows: each row's centre, half-width and the direction it spans.
+	function rows( built ) {
+
+		const p = built.positions, out = [];
+		for ( let i = 0; i < p.length; i += 6 ) {
+
+			const span = [ p[ i + 3 ] - p[ i ], p[ i + 4 ] - p[ i + 1 ], p[ i + 5 ] - p[ i + 2 ] ];
+			out.push( {
+				centre: [ p[ i ] + span[ 0 ] / 2, p[ i + 1 ] + span[ 1 ] / 2, p[ i + 2 ] + span[ 2 ] / 2 ],
+				half: Math.hypot( ...span ) / 2,
+				span,
+			} );
+
+		}
+
+		return out;
+
+	}
+
+	const near = ( a, b ) => a.forEach( ( v, k ) => expect( v ).toBeCloseTo( b[ k ], 5 ) );
+	const curve = ( P, extra = {} ) => tessellateCurves( { P: Float32Array.from( P ), counts: [ P.length / 3 ], widths: [ 0.1 ], steps: 3, ...extra } );
+
+	const BEND = [ 0, 0, 0, 1, 0, 0, 1, 1, 0 ];
+	const SQUARE = [ 0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0 ];
+
+	it( 'draws a linear curve through its points, evenly along each segment', async () => {
+
+		const r = rows( await curve( BEND, { type: 'linear' } ) );
+		expect( r ).toHaveLength( 7 );
+		[[ 0, 0, 0 ], [ 1 / 3, 0, 0 ], [ 2 / 3, 0, 0 ], [ 1, 0, 0 ], [ 1, 1 / 3, 0 ], [ 1, 2 / 3, 0 ], [ 1, 1, 0 ]]
+			.forEach( ( p, i ) => near( r[ i ].centre, p ) );
+
+	} );
+
+	it( 'closes a periodic linear curve', async () => {
+
+		const r = rows( await curve( BEND, { type: 'linear', wrap: 'periodic' } ) );
+		near( r.at( - 1 ).centre, r[ 0 ].centre );
+		near( r[ 6 ].centre, [ 1, 1, 0 ] );
+
+	} );
+
+	it( 'runs a Catmull-Rom curve from its second point to its next to last, through its first and last when pinned', async () => {
+
+		const plain = rows( await curve( SQUARE, { basis: 'catmullRom' } ) );
+		near( plain[ 0 ].centre, [ 1, 0, 0 ] );
+		near( plain.at( - 1 ).centre, [ 1, 1, 0 ] );
+
+		const pinned = rows( await curve( SQUARE, { basis: 'catmullRom', wrap: 'pinned' } ) );
+		[[ 0, 0, 0 ], [ 1, 0, 0 ], [ 1, 1, 0 ], [ 0, 1, 0 ]].forEach( ( p, i ) => near( pinned[ i * 3 ].centre, p ) );
+
+		const periodic = rows( await curve( SQUARE, { basis: 'catmullRom', wrap: 'periodic' } ) );
+		near( periodic.at( - 1 ).centre, periodic[ 0 ].centre );
+
+	} );
+
+	it( 'keeps a Catmull-Rom curve through evenly spaced points on a line even', async () => {
+
+		const r = rows( await curve( STRAIGHT, { basis: 'catmullRom' } ) );
+		[ 1, 4 / 3, 5 / 3, 2 ].forEach( ( x, i ) => near( r[ i ].centre, [ x, 0, 0 ] ) );
+
+	} );
+
+	it( 'starts and ends a pinned b-spline on its first and last points, which a plain one does not touch', async () => {
+
+		const pinned = rows( await curve( SQUARE, { basis: 'bspline', wrap: 'pinned' } ) );
+		near( pinned[ 0 ].centre, [ 0, 0, 0 ] );
+		near( pinned.at( - 1 ).centre, [ 0, 1, 0 ] );
+
+		const plain = rows( await curve( SQUARE, { basis: 'bspline' } ) );
+		// ( P0 + 4 P1 + P2 ) / 6
+		near( plain[ 0 ].centre, [ 5 / 6, 1 / 6, 0 ] );
+
+	} );
+
+	it( 'closes a periodic b-spline and a periodic bezier', async () => {
+
+		const spline = rows( await curve( SQUARE, { basis: 'bspline', wrap: 'periodic' } ) );
+		near( spline.at( - 1 ).centre, spline[ 0 ].centre );
+
+		const HEXAGON = [ 1, 0, 0, 0.5, 0.9, 0, - 0.5, 0.9, 0, - 1, 0, 0, - 0.5, - 0.9, 0, 0.5, - 0.9, 0 ];
+		const bezier = rows( await curve( HEXAGON, { basis: 'bezier', wrap: 'periodic' } ) );
+		near( bezier[ 0 ].centre, [ 1, 0, 0 ] );
+		near( bezier.at( - 1 ).centre, [ 1, 0, 0 ] );
+
+	} );
+
+	it( 'reads widths per vertex, per curve, per span boundary or once', async () => {
+
+		const LINE = [ 0, 0, 0, 1, 0, 0 ];
+		const vertex = rows( await curve( LINE, { type: 'linear', widths: [ 1, 3 ], widthMode: 'vertex' } ) );
+		[ 0.5, 5 / 6, 7 / 6, 1.5 ].forEach( ( h, i ) => expect( vertex[ i ].half ).toBeCloseTo( h, 5 ) );
+
+		const two = { P: Float32Array.from( [ ...LINE, ...LINE ] ), counts: [ 2, 2 ], type: 'linear', steps: 1 };
+		// The second curve's widths start at its own first vertex.
+		const vertices = rows( await tessellateCurves( { ...two, widths: [ 1, 3, 5, 7 ], widthMode: 'vertex' } ) );
+		expect( vertices.map( ( r ) => r.half ) ).toEqual( [ 0.5, 1.5, 2.5, 3.5 ] );
+
+		const uniform = rows( await tessellateCurves( { ...two, widths: [ 1, 4 ], widthMode: 'uniform' } ) );
+		expect( uniform.map( ( r ) => r.half ) ).toEqual( [ 0.5, 0.5, 2, 2 ] );
+
+		// Two values a curve here (one span), the second curve's after the first's.
+		const varying = rows( await tessellateCurves( { ...two, widths: [ 1, 2, 3, 4 ], widthMode: 'varying' } ) );
+		varying.forEach( ( r, i ) => expect( r.half ).toBeCloseTo( [ 0.5, 1, 1.5, 2 ][ i ], 5 ) );
+
+		const constant = rows( await tessellateCurves( { ...two, widths: [ 2, 9 ], widthMode: 'constant' } ) );
+		expect( constant.every( ( r ) => r.half === 1 ) ).toBe( true );
+
+	} );
+
+	it( 'turns each ribbon to face its curve\'s normal', async () => {
+
+		const LINE = [ 0, 0, 0, 1, 0, 0 ];
+		const two = { P: Float32Array.from( [ ...LINE, ...LINE ] ), counts: [ 2, 2 ], type: 'linear', steps: 1, widths: [ 1 ] };
+		const facing = ( r, axis ) => Math.abs( r.span[ axis ] ) / Math.hypot( ...r.span );
+
+		const uniform = rows( await tessellateCurves( { ...two, N: [ 0, 0, 1, 0, 1, 0 ], normalMode: 'uniform' } ) );
+		// Facing +z, a ribbon along x spans y; facing +y, it spans z.
+		expect( facing( uniform[ 0 ], 1 ) ).toBeCloseTo( 1, 5 );
+		expect( facing( uniform[ 2 ], 2 ) ).toBeCloseTo( 1, 5 );
+
+		// A curve's first vertex normal: the second curve starts at vertex 2.
+		const vertex = rows( await tessellateCurves( { ...two, N: [ 0, 0, 1, 0, 0, 1, 0, 1, 0, 0, 1, 0 ], normalMode: 'vertex' } ) );
+		expect( facing( vertex[ 0 ], 1 ) ).toBeCloseTo( 1, 5 );
+		expect( facing( vertex[ 2 ], 2 ) ).toBeCloseTo( 1, 5 );
+
+		const constant = rows( await tessellateCurves( { ...two, N: [ 0, 1, 0, 0, 0, 1 ], normalMode: 'constant' } ) );
+		expect( facing( constant[ 0 ], 2 ) ).toBeCloseTo( 1, 5 );
+		expect( facing( constant[ 2 ], 2 ) ).toBeCloseTo( 1, 5 );
+
+	} );
+
+	it( 'skips and counts the curves it cannot build', async () => {
+
+		const P = Float32Array.from( [ ...STRAIGHT, 0, 0, 0, 1, 0, 0, 2, 0, 0 ] );
+		const built = await tessellateCurves( { P, counts: [ 4, 3 ], basis: 'bezier', widths: [ 0.1 ] } );
+		expect( built.skipped ).toBe( 1 );
+
+		expect( await tessellateCurves( { P: Float32Array.from( STRAIGHT ), counts: [ 4 ], basis: 'hermite', widths: [ 0.1 ] } ) ).toBeNull();
+
+	} );
+
+} );

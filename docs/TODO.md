@@ -29,6 +29,9 @@
 
 ### Known
 
+- [ ] Tar: GNU sparse members (old `S` and pax 0.0 / 0.1 / 1.0) are not understood: in Python's `testtar.tar` their maps
+  read as three garbage entries. Every other local tar (86 of 97 Python can read) lists and reads as Python's `tarfile`
+  does, apart from a leading `./` we drop (2026-11-07). Sparse files are rare in scene archives.
 - [x] Any PNG with an eXIf chunk or JPEG with Exif was decoded at load to learn its size and kept decoded, though most
   never turn (2,342 baked-texture PNGs here had no orientation tag; 1.1 GB decoded in one folder). Fixed 2026-11-07:
   the orientation is read, and only 5–8 or an unreadable block go to the decoder. 7,886 of 7,959 local images now
@@ -96,6 +99,10 @@
 - [ ] CPU-side vitest guards: shader-recompile contract, feature-combo compile smoke (BVH structural invariants done: `tests/unit/processor/bvhInvariants.test.js`; the memory-spill and BLAS-cache builds are not walked yet)
 - [ ] corpus gap: skeletal/morph animation — needs a committed .glb, which the all-procedural rule cannot supply
 - [ ] `bench:load` in Chrome — the Node side is built (`npm run bench:load`, `-- --ab main`); browser-only paths (`createImageBitmap` decoding, background kernel compile, OPFS) are not timed. Its floors (15 % and 100 ms) were set on a busy machine: re-check on a quiet one.
+  Re-checked 2026-11-07 (quiet, 27977388 against itself, 5 models × 3 rounds): no false regression. Phases of 0.5 s and
+  up agreed within 2.5 %, except `ready` / `load` on 24155522 (−11.7 %), moved by `upload` alone (176 ↔ 331 ms from
+  round to round); shorter phases within 11 %. Keep 15 % for the totals; the CPU phases (parse, pbrtBuild, extraction,
+  blas, textures) could gate at ~5 %.
 
 
 ### General
@@ -110,6 +117,13 @@
 
 ### Rendering
 
+- [ ] Light tree cones widen up the tree (`LightBVHBuilder`, measured 2026-11-07): children's cones are joined two at a
+  time, as pbrt does, but the split is by position only, so the error compounds. Normals within 0.05–1.2 rad of one
+  direction: root cone 1.2–1.6× that at 200 emitters; at 2,000, past 0.7 rad, the whole sphere — the top of the tree
+  then never skips emitters facing away. pbrt-v4 adds an orientation term to its split (SAOH); a cone from each node's
+  own normals would not compound: at 0.7–1.2 rad and 2k–20k emitters, 38–926 inner nodes are whole spheres pairwise
+  against 0 that way, mean half-angle 35–60 % smaller (but at 0.2 rad / 20k pairwise is tighter, 0.046 vs 0.058: take
+  the tighter of the two). Costs noise, not bias; measure on a curved emitter scene before building.
 - [ ] Introduce Sequenced HRDIs - https://mattepaint.com/gallery/hdri/skies/
 - [ ] **Fog and light shafts** ROADMAP: "Fog and homogeneous participating media", "Volumetric lighting and shadows";
   - [ ] Follow-ups: fog inside glass; density varying other than with height (noise, VDB); the shadow catcher ignores
@@ -344,8 +358,12 @@ picture: in 0.5.0 one NaN pixel smeared over 60–110 pixels, and 1 % of pixels 
 
 - [ ] GPU-CPU sync for environment in solid color sky mode
 - [ ] Zero-Day loaded as a single frame (`animation: false`) built in 77.6 s for 4.0M triangles, the 9-frame clip in 38.3 s for 2.2M (measured once, busy machine) — check with `bench:load`.
+  Re-measured 2026-11-07 with `bench:load` (Node on Dawn, quiet machine, 27977388, median of 3): the frame ready in
+  12.0 s (4.0M triangles), the clip in 11.5 s (2.2M, 6,177 meshes); `pbrtBuild` is 8.5 s of each. Chrome not timed.
 - [ ] **OIDN at 1920×1080 runs as 4 tiles**: a live refresh (oidn-web 0.5.0, Apple M-series, visible tab, 2026-10-11) takes 67 ms as 4 tiles (178 MB), 58 ms as 2 (280 MB), 50 ms as 1 (483 MB). oidn-webgpu 0.6.0 (M5 Pro on battery, 2026-10-25, not like for like with those): 80 ms as 4 tiles, 56–59 ms as 1 in the app; 57 / 42 ms in Node (0.5.0: 66 ms as 4 tiles). The tile cap is now an area, so wide frames that fit stay whole (1280×720: 33 → 22 ms); going past it is a memory trade. NRD (+15 ms a frame at 1080p) stays for large views until OIDN keeps up there. Tried and rejected (2026-10-11, `git stash` "half-size OIDN while moving"): denoising the half-size render while moving gave ~3× the pictures a second but boiled visibly more — blotch flicker on 24155522.glb at 1024², full 3.34, ¾ 4.22, ½ 5.06.
 - [ ] **Fast Navigation flaps on heavy scenes at 1080p** (NRD, or no live denoiser): full-size frames take the GPU past 100 ms a frame, interaction mode times out between them, and the pending drop to half size does not take hold. 24155522.glb at 1920×1080 under NRD: half size reached only after 4.1 s of moving.
+  Could not reproduce 2026-11-07 (27977388): a 5 s drag (`controls.rotateLeft` every 8 ms) dropped to half size after
+  118 ms under NRD, 96 ms with none, 12 ms under OIDN, and held it to the end, one drop and one restore each.
 
 ### Core and add-ons — make more of the core opt-in
 

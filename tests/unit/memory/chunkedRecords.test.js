@@ -310,3 +310,89 @@ describe( 'ChunkedRecords.release', () => {
 	}
 
 } );
+
+// Random edits on tiny chunks against a flat array: every read, every view and every trimmed copy must match it.
+describe( 'ChunkedRecords against a flat array', () => {
+
+	const LANES = 3, PER_CHUNK = 5;
+	let seed = 11;
+	const random = () => ( seed = ( seed * 1103515245 + 12345 ) >>> 0 ) / 2 ** 32;
+	const int = n => Math.floor( random() * n );
+	const bitsOf = values => new Uint32Array( Float32Array.from( values ).buffer );
+
+	for ( const lazy of [ false, true ] ) {
+
+		it( `keeps every record through writes, grows, trims and releases (${lazy ? 'lazy' : 'eager'})`, () => {
+
+			for ( let run = 0; run < 200; run ++ ) {
+
+				let count = 1 + int( 30 );
+				const store = lazy
+					? ChunkedRecords.lazy( count, LANES, Float32Array, PER_CHUNK * LANES * 4 )
+					: new ChunkedRecords( count, LANES, Float32Array, PER_CHUNK * LANES * 4 );
+				const bits = store.viewAs( Uint32Array );
+				let model = new Array( count * LANES ).fill( 0 );
+				const log = [];
+
+				for ( let step = 0; step < 30; step ++ ) {
+
+					const op = int( 5 );
+					if ( op <= 1 ) {
+
+						const start = int( count ), n = 1 + int( count - start );
+						const src = Float32Array.from( { length: n * LANES }, () => Math.fround( random() * 100 ) );
+						store.setRecords( start, src );
+						model.splice( start * LANES, src.length, ...src );
+						log.push( `set ${start}+${n}` );
+
+					} else if ( op === 2 && lazy ) {
+
+						const next = count + int( 12 );
+						store.grow( next );
+						model = model.concat( new Array( ( next - count ) * LANES ).fill( 0 ) );
+						count = next;
+						log.push( `grow ${next}` );
+
+					} else if ( op === 3 && count > 1 ) {
+
+						count = 1 + int( count );
+						store.trimInPlace( count );
+						model.length = count * LANES;
+						log.push( `trim ${count}` );
+
+					} else if ( op === 4 ) {
+
+						const start = int( count ), n = 1 + int( count - start );
+						store.release( start, n );
+						// Whole chunks inside the range come back as new, zeroed memory. A store smaller than a chunk
+						// has one chunk of its own size.
+						const rpc = store.recordsPerChunk;
+						for ( let k = Math.ceil( start / rpc ); k < Math.floor( ( start + n ) / rpc ); k ++ ) {
+
+							model.fill( 0, k * rpc * LANES, Math.min( ( k + 1 ) * rpc, count ) * LANES );
+
+						}
+
+						log.push( `release ${start}+${n}` );
+
+					}
+
+					const where = `run ${run}: ${log.join( ', ' )}`;
+					// The view first: reading the store would bring a chunk the view lost back for both.
+					expect( [ store.recordCount, bits.recordCount ], where ).toEqual( [ count, count ] );
+					expect( Array.from( bits.copyOf( 0, count ) ), where ).toEqual( Array.from( bitsOf( model ) ) );
+					expect( Array.from( store.copyOf( 0, count ) ), where ).toEqual( model );
+					const start = int( count ), n = 1 + int( count - start );
+					expect( Array.from( store.slice( start, n ) ), where ).toEqual( model.slice( start * LANES, ( start + n ) * LANES ) );
+					const trimmed = store.trimTo( n );
+					expect( Array.from( trimmed.copyOf( 0, n ) ), where ).toEqual( model.slice( 0, n * LANES ) );
+
+				}
+
+			}
+
+		} );
+
+	}
+
+} );

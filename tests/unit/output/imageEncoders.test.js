@@ -284,6 +284,64 @@ describe( 'encodeEXR', () => {
 
 	} );
 
+	it( 'rounds to the nearest half, ties to even, subnormals included, with or without Float16Array', async () => {
+
+		// Every finite half, by bit pattern, and an independent nearest-even search over them.
+		const halves = Float64Array.from( { length: 0x7C00 }, ( _, h ) => ( h >> 10 ? 2 ** ( ( h >> 10 ) - 15 ) * ( 1 + ( h & 0x3FF ) / 1024 ) : 2 ** - 24 * h ) );
+		const expected = v => {
+
+			const sign = v < 0 || Object.is( v, - 0 ) ? 0x8000 : 0;
+			const a = Math.min( Math.abs( v ), 65504 );
+			let lo = 0, hi = halves.length - 1;
+			while ( lo < hi ) {
+
+				const mid = ( lo + hi + 1 ) >> 1;
+				if ( halves[ mid ] <= a ) lo = mid; else hi = mid - 1;
+
+			}
+
+			if ( halves[ lo ] === a || lo === halves.length - 1 ) return sign | lo;
+			const below = a - halves[ lo ], above = halves[ lo + 1 ] - a;
+			return sign | ( below < above || ( below === above && lo % 2 === 0 ) ? lo : lo + 1 );
+
+		};
+
+		const f = new Float32Array( 1 ), u = new Uint32Array( f.buffer );
+		const nudge = ( v, d ) => ( f[ 0 ] = v, u[ 0 ] += d, f[ 0 ] );
+		const values = [ 0, - 0, 1e-30, - 1e-30, 2 ** - 25, nudge( 2 ** - 25, 1 ), nudge( 2 ** - 25, - 1 ), 65504, 65519, 65520 ];
+		for ( let h = 0; h < halves.length - 1; h ++ ) {
+
+			const tie = ( halves[ h ] + halves[ h + 1 ] ) / 2;
+			values.push( halves[ h ], - halves[ h ], tie, - tie, nudge( tie, 1 ), nudge( tie, - 1 ) );
+
+		}
+
+		const data = Float32Array.from( values );
+		const bitsOf = async ( { encodeEXR: encode } ) => {
+
+			const exr = await bytesOf( await encode( { width: data.length, height: 1, channels: [ { name: 'Y', data } ], compression: 'none' } ) );
+			return new Uint16Array( exr.slice( exr.length - data.length * 2 ).buffer );
+
+		};
+
+		const want = Uint16Array.from( data, expected );
+		vi.resetModules();
+		vi.stubGlobal( 'Float16Array', undefined );
+		try {
+
+			expect( await bitsOf( await import( '@/core/output/ImageEncoders.js' ) ) ).toEqual( want );
+
+		} finally {
+
+			vi.unstubAllGlobals();
+			vi.resetModules();
+
+		}
+
+		if ( typeof Float16Array === 'function' ) expect( await bitsOf( await import( '@/core/output/ImageEncoders.js' ) ) ).toEqual( want );
+
+	} );
+
 } );
 
 describe( 'encodeHDR', () => {
@@ -388,7 +446,7 @@ describe( 'gain maps', () => {
 	it( 'lays out a HEIF tone-map item over the picture and its gain map', async () => {
 
 		const base = { width: 4, height: 2, data: new Uint8Array( [ 1, 1, 1 ] ), record: new Uint8Array( [ 9 ] ), matrix: 1, fullRange: false };
-		const map = { ...base, data: new Uint8Array( [ 2, 2 ] ) };
+		const map = { ...base, data: new Uint8Array( [ 2, 2 ] ), record: new Uint8Array( [ 8 ] ), matrix: 0, fullRange: true };
 		const toneMap = new Uint8Array( [ 0, ...isoMetadata( gain ) ] );
 		const file = new Uint8Array( await heifFile( 'avif', { base, primaries: 12, gainMap: map, toneMap } ).arrayBuffer() );
 		const top = boxes( file );
@@ -412,6 +470,79 @@ describe( 'gain maps', () => {
 		expect( Array.from( meta.iref.body.subarray( 4 + 8 ) ) ).toEqual( [ 0, 2, 0, 2, 0, 1, 0, 3 ] );
 		expect( Array.from( meta.grpl.body.subarray( 8 + 4 + 4 ) ) ).toEqual( [ 0, 0, 0, 2, 0, 0, 0, 2, 0, 0, 0, 1 ] );
 		expect( new DataView( meta.pitm.body.buffer, meta.pitm.body.byteOffset ).getUint16( 4 ) ).toBe( 1 );
+
+		const { properties, associations } = itemProperties( meta );
+		expect( properties.map( p => p.type ) ).toEqual( [ 'ispe', 'pixi', 'av1C', 'colr', 'colr', 'av1C', 'colr' ] );
+		expect( [ properties[ 4 ].nclx, properties[ 6 ].nclx ] ).toEqual( [[ 12, 8, 0, true ], [ 2, 2, 0, true ]] );
+		expect( [ properties[ 2 ].body, properties[ 5 ].body ].map( b => Array.from( b ) ) ).toEqual( [[ 9 ], [ 8 ]] );
+		expect( properties[ 3 ].nclx ).toEqual( [ 12, 13, 1, false ] );
+		expect( associations ).toEqual( [[ 1, [ 1, 2, 3 | 0x80, 4 ]], [ 2, [ 1, 5 ]], [ 3, [ 1, 2, 6 | 0x80, 7 ]]] );
+		expect( infeFlags( meta ) ).toEqual( [ 0, 0, 1 ] );
+
+	} );
+
+	// ipco's properties (an nclx colour as primaries, transfer, matrix, full range) and ipma's 1-based lists.
+	function itemProperties( meta ) {
+
+		const iprp = boxes( meta.iprp.body );
+		const ipco = iprp.ipco.body, properties = [];
+		const view = new DataView( ipco.buffer, ipco.byteOffset );
+		for ( let at = 0; at < ipco.length; ) {
+
+			const size = view.getUint32( at ), type = String.fromCharCode( ...ipco.subarray( at + 4, at + 8 ) );
+			const body = ipco.subarray( at + 8, at + size );
+			properties.push( { type, body, nclx: type === 'colr' ? [ view.getUint16( at + 12 ), view.getUint16( at + 14 ), view.getUint16( at + 16 ), ipco[ at + 18 ] === 0x80 ] : null } );
+			at += size;
+
+		}
+
+		const ipma = iprp.ipma.body, associations = [];
+		for ( let at = 8, n = new DataView( ipma.buffer, ipma.byteOffset ).getUint32( 4 ); n --; ) {
+
+			const count = ipma[ at + 2 ];
+			associations.push( [ ipma[ at ] << 8 | ipma[ at + 1 ], Array.from( ipma.subarray( at + 3, at + 3 + count ) ) ] );
+			at += 3 + count;
+
+		}
+
+		return { properties, associations };
+
+	}
+
+	function infeFlags( meta ) {
+
+		const iinf = meta.iinf.body, flags = [];
+		for ( let at = 6; at < iinf.length; at += new DataView( iinf.buffer, iinf.byteOffset ).getUint32( at ) ) flags.push( iinf[ at + 11 ] );
+		return flags;
+
+	}
+
+	it( 'lays out a HEIC of one picture with no tone map', async () => {
+
+		const base = { width: 6, height: 4, data: new Uint8Array( [ 5, 6, 7, 8 ] ), record: new Uint8Array( [ 3, 4 ] ), matrix: 6, fullRange: true };
+		const file = new Uint8Array( await heifFile( 'heic', { base, primaries: 1 } ).arrayBuffer() );
+		const top = boxes( file );
+		expect( Object.keys( top ) ).toEqual( [ 'ftyp', 'meta', 'mdat' ] );
+		const brands = String.fromCharCode( ...top.ftyp.body );
+		expect( [ brands.slice( 0, 4 ), brands.includes( 'mif1' ), brands.includes( 'tmap' ) ] ).toEqual( [ 'heic', true, false ] );
+		expect( top.mdat.at + top.mdat.size ).toBe( file.length );
+
+		const meta = boxes( top.meta.body, 4 );
+		expect( [ meta.iref, meta.grpl ] ).toEqual( [ undefined, undefined ] );
+		const iloc = new DataView( meta.iloc.body.buffer, meta.iloc.body.byteOffset + 4 );
+		expect( iloc.getUint16( 2 ) ).toBe( 1 );
+		const offset = iloc.getUint32( 10 ), length = iloc.getUint32( 14 );
+		expect( Array.from( file.subarray( offset, offset + length ) ) ).toEqual( [ 5, 6, 7, 8 ] );
+		expect( String.fromCharCode( ...meta.iinf.body ) ).toContain( 'hvc1' );
+		expect( infeFlags( meta ) ).toEqual( [ 0 ] );
+
+		const { properties, associations } = itemProperties( meta );
+		expect( properties.map( p => p.type ) ).toEqual( [ 'ispe', 'pixi', 'hvcC', 'colr' ] );
+		const ispe = new DataView( properties[ 0 ].body.buffer, properties[ 0 ].body.byteOffset );
+		expect( [ ispe.getUint32( 4 ), ispe.getUint32( 8 ) ] ).toEqual( [ 6, 4 ] );
+		expect( Array.from( properties[ 2 ].body ) ).toEqual( [ 3, 4 ] );
+		expect( properties[ 3 ].nclx ).toEqual( [ 1, 13, 6, true ] );
+		expect( associations ).toEqual( [[ 1, [ 1, 2, 3 | 0x80, 4 ]]] );
 
 	} );
 

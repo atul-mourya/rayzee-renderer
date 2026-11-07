@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { gzipSync, zipSync, unzipSync } from 'three/addons/libs/fflate.module.js';
+import { gzipSync, zipSync, unzipSync, deflateSync } from 'three/addons/libs/fflate.module.js';
 import { openTar, indexTarHeaders, readTar, createTarIndexer } from '@/core/addons/archives/ArchiveReader.js';
 import { openZip, readZipDirectory } from '@/core/addons/archives/ZipReader.js';
 import { unpackTarGz, loadTarIndex, saveTarIndex } from '@/core/addons/archives/ArchiveCache.js';
@@ -113,9 +113,66 @@ describe( 'ZipReader', () => {
 
 	} );
 
+	// `zip -fz` (Info-ZIP 3.0, macOS): a.txt deflated and b.bin stored, each central entry with UT and ux extras before
+	// a ZIP64 one holding only the saturated size, local headers with ZIP64 extras, and only the directory offset saturated.
+	const INFO_ZIP64 = Uint8Array.from( atob(
+		'UEsDBC0AAAAIAA8eZ13AtNv9//////////8FADAAYS50eHRVVAkAAzVS7mo1Uu5qdXgLAAEE9wEAAAQAAAAAAQAQAGwCAAAAAAAAJQAAAAAAAADL'
+		+ 'SM3JyVeoyiwwM1Eozy/KSdFRyAALJaYnZuZxZYxKj0pTSxoAUEsDBC0AAAAAAA8eZ114d6YP//////////8FADAAYi5iaW5VVAkAAzVS7mo1Uu5q'
+		+ 'dXgLAAEE9wEAAAQAAAAAAQAQAAwAAAAAAAAADAAAAAAAAABzdG9yZWQgYnl0ZXNQSwECHgMtAAAACAAPHmddwLTb/SUAAAD/////BQAkAAAAAAAB'
+		+ 'AAAApIEAAAAAYS50eHRVVAUAAzVS7mp1eAsAAQT3AQAABAAAAAABAAgAbAIAAAAAAABQSwECHgMtAAAAAAAPHmddeHemDwwAAAD/////BQAkAAAA'
+		+ 'AAAAAAAApIF4AAAAYi5iaW5VVAUAAzVS7mp1eAsAAQT3AQAABAAAAAABAAgADAAAAAAAAABQSwYGLAAAAAAAAAAeAy0AAAAAAAAAAAACAAAAAAAA'
+		+ 'AAIAAAAAAAAArgAAAAAAAADXAAAAAAAAAFBLBgcAAAAAhQEAAAAAAAABAAAAUEsFBgAAAAACAAIArgAAAP////8AAA==',
+	), c => c.charCodeAt( 0 ) );
+
+	it( 'reads a ZIP64 archive Info-ZIP wrote', async () => {
+
+		const a = text( 'hello zip64 world, hello again\n'.repeat( 20 ) );
+		const zip = await openZip( blob( INFO_ZIP64 ) );
+		expect( zip.listing ).toEqual( [ { path: 'a.txt', size: 620, offset: 0 }, { path: 'b.bin', size: 12, offset: 0x78 } ] );
+		expect( await zip.read( 'a.txt' ) ).toEqual( a );
+		expect( await zip.read( 'b.bin' ) ).toEqual( text( 'stored bytes' ) );
+		expect( new Uint8Array( await ( await zip.slice( 'a.txt' ) ).arrayBuffer() ) ).toEqual( a );
+		expect( await zip.readHead( 'b.bin', 6 ) ).toEqual( text( 'stored' ) );
+		expect( await zip.readHead( 'a.txt', 5 ) ).toEqual( text( 'hello' ) );
+		expect( [ await zip.slice( 'missing' ), await zip.readHead( 'missing', 4 ) ] ).toEqual( [ null, null ] );
+
+	} );
+
+	it( 'reads a deflated ZIP64 entry whose sizes differ', async () => {
+
+		const body = text( 'deflate me '.repeat( 40 ) );
+		const zip = await openZip( blob( makeZip64( 'big/one.bin', body, deflateSync( body ) ) ) );
+		expect( zip.listing ).toEqual( [ { path: 'big/one.bin', size: body.length, offset: 0 } ] );
+		expect( await zip.read( 'big/one.bin' ) ).toEqual( body );
+
+	} );
+
 	it( 'refuses what it cannot read', async () => {
 
 		await expect( readZipDirectory( blob( text( 'not a zip at all' ) ) ) ).rejects.toThrow( /end of central directory/ );
+
+		const bytes = zipSync( { 'a.txt': [ text( 'abc' ), { level: 0 } ] } );
+		const at = signature => bytes.findIndex( ( _, i ) => new DataView( bytes.buffer ).getUint32( i, true ) === signature );
+		const patched = ( offset, value, size = 2 ) => {
+
+			const copy = bytes.slice();
+			new DataView( copy.buffer )[ size === 2 ? 'setUint16' : 'setUint32' ]( offset, value, true );
+			return blob( copy );
+
+		};
+
+		const central = at( 0x02014b50 ), local = at( 0x04034b50 );
+		await expect( readZipDirectory( patched( central, 0, 4 ) ) ).rejects.toThrow( /corrupt central directory/ );
+		await expect( ( await openZip( patched( local, 0, 4 ) ) ).read( 'a.txt' ) ).rejects.toThrow( /bad local header/ );
+		await expect( ( await openZip( patched( central + 8, 1 ) ) ).read( 'a.txt' ) ).rejects.toThrow( /encrypted/ );
+		await expect( ( await openZip( patched( central + 10, 12 ) ) ).read( 'a.txt' ) ).rejects.toThrow( /compression method 12/ );
+		await expect( ( await openZip( patched( central + 10, 12 ) ) ).slice( 'a.txt' ) ).rejects.toThrow( /compression method 12/ );
+
+		const z64 = makeZip64( 'x.bin', text( 'x' ) );
+		const locator = z64.length - 42, record = locator - 56;
+		const broken = offset => ( z64.slice().fill( 0, offset, offset + 4 ) );
+		await expect( readZipDirectory( blob( broken( locator ) ) ) ).rejects.toThrow( /ZIP64 locator missing/ );
+		await expect( readZipDirectory( blob( broken( record ) ) ) ).rejects.toThrow( /ZIP64 end record missing/ );
 
 	} );
 
@@ -220,31 +277,37 @@ describe( 'ArchiveCache', () => {
 
 } );
 
-function makeZip64( name, body ) {
+function makeZip64( name, body, deflated = null ) {
 
 	const nameBytes = text( name );
 	const local = new Uint8Array( 30 + nameBytes.length );
 	const lv = new DataView( local.buffer );
 	lv.setUint32( 0, 0x04034b50, true );
+	const data = deflated ?? body;
 	lv.setUint16( 4, 45, true );
-	lv.setUint32( 18, body.length, true );
+	lv.setUint16( 8, deflated ? 8 : 0, true );
+	lv.setUint32( 18, data.length, true );
 	lv.setUint32( 22, body.length, true );
 	lv.setUint16( 26, nameBytes.length, true );
 	local.set( nameBytes, 30 );
 
-	const extra = new Uint8Array( 4 + 24 );
+	// A 5-byte timestamp extra, as Info-ZIP writes one, ahead of the ZIP64 extra.
+	const extra = new Uint8Array( 9 + 4 + 24 );
 	const ev = new DataView( extra.buffer );
-	ev.setUint16( 0, 0x0001, true );
-	ev.setUint16( 2, 24, true );
-	ev.setUint32( 4, body.length, true );
-	ev.setUint32( 12, body.length, true );
-	ev.setUint32( 20, 0, true );
+	ev.setUint16( 0, 0x5455, true );
+	ev.setUint16( 2, 5, true );
+	ev.setUint16( 9, 0x0001, true );
+	ev.setUint16( 11, 24, true );
+	ev.setUint32( 13, body.length, true );
+	ev.setUint32( 21, data.length, true );
+	ev.setUint32( 29, 0, true );
 
 	const central = new Uint8Array( 46 + nameBytes.length + extra.length );
 	const cv = new DataView( central.buffer );
 	cv.setUint32( 0, 0x02014b50, true );
 	cv.setUint16( 4, 45, true );
 	cv.setUint16( 6, 45, true );
+	cv.setUint16( 10, deflated ? 8 : 0, true );
 	cv.setUint32( 20, 0xffffffff, true );
 	cv.setUint32( 24, 0xffffffff, true );
 	cv.setUint16( 28, nameBytes.length, true );
@@ -253,7 +316,7 @@ function makeZip64( name, body ) {
 	central.set( nameBytes, 46 );
 	central.set( extra, 46 + nameBytes.length );
 
-	const cdOffset = local.length + body.length;
+	const cdOffset = local.length + data.length;
 	const z64Offset = cdOffset + central.length;
 
 	const z64 = new Uint8Array( 56 );
@@ -279,7 +342,7 @@ function makeZip64( name, body ) {
 	eov.setUint32( 12, 0xffffffff, true );
 	eov.setUint32( 16, 0xffffffff, true );
 
-	const parts = [ local, body, central, z64, locator, eocd ];
+	const parts = [ local, data, central, z64, locator, eocd ];
 	const out = new Uint8Array( parts.reduce( ( n, p ) => n + p.length, 0 ) );
 	let o = 0;
 	for ( const p of parts ) {
