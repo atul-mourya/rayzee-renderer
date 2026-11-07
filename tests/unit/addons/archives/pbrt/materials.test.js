@@ -214,32 +214,44 @@ describe( 'pbrt materials', () => {
 
 	} );
 
-	it( 'reads a sampled spectral IOR at 550 nm, not its first wavelength', async () => {
+	it( 'reads a spectral IOR as glTF gives glass one: its value at the d line and its spread as dispersion', async () => {
 
 		// crown's gems: "spectrum eta" [ 200 3.5 900 3.3 ] had an IOR of 200.
-		const ior = async ( ...samples ) => ( await buildMaterial( { type: 'dielectric', params: { eta: param( 'spectrum', ...samples ) } }, ctx ) ).ior;
-		expect( await ior( 200, 3.5, 900, 3.3 ) ).toBeCloseTo( 3.4, 6 );
-		expect( await ior( 400, 1.53, 500, 1.52, 600, 1.515, 700, 1.512 ) ).toBeCloseTo( 1.5175, 6 );
-		expect( await ior( 600, 1.6, 700, 1.58 ) ).toBe( 1.6 );
-		expect( await ior( 300, 1.7, 400, 1.68 ) ).toBe( 1.68 );
-		expect( await ior( 'glass-SF11' ) ).toBe( 1.5 );
-		expect( ( await buildMaterial( { type: 'dielectric', params: { eta: param( 'float', 1.33 ) } }, ctx ) ).ior ).toBe( 1.33 );
+		const glass = async ( type, ...samples ) => {
+
+			const mat = await buildMaterial( { type, params: { eta: param( 'spectrum', ...samples ) } }, ctx );
+			return [ mat.ior, mat.dispersion ];
+
+		};
+
+		const [ gem, gemDispersion ] = await glass( 'dielectric', 200, 3.5, 900, 3.3 );
+		expect( gem ).toBeCloseTo( 3.5 - 0.2 * 387.562 / 700, 6 );
+		// 20 / Abbe: n_F − n_C over n_d − 1.
+		expect( gemDispersion ).toBeCloseTo( 20 * ( 0.2 * ( 656.281 - 486.134 ) / 700 ) / ( gem - 1 ), 6 );
+		expect( ( await glass( 'dielectric', 400, 1.53, 500, 1.52, 600, 1.515, 700, 1.512 ) )[ 0 ] ).toBeCloseTo( 1.52 - 0.005 * 0.87562, 6 );
+		// Held at its ends: a spectrum flat over the visible lines splits nothing.
+		expect( await glass( 'dielectric', 300, 1.7, 400, 1.68 ) ).toEqual( [ 1.68, 0 ] );
+		expect( await glass( 'dielectric', 'glass-SF11' ) ).toEqual( [ 1.5, 0 ] );
+		// A thin dielectric bends no light, so splits no colours.
+		expect( ( await glass( 'thindielectric', 200, 3.5, 900, 3.3 ) )[ 1 ] ).toBe( 0 );
+		expect( ( await buildMaterial( { type: 'dielectric', params: { eta: param( 'float', 1.33 ) } }, ctx ) ).dispersion ).toBe( 0 );
 		const skin = await buildMaterial( { type: 'subsurface', params: { eta: param( 'spectrum', 500, 1.4, 600, 1.3 ) } }, ctx );
-		expect( skin.ior ).toBeCloseTo( 1.35, 6 );
+		expect( skin.ior ).toBeCloseTo( 1.4 - 0.1 * 0.87562, 6 );
 
 	} );
 
-	it( 'reads pbrt\'s named glasses at 550 nm', async () => {
+	it( 'reads pbrt\'s named glasses as Schott\'s catalogue gives them', async () => {
 
-		// kroken's "glass-F11" was 1.5.
-		const glasses = {
-			'glass-BK7': 1.5185368, 'glass-BAF10': 1.6730513, 'glass-FK51A': 1.4877955, 'glass-LASF9': 1.8558086,
-			'glass-F5': 1.6770886, 'glass-F10': 1.7335740, 'glass-F11': 1.7911194
+		// n_d and the Abbe number V_d from Schott's catalogue: pbrt's tables, sampled every ~22 nm, land within 0.5 %.
+		const SCHOTT = {
+			'glass-BK7': [ 1.5168, 64.17 ], 'glass-BAF10': [ 1.67003, 47.11 ], 'glass-FK51A': [ 1.48656, 84.47 ],
+			'glass-LASF9': [ 1.85025, 32.17 ], 'glass-F5': [ 1.6727, 32.21 ], 'glass-F10': [ 1.72825, 28.41 ], 'glass-F11': [ 1.78472, 25.68 ]
 		};
-		for ( const [ name, n ] of Object.entries( glasses ) ) {
+		for ( const [ name, [ nd, abbe ]] of Object.entries( SCHOTT ) ) {
 
-			const params = { eta: param( 'spectrum', name ) };
-			expect( ( await buildMaterial( { type: 'dielectric', params }, ctx ) ).ior ).toBeCloseTo( n, 6 );
+			const mat = await buildMaterial( { type: 'dielectric', params: { eta: param( 'spectrum', name ) } }, ctx );
+			expect( mat.ior ).toBeCloseTo( nd, 4 );
+			expect( Math.abs( 20 / mat.dispersion / abbe - 1 ) ).toBeLessThan( 0.006 );
 
 		}
 

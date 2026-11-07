@@ -54,7 +54,6 @@ const REPORT = {
 	},
 	approximated: {
 		'LightSource distant: L': 1,
-		'Material dielectric: eta': 2,
 		'Material mix: amount': 1,
 	},
 };

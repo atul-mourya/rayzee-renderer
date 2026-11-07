@@ -30,14 +30,14 @@
 		"denoisedRmse": 0.003125516430535284
 	},
 	"dispersion-glass/oidn/1": {
-		"ratio": 0.3332466641538759,
-		"rawRmse": 0.10501798613779122,
-		"denoisedRmse": 0.034996893556576904
+		"ratio": 0.33391256268020075,
+		"rawRmse": 0.10428366029398584,
+		"denoisedRmse": 0.03482162425443631
 	},
 	"dispersion-glass/oidn/64": {
-		"ratio": 0.54944341703964,
-		"rawRmse": 0.011711826713332074,
-		"denoisedRmse": 0.00643498608914931
+		"ratio": 0.5402509706577592,
+		"rawRmse": 0.01151332611453347,
+		"denoisedRmse": 0.006220085608876034
 	},
 	"alpha-cutout/oidn/1": {
 		"ratio": 0.40793909585366833,
@@ -555,14 +555,14 @@
 		"denoisedRmse": 0.003125279898408013
 	},
 	"dispersion-glass/oidn-tiled/1": {
-		"ratio": 0.3332466641538759,
-		"rawRmse": 0.10501798613779122,
-		"denoisedRmse": 0.034996893556576904
+		"ratio": 0.33391256268020075,
+		"rawRmse": 0.10428366029398584,
+		"denoisedRmse": 0.03482162425443631
 	},
 	"dispersion-glass/oidn-tiled/64": {
-		"ratio": 0.54944341703964,
-		"rawRmse": 0.011711826713332074,
-		"denoisedRmse": 0.00643498608914931
+		"ratio": 0.5402509706577592,
+		"rawRmse": 0.01151332611453347,
+		"denoisedRmse": 0.006220085608876034
 	},
 	"alpha-cutout/oidn-tiled/1": {
 		"ratio": 0.40793909585366833,
@@ -586,8 +586,8 @@
 	},
 	"dispersion-glass/nrd/64": {
 		"ratio": 1,
-		"rawRmse": 0.011711826713332074,
-		"denoisedRmse": 0.011711826713332074
+		"rawRmse": 0.01151332611453347,
+		"denoisedRmse": 0.01151332611453347
 	},
 	"alpha-cutout/nrd/1": {
 		"ratio": 0.7165235018374306,
@@ -710,9 +710,9 @@
 		"denoisedRmse": 0.0019483660625211504
 	},
 	"dispersion-glass/nrd/1": {
-		"ratio": 0.7632053919890941,
-		"rawRmse": 0.10501798613779122,
-		"denoisedRmse": 0.0801502932761982
+		"ratio": 0.759823854911628,
+		"rawRmse": 0.10428366029398584,
+		"denoisedRmse": 0.079237212768871
 	},
 	"mixed-lights/nrd/1": {
 		"ratio": 0.4574065011925913,
@@ -1348,5 +1348,35 @@
 		"ratio": 0.47941777756289117,
 		"rawRmse": 0.005826395535907812,
 		"denoisedRmse": 0.0027932775990272734
+	},
+	"dispersion-glass/nrd/16": {
+		"ratio": 0.9345162079439379,
+		"rawRmse": 0.02311467796047342,
+		"denoisedRmse": 0.021601041195466936
+	},
+	"dispersion-glass/oidn/16": {
+		"ratio": 0.3761709539281628,
+		"rawRmse": 0.02311467796047342,
+		"denoisedRmse": 0.008695070458133567
+	},
+	"dispersion-glass/oidn-tiled/16": {
+		"ratio": 0.3761702583919698,
+		"rawRmse": 0.02311467796047342,
+		"denoisedRmse": 0.008695054381038457
+	},
+	"dispersion-glass/nrd/150": {
+		"ratio": 1,
+		"rawRmse": 0.007312611022727344,
+		"denoisedRmse": 0.007312611022727344
+	},
+	"dispersion-glass/oidn/150": {
+		"ratio": 0.679487453550608,
+		"rawRmse": 0.007312611022727344,
+		"denoisedRmse": 0.004968827442639111
+	},
+	"dispersion-glass/oidn-tiled/150": {
+		"ratio": 0.679487453550608,
+		"rawRmse": 0.007312611022727344,
+		"denoisedRmse": 0.004968827442639111
 	}
 }

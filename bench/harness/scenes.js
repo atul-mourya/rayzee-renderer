@@ -365,8 +365,8 @@ function makeDispersionRow() {
 
 	specs.forEach( ( spec, index ) => {
 
-		// IOR well above 1.5: the Cauchy term is 0.03 * dispersion / λ², so a low base IOR
-		// separates the wavelengths too little to survive tone mapping at 8 bits.
+		// IOR well above 1.5: glTF's spread is ( ior − 1 ) · dispersion / 20 between the F and C
+		// lines, so a low IOR separates the wavelengths too little to survive tone mapping at 8 bits.
 		const mesh = new Mesh( geometry, new MeshPhysicalMaterial( {
 			color: 0xffffff,
 			transmission: 1,

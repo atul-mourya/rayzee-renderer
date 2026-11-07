@@ -62,11 +62,16 @@ export const MicrofacetTransmissionResult = struct( {
 // DISPERSION
 // ================================================================================
 
-// Cauchy IOR n(λ) = baseIOR + 0.03·dispersion / λ_µm²
-const iorFromWavelength = /*@__PURE__*/ Fn( ( [ baseIOR, dispersionStrength, wavelength ] ) => {
+// glTF's dispersion (KHR_materials_dispersion, three.js alike) is 20 / the Abbe number: n_F − n_C = ( ior − 1 ) ·
+// dispersion / 20, `ior` at the d line. Spread by Cauchy, λ in µm: n( λ ) = ior + B · ( 1 / λ² − 1 / λ_d² ).
+const F_LINE = 0.486134, C_LINE = 0.656281, D_LINE = 0.587562;
+const CAUCHY_PER_DISPERSION = 1 / ( 20 * ( 1 / F_LINE ** 2 - 1 / C_LINE ** 2 ) );
+
+export const iorFromWavelength = /*@__PURE__*/ Fn( ( [ baseIOR, dispersionStrength, wavelength ] ) => {
 
 	const wlMicron = wavelength.div( 1000.0 );
-	return baseIOR.add( dispersionStrength.mul( 0.03 ).div( wlMicron.mul( wlMicron ) ) );
+	const B = baseIOR.sub( 1.0 ).mul( dispersionStrength ).mul( CAUCHY_PER_DISPERSION );
+	return baseIOR.add( B.mul( float( 1.0 ).div( wlMicron.mul( wlMicron ) ).sub( 1 / D_LINE ** 2 ) ) );
 
 } );
 

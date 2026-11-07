@@ -190,24 +190,24 @@
 	},
 	"dispersion-glass": {
 		"truth": {
-			"meanR": 0.08763962975298512,
-			"meanG": 0.2145646622403774,
-			"meanB": 0.301684516846791,
-			"meanLuminance": 0.19387045383614318,
-			"maxLuminance": 0.5167148115843535,
+			"meanR": 0.08738998568851741,
+			"meanG": 0.21396049332044242,
+			"meanB": 0.3008443798564997,
+			"meanLuminance": 0.19332462000580003,
+			"maxLuminance": 0.5104143850713968,
 			"nonFinite": 0,
 			"samples": 1024
 		},
 		"golden": {
-			"meanR": 0.0876033534307723,
-			"meanG": 0.2145900971133159,
-			"meanB": 0.3016595503091821,
-			"meanLuminance": 0.1938791299271475,
-			"maxLuminance": 0.5545192863166333,
+			"meanR": 0.08735507875304194,
+			"meanG": 0.21398575438458067,
+			"meanB": 0.30081829970237095,
+			"meanLuminance": 0.19333338251726115,
+			"maxLuminance": 0.513194840335846,
 			"nonFinite": 0,
 			"samples": 96
 		},
-		"rmseVsTruth": 0.009505066448490652
+		"rmseVsTruth": 0.00929456827819219
 	},
 	"iridescence-thinfilm": {
 		"truth": {

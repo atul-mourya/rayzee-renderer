@@ -122,18 +122,47 @@ export function pFloat( params, name, dflt ) {
 
 }
 
-/** An index of refraction: a sampled spectrum ( λ value pairs ) or a named glass is read at 550 nm, linearly between its samples. */
+// The Fraunhofer lines glTF's dispersion is defined on, nm.
+const F_LINE = 486.134, D_LINE = 587.562, C_LINE = 656.281;
+
+// A spectrum of ( λ value ) pairs at λ nm: linear between its samples, held at its ends.
+function spectrumAt( v, lambda ) {
+
+	const n = v.length - ( v.length % 2 );
+	if ( lambda <= v[ 0 ] ) return v[ 1 ];
+	for ( let i = 2; i < n; i += 2 ) {
+
+		if ( lambda <= v[ i ] ) return v[ i - 1 ] + ( v[ i + 1 ] - v[ i - 1 ] ) * ( lambda - v[ i - 2 ] ) / ( v[ i ] - v[ i - 2 ] );
+
+	}
+
+	return v[ n - 1 ];
+
+}
+
+/**
+ * An index of refraction as glTF gives glass one: a float, or a spectrum (λ value pairs, or a named glass) as its value at
+ * the d line and `dispersion`, 20 / its Abbe number ( n_d − 1 ) / ( n_F − n_C ). A spectrum rising from F to C gets
+ * none, and counts as approximated.
+ * @returns {{ ior: number, dispersion: number }}
+ */
 function pEta( params, name, dflt ) {
 
 	const p = param( params, name );
 	const v = p?.type === 'spectrum' && ( GLASS_ETA[ p.value[ 0 ] ] ?? p.value );
-	if ( typeof v?.[ 0 ] !== 'number' ) return pFloat( params, name, dflt );
-	approximated( params, name );
-	if ( v.length < 2 ) return dflt;
-	let i = 2;
-	while ( i < v.length - 1 && v[ i ] < 550 ) i += 2;
-	if ( i >= v.length - 1 || v[ i - 2 ] >= 550 ) return v[ i >= v.length - 1 ? i - 1 : 1 ];
-	return v[ i - 1 ] + ( v[ i + 1 ] - v[ i - 1 ] ) * ( 550 - v[ i - 2 ] ) / ( v[ i ] - v[ i - 2 ] );
+	if ( typeof v?.[ 0 ] !== 'number' ) return { ior: pFloat( params, name, dflt ), dispersion: 0 };
+	if ( v.length < 2 ) {
+
+		approximated( params, name );
+		return { ior: dflt, dispersion: 0 };
+
+	}
+
+	const ior = spectrumAt( v, D_LINE );
+	const spread = spectrumAt( v, F_LINE ) - spectrumAt( v, C_LINE );
+	if ( spread > 0 && ior > 1 ) return { ior, dispersion: 20 * spread / ( ior - 1 ) };
+	if ( spread !== 0 ) approximated( params, name );
+	return { ior, dispersion: 0 };
 
 }
 
@@ -332,7 +361,8 @@ const SUBSURFACE_SIGMA_S = [ 2.55, 3.21, 3.77 ];
  */
 async function applySubsurface( mat, params, ctx ) {
 
-	const eta = pEta( params, 'eta', 1.33 );
+	const { ior: eta, dispersion } = pEta( params, 'eta', 1.33 );
+	if ( dispersion > 0 ) approximated( params, 'eta' );
 	const scale = pFloat( params, 'scale', 1 );
 	const scaled = ( rgb ) => rgb.map( ( v ) => Math.max( 0, v * scale ) );
 	let g = pFloat( params, 'g', 0 );
@@ -527,7 +557,11 @@ export async function buildMaterial( def, ctx ) {
 			mat.transmission = 1;
 			mat.metalness = 0;
 			mat.color.setRGB( 1, 1, 1 );
-			mat.ior = pEta( params, 'eta', 1.5 );
+			const eta = pEta( params, 'eta', 1.5 );
+			mat.ior = eta.ior;
+			// A thin dielectric bends no light, so its spectrum splits no colours.
+			if ( type === 'dielectric' ) mat.dispersion = eta.dispersion;
+			else if ( eta.dispersion > 0 ) approximated( params, 'eta' );
 			await applyRoughness( mat, 'roughness', params, 0, ctx );
 			mat.thickness = type === 'thindielectric' ? 0 : pFloat( params, 'thickness', 0 );
 			break;

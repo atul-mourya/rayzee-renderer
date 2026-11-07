@@ -166,6 +166,10 @@
 ### Materials
 
 - [ ] implement pending Physical material properties
+- [ ] **Dispersion grain** — a path through dispersive glass carries one wavelength, so even BK7 (Abbe 64), whose split
+  is barely visible once converged, doubles transparent-machines' error at 64 spp (0.022 → 0.047, rainbow speckle on
+  every edge). pbrt traces four wavelengths a path (hero wavelength) and drops the others only at a dispersive interface.
+  Also not glTF's: `MaterialEvaluation` saturates the base colour of a dispersive transmissive material.
 - [ ] Supporting GPU-compressed texture arrays requires adding  per-scene format selection at build time - the TSL compiler doesn't support clean teardown/rebuild of compute pipelines when texture binding types change.
 
 ### Environment
@@ -214,10 +218,11 @@ once looked at. How it should have been built so they could not happen:
   samples image × constant per slot. Bake any uv-mapped graph to an image (now done for `mix`, `scale` by a texture,
   `scale` > 1, `invert`, a `mix` material's colours — `PBRTTextureBake.js`), and turn position-based mappings (planar,
   spherical, cylindrical) into a generated uv set per shape so they bake too. Only direction-dependent (`directionmix`)
-  and 3D procedural textures need anything more.
+  and 3D procedural textures need anything more. Position-based mappings done 2026-10-14.
 - **Validate at the loader → engine boundary.** A float EXR normal map failed the whole load (`IndexSizeError` in
   `TextureCreator`). The engine should convert a texel format it cannot pack and record an issue for that texture,
-  never abort the scene.
+  never abort the scene. Done 2026-10-12: float and half-float maps pack as 8-bit (`rgba8Pixels`), and a layer that
+  cannot be converted takes a placeholder and an issue instead of failing its bucket.
 - **The engine ties emission side to surface side.** A one-sided pbrt light became `FrontSide`, which also made its back
   see-through to camera rays; in pbrt it stays opaque (and black). Done 2026-11-04: a material's `emissiveSide`, an
   emitting side in the triangle flags apart from culling.
@@ -228,6 +233,7 @@ once looked at. How it should have been built so they could not happen:
   fails until the bump is decided).
 - **Count non-finite samples.** kroken's NaN pixels (two-sided emitter seen edge-on, fixed 057cbc41) were found by eye
   after OIDN drew them as black dots. A per-frame count in FinalWrite, recorded as an issue, makes the next one a number.
+  Partly since 2026-10-25: OIDN counts them in its input (`denoiser.non_finite_input`), but only while it runs.
 
 ### Missing today
 - [ ] **Displacement** (`texture displacement` + `edgelength`): dice to the edge length and displace along the normal at
@@ -248,10 +254,13 @@ once looked at. How it should have been built so they could not happen:
   medium stack treats an open sheet against pbrt's per-interface orientation.
 - [ ] **Named spectra**: `METAL_ALBEDO` is a five-metal table and blackbody is a curve fit. Port pbrt's named metal
   spectra and integrate against CIE for exact F0 and blackbody colour (kroken reads warmer partly here). Named glasses
-  done 2026-11-07: pbrt's seven tables (`GLASS_ETA`), read at 550 nm like a sampled `eta` (kroken's F11 was 1.5, now 1.79).
+  done 2026-11-07: pbrt's seven tables (`GLASS_ETA`), read like any spectral `eta` (kroken's F11 was 1.5, now 1.78).
 - [ ] **A second infinite light** is dropped (watercolor has two); the engine has one environment.
-- [ ] **Spectral `eta`** is read at 550 nm (crown's gems were IOR 200 before 2026-10-14). The dispersion layer could fit
-  `ior + 0.03·dispersion / λ²` to it; exact needs the sampled table in the shader.
+- [x] **Spectral `eta`** (crown's gems were IOR 200 before 2026-10-14). Done 2026-11-07: a spectrum, inline or a named
+  glass, is glTF's glass — its IOR at the d line and `dispersion` 20 / its Abbe number (Schott's catalogue within 0.5 %);
+  a thin dielectric and subsurface take the IOR alone. The engine's dispersion now means glTF's: the F–C spread is
+  ( ior − 1 ) · dispersion / 20, centred on the IOR (it was 0.057 · dispersion whatever the IOR, and raised the mean).
+  Exact beyond the three lines needs the sampled table in the shader; the grain it costs is Materials → Dispersion grain.
 - [ ] **Lights**: area light `filename` (an image that emits); `goniometric` → the engine's IES profiles; `projection` →
   its gobos; the infinite light's `portal`. Area light `power` done 2026-10-05.
 - [ ] **Cameras**: `spherical` → the engine's panorama (a panorama is global, not per camera: needs a per-camera
