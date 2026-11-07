@@ -146,6 +146,19 @@ export class InteractionManager extends EventDispatcher {
 	}
 
 	/**
+	 * Outlines `object` without selecting it (a drop target, say); null outlines the selection again. The host redraws
+	 * (`refreshFrame()`) when the loop is idle.
+	 * @param {import('three').Object3D|null} object
+	 */
+	highlight( object ) {
+
+		const outline = this._overlayManager?.getHelper( 'outline' );
+		const shown = object ?? this.selectedObject;
+		if ( outline ) outline.setSelectedObjects( shown && ! this.isGeometryOnDisk?.() ? [ shown ] : [] );
+
+	}
+
+	/**
 	 * Deselects the current object.
 	 */
 	deselect() {

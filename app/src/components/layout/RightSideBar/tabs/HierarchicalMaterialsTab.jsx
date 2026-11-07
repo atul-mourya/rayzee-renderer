@@ -5,6 +5,7 @@ import { usePolyHavenMaterialApplicator } from '@/hooks/usePolyHavenMaterialAppl
 import { PolyHavenTextures } from '@/services/PolyHavenService';
 import { PhysicallyBasedMaterials } from '@/services/AssetLoaderService';
 import { useToast } from '@/hooks/use-toast';
+import { startMaterialDrag, endMaterialDrag } from '@/lib/materialDrop';
 import CatalogBrowser from './CatalogBrowser';
 
 const HierarchicalMaterialsTab = () => {
@@ -14,18 +15,18 @@ const HierarchicalMaterialsTab = () => {
 	const [ activeSourceTab, setActiveSourceTab ] = useState( 'current' );
 	const [ polyHavenResolution, setPolyHavenResolution ] = useState( '1k' );
 
-	const applyPolyHaven = useCallback( ( material ) => {
+	const applyPolyHaven = useCallback( ( material, target ) => {
 
-		applyPolyHavenMaterial( { ...material, targetResolution: polyHavenResolution } );
+		return applyPolyHavenMaterial( { ...material, targetResolution: polyHavenResolution }, target );
 
 	}, [ applyPolyHavenMaterial, polyHavenResolution ] );
 
-	const applyPhysicallyBased = useCallback( async ( materialData ) => {
+	// Onto `target`, the selected object unless given (a material dropped on the view).
+	const applyPhysicallyBased = useCallback( async ( materialData, target = useStore.getState().selectedObject ) => {
 
-		const selectedObject = useStore.getState().selectedObject;
 		const setLoading = useStore.getState().setLoading;
 
-		if ( ! selectedObject ) {
+		if ( ! target ) {
 
 			toast( {
 				title: "No Object Selected",
@@ -36,7 +37,7 @@ const HierarchicalMaterialsTab = () => {
 
 		}
 
-		if ( ! selectedObject.material ) {
+		if ( ! target.material ) {
 
 			toast( {
 				title: "Invalid Object",
@@ -57,8 +58,9 @@ const HierarchicalMaterialsTab = () => {
 		try {
 
 			const { MaterialService } = await import( '@/services/MaterialService' );
-			MaterialService.applyMaterialToObject( materialData, selectedObject.material );
-			MaterialService.updatePathTracerMaterial( selectedObject );
+			MaterialService.applyMaterialToObject( materialData, target.material );
+			MaterialService.updatePathTracerMaterial( target );
+			window.dispatchEvent( new Event( 'MaterialUpdate' ) );
 
 			setLoading( { isLoading: false } );
 
@@ -99,7 +101,12 @@ const HierarchicalMaterialsTab = () => {
 				</TabsList>
 
 				<TabsContent value="current" className="flex-1 min-h-0 mt-2">
-					<CatalogBrowser source={PhysicallyBasedMaterials} onPick={applyPhysicallyBased} />
+					<CatalogBrowser
+						source={PhysicallyBasedMaterials}
+						onPick={applyPhysicallyBased}
+						onItemDragStart={( e, item ) => startMaterialDrag( e, item, applyPhysicallyBased )}
+						onItemDragEnd={endMaterialDrag}
+					/>
 				</TabsContent>
 
 				<TabsContent value="polyhaven" className="flex-1 min-h-0 mt-2">
@@ -108,6 +115,8 @@ const HierarchicalMaterialsTab = () => {
 						variant={polyHavenResolution}
 						onVariantChange={setPolyHavenResolution}
 						onPick={applyPolyHaven}
+						onItemDragStart={( e, item ) => startMaterialDrag( e, item, applyPolyHaven )}
+						onItemDragEnd={endMaterialDrag}
 					/>
 				</TabsContent>
 			</Tabs>

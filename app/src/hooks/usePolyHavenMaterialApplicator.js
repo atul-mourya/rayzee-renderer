@@ -13,10 +13,10 @@ export const usePolyHavenMaterialApplicator = () => {
 	const selectedObject = useStore( ( state ) => state.selectedObject );
 	const setLoading = useStore( ( state ) => state.setLoading );
 
-	const applyPolyHavenMaterial = useCallback( async ( materialData ) => {
+	// Onto `target`, the selected object unless given (a material dropped on the view).
+	const applyPolyHavenMaterial = useCallback( async ( materialData, target = useStore.getState().selectedObject ) => {
 
-		const { selectedObject } = useStore.getState();
-		if ( ! selectedObject ) {
+		if ( ! target ) {
 
 			console.warn( 'No object selected for material application' );
 			return;
@@ -60,9 +60,9 @@ export const usePolyHavenMaterialApplicator = () => {
 			} );
 
 			// Apply to selected object
-			const oldMaterial = selectedObject.material;
-			PolyHavenMaterialLoader.fitDisplacement( selectedObject, threeMaterial );
-			selectedObject.material = threeMaterial;
+			const oldMaterial = target.material;
+			PolyHavenMaterialLoader.fitDisplacement( target, threeMaterial );
+			target.material = threeMaterial;
 
 			// Dispose old material and its textures
 			if ( oldMaterial && typeof oldMaterial.dispose === 'function' ) {
@@ -107,7 +107,7 @@ export const usePolyHavenMaterialApplicator = () => {
 			} );
 
 			// Update path tracer with new material
-			await PolyHavenMaterialLoader.updatePathTracerMaterial( selectedObject, completeMaterialConfig );
+			await PolyHavenMaterialLoader.updatePathTracerMaterial( target, completeMaterialConfig );
 
 			toast( {
 				title: "PolyHaven Material Applied",

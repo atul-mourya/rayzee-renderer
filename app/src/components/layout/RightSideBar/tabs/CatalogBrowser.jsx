@@ -21,9 +21,11 @@ const NO_LISTING = { query: '', category: null, pinned: [], items: [], cursor: n
  * @param {(value:string) => void} [onVariantChange]
  * @param {Array} [actions] - per-card hover actions (ItemsCatalog's), for a source whose cards are not clicked
  * @param {(item:object) => any} [onPick] - a click on an item
+ * @param {(event:DragEvent, item:object) => void} [onItemDragStart] - an item dragged out of the grid
+ * @param {(event:DragEvent) => void} [onItemDragEnd]
  * @param {string} [selectedKey] - the item ringed as current; else the last one picked
  */
-const CatalogBrowser = ( { source, notice, variant, onVariantChange, actions, onPick, selectedKey } ) => {
+const CatalogBrowser = ( { source, notice, variant, onVariantChange, actions, onPick, selectedKey, onItemDragStart, onItemDragEnd } ) => {
 
 	const { toast } = useToast();
 
@@ -261,6 +263,8 @@ const CatalogBrowser = ( { source, notice, variant, onVariantChange, actions, on
 						value={ringIndex >= 0 ? String( ringIndex ) : null}
 						onValueChange={onPick ? handlePick : undefined}
 						actions={actions}
+						onItemDragStart={onItemDragStart}
+						onItemDragEnd={onItemDragEnd}
 						isLoading={isSearching || ( pending && listing.items.length === 0 )}
 						error={error}
 						hideSearch

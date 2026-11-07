@@ -54,6 +54,9 @@ export const ItemsCatalog = ( {
 	actions = null,
 	// Called as the end of the grid scrolls near: the next page's loader.
 	onEndReached = null,
+	// A card that can be dragged elsewhere (a material onto the view): called with the drag event and the item.
+	onItemDragStart = null,
+	onItemDragEnd = null,
 	...props
 } ) => {
 
@@ -636,12 +639,16 @@ export const ItemsCatalog = ( {
 														: "hover:bg-accent/50"
 												)}
 												onClick={actions ? undefined : () => handleItemSelection( itemKey )}
+												draggable={!! onItemDragStart}
+												onDragStart={onItemDragStart ? ( e ) => onItemDragStart( e, item ) : undefined}
+												onDragEnd={onItemDragEnd ?? undefined}
 											>
 												<CardContent className="p-1">
 													<div className="group/thumb relative aspect-square mb-1 overflow-hidden rounded-lg">
 														<img
 															src={item.preview}
 															alt={item.name}
+															draggable={! onItemDragStart}
 															// A preview that does not load gives way to the next the item offers.
 															onError={( e ) => {
 

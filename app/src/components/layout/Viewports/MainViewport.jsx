@@ -9,11 +9,14 @@ import { Toaster } from "@/components/ui/toaster";
 import { useStore, useAssetsStore, usePathTracerStore } from '@/store';
 import { getApp } from '@/lib/appProxy';
 import { readDrop, loadFolder } from '@/lib/folders';
+import { isMaterialDrag, meshAt, highlightMesh, dropMaterial, endMaterialDrag } from '@/lib/materialDrop';
 
 const MainViewport = ( { mode = "preview" } ) => {
 
 	const [ isDragging, setIsDragging ] = useState( false );
 	const dragCounter = useRef( 0 );
+	// Where a dragged material's target was last picked: picking is a raycast, and dragover repeats while the cursor rests.
+	const materialPick = useRef( { x: NaN, y: NaN, time: 0, mesh: null } );
 	const setEnvironment = useAssetsStore( state => state.setEnvironment );
 	const setLoading = useStore( state => state.setLoading );
 	const environmentMode = usePathTracerStore( state => state.environmentMode );
@@ -128,6 +131,7 @@ const MainViewport = ( { mode = "preview" } ) => {
 	const handleDragEnter = useCallback( ( e ) => {
 
 		e.preventDefault();
+		if ( isMaterialDrag( e ) ) return;
 		dragCounter.current ++;
 		if ( dragCounter.current === 1 ) setIsDragging( true );
 
@@ -136,12 +140,32 @@ const MainViewport = ( { mode = "preview" } ) => {
 	const handleDragOver = useCallback( ( e ) => {
 
 		e.preventDefault();
+		if ( ! isMaterialDrag( e ) ) return;
+
+		// A material lands on the object under the cursor, outlined meanwhile; elsewhere it cannot be dropped.
+		const last = materialPick.current;
+		const now = performance.now();
+		if ( Math.hypot( e.clientX - last.x, e.clientY - last.y ) > 2 || now - last.time > 250 ) {
+
+			materialPick.current = { x: e.clientX, y: e.clientY, time: now, mesh: meshAt( e.clientX, e.clientY ) };
+			highlightMesh( materialPick.current.mesh );
+
+		}
+
+		e.dataTransfer.dropEffect = materialPick.current.mesh ? 'copy' : 'none';
 
 	}, [] );
 
 	const handleDragLeave = useCallback( ( e ) => {
 
 		e.preventDefault();
+		if ( isMaterialDrag( e ) ) {
+
+			if ( ! e.currentTarget.contains( e.relatedTarget ) ) highlightMesh( null );
+			return;
+
+		}
+
 		dragCounter.current --;
 		if ( dragCounter.current === 0 ) setIsDragging( false );
 
@@ -151,6 +175,17 @@ const MainViewport = ( { mode = "preview" } ) => {
 	const handleDrop = useCallback( ( e ) => {
 
 		e.preventDefault();
+
+		if ( isMaterialDrag( e ) ) {
+
+			const mesh = meshAt( e.clientX, e.clientY );
+			materialPick.current = { x: NaN, y: NaN, time: 0, mesh: null };
+			if ( mesh ) dropMaterial( mesh ).catch( error => toast( { title: "Could not apply the material", description: error?.message || String( error ), variant: "destructive" } ) );
+			else endMaterialDrag();
+			return;
+
+		}
+
 		dragCounter.current = 0;
 		setIsDragging( false );
 
