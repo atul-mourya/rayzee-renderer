@@ -110,24 +110,24 @@
 		"denoisedRmse": 0.000331774643235627
 	},
 	"arealights-two/oidn/1": {
-		"ratio": 0.2297478172081264,
+		"ratio": 0.22973521678082687,
 		"rawRmse": 0.08077784593028592,
-		"denoisedRmse": 0.018558533781257526
+		"denoisedRmse": 0.01855751594588247
 	},
 	"arealights-two/oidn-tiled/1": {
-		"ratio": 0.2297478172081264,
+		"ratio": 0.22973521678082687,
 		"rawRmse": 0.08077784593028592,
-		"denoisedRmse": 0.018558533781257526
+		"denoisedRmse": 0.01855751594588247
 	},
 	"arealights-two/oidn/64": {
-		"ratio": 0.25235828258482884,
+		"ratio": 0.2533640749070906,
 		"rawRmse": 0.04378542962408696,
-		"denoisedRmse": 0.011049615822173474
+		"denoisedRmse": 0.011093654871116314
 	},
 	"arealights-two/oidn-tiled/64": {
-		"ratio": 0.25235828258482884,
+		"ratio": 0.2534474540188718,
 		"rawRmse": 0.04378542962408696,
-		"denoisedRmse": 0.011049615822173474
+		"denoisedRmse": 0.01109730566134733
 	},
 	"spheres-gradient/nrd/1": {
 		"ratio": 0.9348044978676439,
@@ -160,19 +160,19 @@
 		"denoisedRmse": 0.0060445557811296905
 	},
 	"instanced-storage/nrd/1": {
-		"ratio": 0.34232300945483646,
+		"ratio": 0.330359330489593,
 		"rawRmse": 0.1141255562821395,
-		"denoisedRmse": 0.03906780388220931
+		"denoisedRmse": 0.037702442365119965
 	},
 	"instanced-storage/oidn/1": {
-		"ratio": 0.15390342869441584,
+		"ratio": 0.1539092185929233,
 		"rawRmse": 0.1141255562821395,
-		"denoisedRmse": 0.017564314413478797
+		"denoisedRmse": 0.01756497518886678
 	},
 	"instanced-storage/oidn-tiled/1": {
-		"ratio": 0.15390342869441584,
+		"ratio": 0.1539092185929233,
 		"rawRmse": 0.1141255562821395,
-		"denoisedRmse": 0.017564314413478797
+		"denoisedRmse": 0.01756497518886678
 	},
 	"instanced-storage/nrd/64": {
 		"ratio": 1,
@@ -180,14 +180,14 @@
 		"denoisedRmse": 0.011686945197843966
 	},
 	"instanced-storage/oidn/64": {
-		"ratio": 0.3174471202055007,
+		"ratio": 0.31449387158095826,
 		"rawRmse": 0.011686945197843966,
-		"denoisedRmse": 0.0037099870970550724
+		"denoisedRmse": 0.0036754726422244368
 	},
 	"instanced-storage/oidn-tiled/64": {
-		"ratio": 0.3174471202055007,
+		"ratio": 0.31460145432373776,
 		"rawRmse": 0.011686945197843966,
-		"denoisedRmse": 0.0037099870970550724
+		"denoisedRmse": 0.003676729955843535
 	},
 	"spheres-procedural-sky/nrd/1": {
 		"ratio": 0.8833698055102385,
@@ -1378,5 +1378,185 @@
 		"ratio": 0.7445993711706258,
 		"rawRmse": 0.005896367109738215,
 		"denoisedRmse": 0.004390431242102235
+	},
+	"cornell-emissive/nrd/1": {
+		"ratio": 0.5774703777906561,
+		"rawRmse": 0.07032315802852687,
+		"denoisedRmse": 0.04060954063416543
+	},
+	"cornell-emissive/oidn/1": {
+		"ratio": 0.2114026583553075,
+		"rawRmse": 0.07032315802852687,
+		"denoisedRmse": 0.014866502551170967
+	},
+	"cornell-emissive/oidn-tiled/1": {
+		"ratio": 0.2114026583553075,
+		"rawRmse": 0.07032315802852687,
+		"denoisedRmse": 0.014866502551170967
+	},
+	"cornell-emissive/nrd/16": {
+		"ratio": 0.514561061163905,
+		"rawRmse": 0.016010692151358426,
+		"denoisedRmse": 0.008238478743371596
+	},
+	"cornell-emissive/oidn/16": {
+		"ratio": 0.26996058498197195,
+		"rawRmse": 0.016010692151358426,
+		"denoisedRmse": 0.004322255819146988
+	},
+	"cornell-emissive/oidn-tiled/16": {
+		"ratio": 0.26996765127825595,
+		"rawRmse": 0.016010692151358426,
+		"denoisedRmse": 0.004322368955441441
+	},
+	"cornell-emissive/nrd/64": {
+		"ratio": 1,
+		"rawRmse": 0.007574366451165683,
+		"denoisedRmse": 0.007574366451165683
+	},
+	"cornell-emissive/oidn/64": {
+		"ratio": 0.38385295782418105,
+		"rawRmse": 0.007574366451165683,
+		"denoisedRmse": 0.0029074429659241927
+	},
+	"cornell-emissive/oidn-tiled/64": {
+		"ratio": 0.3839085975287411,
+		"rawRmse": 0.007574366451165683,
+		"denoisedRmse": 0.0029078644014357653
+	},
+	"cornell-emissive/nrd/150": {
+		"ratio": 1,
+		"rawRmse": 0.004852056912362719,
+		"denoisedRmse": 0.004852056912362719
+	},
+	"cornell-emissive/oidn/150": {
+		"ratio": 0.49524041234650185,
+		"rawRmse": 0.004852056912362719,
+		"denoisedRmse": 0.0024029346660072075
+	},
+	"cornell-emissive/oidn-tiled/150": {
+		"ratio": 0.49524577559300614,
+		"rawRmse": 0.004852056912362719,
+		"denoisedRmse": 0.0024029606887844813
+	},
+	"furnace-multibounce/nrd/1": {
+		"ratio": 0.1519345219267377,
+		"rawRmse": 0.30459288461942985,
+		"denoisedRmse": 0.04627817430693905
+	},
+	"furnace-multibounce/oidn/1": {
+		"ratio": 0.13318099108110623,
+		"rawRmse": 0.30459288461942985,
+		"denoisedRmse": 0.04056598224986871
+	},
+	"furnace-multibounce/oidn-tiled/1": {
+		"ratio": 0.13318099108110623,
+		"rawRmse": 0.30459288461942985,
+		"denoisedRmse": 0.04056598224986871
+	},
+	"furnace-multibounce/nrd/16": {
+		"ratio": 0.5146170027600852,
+		"rawRmse": 0.10146066692583892,
+		"denoisedRmse": 0.05221338431141453
+	},
+	"furnace-multibounce/oidn/16": {
+		"ratio": 0.3802883555560272,
+		"rawRmse": 0.10146066692583892,
+		"denoisedRmse": 0.03858431017884508
+	},
+	"furnace-multibounce/oidn-tiled/16": {
+		"ratio": 0.38059250619641016,
+		"rawRmse": 0.10146066692583892,
+		"denoisedRmse": 0.03861516950566426
+	},
+	"furnace-multibounce/nrd/64": {
+		"ratio": 1,
+		"rawRmse": 0.07213165581638803,
+		"denoisedRmse": 0.07213165581638803
+	},
+	"furnace-multibounce/oidn/64": {
+		"ratio": 0.5308304980079867,
+		"rawRmse": 0.07213165581638803,
+		"denoisedRmse": 0.03828968277915394
+	},
+	"furnace-multibounce/oidn-tiled/64": {
+		"ratio": 0.5309806748912552,
+		"rawRmse": 0.07213165581638803,
+		"denoisedRmse": 0.03830051528640945
+	},
+	"furnace-multibounce/nrd/150": {
+		"ratio": 1,
+		"rawRmse": 0.052438919938355824,
+		"denoisedRmse": 0.052438919938355824
+	},
+	"furnace-multibounce/oidn/150": {
+		"ratio": 0.7272326533967929,
+		"rawRmse": 0.052438919938355824,
+		"denoisedRmse": 0.038135294888032495
+	},
+	"furnace-multibounce/oidn-tiled/150": {
+		"ratio": 0.7270587834796758,
+		"rawRmse": 0.052438919938355824,
+		"denoisedRmse": 0.0381261773373691
+	},
+	"arealights-two/nrd/16": {
+		"ratio": 0.3795587799174427,
+		"rawRmse": 0.0541107875708447,
+		"denoisedRmse": 0.020538224510761736
+	},
+	"arealights-two/oidn/16": {
+		"ratio": 0.2191242021583701,
+		"rawRmse": 0.0541107875708447,
+		"denoisedRmse": 0.011856983154622395
+	},
+	"arealights-two/oidn-tiled/16": {
+		"ratio": 0.2193364506162709,
+		"rawRmse": 0.0541107875708447,
+		"denoisedRmse": 0.011868468085840104
+	},
+	"arealights-two/nrd/150": {
+		"ratio": 1,
+		"rawRmse": 0.0340396731900992,
+		"denoisedRmse": 0.0340396731900992
+	},
+	"arealights-two/oidn/150": {
+		"ratio": 0.3195961613774038,
+		"rawRmse": 0.0340396731900992,
+		"denoisedRmse": 0.01087894888609703
+	},
+	"arealights-two/oidn-tiled/150": {
+		"ratio": 0.3196658018461272,
+		"rawRmse": 0.0340396731900992,
+		"denoisedRmse": 0.01088131942489318
+	},
+	"instanced-storage/nrd/16": {
+		"ratio": 0.37319009704629563,
+		"rawRmse": 0.026191765294944193,
+		"denoisedRmse": 0.009774507432234021
+	},
+	"instanced-storage/oidn/16": {
+		"ratio": 0.2078556185856324,
+		"rawRmse": 0.026191765294944193,
+		"denoisedRmse": 0.005444105577230324
+	},
+	"instanced-storage/oidn-tiled/16": {
+		"ratio": 0.20800138747560998,
+		"rawRmse": 0.026191765294944193,
+		"denoisedRmse": 0.005447923521783921
+	},
+	"instanced-storage/nrd/150": {
+		"ratio": 1,
+		"rawRmse": 0.0074875324722431585,
+		"denoisedRmse": 0.0074875324722431585
+	},
+	"instanced-storage/oidn/150": {
+		"ratio": 0.4157934903563195,
+		"rawRmse": 0.0074875324722431585,
+		"denoisedRmse": 0.003113267260790265
+	},
+	"instanced-storage/oidn-tiled/150": {
+		"ratio": 0.41579923647371736,
+		"rawRmse": 0.0074875324722431585,
+		"denoisedRmse": 0.0031133102850308706
 	}
 }

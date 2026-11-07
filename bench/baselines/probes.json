@@ -31,15 +31,15 @@
 			"samples": 2048
 		},
 		"golden": {
-			"meanR": 0.27266468883493555,
-			"meanG": 0.30996374458295106,
-			"meanB": 0.2932386990837966,
-			"meanLuminance": 0.3008264170459195,
+			"meanR": 0.27266463210972214,
+			"meanG": 0.3099637454990538,
+			"meanB": 0.2932386570002828,
+			"meanLuminance": 0.3008264026029061,
 			"maxLuminance": 12,
 			"nonFinite": 0,
 			"samples": 64
 		},
-		"rmseVsTruth": 0.007574345621981224
+		"rmseVsTruth": 0.007574366451165683
 	},
 	"glass-transmission": {
 		"truth": {
@@ -115,15 +115,15 @@
 			"samples": 2048
 		},
 		"golden": {
-			"meanR": 0.2511030155122569,
-			"meanG": 0.20035376207388822,
-			"meanB": 0.18982545364360703,
-			"meanLuminance": 0.21038290948622046,
+			"meanR": 0.25110301407303837,
+			"meanG": 0.2003537592558473,
+			"meanB": 0.1898254497310461,
+			"meanLuminance": 0.21038290688229175,
 			"maxLuminance": 28.844421997451782,
 			"nonFinite": 0,
 			"samples": 64
 		},
-		"rmseVsTruth": 0.0067098469397982455
+		"rmseVsTruth": 0.0067097056752331175
 	},
 	"shadow-catcher-ground": {
 		"truth": {
@@ -157,15 +157,15 @@
 			"samples": 2048
 		},
 		"golden": {
-			"meanR": 0.10691348492905728,
-			"meanG": 0.2654969283417774,
-			"meanB": 0.39545910043241106,
-			"meanLuminance": 0.24116535709717593,
+			"meanR": 0.10691348767169329,
+			"meanG": 0.2654969343564213,
+			"meanB": 0.395459045412184,
+			"meanLuminance": 0.2411653580094719,
 			"maxLuminance": 0.5513530531108379,
 			"nonFinite": 0,
 			"samples": 64
 		},
-		"rmseVsTruth": 0.006044724580565602
+		"rmseVsTruth": 0.0060445557811296905
 	},
 	"refit-deform": {
 		"truth": {
@@ -220,15 +220,15 @@
 			"samples": 2048
 		},
 		"golden": {
-			"meanR": 0.11274425630946006,
-			"meanG": 0.10922043195723763,
-			"meanB": 0.12590130165214752,
-			"meanLuminance": 0.11117395580649103,
+			"meanR": 0.11274425680463018,
+			"meanG": 0.10922043213881683,
+			"meanB": 0.1259013018106927,
+			"meanLuminance": 0.11117395605307699,
 			"maxLuminance": 79.84682382965087,
 			"nonFinite": 0,
 			"samples": 64
 		},
-		"rmseVsTruth": 0.005346984598383515
+		"rmseVsTruth": 0.00534698729270394
 	},
 	"sheen-velvet": {
 		"truth": {
@@ -241,15 +241,15 @@
 			"samples": 2048
 		},
 		"golden": {
-			"meanR": 0.12025225399905537,
-			"meanG": 0.11761805077723153,
-			"meanB": 0.1351151847377139,
-			"meanLuminance": 0.11944137545413613,
-			"maxLuminance": 0.7178294416069984,
+			"meanR": 0.12025226033576075,
+			"meanG": 0.11761805652722757,
+			"meanB": 0.1351151900303762,
+			"meanLuminance": 0.11944138129584662,
+			"maxLuminance": 0.7178295141220092,
 			"nonFinite": 0,
 			"samples": 64
 		},
-		"rmseVsTruth": 0.0016127562965652942
+		"rmseVsTruth": 0.001612782895808317
 	},
 	"clearcoat-carpaint": {
 		"truth": {
@@ -458,16 +458,16 @@
 			"samples": 512
 		},
 		"golden": {
-			"meanR": 0.9964799107947329,
-			"meanG": 0.9964799107947329,
-			"meanB": 0.9964799107947329,
-			"meanLuminance": 0.9964799107947329,
+			"meanR": 0.9964731197778747,
+			"meanG": 0.9964731197778747,
+			"meanB": 0.9964731197778747,
+			"meanLuminance": 0.9964731197778747,
 			"maxLuminance": 10.657319068908691,
 			"nonFinite": 0,
 			"samples": 128
 		},
-		"rmseVsTruth": 0.05616253930555265,
-		"furnaceRatio": 0.9964799107947329
+		"rmseVsTruth": 0.056162979897336374,
+		"furnaceRatio": 0.9964731197778747
 	},
 	"furnace-lowpoly-16": {
 		"truth": {
@@ -546,15 +546,15 @@
 			"samples": 2048
 		},
 		"golden": {
-			"meanR": 0.12010833327193494,
-			"meanG": 0.10027247378428482,
-			"meanB": 0.09890937672760285,
-			"meanLuminance": 0.10439116190386684,
-			"maxLuminance": 58.686723850250246,
+			"meanR": 0.12011487377945343,
+			"meanG": 0.10027754156076736,
+			"meanB": 0.09891268601691118,
+			"meanLuminance": 0.10439641582019353,
+			"maxLuminance": 58.68667852859497,
 			"nonFinite": 0,
 			"samples": 128
 		},
-		"rmseVsTruth": 0.03593261987837353
+		"rmseVsTruth": 0.035932595151042024
 	},
 	"instanced-storage": {
 		"truth": {
@@ -567,15 +567,15 @@
 			"samples": 2048
 		},
 		"golden": {
-			"meanR": 0.2521179908761762,
-			"meanG": 0.23713117393998312,
-			"meanB": 0.16229330959097935,
-			"meanLuminance": 0.2349140774146361,
+			"meanR": 0.25211779044311733,
+			"meanG": 0.2371310685405057,
+			"meanB": 0.16229319198664383,
+			"meanLuminance": 0.23491395092983106,
 			"maxLuminance": 15.864163310050964,
 			"nonFinite": 0,
 			"samples": 96
 		},
-		"rmseVsTruth": 0.00949328994382806
+		"rmseVsTruth": 0.009493094629012752
 	},
 	"furnace-dielectric-smooth": {
 		"furnaceRatio": 0.999713135035563,

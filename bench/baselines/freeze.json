@@ -7,10 +7,10 @@
 		"engagedFraction": 0.0400848388671875
 	},
 	"cornell-emissive": {
-		"ratio": 1.1388186985905422,
-		"plainRmse": 0.007574345621981224,
-		"frozenRmse": 0.008625806423899629,
+		"ratio": 1.1376118798174206,
+		"plainRmse": 0.007574366451165683,
+		"frozenRmse": 0.008616689256936597,
 		"samples": 64,
-		"engagedFraction": 0.0516204833984375
+		"engagedFraction": 0.0501556396484375
 	}
 }
