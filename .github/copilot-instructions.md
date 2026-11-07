@@ -41,8 +41,11 @@ measured trade-offs and known traps. Read it before changing engine code. Where 
 ## Commits
 
 Conventional commits: every message and PR title starts with `feat:`, `fix:`, `refactor:`, `perf:`, `docs:`, `test:`,
-`chore:`, `build:`, `ci:`, `style:` or `revert:` (optional scope, e.g. `fix(tsl):`). **A change to default pixels is a
-breaking change** and needs a `BREAKING CHANGE:` footer.
+`chore:`, `build:`, `ci:`, `style:` or `revert:` (optional scope, e.g. `fix(tsl):`). **Breaking means a public API
+change, never a look:** mark a commit breaking (`!` or the footer) only when it removes, renames or re-types an export,
+method, option, event or issue code, or changes a call's contract. A change to what renders look like is not: say how
+renders change in the commit body, and never write the footer's words there (the release analyzer matches them
+anywhere).
 
 ## Commands
 
