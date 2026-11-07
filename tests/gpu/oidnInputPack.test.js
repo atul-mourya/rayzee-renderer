@@ -1,6 +1,7 @@
 import { it, expect, beforeAll } from 'vitest';
 import { describeGPU } from './gpu.js';
 import { OIDNDenoiser } from '@/core/viewer/denoise/OIDNDenoiser.js';
+import { DENOISE_BLEND } from '@/core/viewer/denoise/DenoiserSettings.js';
 
 const BORDER = 16;
 const align = n => Math.ceil( ( n + 2 * BORDER ) / 16 ) * 16;
@@ -214,7 +215,7 @@ describeGPU( 'OIDN input copy', () => {
 		const buffer = device.createBuffer( { size: m2.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST } );
 		device.queue.writeBuffer( buffer, 0, m2 );
 
-		expect( p._writeVariance( device, { buffer, samples, width }, width, height ) ).toEqual( { weight: 1, radius: 2 } );
+		expect( p._writeVariance( device, { buffer, samples, width }, width, height ) ).toEqual( { weight: 1, radius: DENOISE_BLEND.radius } );
 
 		const albedo = new Float32Array( await read( p._gpuInputBuffers.albedo ) );
 		for ( let y = 0; y < height; y ++ ) for ( let x = 0; x < width; x ++ ) {
