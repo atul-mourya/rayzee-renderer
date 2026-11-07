@@ -2155,6 +2155,21 @@ export class USDSceneReader {
 
 		mat.clearcoat = await num( 'coat', 0 );
 		mat.clearcoatRoughness = await num( 'coat_roughness', 0.1 );
+		// Standard Surface deepens the base under its coat as base_color ^ ( 1 + coat · coat_affect_color ).
+		const affect = mat.clearcoat * await num( 'coat_affect_color', 0 );
+		if ( affect > 0 && mat.map ) {
+
+			mat.coatDarkening = Math.min( 1, affect / mat.clearcoat );
+			this.warnOnce( 'mtlx:coataffect', 'Standard Surface coat_affect_color over a textured base colour is approximated by coat darkening' );
+
+		} else if ( affect > 0 ) {
+
+			const base = await num( 'base', 1 );
+			const deepen = ( v ) => ( base > 0 ? base * Math.max( 0, v / base ) ** ( 1 + affect ) : v );
+			mat.color.setRGB( deepen( mat.color.r ), deepen( mat.color.g ), deepen( mat.color.b ) );
+
+		}
+
 
 		const film = await num( 'thin_film_thickness', 0 );
 		if ( film > 0 ) {

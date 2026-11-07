@@ -591,6 +591,39 @@ ${extra}` ), 'wood.png': '', 'rough.png': '', 'normal.png': '', 'leather.png': '
 
 	} );
 
+	it( 'deepens a Standard Surface base under its coat by coat_affect_color, approximated over a texture', async () => {
+
+		const plain = await materialOf( scene( `    token outputs:mtlx:surface.connect = </mat/ss.outputs:out>
+    def Shader "ss"
+    {
+        uniform token info:id = "ND_standard_surface_surfaceshader"
+        float inputs:base = 0.5
+        color3f inputs:base_color = (1, 0.5, 0.25)
+        float inputs:coat = 1
+        float inputs:coat_affect_color = 1
+    }` ) );
+		expect( plain.material.color.toArray() ).toEqual( [ 0.5, 0.125, 0.03125 ] );
+		expect( plain.material.coatDarkening ).toBeUndefined();
+
+		const textured = await materialOf( scene( `    token outputs:mtlx:surface.connect = </mat/ss.outputs:out>
+    def Shader "ss"
+    {
+        uniform token info:id = "ND_standard_surface_surfaceshader"
+        color3f inputs:base_color.connect = </mat/img.outputs:out>
+        float inputs:coat = 0.5
+        float inputs:coat_affect_color = 0.8
+    }
+    def Shader "img"
+    {
+        uniform token info:id = "ND_image_color3"
+        asset inputs:file = @./leather.png@
+    }` ), images );
+		expect( textured.material.map ).toBeTruthy();
+		expect( textured.material.coatDarkening ).toBeCloseTo( 0.8, 6 );
+		expect( textured.result.warnings.some( w => /coat_affect_color/.test( w ) ) ).toBe( true );
+
+	} );
+
 	it( 'reads a MaterialX height map at its own slope: per UV unit over 16, times the normal map after it', async () => {
 
 		const sized = { resolveImage: async path => Object.assign( new Texture( { width: 512, height: 512 } ), { name: path } ) };

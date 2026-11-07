@@ -322,7 +322,9 @@ A clear coat (`clearcoat`) follows glTF: it reflects, and the base under it keep
 `coatDarkening` (0–1, set on the three.js material or with `setMaterialProperty`) also has what a real varnish does,
 OpenPBR's `coat_darkening`: light the coat reflects back down meets the base again, so the base turns deeper and darker
 — an orange plastic stays orange where it would turn peach. The pbrt importer sets it to 1 under every pbrt coat, and
-the USD importer reads it from OpenPBR materials (where it defaults to 1).
+the USD importer reads it from OpenPBR materials (where it defaults to 1). Autodesk Standard Surface's
+`coat_affect_color`, which raises the base colour to the power 1 + coat × affect, is applied to a plain base colour
+exactly and becomes `coatDarkening` over a texture (reported as approximated).
 
 An emissive material glows from the faces its `side` shows unless it has an `emissiveSide` (`FrontSide`, `BackSide` or
 `DoubleSide`, set on the three.js material before the model loads): then it glows from those faces only, and the others

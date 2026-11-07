@@ -84,12 +84,18 @@ the shadow terminator, shadow-ray picking, sized lights and fog. CLAUDE.md keeps
   `COAT_INTERNAL_REFLECTANCE`). One site, `coatDarkenedColor` (`Clearcoat.js`), after the extension maps in Shade and in
   the bidirectional `resolveSurfaceMaterial`, so every lobe, NEE and the OIDN albedo guide see it. glTF's coat has
   none (0, the default); pbrt's coated materials set 1 (their layer simulates it) and lose the base specular the old
-  mapping gave them; USD reads OpenPBR's (default 1). Against TungstenRender.exr at 17 bounces, no firefly clamp:
-  coffee 0.67 → 0.13 stops (colour error 0.069 → 0.012), kitchen 0.41 → 0.19, classroom 0.48 → 0.34.
-  `tests/gpu/coatDarkening.test.js`. ⚠️ The coat's lobe-selection weight follows its own roughness
-  (`calculateBRDFWeights`): by the base's, a coat over a matte base was never drawn, and its mirror reflections came
-  only from NEE as specks the denoiser smeared into blotches (pbrt's Pontiac GTO). `clearcoat-carpaint`: same truth,
-  noise ×0.99–1.01.
+  mapping gave them; USD reads OpenPBR's (default 1; three's loader too, for `.usdz`), and Standard Surface's
+  `coat_affect_color` (base_color ^ ( 1 + coat · affect )) exactly on a plain colour, as coat darkening over a texture.
+  Against pbrt-v4 itself (same files, 17 bounces, no firefly clamp; brightness, mean |stops|): coffee 1.68×, 0.77 →
+  1.01×, 0.12; kitchen 1.16×, 0.34 → 1.005×, 0.08; classroom 1.16×, 0.27 → 1.06×, 0.14; watercolor 1.27×, 0.53 → 1.03×,
+  0.18 (Tungsten's own references sit
+  0.90–1.06× of pbrt, glass-of-water 0.53×). Strong coated colours stay deeper than pbrt's (classroom wood G/R 0.28
+  against 0.49): pbrt is spectral, and the darkening per wavelength over a smooth spectrum saturates less than per RGB
+  channel; Tungsten, RGB, agrees with Rayzee. `tests/gpu/coatDarkening.test.js`. ⚠️ The coat's lobe-selection weight
+  (`calculateBRDFWeights`) is max( base smoothness, coat smoothness · max( 1 − base luminance, 0.25 ) ): by the base's
+  smoothness alone a coat over a matte base was never drawn, and its mirror reflections came only from NEE as specks
+  the denoiser smeared into blotches (pbrt's Pontiac GTO); by the coat's alone a white base under it lost samples
+  (`furnace-clearcoat` 13 % noisier). Now `furnace-clearcoat` is bit-identical and `clearcoat-carpaint` 1 % less noisy.
 - **Material layers** — clear coat, sheen, iridescence, anisotropy, subsurface, dispersion, diffuse transmission,
   diffuse roughness and coat darkening (`MATERIAL_LAYERS`, `shaders/SceneResources.js`) are compiled into the kernels only while some material has the layer's
   factor above 0 (`MaterialDataManager.materialLayers()`). The set rides in each kernel's build context

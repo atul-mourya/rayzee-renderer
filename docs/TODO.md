@@ -9,9 +9,14 @@
 -   pbrt camera all info parsing
 -   pbrt folliage
 -   make bvh an independent library
+-   this fbx scene not loading correctly: https://www.fab.com/listings/578d0ceb-5ccb-425f-abd5-e791a21551b6 , /Users/atulkumar/Desktop/3DAssets/south_african_slate_quarry_low.zip
 
 ### MVP
-- [ ] color schema of the pbrt renders reference images are so different then rayzee. Example: watercolor scene
+- [ ] White balance control: reference pictures are finished after rendering — pbrt's own (watercolor's makepngs.sh:
+  white balance 8000 K, ×0.8, ACES) and artists' (watercolor's are another renderer's, graded in Photoshop). pbrt's raw
+  render is as blue as Rayzee's (mean xy 0.283, 0.302 both), so a render can only match them with a warmth control;
+  pbrt Film `whitebalance` is unread too. Materials were the other half: coat darkening (8f9e51f3) put Rayzee within
+  1.01–1.06× of pbrt-v4 on coffee, kitchen, classroom and watercolor.
 - [ ] dynamic max stack in bvhtraversal
 - [ ] https://github.com/DennisSmolek/Fsr3 - branch already created
 - [ ] tiled output for lower vram — Blender Cycles-style render-region tiling; VRAM-bounded 4K/8K final render + video. See docs/internal/specs/wavefront-tiled-output.md

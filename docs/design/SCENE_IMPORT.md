@@ -175,7 +175,9 @@ USDLoader. Each layer is read only when composition reaches it (`USDFiles` over 
   reads it: clear coat ×0.25, thin diffTrans ÷2), PxrSurface's main lobes, UsdPreviewSurface with UsdUVTexture; connections
   followed through PxrColorCorrect's gamma, PxrBlend (bottom input), primvar readers and node graphs. MaterialX
   (`outputs:mtlx:surface`, read ahead of a preview surface beside it): OpenPBR (Blender's Principled BSDF), Standard
-  Surface, glTF PBR and UsdPreviewSurface map parameter to parameter; a `surface` over a BSDF graph (Blender's other
+  Surface, glTF PBR and UsdPreviewSurface map parameter to parameter (OpenPBR's `coat_darkening` is the engine's
+  `coatDarkening`; Standard Surface's `coat_affect_color` deepens a plain base colour exactly, a textured one through
+  `coatDarkening`); a `surface` over a BSDF graph (Blender's other
   shaders) is read as its lobes say — diffuse, conductor (colour from `artistic_ior`'s reflectivity), dielectric (T or RT
   is glass), sheen, subsurface, translucent; mix, add, layer and multiply weight them; a plain diffuse gets no specular.
   Values fold to a constant, a texture with its gain (`multiply` by a constant), channel (`extract`) and placement (a
