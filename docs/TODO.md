@@ -246,8 +246,9 @@ once looked at. How it should have been built so they could not happen:
 - [ ] **Single-sheet dielectric**: kroken's picture glass is one quad of `dielectric`; the card behind it renders very
   noisy at 512 spp and OIDN turns the noise into a bumpy texture. See Known → `thickness` / thin-walled; check how the
   medium stack treats an open sheet against pbrt's per-interface orientation.
-- [ ] **Named spectra**: `METAL_ALBEDO` is a five-metal table and blackbody is a curve fit. Port pbrt's named spectra
-  (metals, glasses) and integrate against CIE for exact F0, IOR and blackbody colour (kroken reads warmer partly here).
+- [ ] **Named spectra**: `METAL_ALBEDO` is a five-metal table and blackbody is a curve fit. Port pbrt's named metal
+  spectra and integrate against CIE for exact F0 and blackbody colour (kroken reads warmer partly here). Named glasses
+  done 2026-11-07: pbrt's seven tables (`GLASS_ETA`), read at 550 nm like a sampled `eta` (kroken's F11 was 1.5, now 1.79).
 - [ ] **A second infinite light** is dropped (watercolor has two); the engine has one environment.
 - [ ] **Spectral `eta`** is read at 550 nm (crown's gems were IOR 200 before 2026-10-14). The dispersion layer could fit
   `ior + 0.03·dispersion / λ²` to it; exact needs the sampled table in the shader.

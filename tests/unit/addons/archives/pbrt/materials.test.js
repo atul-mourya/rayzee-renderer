@@ -222,10 +222,26 @@ describe( 'pbrt materials', () => {
 		expect( await ior( 400, 1.53, 500, 1.52, 600, 1.515, 700, 1.512 ) ).toBeCloseTo( 1.5175, 6 );
 		expect( await ior( 600, 1.6, 700, 1.58 ) ).toBe( 1.6 );
 		expect( await ior( 300, 1.7, 400, 1.68 ) ).toBe( 1.68 );
-		expect( await ior( 'glass-BK7' ) ).toBe( 1.5 );
+		expect( await ior( 'glass-SF11' ) ).toBe( 1.5 );
 		expect( ( await buildMaterial( { type: 'dielectric', params: { eta: param( 'float', 1.33 ) } }, ctx ) ).ior ).toBe( 1.33 );
 		const skin = await buildMaterial( { type: 'subsurface', params: { eta: param( 'spectrum', 500, 1.4, 600, 1.3 ) } }, ctx );
 		expect( skin.ior ).toBeCloseTo( 1.35, 6 );
+
+	} );
+
+	it( 'reads pbrt\'s named glasses at 550 nm', async () => {
+
+		// kroken's "glass-F11" was 1.5.
+		const glasses = {
+			'glass-BK7': 1.5185368, 'glass-BAF10': 1.6730513, 'glass-FK51A': 1.4877955, 'glass-LASF9': 1.8558086,
+			'glass-F5': 1.6770886, 'glass-F10': 1.7335740, 'glass-F11': 1.7911194
+		};
+		for ( const [ name, n ] of Object.entries( glasses ) ) {
+
+			const params = { eta: param( 'spectrum', name ) };
+			expect( ( await buildMaterial( { type: 'dielectric', params }, ctx ) ).ior ).toBeCloseTo( n, 6 );
+
+		}
 
 	} );
 
