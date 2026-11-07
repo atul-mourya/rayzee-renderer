@@ -29,6 +29,10 @@
 
 ### Known
 
+- [x] Any PNG with an eXIf chunk or JPEG with Exif was decoded at load to learn its size and kept decoded, though most
+  never turn (2,342 baked-texture PNGs here had no orientation tag; 1.1 GB decoded in one folder). Fixed 2026-11-07:
+  the orientation is read, and only 5–8 or an unreadable block go to the decoder. 7,886 of 7,959 local images now
+  sized from the header (was 5,159), every one matching macOS `sips`.
 - [ ] **Light radius, what is left** (point and spot lights with a radius, and USD's sphere radius and sun angle, done
   2026-10-12; see Light radius in `CLAUDE.md`): the bidirectional and VCM integrators still treat them as points; glTF
   has no field for a radius (`docs/SCENE_IMPORT.md` → Lights from Blender's glTF exporter); the app has no control for it. ⚠️ Blender

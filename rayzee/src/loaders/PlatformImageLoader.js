@@ -31,9 +31,27 @@ function trimPNG( bytes ) {
 
 }
 
+// The orientation (TIFF tag 0x0112) of the EXIF block in bytes [start, end): 1 when it names none, 0 when unreadable.
+function exifOrientation( bytes, start, end ) {
+
+	if ( end > bytes.length || end - start < 8 ) return 0;
+	const le = bytes[ start ] === 0x49 && bytes[ start + 1 ] === 0x49;
+	if ( ! le && ! ( bytes[ start ] === 0x4D && bytes[ start + 1 ] === 0x4D ) ) return 0;
+	const u16 = ( i ) => ( le ? bytes[ i ] | ( bytes[ i + 1 ] << 8 ) : ( bytes[ i ] << 8 ) | bytes[ i + 1 ] );
+	const u32 = ( i ) => ( le ? ( u16( i + 2 ) << 16 ) | u16( i ) : ( u16( i ) << 16 ) | u16( i + 2 ) ) >>> 0;
+	const ifd = start + u32( start + 4 );
+	if ( ifd + 2 > end || ifd + 2 + u16( ifd ) * 12 > end ) return 0;
+	for ( let k = 0, e = ifd + 2; k < u16( ifd ); k ++, e += 12 ) if ( u16( e ) === 0x0112 ) return u16( e + 8 );
+	return 1;
+
+}
+
+// Orientations 1–4 keep the stored width and height; 5–8 swap them, and anything else is left to the decoder.
+const turns = ( orientation ) => ! ( orientation >= 1 && orientation <= 4 );
+
 /**
  * A PNG's, JPEG's or WebP's size from its header, or null: other formats, a header past `bytes`, and an image whose
- * metadata may turn it (a JPEG's Exif, a PNG's eXIf, a WebP's EXIF) are decoded to learn it.
+ * metadata turns it or cannot be read (a JPEG's Exif or a PNG's eXIf orientation, any WebP EXIF) are decoded to learn it.
  */
 export function imageHeaderSize( bytes ) {
 
@@ -45,7 +63,7 @@ export function imageHeaderSize( bytes ) {
 
 		for ( let i = 8; i + 8 <= bytes.length; i += 12 + u32( i ) ) {
 
-			if ( tag( i + 4, 'eXIf' ) ) return null;
+			if ( tag( i + 4, 'eXIf' ) && turns( exifOrientation( bytes, i + 8, i + 8 + u32( i ) ) ) ) return null;
 			if ( tag( i + 4, 'IDAT' ) ) return { width: u32( 16 ), height: u32( 20 ) };
 
 		}
@@ -96,7 +114,7 @@ export function imageHeaderSize( bytes ) {
 
 		}
 
-		if ( marker === 0xE1 && i + 10 <= bytes.length && tag( i + 4, 'Exif' ) ) return null;
+		if ( marker === 0xE1 && i + 10 <= bytes.length && tag( i + 4, 'Exif' ) && turns( exifOrientation( bytes, i + 10, i + 2 + u16( i + 2 ) ) ) ) return null;
 		if ( marker >= 0xC0 && marker <= 0xCF && marker !== 0xC4 && marker !== 0xC8 && marker !== 0xCC ) {
 
 			return i + 9 <= bytes.length ? { width: u16( i + 7 ), height: u16( i + 5 ) } : null;

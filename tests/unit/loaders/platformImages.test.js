@@ -20,7 +20,7 @@ function png( width, height, before = [] ) {
 
 	const chunk = ( type, body ) => [ ...u32( body.length ), ...ascii( type ), ...body, 0, 0, 0, 0 ];
 	return new Uint8Array( [ 137, 80, 78, 71, 13, 10, 26, 10, ...chunk( 'IHDR', [ ...u32( width ), ...u32( height ), 8, 6, 0, 0, 0 ] ),
-		...before.flatMap( ( type ) => chunk( type, [ 1, 2, 3 ] ) ), ...chunk( 'IDAT', [ 9, 9 ] ), ...chunk( 'IEND', [] ) ] );
+		...before.flatMap( ( type ) => ( Array.isArray( type ) ? chunk( ...type ) : chunk( type, [ 1, 2, 3 ] ) ) ), ...chunk( 'IDAT', [ 9, 9 ] ), ...chunk( 'IEND', [] ) ] );
 
 }
 
@@ -30,6 +30,16 @@ function jpeg( width, height, { marker = 0xC0, before = [] } = {} ) {
 	const segment = ( m, body ) => [ 0xFF, m, ( body.length + 2 ) >> 8, ( body.length + 2 ) & 255, ...body ];
 	return new Uint8Array( [ 0xFF, 0xD8, ...before.flatMap( ( [ m, body ] ) => segment( m, body ) ),
 		...segment( marker, [ 8, height >> 8, height & 255, width >> 8, width & 255, 3 ] ), 0xFF, 0xDA, 0, 2, 0xFF, 0xD9 ] );
+
+}
+
+// An EXIF (TIFF) block with one IFD entry: the orientation, or another tag (Make) when `orientation` is null.
+function exif( orientation, littleEndian = true ) {
+
+	const u16 = ( v ) => ( littleEndian ? [ v & 255, v >> 8 ] : [ v >> 8, v & 255 ] );
+	const u32le = ( v ) => ( littleEndian ? [ v & 255, ( v >> 8 ) & 255, 0, 0 ] : [ 0, 0, ( v >> 8 ) & 255, v & 255 ] );
+	return [ ...ascii( littleEndian ? 'II' : 'MM' ), ...u16( 42 ), ...u32le( 8 ), ...u16( 1 ),
+		...u16( orientation === null ? 0x010F : 0x0112 ), ...u16( 3 ), ...u32le( 1 ), ...u16( orientation ?? 0 ), 0, 0, 0, 0, 0, 0 ];
 
 }
 
@@ -197,6 +207,25 @@ describe( 'an image\'s size from its header', () => {
 		expect( imageHeaderSize( png( 2048, 1024, [ 'iCCP', 'tEXt' ] ) ) ).toEqual( { width: 2048, height: 1024 } );
 		expect( imageHeaderSize( jpeg( 640, 480 ) ) ).toEqual( { width: 640, height: 480 } );
 		expect( imageHeaderSize( jpeg( 4000, 3000, { marker: 0xC2, before: [[ 0xE0, ascii( 'JFIF\0' ) ], [ 0xDB, new Array( 64 ).fill( 1 ) ], [ 0xC4, [ 0, 1 ]]] } ) ) ).toEqual( { width: 4000, height: 3000 } );
+
+	} );
+
+	// Baked-texture tools write an eXIf with no orientation at all; decoding each just for its size held them all at once.
+	it( 'reads a PNG\'s and a JPEG\'s past EXIF that keeps the image upright', () => {
+
+		for ( const [ orientation, littleEndian ] of [[ 1, true ], [ null, true ], [ 3, false ], [ 4, true ]] ) {
+
+			expect( imageHeaderSize( png( 300, 200, [[ 'eXIf', exif( orientation, littleEndian ) ]] ) ) ).toEqual( { width: 300, height: 200 } );
+			expect( imageHeaderSize( jpeg( 300, 200, { before: [[ 0xE1, [ ...ascii( 'Exif' ), 0, 0, ...exif( orientation, littleEndian ) ]]] } ) ) ).toEqual( { width: 300, height: 200 } );
+
+		}
+
+		for ( const orientation of [ 5, 6, 8, 0, 9 ] ) {
+
+			expect( imageHeaderSize( png( 300, 200, [[ 'eXIf', exif( orientation ) ]] ) ) ).toBeNull();
+			expect( imageHeaderSize( jpeg( 300, 200, { before: [[ 0xE1, [ ...ascii( 'Exif' ), 0, 0, ...exif( orientation, false ) ]]] } ) ) ).toBeNull();
+
+		}
 
 	} );
 
