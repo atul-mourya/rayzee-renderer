@@ -151,6 +151,11 @@ that moved on the same GPU.
   `useStore.exportRequest`. Picture choices persist in localStorage, video choices in `useAnimationStore.videoExport`; the
   EXR colour space is `app.color.exportSpace`. A saved render exports its picture (edited, as rendered, AI) or its EXR
   copy, as saved or converted to Radiance HDR. Both import `rayzee/encoders` only when used (the window on open).
+- **Material catalogue** (Assets → Materials → Physically Based; `services/MaterialService.js`): the physicallybased.info
+  database (CC0) plus pbrt's measured media and optical glasses it lacks (`services/MeasuredMaterials.js`). Its colours
+  are linear Rec.709 and lengths centimetres: `subsurfaceRadius` is the diffuse mean free path 1 / σtr, turned into the
+  engine's inputs by `subsurfaceFromDiffuse` (`materials/Scattering.js`); `transmissionDispersion` an Abbe number;
+  `transmissionDepth` where the colour is reached inside (else it tints the surface). ⚠️ `density` is mass density.
 - **`VideoEncoder.js`**: WebCodecs encodes, Mediabunny muxes MP4 (H.264, level picked by size, odd sides cropped) or WebM
   (VP9, then VP8); imported only when a video is exported (Mediabunny is 40 KB gzip). `videoJob.js` journals each frame's
   chunks and muxes at the end (MP4 index first, `fastStart: 'reserve'`); a job from before the Export window has no

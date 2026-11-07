@@ -1,5 +1,5 @@
 import { Color } from 'three';
-import { MATERIAL_DEFAULTS } from 'rayzee';
+import { MATERIAL_DEFAULTS, subsurfaceFromDiffuse } from 'rayzee';
 import { getApp } from '@/lib/appProxy';
 
 /**
@@ -8,41 +8,50 @@ import { getApp } from '@/lib/appProxy';
 export class MaterialService {
 
 	/**
-	 * Create a complete material object with defaults from API data
-	 * @param {Object} apiMaterialInfo - Material data from API
+	 * A complete material from a Physically Based database entry (https://physicallybased.info: colours linear Rec.709,
+	 * lengths in centimetres, `density` the mass density, which nothing optical reads).
+	 * @param {Object} apiMaterialInfo - one entry of the catalogue
+	 * @param {number} [unitsPerMetre=1] - the scene's scale, for the entry's lengths
 	 * @returns {Object} Complete material object with all PBR properties
 	 */
-	static createCompleteMaterialFromAPI( apiMaterialInfo ) {
+	static createCompleteMaterialFromAPI( apiMaterialInfo, unitsPerMetre = 1 ) {
 
-		// Create complete material by merging API data with defaults
 		const completeMaterial = structuredClone( MATERIAL_DEFAULTS );
+		const centimetre = unitsPerMetre / 100;
+		const positive = ( v ) => typeof v === 'number' && v > 0;
 
-		// Apply API properties if they exist
 		if ( apiMaterialInfo.color ) completeMaterial.color = apiMaterialInfo.color;
 		if ( typeof apiMaterialInfo.metalness === 'number' ) completeMaterial.metalness = apiMaterialInfo.metalness;
-		if ( typeof apiMaterialInfo.roughness === 'number' ) completeMaterial.roughness = Math.max( 0.05, apiMaterialInfo.roughness );
+		// 0 is a mirror: the engine takes it as an exact reflection.
+		if ( typeof apiMaterialInfo.roughness === 'number' ) completeMaterial.roughness = apiMaterialInfo.roughness;
 		if ( typeof apiMaterialInfo.ior === 'number' ) completeMaterial.ior = apiMaterialInfo.ior;
 		if ( typeof apiMaterialInfo.transmission === 'number' ) completeMaterial.transmission = apiMaterialInfo.transmission;
 
-		// Handle density -> attenuationDistance conversion
-		if ( typeof apiMaterialInfo.density === 'number' && apiMaterialInfo.density > 0 ) {
+		if ( completeMaterial.transmission > 0 ) {
 
-			completeMaterial.attenuationDistance = 1000 / apiMaterialInfo.density;
+			completeMaterial.side = 2;
+			// The colour is reached at `transmissionDepth` inside (centimetres, as the radii are), glTF's attenuation;
+			// without a depth it tints the surface. One or the other: both would tint it twice.
+			if ( positive( apiMaterialInfo.transmissionDepth ) ) {
+
+				completeMaterial.attenuationColor = [ ...completeMaterial.color ];
+				completeMaterial.attenuationDistance = apiMaterialInfo.transmissionDepth * centimetre;
+				completeMaterial.color = [ 1, 1, 1 ];
+
+			}
+
+			// An Abbe number; glTF's dispersion is 20 / it.
+			if ( positive( apiMaterialInfo.transmissionDispersion ) ) completeMaterial.dispersion = 20 / apiMaterialInfo.transmissionDispersion;
 
 		}
 
-		// Handle transmission materials - set appropriate properties
-		if ( completeMaterial.transmission > 0 ) {
+		// The diffuse mean free path, per channel: the colour shown and how far light spreads under the surface.
+		if ( Array.isArray( apiMaterialInfo.subsurfaceRadius ) ) {
 
-			completeMaterial.transparent = 1;
-			completeMaterial.side = 2; // DoubleSide for transmissive materials
-
-			// For transmissive materials, use color as attenuation color
-			if ( completeMaterial.color ) {
-
-				completeMaterial.attenuationColor = [ ...completeMaterial.color ];
-
-			}
+			const { subsurfaceColor, subsurfaceRadius } = subsurfaceFromDiffuse( completeMaterial.color, apiMaterialInfo.subsurfaceRadius, completeMaterial.ior );
+			completeMaterial.subsurface = 1;
+			completeMaterial.subsurfaceColor = subsurfaceColor;
+			completeMaterial.subsurfaceRadius = subsurfaceRadius.map( ( r ) => r * centimetre );
 
 		}
 
@@ -136,7 +145,7 @@ export class MaterialService {
 		};
 
 		// Create complete material with defaults first
-		const completeMaterial = this.createCompleteMaterialFromAPI( materialInfo );
+		const completeMaterial = this.createCompleteMaterialFromAPI( materialInfo, getApp()?.settings?.get( 'unitsPerMetre' ) ?? 1 );
 
 		// Ensure and set all material properties to create a complete PBR material
 		// Base colors

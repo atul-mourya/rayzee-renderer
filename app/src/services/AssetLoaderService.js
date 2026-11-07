@@ -228,6 +228,15 @@ export class AssetLoaderService {
 				source: 'physicallybased'
 			} ) );
 
+			// pbrt's measured media and optical glasses, where the database has nothing of that name.
+			const { MEASURED_MATERIALS } = await import( './MeasuredMaterials.js' );
+			const names = new Set( processedMaterials.map( ( m ) => m.name.toLowerCase() ) );
+			for ( const mData of MEASURED_MATERIALS ) {
+
+				if ( ! names.has( mData.name.toLowerCase() ) ) processedMaterials.push( { ...mData, categories: mData.category, source: 'pbrt' } );
+
+			}
+
 			return processedMaterials;
 
 		} catch ( error ) {
