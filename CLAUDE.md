@@ -545,6 +545,9 @@ bench gates and measurements.
   (`bumpMapSize`), never of the stored layer: packing stretches every layer to its array's size, so a 512² wall map packed
   with 1024² maps rendered at half strength. ⚠️ Keep the normal-map frame inline: split into Fns passing a mat3 it cost
   Shade 1–2 % where no map is used.
+- **Normal map orientation**: green is read along −dP/dv (glTF's top-down images); a bottom-up map (`flipY`: FBX, OBJ,
+  pbrt, USD) packs its scale negative (`greenUp()`, `GeometryExtractor`) and is read along +dP/dv, as three.js does.
+  ⚠️ An edit keeps the packed sign (`keepGreen`, `MaterialDataManager`).
 - **Ray spawn points**: every ray leaving a surface starts at `offsetRayOrigin( p, n )` (`shaders/Common.js`), n the
   **facet** normal on the side the ray leaves. ⚠️ The hit record's `normal` is the interpolated one; the facet normal
   rides in its spare lane (`shaders/HitFacet.js`). ⚠️ Never a fixed distance; a shadow ray towards a sampled light point

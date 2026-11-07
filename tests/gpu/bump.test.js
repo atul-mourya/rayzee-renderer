@@ -6,7 +6,7 @@
  */
 
 import { afterAll, beforeAll, expect, it } from 'vitest';
-import { DataArrayTexture, DataTexture, DirectionalLight, LinearFilter, Mesh, MeshPhysicalMaterial, PlaneGeometry, RepeatWrapping, Scene } from 'three';
+import { DataArrayTexture, DataTexture, DirectionalLight, LinearFilter, Mesh, MeshPhysicalMaterial, PlaneGeometry, RepeatWrapping, Scene, Vector2 } from 'three';
 import { int, float, vec2, vec3, vec4, mat3 } from 'three/tsl';
 import { describeGPU, createRenderer, evaluate } from './gpu.js';
 import { processBump, buildBucketTextureNodes, NO_UV_AXES } from '@/core/shaders/TextureSampling.js';
@@ -181,6 +181,55 @@ describeGPU( 'bump strength in a scene', () => {
 	};
 
 	const rmse = ( a, b ) => Math.sqrt( a.reduce( ( sum, v, i ) => sum + ( ( i & 3 ) === 3 ? 0 : ( v - b[ i ] ) ** 2 ), 0 ) / ( a.length * 0.75 ) );
+
+	// Rows top down, as an image file holds them; `pixel( row )` gives one row's RGBA.
+	const imageRows = ( size, pixel, flipY ) => {
+
+		const data = new Uint8Array( size * size * 4 );
+		for ( let r = 0; r < size; r ++ ) for ( let x = 0; x < size; x ++ ) data.set( pixel( r ), ( r * size + x ) * 4 );
+		const t = new DataTexture( data, size, size );
+		t.flipY = flipY;
+		t.needsUpdate = true;
+		return t;
+
+	};
+
+	it( 'reads a normal map stored bottom up (three\'s TextureLoader) as the same picture stored top down (glTF)', async () => {
+
+		// Normals leaning up and down the image, 20° at most: green is the lean towards the image's top.
+		const normals = ( flipY ) => imageRows( NATIVE, ( r ) => {
+
+			const lean = 0.36 * Math.cos( 2 * Math.PI * 4 * r / NATIVE ), l = Math.hypot( lean, 1 );
+			return [ 128, Math.round( 127.5 + 127.5 * lean / l ), Math.round( 127.5 + 127.5 / l ), 255 ];
+
+		}, flipY );
+
+		const shade = async ( material, { topDown = false } = {} ) => {
+
+			const geometry = new PlaneGeometry( 2, 2 );
+			// A top-down image has v run down it: flip the plane's v so the picture lands where it did.
+			if ( topDown ) for ( let i = 0, uv = geometry.attributes.uv; i < uv.count; i ++ ) uv.setY( i, 1 - uv.getY( i ) );
+			const plane = new Mesh( geometry, new MeshPhysicalMaterial( { roughness: 1, ...material } ) );
+			plane.rotation.x = - Math.PI / 2;
+			const sun = new DirectionalLight( 0xffffff, 3 );
+			sun.position.set( 0, 2, 5 );
+			await app.loadObject3D( new Scene().add( plane, sun ), 'normal' );
+			app.camera.position.set( 0, 2.5, 0.001 );
+			app.camera.lookAt( 0, 0, 0 );
+			await app.renderFrames( 16 );
+			return ( await app.renderToBuffer( { colorSpace: 'linear' } ) ).data.slice();
+
+		};
+
+		const flat = await shade( {} );
+		const bottomUp = await shade( { normalMap: normals( true ) } );
+		// GLTFLoader's derivative-tangent material: normalScale.y negated.
+		const topDown = await shade( { normalMap: normals( false ), normalScale: new Vector2( 1, - 1 ) }, { topDown: true } );
+
+		// Read the other way up, the lean turned over: further from the picture (1.1×) than no map at all.
+		expect( rmse( bottomUp, topDown ) ).toBeLessThan( 0.02 * rmse( flat, topDown ) );
+
+	}, 120000 );
 
 	it( 'is as strong packed into a larger array as alone', async () => {
 

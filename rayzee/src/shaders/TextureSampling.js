@@ -534,7 +534,8 @@ export const perturbNormal = Fn( ( [ geometryNormal, mapIndex, scale, uv, uvTang
 
 	const normalSample = sampleBucket( linearBuckets, mapIndex, uv );
 	const normalMap = normalSample.xyz.mul( 2.0 ).sub( 1.0 ).toVar();
-	normalMap.x.mulAssign( scale );
+	// A negative scale is a map whose green runs along +dP/dv (MaterialPacking's greenSign).
+	normalMap.x.mulAssign( abs( scale ) );
 	normalMap.y.assign( normalMap.y.negate().mul( scale ) );
 
 	const { tangent, bitangent } = tangentFrame( geometryNormal, uvTangent );

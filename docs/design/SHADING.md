@@ -68,6 +68,12 @@ the shadow terminator, shadow-ray picking, sized lights and fog. CLAUDE.md keeps
   and white furnaces 0.9995–1.0000, and the map's fold; `headlessEngine.test.js` a map of 0.2 under factor 1 rendering
   as factor 0.2; `furnace-rough-diffuse` 0.99983, `-layered` 0.99976, `rough-diffuse` its shape.
   Every material of the 1.9M-triangle test interior at 0.5: frame +0–1 %, within noise.
+- **Normal map orientation**: the shader reads green along −dP/dv, as glTF's top-down images mean it (both
+  GLTFLoader cases: negated `normalScale.y` without tangents, positive with them). A map stored bottom up (`flipY`,
+  three's TextureLoader: FBX, OBJ, pbrt, USD) means green along +dP/dv as three.js reads it, unless its `normalScale.y`
+  is negative: `greenUp()` (`GeometryExtractor`) packs its scale negative and the shader takes `abs` for x. Read the
+  glTF way, those maps lit their relief from the wrong side (`tests/gpu/bump.test.js`: further from the right picture
+  than no map). A top-down DataTexture is left as it was, though three would read it along +dP/dv.
 - **Clear coat normal** (glTF `clearcoatNormalTexture`; three.js `clearcoatNormalMap` / `clearcoatNormalScale`, packed at
   134–135) — the coat has a normal of its own, as glTF, three.js, Blender and MaterialX have it: the surface's (displaced,
   never the base's normal or bump map), or its own map's. Shade sets `material.clearcoatNormal`; `computeDotProductsAniso`

@@ -270,6 +270,30 @@ describe( 'createMaterialObject', () => {
 
 	} );
 
+	it( 'reads a bottom-up normal map\'s green as three.js does, a top-down (glTF) one\'s as before', () => {
+
+		const extractor = new GeometryExtractor();
+		const scales = ( params ) => {
+
+			const data = packed( extractor.createMaterialObject( new MeshPhysicalMaterial( params ) ) );
+			return [ data[ M.NORMAL_SCALE ], data[ M.CLEARCOAT_NORMAL_SCALE ] ];
+
+		};
+
+		const bottomUp = new Texture();
+		const topDown = Object.assign( new Texture(), { flipY: false } );
+		const coat = ( map ) => ( { clearcoat: 1, clearcoatNormalMap: map, clearcoatNormalScale: new Vector2( 2, 2 ) } );
+
+		// The shader takes a negative scale as green along +dP/dv.
+		expect( scales( { normalMap: bottomUp, normalScale: new Vector2( 0.5, 0.5 ), ...coat( bottomUp ) } ) ).toEqual( [ - 0.5, - 2 ] );
+		// three flips that with a negative y.
+		expect( scales( { normalMap: bottomUp, normalScale: new Vector2( 0.5, - 0.5 ) } )[ 0 ] ).toBe( 0.5 );
+		// GLTFLoader's negative y (no tangents) or positive one (tangents): the scale's x either way.
+		expect( scales( { normalMap: topDown, normalScale: new Vector2( 0.5, - 0.5 ), ...coat( topDown ) } ) ).toEqual( [ 0.5, 2 ] );
+		expect( scales( { normalMap: topDown, normalScale: new Vector2( 0.5, 0.5 ) } )[ 0 ] ).toBe( 0.5 );
+
+	} );
+
 	it( 'carries Phong specular strength once, not squared through the colour too', () => {
 
 		const extractor = new GeometryExtractor();
@@ -422,6 +446,23 @@ describe( 'MaterialDataManager', () => {
 		}
 
 		expect( differing ).toEqual( [] );
+
+	} );
+
+	it( 'keeps which way a normal map\'s green runs through scale edits, zero included', () => {
+
+		const manager = managerWith( new GeometryExtractor() );
+		manager.updateMaterial( 0, new MeshPhysicalMaterial( { normalMap: new Texture() } ) );
+		const scale = ( value ) => {
+
+			manager.updateMaterialProperty( 0, 'normalScale', value );
+			return manager.materialStorageAttr.array[ M.NORMAL_SCALE ];
+
+		};
+
+		expect( scale( 0.25 ) ).toBe( - 0.25 );
+		expect( scale( new Vector2( 0, 0 ) ) ).toBe( - 0 );
+		expect( scale( 2 ) ).toBe( - 2 );
 
 	} );
 

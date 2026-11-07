@@ -90,6 +90,14 @@ function bumpMapSize( texture ) {
 
 }
 
+// The shader reads a normal map's green along −dP/dv, as glTF's top-down images mean it. A map stored bottom up (flipY,
+// three's TextureLoader) means it along +dP/dv, as three reads it, unless its scale's y is negative.
+function greenUp( texture, scale ) {
+
+	return !! texture && texture.flipY !== false && ! ( ( typeof scale === 'number' ? scale : scale?.y ) < 0 );
+
+}
+
 export function resolveMaterialTextures( material ) {
 
 	return {
@@ -1347,6 +1355,8 @@ export class GeometryExtractor {
 			coatDarkening: pick( 'coatDarkening' ),
 
 			normalScale: pick( 'normalScale' ),
+			normalGreenUp: greenUp( textures.normalMap, material.normalScale ),
+			clearcoatNormalGreenUp: greenUp( textures.clearcoatNormalMap, material.clearcoatNormalScale ),
 			bumpScale: pick( 'bumpScale' ),
 			bumpDistance: pick( 'bumpDistance' ),
 			relativeIOR: pick( 'relativeIOR' ),

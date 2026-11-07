@@ -26,6 +26,10 @@ const convertedBuffers = new WeakSet();
 const log = createLogger( 'material' );
 
 const PIXELS_PER_MATERIAL = M.SLOTS_PER_MATERIAL;
+
+// A new normal scale keeps the packed one's sign, which says which way the map's green runs (-0 included).
+const keepGreen = ( packed, scale ) => ( packed < 0 || Object.is( packed, - 0 ) ? - Math.abs( scale ) : scale );
+
 // Side and the opaque-blocker bit share the material lane, so a patch is a masked write.
 const TRI_FLAGS_OFFSET = T.MATERIAL_FLAGS_OFFSET;
 
@@ -562,7 +566,7 @@ export class MaterialDataManager {
 			case 'iridescenceThicknessMaximum': data[ stride + M.IRIDESCENCE_THICKNESS_RANGE + 1 ] = value; break;
 			case 'clearcoat': data[ stride + M.CLEARCOAT ] = value; break;
 			case 'clearcoatRoughness': data[ stride + M.CLEARCOAT_ROUGHNESS ] = value; break;
-			case 'clearcoatNormalScale': data[ stride + M.CLEARCOAT_NORMAL_SCALE ] = value?.x ?? value; break;
+			case 'clearcoatNormalScale': data[ stride + M.CLEARCOAT_NORMAL_SCALE ] = keepGreen( data[ stride + M.CLEARCOAT_NORMAL_SCALE ], value?.x ?? value ); break;
 			case 'opacity': data[ stride + M.OPACITY ] = value; break;
 			case 'side': data[ stride + M.SIDE ] = value;
 				// Side is also mirrored into per-triangle data (NORMAL_C.w) so BVH
@@ -574,16 +578,7 @@ export class MaterialDataManager {
 			case 'alphaMode': data[ stride + M.ALPHA_MODE ] = value; break;
 			case 'depthWrite': data[ stride + M.DEPTH_WRITE ] = value; break;
 			case 'normalScale':
-				if ( value.x !== undefined ) {
-
-					data[ stride + M.NORMAL_SCALE ] = value.x;
-
-				} else if ( typeof value === 'number' ) {
-
-					data[ stride + M.NORMAL_SCALE ] = value;
-
-				}
-
+				if ( value.x !== undefined || typeof value === 'number' ) data[ stride + M.NORMAL_SCALE ] = keepGreen( data[ stride + M.NORMAL_SCALE ], value.x ?? value );
 				break;
 			case 'bumpScale': data[ stride + M.BUMP_SCALE ] = value; break;
 			case 'bumpDistance': data[ stride + M.BUMP_DISTANCE ] = value; break;

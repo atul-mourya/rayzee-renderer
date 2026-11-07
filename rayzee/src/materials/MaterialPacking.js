@@ -33,6 +33,8 @@ function num( value, fallback ) {
 
 }
 
+const greenSign = ( scale, up ) => ( up && Number.isFinite( scale ) ? - Math.abs( scale ) : scale );
+
 function mapIndex( value ) {
 
 	return Number.isInteger( value ) ? value : - 1;
@@ -88,8 +90,8 @@ export function packMaterial( data, base, mat ) {
 	s( M.DEPTH_WRITE, mat.depthWrite, D.depthWrite );
 	const normalScale = mat.normalScale;
 	const uniformScale = typeof normalScale === 'number' ? normalScale : undefined;
-	// The shader takes one scale for both axes.
-	s( M.NORMAL_SCALE, uniformScale ?? normalScale?.x ?? normalScale?.[ 0 ], D.normalScale[ 0 ] );
+	// The shader takes one scale for both axes; a negative one reads green the other way.
+	s( M.NORMAL_SCALE, greenSign( uniformScale ?? normalScale?.x ?? normalScale?.[ 0 ], mat.normalGreenUp ), D.normalScale[ 0 ] );
 
 	writeTriple( data, base + M.COLOR, mat.color, D.color );
 	u( M.METALNESS, mat.metalness, D.metalness );
@@ -164,7 +166,7 @@ export function packMaterial( data, base, mat ) {
 
 	data[ base + M.CLEARCOAT_NORMAL_MAP_INDEX ] = mapIndex( mat.clearcoatNormalMap );
 	const coatScale = mat.clearcoatNormalScale;
-	s( M.CLEARCOAT_NORMAL_SCALE, typeof coatScale === 'number' ? coatScale : coatScale?.x ?? coatScale?.[ 0 ], D.clearcoatNormalScale[ 0 ] );
+	s( M.CLEARCOAT_NORMAL_SCALE, greenSign( typeof coatScale === 'number' ? coatScale : coatScale?.x ?? coatScale?.[ 0 ], mat.clearcoatNormalGreenUp ), D.clearcoatNormalScale[ 0 ] );
 
 	s( M.BUMP_DISTANCE, mat.bumpDistance, D.bumpDistance );
 	data[ base + M.BUMP_MAP_WIDTH ] = num( mat.bumpMapSize?.[ 0 ], 0 );
