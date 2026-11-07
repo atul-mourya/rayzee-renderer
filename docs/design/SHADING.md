@@ -73,7 +73,8 @@ the shadow terminator, shadow-ray picking, sized lights and fog. CLAUDE.md keeps
   three's TextureLoader: FBX, OBJ, pbrt, USD) means green along +dP/dv as three.js reads it, unless its `normalScale.y`
   is negative: `greenUp()` (`GeometryExtractor`) packs its scale negative and the shader takes `abs` for x. Read the
   glTF way, those maps lit their relief from the wrong side (`tests/gpu/bump.test.js`: further from the right picture
-  than no map). A top-down DataTexture is left as it was, though three would read it along +dP/dv.
+  than no map). A top-down DataTexture is left as it was, though three would read it along +dP/dv. ⚠️ An edit keeps the
+  packed sign (`keepGreen`, `MaterialDataManager`).
 - **Clear coat normal** (glTF `clearcoatNormalTexture`; three.js `clearcoatNormalMap` / `clearcoatNormalScale`, packed at
   134–135) — the coat has a normal of its own, as glTF, three.js, Blender and MaterialX have it: the surface's (displaced,
   never the base's normal or bump map), or its own map's. Shade sets `material.clearcoatNormal`; `computeDotProductsAniso`
@@ -164,7 +165,13 @@ the shadow terminator, shadow-ray picking, sized lights and fog. CLAUDE.md keeps
   flag sits in slot 34's last lane, read for a transmissive or subsurface material only while some material has it
   (`relativeIOR` in the build context, `MaterialDataManager.hasRelativeIOR()`): a scene without one compiles exactly as
   before. Bitterli's Teapot (full) showed clear tea where its preview is amber (its tea sits outside the glass–tea wall);
-  now amber, with the preview's pattern through the bottom under the scene's original environment.
+  now amber, with the preview's pattern through the bottom under the scene's original environment. pbrt glass whose
+  medium is outside it is turned over.
+- **Dispersion** is glTF's, as three.js reads it: `ior` at the d line, the F–C spread ( ior − 1 ) · dispersion / 20
+  (`iorFromWavelength`, `tests/gpu/dispersion.test.js`); pbrt's spectral `eta` maps onto it. A path carries one
+  wavelength (pbrt's too, past a dispersive interface), drawn by its weight in the picture
+  (`sampleWavelengthForDispersion`), so dispersive glass adds colour grain however small its split (BK7:
+  transparent-machines' 64-spp error 0.022 → 0.039; 0.047 drawn uniformly).
 - **Light through glass** (`traceShadowRay`, path integrator) — a shadow ray crosses glass in a straight line, as V-Ray's
   and Arnold's "glass affects shadows" do, and returns a colour: each face multiplies it by (1 − F) × transmission × the
   crossing's tint (base colour and its map at the hit), and a volume by its absorption per channel, so NEE carries what a
@@ -191,7 +198,9 @@ the shadow terminator, shadow-ray picking, sized lights and fog. CLAUDE.md keeps
   turned the bump off before 2026-11), faded in by its size up to 1. Both tilt along
   the map's U and V; `bumpScale` used the arbitrary cross( up, N ) frame until 2026-11, so its bumps leaned a way that
   depended on how the surface faced the world. Either takes its slope over one texel of the map as authored
-  (`bumpMapSize`, slot 34 beside `bumpDistance`, read only for a bump-mapped material). Compiled in only while some
+  (`bumpMapSize`, slot 34 beside `bumpDistance`, read only for a bump-mapped material), never of the stored layer:
+  packing stretches every layer to its array's size, so a 512² wall map packed with 1024² maps rendered at half
+  strength. Compiled in only while some
   material has a bump map (`bumpMaps` in the build context, `MaterialDataManager.hasBumpMaps()`): `lamps-bidirectional`
   and `cornell-bidirectional` ran 4 % faster without it, the rest unchanged. ⚠️ The normal-map frame keeps its old shape
   (inline helpers, no matrix passed between functions): as functions passing a mat3 it cost Shade 1.2–1.8 % in scenes
@@ -292,7 +301,9 @@ the shadow terminator, shadow-ray picking, sized lights and fog. CLAUDE.md keeps
     series below 0.01. `tests/gpu/fog.test.js` holds the depth to a 20,000-step Simpson integral (2 · 10⁻⁴) over random
     rays, horizontal and vertical ones included, the flight to a round trip through it, and falloff 0 to the
     homogeneous expressions bit for bit. Ground mist in the app keeps the haze over each spot of the floor and gathers
-    it lower (Height: Low / Ground halve the density at 25 % / 6 % of the models' height).
+    it lower (Height: Low / Ground halve the density at 25 % / 6 % of the models' height). The app turns its Thickness
+    into a density by the models' longest side, and gives an object seen from outside a cube around it and the camera
+    (a box seen from outside shows its edges).
   - *Free flight in Shade*, before the miss branch, outside any glass or subsurface medium (medium stack depth 0): a
     distance drawn exactly from the density inside the ray's span of the box (`fogFreeFlight`). Extinction is grey, so
     a ray that passes keeps its throughput, one that scatters takes the albedo; no spectral MIS.

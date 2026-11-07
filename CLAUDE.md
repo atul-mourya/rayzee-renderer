@@ -508,30 +508,21 @@ bench gates and measurements.
   both integrators through one function. ⚠️ EON's form is 0/0 at roughness 0 and only near Lambert in f32: roughness 0
   branches to the old Lambert expression, bit for bit.
 - **Material layers** (`MATERIAL_LAYERS`, `shaders/SceneResources.js`): clear coat, sheen, iridescence, anisotropy,
-  subsurface, dispersion, diffuse transmission, diffuse roughness and coat darkening compile in only while some material has them
-  (`materialLayers( builder )`, a plain JS `if`). ⚠️ Removing a layer's code must be exact for a material without it:
-  the iridescence weight keeps `min( 0, diffuse )`, and a sampling link may go only because its weight is 0.
-- **Coat darkening** (`coatDarkening`, OpenPBR's): the base under a coat takes back what the coat reflects down, deeper and
-  darker (`coatDarkenedColor`, `Clearcoat.js`). Off for glTF, whose coat has none; pbrt coats and USD OpenPBR set it.
-- **Glass** (`sampleDielectric`, `shaders/MaterialTransmission.js`): a facet drawn from the visible normals, the exact
-  Fresnel at that facet picks reflection or refraction, weight G2 / G1(V) over the interface's albedo
-  (`dielectricInterfaceAlbedo`, the DFG LUT's B/A); a draw on the wrong side of N ends the path. When transmission's
-  lottery declines, Shade sets `material.transmission` to 0 so the opaque base is itself (it lost (1 − T) twice).
-  Only refraction takes the base colour, √ of it a crossing (`transmissionTint`: a way in and out takes it once, as in
-  Cycles); reflections stay the light's. ⚠️ Change the glass sampler, rerun `npm run bench:lut`; `furnace-glass-*` gate it.
-  `ior` is absolute and tracked through nested volumes (glTF); `relativeIOR` (every pbrt material) makes it the surface's
-  own ratio, and only a surface with a volume changes the medium. pbrt glass with its medium outside is turned over.
-- **Dispersion** is glTF's, as three.js reads it: `ior` at the d line, the F–C spread ( ior − 1 ) · dispersion / 20
-  (`iorFromWavelength`, `tests/gpu/dispersion.test.js`); pbrt's spectral `eta` maps onto it. ⚠️ A path carries one
-  wavelength (pbrt's too, past a dispersive interface), drawn by its weight in the picture
-  (`sampleWavelengthForDispersion`), so dispersive glass adds colour grain however small its split (BK7: transparent-machines'
-  64-spp error 0.022 → 0.039; 0.047 drawn uniformly).
-- **Light through glass**: `traceShadowRay` crosses glass straight and returns a **colour** (`transmissionTint` of base
-  colour × map per face, absorption per channel); `traceShadowRayRefractiveOpaque` (bidirectional) stays a float. A path
-  refracted to an emitter is MIS-weighed from the last opaque scatter: the MIS ray length runs on across a refraction
-  (path integrator only). Thin panes match refraction alone within ~1 %, thick blocks ±7 %. Compiled in only while some
-  material transmits (`usesGlass`, like the material layers): otherwise shadow rays carry a float. `glass-tinted-light`
-  gates it.
+  subsurface, dispersion, diffuse transmission, diffuse roughness and coat darkening compile in only while some
+  material has them (`materialLayers( builder )`, a plain JS `if`). ⚠️ Removing a layer's code must be exact for a
+  material without it: the iridescence weight keeps `min( 0, diffuse )`, and a sampling link may go only because its
+  weight is 0.
+- **Coat darkening** (`coatDarkening`, OpenPBR's): the base under a coat takes back what the coat reflects down
+  (`coatDarkenedColor`, `Clearcoat.js`). Off for glTF; pbrt coats and USD OpenPBR set it.
+- **Glass** (`sampleDielectric`, `shaders/MaterialTransmission.js`): facets drawn from the visible normals, weighed over
+  the interface's albedo from the DFG LUT; only refraction takes the base colour, √ of it a crossing
+  (`transmissionTint`). `ior` is absolute through nested volumes (glTF); `relativeIOR` (pbrt) makes it the surface's own
+  ratio. ⚠️ Change the glass sampler, rerun `npm run bench:lut`; `furnace-glass-*` gate it.
+- **Dispersion** is glTF's (`iorFromWavelength`); pbrt's spectral `eta` maps onto it. ⚠️ A path carries one
+  wavelength, so dispersive glass adds colour grain however small its split.
+- **Light through glass**: `traceShadowRay` crosses glass straight and returns a colour (path integrator; the
+  bidirectional `traceShadowRayRefractiveOpaque` stays a float), and a path refracted to an emitter is MIS-weighed from
+  the last opaque scatter. Compiled in only while some material transmits (`usesGlass`). `glass-tinted-light` gates it.
 - **Transmission map**: factor × the map's R, in Shade and in shadow rays. ⚠️ `SceneProcessor` adopts every per-type
   texture list through `_adoptTextureLists` (`TEXTURE_LISTS`): a list kept from an earlier extraction drops that map
   type after `rebuildMaterials()`.
@@ -539,15 +530,13 @@ bench gates and measurements.
   march finds behind the base triangle is moved onto its plane: rays spawned below it all hit that triangle. ⚠️ Glass
   and subsurface: the relief is not geometry, so the triangle decides entering vs leaving, and only a reflection leaves
   from the relief; total internal reflection keeps chance 1.
-- **Bump maps**: with `bumpDistance` (scene units) the map is a height and the normal the bumped surface's own, over the
-  triangle's world-space UV axes (`triangleUVAxes`); without, three.js's `bumpScale`. Both tilt along the map's U and V,
-  and compile in only while some material has a bump map (`usesBumpMaps`). They step one texel of the map as authored
-  (`bumpMapSize`), never of the stored layer: packing stretches every layer to its array's size, so a 512² wall map packed
-  with 1024² maps rendered at half strength. ⚠️ Keep the normal-map frame inline: split into Fns passing a mat3 it cost
-  Shade 1–2 % where no map is used.
-- **Normal map orientation**: green is read along −dP/dv (glTF's top-down images); a bottom-up map (`flipY`: FBX, OBJ,
-  pbrt, USD) packs its scale negative (`greenUp()`, `GeometryExtractor`) and is read along +dP/dv, as three.js does.
-  ⚠️ An edit keeps the packed sign (`keepGreen`, `MaterialDataManager`).
+- **Bump maps**: with `bumpDistance` (scene units) the map is a height and the normal the bumped surface's own
+  (`triangleUVAxes`); without, three.js's `bumpScale`. Both step one texel of the map as authored (`bumpMapSize`), never
+  of the packed layer, and compile in only while some material has one (`usesBumpMaps`). ⚠️ Keep the normal-map frame
+  inline: split into Fns passing a mat3 it cost Shade 1–2 % where no map is used.
+- **Normal map orientation**: green is read along −dP/dv (glTF); a bottom-up map (`flipY`: FBX, OBJ, pbrt, USD) packs
+  its scale negative (`greenUp()`, `GeometryExtractor`) and is read as three.js does. ⚠️ An edit keeps the packed sign
+  (`keepGreen`, `MaterialDataManager`).
 - **Ray spawn points**: every ray leaving a surface starts at `offsetRayOrigin( p, n )` (`shaders/Common.js`), n the
   **facet** normal on the side the ray leaves. ⚠️ The hit record's `normal` is the interpolated one; the facet normal
   rides in its spare lane (`shaders/HitFacet.js`). ⚠️ Never a fixed distance; a shadow ray towards a sampled light point
@@ -563,22 +552,14 @@ bench gates and measurements.
   loses where a white sun and a blue sky are both in view — a sample carries one light's colour, not their mix.
 - **Light radius**: a point or spot light with `userData.radius` is lit as Cycles' Soft Falloff (NEE only), compiled in
   only while some light has one.
-- **Fog** (`shaders/Fog.js`; settings `fogDensity` per scene unit, `fogColor`, `fogAnisotropy`, `fogBounds`,
-  `fogHeightFalloff`, `fogFloor`): a medium in a box, by default the models' bounds (`getModelBounds()`, no ground
-  plane), so the sky and sun light it from outside; even, or thinning as e^(−falloff · h) above `fogFloor` (default
-  the models' floor) with a closed-form optical depth and free flight (`fogOpticalDepth`, `fogFreeFlight`; falloff 0
-  takes the homogeneous expressions exactly). Compiled in only while the density is above 0
-  (`PathTracer._fogNeeded()`), path integrator only (else `setting.ignored`). Free flight in Shade before the miss
-  branch; a scatter takes the lights, sky and sun MIS'd against the phase draw (`fogScatterLight`), point and spot
-  lights and the emitters share one light along every segment, picked per segment and drawn equiangularly
-  (`fogSegmentLight`), and every shadow ray takes the fog's transmittance (`traceShadowRay` via `SceneResources.fog`).
-  ⚠️ The fog's shadow rays go through one call site (`traceFogLight`): each `traceShadowRay` call inlines the whole
-  BVH walk. ⚠️ A segment's emitter point is drawn from a reference point in the span, so from either side
-  (`sampleLightBVHTriangleAnySide`): drawn as surface NEE draws, the sides facing away from the reference were left to
-  the phase draw at a weight below 1 (−1 %). The app turns its Thickness into a density by the models' longest side,
-  its Height (Everywhere / Low / Ground) into a falloff halving the density at 25 % / 6 % of the models' height with
-  the same haze over each spot of the floor, and gives an object seen from outside a cube around it and the camera (a
-  box seen from outside shows its edges).
+- **Fog** (`shaders/Fog.js`; settings `fogDensity`, `fogColor`, `fogAnisotropy`, `fogBounds`, `fogHeightFalloff`,
+  `fogFloor`): a medium in a box (default the models' bounds, `getModelBounds()`), even or thinning with height in
+  closed form. Compiled in only while the density is above 0 (`PathTracer._fogNeeded()`); path integrator only (else
+  `setting.ignored`). Free flight in Shade; a scatter takes the lights, sky and sun through the phase function
+  (`fogScatterLight`); point and spot lights and the emitters light every segment, drawn equiangularly
+  (`fogSegmentLight`); every shadow ray takes the fog's transmittance. ⚠️ The fog's shadow rays go through one call
+  site (`traceFogLight`): each `traceShadowRay` call inlines the whole BVH walk. ⚠️ A segment's emitter point is drawn
+  from either side (`sampleLightBVHTriangleAnySide`): drawn as surface NEE draws, the far sides were weighed below 1.
 - ⚠️ `bench:ab` read +7–9 % on identical code for two scenes on one day: net any A/B of a self-run.
 
 ### State-Engine Synchronization Pattern
