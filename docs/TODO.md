@@ -209,8 +209,9 @@ once looked at. How it should have been built so they could not happen:
   emitting side in the triangle flags apart from culling.
 - **Never cache a failed load.** The archive scene cache stored a 3 GB graph from a load the engine then rejected; the next
   load would have restored it. Store only once the engine has accepted the scene (done 2026-10-14), and derive the cache
-  revision from the loader's code instead of a hand-bumped `PBRT_BUILD_REVISION` (open: no build-tool-free way found; a
-  unit test hashing the loader's sources against a recorded hash would catch a forgotten bump).
+  revision from the loader's code instead of a hand-bumped `PBRT_BUILD_REVISION` (no build-tool-free way found; since
+  2026-11-07 `buildRevision.test.js` hashes the loader's and the graph codec's code against a recorded hash, so a change
+  fails until the bump is decided).
 - **Count non-finite samples.** kroken's NaN pixels (two-sided emitter seen edge-on, fixed 057cbc41) were found by eye
   after OIDN drew them as black dots. A per-frame count in FinalWrite, recorded as an issue, makes the next one a number.
 

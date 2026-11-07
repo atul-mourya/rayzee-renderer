@@ -46,6 +46,11 @@ subtree per element, and the whole thing rarely fits: Moana is 29 GB unpacked.
   a template's small non-.ply shapes merge in its own space. ⚠️ Keep that grouping: without it each
   Moana Pandanus tree was ten overlapping instances and rendered 60 % slower. Anything that changes
   what the same files build bumps `PBRT_BUILD_REVISION`, or a stored graph of the old build is reused.
+  `tests/unit/addons/archives/pbrt/buildRevision.test.js` hashes every `.js` under `pbrt/` and `SceneGraphCodec.js`
+  (comment lines, blank lines and spacing aside; a comment at the end of a code line counts) and fails until the
+  recorded `{ revision, format, code }` matches, so a bump of `PBRT_BUILD_REVISION` or `SCENE_GRAPH_FORMAT` is decided
+  rather than remembered. Releases change the key anyway (the package version is in it); this guards graphs stored
+  between them. `npm test` runs in the release workflow, so an unrecorded change stops a release.
 - **Parse memory.** The entry is picked from each `.pbrt`'s first 4 MB (`listEntryPathsFrom`:
   WorldBegin may only follow the scene-wide options); reading every file whole was 15 GB and 40 s
   for a 17-part Moana archive. Heads naming no scene, or several, fall back to full reads. A dropped
