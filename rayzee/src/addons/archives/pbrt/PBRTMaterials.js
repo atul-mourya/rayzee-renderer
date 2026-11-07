@@ -606,10 +606,8 @@ export async function buildMaterial( def, ctx ) {
 		case 'diffusetransmission': {
 
 			// pbrt reflects R and transmits T, both diffusely and both × `scale`, clamped to [0, 1]; no specular layer.
-			// The engine splits its diffuse lobe by `diffuseTransmission`: reflecting (1 − dt) · colour · map, transmitting
-			// dt · its colour · its map. dt = T's peak (its brightest texel × tint × scale); each colour is its lobe's
-			// peak over its share × its map's brightest texel (`ctx.textureMaxRGB`, else taken as 1), so both are exact at
-			// every texel pbrt does not clamp while max R + max T ≤ 1. A mapped colour may pass 1; colour × map stays ≤ 1.
+			// The diffuse lobe reflects (1 − dt) · colour · map and transmits dt · its colour · its map: dt is T's peak,
+			// each colour its lobe's peak over its share × its map's brightest texel, exact while max R + max T ≤ 1.
 			// `userData.pbrtFlat` keeps each colour at its peak, for where its map is dropped.
 			const scale = pFloat( params, 'scale', 1 );
 			const unit = ( v ) => Math.min( 1, Math.max( 0, scale * v ) );

@@ -1,8 +1,7 @@
 /**
- * Fog: a medium filling an axis-aligned box, by default the scene's bounds, so the environment and the sun light it from
- * outside. Its density is `density` (per scene unit) up to the `floor` height and thins as e^(−falloff · h) above it.
- * Extinction is grey and the albedo coloured, and the optical depth along a ray has a closed form, so free-flight
- * distance sampling is exact: a path that passes through keeps its throughput, one that scatters takes the albedo.
+ * Fog: a medium in an axis-aligned box (by default the scene's bounds, so the environment and sun light it from
+ * outside), `density` per scene unit up to `floor` and thinning as e^(−falloff · h) above. Grey extinction and a
+ * closed-form optical depth, so free flight is drawn exactly; a scatter takes the albedo.
  */
 
 import { Fn, float, vec2, vec3, int, bool as tslBool, If, Loop, abs, dot, max, min, mix, step, exp, log, sqrt, select, length, atan, tan, clamp, sampler } from 'three/tsl';
@@ -98,7 +97,7 @@ const freeFlight = /*@__PURE__*/ Fn( ( [ oy, dy, a, b, xi, density, falloff, flo
 } );
 
 /** The fog's extinction at a point. */
-export const fogDensityAt = ( fog, p ) => select( fog.falloff.greaterThan( 0.0 ), fog.density.mul( exp( fog.falloff.mul( max( p.y.sub( fog.floor ), 0.0 ) ).negate() ) ), fog.density );
+const fogDensityAt = ( fog, p ) => select( fog.falloff.greaterThan( 0.0 ), fog.density.mul( exp( fog.falloff.mul( max( p.y.sub( fog.floor ), 0.0 ) ).negate() ) ), fog.density );
 
 /** Its optical depth along `origin + t · dir` from t = `a` to `b` ≥ `a`, both inside the box. */
 export const fogOpticalDepth = ( fog, origin, dir, a, b ) => opticalDepth( origin.y, dir.y, a, b, fog.density, fog.falloff, fog.floor );
@@ -207,12 +206,10 @@ const inScattering = ( fog, origin, dir, near, t ) => fog.color.mul( fogDensityA
 const EMITTERS = 4;
 
 /**
- * Light scattered toward the ray's start along the fog span ( near, far ) of `origin + t · dir`, from the point and spot
- * lights and the emitters: one of them, drawn by its unshadowed single scattering, at one distance drawn equiangularly
- * toward it (Kulla & Fajardo 2012), which cancels the 1 / d² that makes a light in fog sparkle when sampled from
- * free-flight points. Every fog segment takes it, so a scatter point leaves these lights out. The emitters are one
- * candidate, weighed as if their power sat at the centre of their light tree (any weight above 0 is unbiased).
- * Radiance before the path's throughput. `emitters`: their uniforms and buffers, and `pdf`, or null.
+ * Light scattered toward the ray's start along the fog span ( near, far ) of `origin + t · dir` from the point and spot
+ * lights and the emitters: one picked by its unshadowed single scattering, at a distance drawn equiangularly toward it
+ * (Kulla & Fajardo 2012). A scatter point leaves these lights to it. Radiance before the path's throughput;
+ * `emitters`: their uniforms and buffers, and `pdf`, or null.
  */
 export function fogSegmentLight( { enabled, origin, dir, near, far, g, fog, lamps, emitters, sample1D, sample2D } ) {
 
@@ -302,11 +299,9 @@ export function fogSegmentLight( { enabled, origin, dir, near, far, g, fog, lamp
 }
 
 /**
- * The emitters' part of fogSegmentLight, picked with `pickPdf`: a point drawn on an emitter from a reference point in
- * the span, then a distance drawn equiangularly toward it, weighed against the phase draw as the emitter-hit branch
- * weighs it (`emitters.pdf( triangle, dist, L, from, instance )`, NEE's solid-angle density). ⚠️ The point is drawn
- * from either side: a side facing away from the reference faces other points of the span, and left to the phase draw
- * alone at a weight below 1 its light went missing.
+ * The emitters' part of fogSegmentLight, picked with `pickPdf`: a point on an emitter drawn from a reference point in
+ * the span, a distance drawn equiangularly toward it, weighed against the phase draw as the emitter-hit branch weighs
+ * it. ⚠️ Drawn from either side: a side facing away from the reference faces other points of the span.
  */
 function emitterLight( { slot, origin, dir, near, far, g, fog, emitters, sample1D, pickPdf } ) {
 

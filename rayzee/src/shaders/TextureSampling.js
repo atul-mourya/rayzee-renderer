@@ -482,7 +482,7 @@ export const triangleUVAxes = Fn( ( [ triangleBuffer, triIndex, transform, bvhBu
 } );
 
 /** vec4( normalize( dP/du ), handedness ) from UV axes; w == 0 means no usable frame. */
-export const uvTangentOf = Fn( ( [ axes, geometryNormal ] ) => {
+const uvTangentOf = Fn( ( [ axes, geometryNormal ] ) => {
 
 	const T = axes[ 0 ].toVar();
 	const result = vec4( 0.0 ).toVar();
@@ -498,10 +498,9 @@ export const uvTangentOf = Fn( ( [ axes, geometryNormal ] ) => {
 } );
 
 /**
- * The frame a map tilts `geometryNormal` in: the map's U axis made perpendicular to N (the interpolated normal is not
- * exactly triangle-planar), or the arbitrary cross( up, N ) frame where `uvTangent` (vec4( T.xyz, handedness )) has
- * none. A frame unrelated to the texture's U axis rotates the whole tilt: on a vertical fluted-glass panel the arbitrary
- * frame comes out 90 deg off, so the rib normals tilt up/down instead of across the ribs. Inline, as perturbNormal was.
+ * The frame a map tilts `geometryNormal` in: the map's U axis made perpendicular to N (any other frame turns the whole
+ * tilt), or the arbitrary cross( up, N ) frame where `uvTangent` (vec4( T.xyz, handedness )) has none. Inline, as
+ * perturbNormal was.
  */
 function tangentFrame( geometryNormal, uvTangent ) {
 
@@ -561,14 +560,10 @@ export const processNormal = Fn( ( [ geometryNormal, material, uvCache, uvTangen
 } );
 
 /**
- * The normal a bump map gives `currentNormal`; `axes` are the surface's UV axes in the bump map's UV space (triangleUVAxes).
- * The slope is taken over one texel of the map as authored, however packing stretched or shrank it: a 512² map in a
- * 1024² array stepped one stored texel at half strength.
- *
- * With a `bumpDistance` the map is a height, 0 → 1 spanning that many scene units (negative presses it in), and the
- * normal is the bumped surface's own: Mikkelsen's surface gradient over the axes, as Cycles' Bump node and pbrt's
- * displacement take it. Without one, three.js's bumpScale: the slope per texel times the scale (negative presses it in),
- * faded in by its size up to 1, tilted along the map's U and V.
+ * The normal a bump map gives `currentNormal`; `axes` are the surface's UV axes in the bump map's UV space
+ * (triangleUVAxes). The slope is taken over one texel of the map as authored, however packing stretched it. With a
+ * `bumpDistance` the map is a height spanning that many scene units and the normal the bumped surface's own (Mikkelsen's
+ * surface gradient); without, three.js's bumpScale, faded in by its size up to 1. Negative presses it in.
  */
 export const processBump = Fn( ( [ currentNormal, material, uvCache, axes ], builder ) => {
 

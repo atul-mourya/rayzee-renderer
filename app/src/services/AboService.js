@@ -1,11 +1,9 @@
 import { pageAfter, rankSearch, searchEntries } from '@/lib/catalog';
 
 /**
- * Amazon Berkeley Objects: ~7,900 product models (GLB, metres, Y up), CC BY 4.0, credit Amazon.com.
- * The dataset is a static bucket with no search API, so browsing and search run in the browser over
- * abo-index.json (built by `npm run abo:index`). Each model comes two ways: CodePawl's compressed copy
- * (WebP up to 2048 px, ~1 MB) or Amazon's original file (textures mostly 2K or 4K, ~10 MB, up to 330).
- * Downloads need no token and the links do not expire.
+ * Amazon Berkeley Objects (GLB, metres, Y up; CC BY 4.0, credit Amazon.com). The bucket has no search API, so browsing
+ * and search run over abo-index.json (`npm run abo:index`). Each model comes as CodePawl's compressed copy or Amazon's
+ * original file.
  */
 export class AboService {
 

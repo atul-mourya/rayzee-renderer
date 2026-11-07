@@ -1533,9 +1533,8 @@ export class OIDNDenoiser extends EventDispatcher {
 	}
 
 	/**
-	 * Denoises frames of this size from the next run on, with the network and buffers sized for the
-	 * render (oidn-webgpu keeps a plan for each of two sizes): the moving-camera drop traces smaller
-	 * frames. The picture already made stays up, and a larger frame is a resize.
+	 * Denoises frames of this size from the next run on, the network and buffers staying sized for the render
+	 * (oidn-webgpu keeps a plan for each of two sizes). The picture already made stays up; a larger frame is a resize.
 	 * @param {number} width
 	 * @param {number} height
 	 */

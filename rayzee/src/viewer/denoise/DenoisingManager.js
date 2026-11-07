@@ -292,10 +292,8 @@ export class DenoisingManager extends EventDispatcher {
 	}
 
 	/**
-	 * The size frames are traced at: smaller than the render size while the camera moves (the viewer's
-	 * moving-camera drop), the render size again once it stops. Unlike a resize, the denoised picture
-	 * on screen stays up — the Compositor stretches it until the next refresh — and nothing sized for
-	 * the render is rebuilt.
+	 * The size frames are traced at: smaller than the render while the camera moves, the render size once it stops.
+	 * Unlike a resize, the picture on screen stays up (stretched) and nothing sized for the render is rebuilt.
 	 * @param {number} width
 	 * @param {number} height
 	 */

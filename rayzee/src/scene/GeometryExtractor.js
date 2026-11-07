@@ -1065,11 +1065,9 @@ export class GeometryExtractor {
 	}
 
 	/**
-	 * The matrix list a mesh groups by: its own, or a sibling's holding the same matrices, which it then shares (so an
-	 * edit to one moves both, as a shared list does: a group is traced through one member's list). glTF's
-	 * EXT_mesh_gpu_instancing gives each primitive of a node an InstancedMesh with its own copy of the node's list.
-	 * Siblings only, under a group (two objects added to the scene stay apart), of two copies or more, and float lists
-	 * only. A list seen before returns at once, so shared lists (pbrt, USD) never reach the compare.
+	 * The matrix list a mesh groups by: its own, or a sibling's holding the same matrices, which it then shares (glTF's
+	 * EXT_mesh_gpu_instancing gives each primitive of a node its own copy). Siblings under a group, of two copies or
+	 * more, float lists only; a list seen before returns at once.
 	 * @private
 	 */
 	_sameMatrixList( mesh, count ) {

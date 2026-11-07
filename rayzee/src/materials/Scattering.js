@@ -1,7 +1,6 @@
 /**
- * Subsurface scattering from what is measured or authored. The engine's random walk takes a single-scatter albedo
- * (`subsurfaceColor`) and the mean free path 1 / σt (`subsurfaceRadius`); a material is more often given as the colour it
- * shows and how far its light spreads. The classical dipole (Jensen et al. 2001) joins the two.
+ * The random walk's inputs (single-scatter albedo, mean free path) from the colour a material shows and how far its
+ * light spreads, through the classical dipole (Jensen et al. 2001).
  */
 
 /**

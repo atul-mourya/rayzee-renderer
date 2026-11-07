@@ -2,11 +2,10 @@ import { Color } from 'three';
 import { SSS_PRESETS } from '@/Constants';
 
 /**
- * Materials the Physically Based database lacks, in its format. From pbrt-v4's measured tables as the pbrt importer reads
- * them: a translucent medium as the colour the classical dipole gives it (IOR 1.33) and its diffuse mean free path
- * 1 / σtr in centimetres, an optical glass as its IOR at the d line and its Abbe number. A medium's roughness is a
- * starting finish, not measured. tests/unit/app/measuredMaterials.test.js holds them to the importer. Then the
- * translucent looks of SSS_PRESETS, sized to the object they go on (`subsurfacePreset`, read by MaterialService).
+ * Materials the Physically Based database lacks, in its format, from pbrt-v4's measured tables: a translucent medium as
+ * the colour the classical dipole gives it (IOR 1.33) and its diffuse mean free path 1 / σtr in centimetres (its
+ * roughness a starting finish), an optical glass as its IOR at the d line and its Abbe number. Then the translucent
+ * looks of SSS_PRESETS, sized to the object they go on (`subsurfacePreset`).
  */
 
 const JENSEN = 'Jensen et al. 2001, "A Practical Model for Subsurface Light Transport"';

@@ -19,9 +19,8 @@ export function viewMatrixOf( camera, target ) {
 }
 
 /**
- * The inverse projection camera rays are traced through. Its w at the far plane is 1 / far, which a far plane ~1e7 ×
- * near or more (glTF's zfar 1e10 at znear 1e-4) rounds to 0 or below in f32: every ray turned round and saw only sky.
- * A ray's direction needs only w's sign, so there it is kept positive; any other camera's is its own, bit for bit.
+ * The inverse projection camera rays are traced through, its w at the far plane kept positive: 1 / far rounds to 0 or
+ * below in f32 for a far plane ~1e7 × near or more, and a ray needs only w's sign. Any other camera's is its own.
  * @param {import('three').Camera} camera
  * @param {import('three').Matrix4} target
  * @returns {import('three').Matrix4} target

@@ -19,11 +19,9 @@ import { createLogger, fmt } from '../Logger.js';
 // Hard ceiling the engine supports for the reserved render size. 4K (3840×2160) fits within 4096².
 export const MAX_RESERVABLE_RENDER_SIZE = 4096;
 
-// Reserved render size: the largest render (SQUARE, longest edge) the engine accepts — it warns and ignores
-// larger. The per-pixel buffers (convergence, freeze mask, the integrator's) are allocated at it, since a
-// grown buffer cannot be rebound without a kernel rebuild; the StorageTextures follow the render size.
-// It is a LIVE binding (mutable), raised (e.g. for 4K) through RayzeeRenderer.setReservedRenderResolution(),
-// the device-gated API hosts should call, at any point in the lifecycle. Default 2048.
+// The largest render (square, longest edge) the engine accepts; larger warns and is ignored. Per-pixel buffers are
+// allocated at it (a grown buffer needs a kernel rebuild); the StorageTextures follow the render size. A live binding,
+// raised through RayzeeRenderer.setReservedRenderResolution().
 export let MAX_STORAGE_TEXTURE_SIZE = 2048;
 
 // Set the reserved render size. Clamped to [256, MAX_RESERVABLE_RENDER_SIZE]. Returns the applied value.

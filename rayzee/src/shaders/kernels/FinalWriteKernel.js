@@ -41,9 +41,8 @@ const nanInfToRed = /*@__PURE__*/ wgslFn( `
 
 /**
  * How this frame's guide sample enters a pixel's average, which holds only samples not marked `unlikely` (glass's less
- * likely branch). An unlikely sample stays out once a likely one has come (`keepPrev`); until then unlikely ones stand
- * in, and the first likely one replaces them (`replace`). A pixel never marked has `prevCount === auxSamples` and keeps
- * the epoch's alpha, so it averages exactly as before. Plain JS inliner: returns nodes.
+ * likely branch): unlikely ones stand in until the first likely one replaces them (`replace`), then stay out
+ * (`keepPrev`). A pixel never marked keeps the epoch's alpha. Plain JS inliner: returns nodes.
  */
 export const guideWeights = ( unlikely, prevCount, auxSamples, auxAccumulationAlpha ) => ( {
 	keepPrev: unlikely.and( prevCount.greaterThan( uint( 0 ) ) ),
