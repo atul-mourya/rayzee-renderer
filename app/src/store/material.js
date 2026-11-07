@@ -1,8 +1,9 @@
 import { create } from 'zustand';
 import * as THREE from 'three';
-import { translucencyToScale, SSS_PRESETS } from '@/Constants';
+import { translucencyToScale, SSS_PRESETS, presetRadius } from '@/Constants';
 import { deriveAlphaMode } from 'rayzee';
 import { getApp } from '@/lib/appProxy';
+import { MaterialService } from '@/services/MaterialService';
 import { useStore } from './ui.js';
 
 // Material store
@@ -241,8 +242,7 @@ export const useMaterialStore = create( ( set, get ) => ( {
 		get().updateMaterialProperty( 'diffuseTransmissionColor', obj.material.diffuseTransmissionColor );
 
 	},
-	// Apply a named SSS preset. The radius is derived from the object's world-space size so the
-	// look is scale-invariant: radius = ratio × bboxDiagonal × depth (see SSS_PRESETS).
+	// Apply a named SSS preset, sized to the object (see SSS_PRESETS).
 	applySubsurfacePreset: presetName => {
 
 		const preset = SSS_PRESETS.find( p => p.name === presetName );
@@ -255,12 +255,7 @@ export const useMaterialStore = create( ( set, get ) => ( {
 		const mat = obj.material;
 		const idx = obj.userData?.materialIndex ?? 0;
 
-		// World-space size → scale-invariant radius.
-		obj.updateWorldMatrix( true, false );
-		const size = new THREE.Box3().setFromObject( obj ).getSize( new THREE.Vector3() );
-		const diag = size.length() || 1;
-		const r = diag * preset.depth;
-		const radius = [ r * preset.radius[ 0 ], r * preset.radius[ 1 ], r * preset.radius[ 2 ] ];
+		const radius = presetRadius( preset, MaterialService.diagonalOf( obj ) );
 
 		const setProp = ( prop, value ) => {
 

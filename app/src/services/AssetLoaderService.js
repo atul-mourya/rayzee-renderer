@@ -220,7 +220,7 @@ export class AssetLoaderService {
 
 			const data = await response.json();
 
-			const { MEASURED_MATERIALS, materialSwatch } = await import( './MeasuredMaterials.js' );
+			const { MEASURED_MATERIALS, PRESET_MATERIALS, materialSwatch } = await import( './MeasuredMaterials.js' );
 
 			// Process materials to add preview property and ensure categories are arrays; a swatch of the colour stands in
 			// for a reference render that does not load.
@@ -239,6 +239,8 @@ export class AssetLoaderService {
 				if ( ! names.has( mData.name.toLowerCase() ) ) processedMaterials.push( { ...mData, categories: mData.category, source: 'pbrt' } );
 
 			}
+
+			for ( const mData of PRESET_MATERIALS ) processedMaterials.push( { ...mData, categories: mData.category, source: 'rayzee' } );
 
 			return processedMaterials;
 

@@ -8,7 +8,7 @@ import { Select, SelectTrigger, SelectContent, SelectValue, SelectItem } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useStore, useMaterialStore } from '@/store';
 import { getApp } from '@/lib/appProxy';
-import { SSS_PRESETS, scaleToTranslucency } from '@/Constants';
+import { scaleToTranslucency } from '@/Constants';
 import { Switch } from '@/components/ui/switch';
 import { Separator } from '@/components/ui/separator';
 import { TexturePreview } from '@/components/ui/texture-preview';
@@ -714,26 +714,9 @@ const MaterialTab = () => {
 							{MATERIAL_PROPERTIES.subsurfaceAdvanced?.map( ( [ property, config ] ) => renderPropertyComponent( property, config ) )}
 						</>
 					) : null}>
-						<Switch label="Enable Subsurface" tip="Lets light enter the surface and scatter inside, as in skin, wax or marble. More settings are under ⋮." checked={isFeatureEnabled( materialState, 'subsurface' )} onCheckedChange={( enabled ) => materialStore.handleToggleFeature( 'subsurface', enabled )} />
+						<Switch label="Enable Subsurface" tip="Lets light enter the surface and scatter inside, as in skin, wax or marble. It starts as candle wax; Assets → Materials has more, such as jade, milk and skin. More settings are under ⋮." checked={isFeatureEnabled( materialState, 'subsurface' )} onCheckedChange={( enabled ) => materialStore.handleToggleFeature( 'subsurface', enabled )} />
 					</Row>
-					{isFeatureEnabled( materialState, 'subsurface' ) && (
-						<>
-							<Row className="w-full">
-								<div className="opacity-50 text-xs truncate" title="Fills in the settings below for a common material, such as skin, wax, marble or milk.">Preset</div>
-								<Select onValueChange={( v ) => materialStore.applySubsurfacePreset( v )}>
-									<SelectTrigger className="max-w-32 h-5 rounded-full">
-										<SelectValue placeholder="Choose…" />
-									</SelectTrigger>
-									<SelectContent>
-										{SSS_PRESETS.map( p => (
-											<SelectItem key={p.name} value={p.name}>{p.label}</SelectItem>
-										) )}
-									</SelectContent>
-								</Select>
-							</Row>
-							{MATERIAL_PROPERTIES.subsurface?.map( ( [ property, config ] ) => renderPropertyComponent( property, config ) )}
-						</>
-					)}
+					{isFeatureEnabled( materialState, 'subsurface' ) && MATERIAL_PROPERTIES.subsurface?.map( ( [ property, config ] ) => renderPropertyComponent( property, config ) )}
 					<Separator />
 
 					{/* Translucency: diffuse transmission through a thin surface (leaves, paper, lampshades) */}

@@ -1,6 +1,7 @@
-import { Color } from 'three';
+import { Box3, Color, Vector3 } from 'three';
 import { MATERIAL_DEFAULTS, subsurfaceFromDiffuse } from 'rayzee';
 import { getApp } from '@/lib/appProxy';
+import { SSS_PRESETS, presetRadius } from '@/Constants';
 
 /**
  * Service class for handling material operations
@@ -12,15 +13,24 @@ export class MaterialService {
 	 * lengths in centimetres, `density` the mass density, which nothing optical reads).
 	 * @param {Object} apiMaterialInfo - one entry of the catalogue
 	 * @param {number} [unitsPerMetre=1] - the scene's scale, for the entry's lengths
+	 * @param {number} [objectDiagonal=1] - the object's world-space diagonal, for a look sized to it
 	 * @returns {Object} Complete material object with all PBR properties
 	 */
-	static createCompleteMaterialFromAPI( apiMaterialInfo, unitsPerMetre = 1 ) {
+	static createCompleteMaterialFromAPI( apiMaterialInfo, unitsPerMetre = 1, objectDiagonal = 1 ) {
 
 		const completeMaterial = structuredClone( MATERIAL_DEFAULTS );
 		const centimetre = unitsPerMetre / 100;
 		const positive = ( v ) => typeof v === 'number' && v > 0;
 
-		if ( apiMaterialInfo.color ) completeMaterial.color = apiMaterialInfo.color;
+		// A colour past the gamut (gold's red, 1.059) would reflect more than it receives: scaled to 1, keeping its hue,
+		// as the pbrt importer scales gold.
+		if ( apiMaterialInfo.color ) {
+
+			const top = Math.max( ...apiMaterialInfo.color );
+			completeMaterial.color = top > 1 ? apiMaterialInfo.color.map( ( v ) => v / top ) : apiMaterialInfo.color;
+
+		}
+
 		if ( typeof apiMaterialInfo.metalness === 'number' ) completeMaterial.metalness = apiMaterialInfo.metalness;
 		// 0 is a mirror: the engine takes it as an exact reflection.
 		if ( typeof apiMaterialInfo.roughness === 'number' ) completeMaterial.roughness = apiMaterialInfo.roughness;
@@ -55,6 +65,17 @@ export class MaterialService {
 
 		}
 
+		// A look sized to the object (SSS_PRESETS), not measured.
+		const preset = SSS_PRESETS.find( ( p ) => p.name === apiMaterialInfo.subsurfacePreset );
+		if ( preset ) {
+
+			completeMaterial.subsurface = preset.weight;
+			completeMaterial.subsurfaceColor = new Color( preset.scatter ).toArray();
+			completeMaterial.subsurfaceRadius = presetRadius( preset, objectDiagonal );
+			completeMaterial.subsurfaceAnisotropy = preset.g;
+
+		}
+
 		// Handle thin film properties
 		if ( typeof apiMaterialInfo.thinFilmThickness === 'number' ) {
 
@@ -77,8 +98,9 @@ export class MaterialService {
 	 * Apply material information to a Three.js material object
 	 * @param {Object} materialInfo - Material information from API
 	 * @param {Object} threeMaterial - Three.js material object to modify
+	 * @param {number} [objectDiagonal=1] - the object's world-space diagonal (diagonalOf), for a look sized to it
 	 */
-	static applyMaterialToObject( materialInfo, threeMaterial ) {
+	static applyMaterialToObject( materialInfo, threeMaterial, objectDiagonal = 1 ) {
 
 		if ( ! threeMaterial ) {
 
@@ -145,7 +167,7 @@ export class MaterialService {
 		};
 
 		// Create complete material with defaults first
-		const completeMaterial = this.createCompleteMaterialFromAPI( materialInfo, getApp()?.settings?.get( 'unitsPerMetre' ) ?? 1 );
+		const completeMaterial = this.createCompleteMaterialFromAPI( materialInfo, getApp()?.settings?.get( 'unitsPerMetre' ) ?? 1, objectDiagonal );
 
 		// Ensure and set all material properties to create a complete PBR material
 		// Base colors
@@ -204,6 +226,14 @@ export class MaterialService {
 
 		// Ensure needsUpdate exists and set it
 		ensureAndSet( threeMaterial, 'needsUpdate', true );
+
+	}
+
+	/** The length of `object`'s world-space bounding box diagonal; 1 for an empty one. */
+	static diagonalOf( object ) {
+
+		object.updateWorldMatrix( true, false );
+		return new Box3().setFromObject( object ).getSize( new Vector3() ).length() || 1;
 
 	}
 

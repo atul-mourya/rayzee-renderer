@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { useStore } from '@/store';
+import { useStore, useCameraStore, modelSizeMetres } from '@/store';
 import { usePolyHavenMaterialApplicator } from '@/hooks/usePolyHavenMaterialApplicator';
 import { PolyHavenTextures } from '@/services/PolyHavenService';
 import { PhysicallyBasedMaterials } from '@/services/AssetLoaderService';
@@ -58,15 +58,19 @@ const HierarchicalMaterialsTab = () => {
 		try {
 
 			const { MaterialService } = await import( '@/services/MaterialService' );
-			MaterialService.applyMaterialToObject( materialData, target.material );
+			MaterialService.applyMaterialToObject( materialData, target.material, MaterialService.diagonalOf( target ) );
 			MaterialService.updatePathTracerMaterial( target );
 			window.dispatchEvent( new Event( 'MaterialUpdate' ) );
 
 			setLoading( { isLoading: false } );
 
+			// Light goes as far into a translucent one as into the real thing, so how it looks depends on the model's size.
+			const size = Array.isArray( materialData.subsurfaceRadius ) ? modelSizeMetres( useCameraStore.getState() ) : null;
 			toast( {
 				title: "Material Applied",
-				description: materialData.name,
+				description: size
+					? `${materialData.name}: light goes as far in as in the real thing, for a model of ${size} m. If that size is wrong, set the real one in Camera → Depth of Field → Pro → Subject Size.`
+					: materialData.name,
 			} );
 
 		} catch ( error ) {

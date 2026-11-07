@@ -1,10 +1,12 @@
 import { Color } from 'three';
+import { SSS_PRESETS } from '@/Constants';
 
 /**
- * Materials the Physically Based database lacks, in its format, from pbrt-v4's measured tables as the pbrt importer reads
+ * Materials the Physically Based database lacks, in its format. From pbrt-v4's measured tables as the pbrt importer reads
  * them: a translucent medium as the colour the classical dipole gives it (IOR 1.33) and its diffuse mean free path
  * 1 / σtr in centimetres, an optical glass as its IOR at the d line and its Abbe number. A medium's roughness is a
- * starting finish, not measured. tests/unit/app/measuredMaterials.test.js holds them to the importer.
+ * starting finish, not measured. tests/unit/app/measuredMaterials.test.js holds them to the importer. Then the
+ * translucent looks of SSS_PRESETS, sized to the object they go on (`subsurfacePreset`, read by MaterialService).
  */
 
 const JENSEN = 'Jensen et al. 2001, "A Practical Model for Subsurface Light Transport"';
@@ -79,3 +81,15 @@ export const MEASURED_MATERIALS = [
 	glass( 'Optical glass SF10', 'glass-F10', 1.72828, 28.47, [ 'dense flint' ] ),
 	glass( 'Optical glass SF11', 'glass-F11', 1.78474, 25.71, [ 'dense flint' ] ),
 ];
+
+export const PRESET_MATERIALS = SSS_PRESETS.map( ( preset ) => {
+
+	const color = new Color( preset.base ).toArray();
+	return {
+		name: preset.label, color, metalness: 0, roughness: preset.roughness, ior: preset.ior, subsurfacePreset: preset.name,
+		category: [ preset.category ], tags: preset.tags,
+		description: 'Not measured: light goes in by a share of the object\'s size, so it looks alike on a small or a large model.',
+		sources: [], reference: [], preview: materialSwatch( color ),
+	};
+
+} );

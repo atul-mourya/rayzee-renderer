@@ -1,9 +1,17 @@
 import { describe, it, expect, vi } from 'vitest';
-import { Group, Mesh, BoxGeometry, MeshStandardMaterial, MeshPhysicalMaterial } from 'three';
+
+// The app's constants read the device pixel ratio as they load.
+vi.hoisted( () => {
+
+	globalThis.window ??= { devicePixelRatio: 1 };
+
+} );
+import { Group, Mesh, BoxGeometry, MeshStandardMaterial, MeshPhysicalMaterial, Color } from 'three';
 import { subsurfaceFromDiffuse } from '@/core/materials/Scattering.js';
 import { buildMaterial } from '@/core/addons/archives/pbrt/PBRTMaterials.js';
 import { MaterialService } from '@/services/MaterialService';
-import { MEASURED_MATERIALS } from '@/services/MeasuredMaterials';
+import { MEASURED_MATERIALS, PRESET_MATERIALS } from '@/services/MeasuredMaterials';
+import { SSS_PRESETS } from '@/Constants';
 
 vi.mock( '@/lib/appProxy', () => ( { getApp: () => null } ) );
 
@@ -41,6 +49,10 @@ describe( 'a Physically Based catalogue entry', () => {
 		expect( honey.color ).toEqual( CATALOG.Honey.color );
 		expect( honey.attenuationDistance ).toBe( Infinity );
 		expect( read( CATALOG.Gold ).attenuationDistance ).toBe( Infinity );
+		// Past the gamut, scaled to 1 with its hue kept, as the pbrt importer has gold.
+		const gold = read( CATALOG.Gold ).color;
+		expect( Math.max( ...gold ) ).toBe( 1 );
+		expect( gold[ 1 ] / gold[ 0 ] ).toBeCloseTo( 0.773 / 1.059, 9 );
 		expect( honey.transparent ).toBe( 0 );
 
 	} );
@@ -87,6 +99,34 @@ describe( 'the catalogue\'s additions from pbrt', () => {
 		}
 
 		expect( new Set( MEASURED_MATERIALS.map( ( m ) => m.name ) ).size ).toBe( MEASURED_MATERIALS.length );
+
+	} );
+
+} );
+
+describe( 'the catalogue\'s translucent looks', () => {
+
+	it( 'scatter as far in as a share of the object they land on, as the Material tab\'s preset did', () => {
+
+		const object = new Mesh( new BoxGeometry( 2, 1, 2 ) );
+		expect( MaterialService.diagonalOf( object ) ).toBeCloseTo( 3, 9 );
+
+		for ( const entry of PRESET_MATERIALS ) {
+
+			const preset = SSS_PRESETS.find( ( p ) => p.name === entry.subsurfacePreset );
+			const mine = read( entry, 1000 );
+			const sized = MaterialService.createCompleteMaterialFromAPI( entry, 1000, 3 );
+			closeTo( sized.subsurfaceRadius, preset.radius.map( ( c ) => c * preset.depth * 3 ), 9 );
+			expect( sized.subsurfaceRadius[ 0 ] / mine.subsurfaceRadius[ 0 ] ).toBeCloseTo( 3, 9 );
+			closeTo( sized.color, new Color( preset.base ).toArray(), 9 );
+			closeTo( sized.subsurfaceColor, new Color( preset.scatter ).toArray(), 9 );
+			expect( [ sized.subsurface, sized.subsurfaceAnisotropy, sized.roughness, sized.ior ] ).toEqual( [ preset.weight, preset.g, preset.roughness, preset.ior ] );
+
+		}
+
+		expect( PRESET_MATERIALS.map( ( m ) => m.name ) ).toEqual( SSS_PRESETS.map( ( p ) => p.label ) );
+		const measured = new Set( [ ...MEASURED_MATERIALS, ...Object.values( CATALOG ) ].map( ( m ) => m.name.toLowerCase() ) );
+		expect( PRESET_MATERIALS.some( ( m ) => measured.has( m.name.toLowerCase() ) ) ).toBe( false );
 
 	} );
 
