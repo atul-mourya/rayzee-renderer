@@ -11,14 +11,12 @@
 -   make bvh an independent library
 
 ### MVP
-- [x] drag and drop material without need to select a mesh
 - [ ] color schema of the pbrt renders reference images are so different then rayzee. Example: watercolor scene
 - [ ] dynamic max stack in bvhtraversal
 - [ ] https://github.com/DennisSmolek/Fsr3 - branch already created
 - [ ] tiled output for lower vram — Blender Cycles-style render-region tiling; VRAM-bounded 4K/8K final render + video. See docs/internal/specs/wavefront-tiled-output.md
 
 ### pbrt: read but not used (audit of the 26 catalog scenes, 2026-11-01)
-- [x] `sceneMetadata.render` (bounces, samples, film size, integrator) is applied by nothing; the canvas keeps its own aspect, so framing differs from 16:9 previews. Done 2026-11-07: the app opens a scene at its shape and integrator (see Render settings a file asks for, below)
 - [ ] PixelFilter (triangle, radius 1; 25 scenes) — engine uses its own pixel reconstruction
 - [ ] volpath `regularize` (BMW), sppm `radius` (Cornell Caustic)
 - [ ] Not read, not in the catalog: spherical / realistic cameras (spherical becomes perspective), perspective `screenwindow`, `frameaspectratio`, shutter (motion blur), Film white balance / sensor / `cropwindow` / `maxcomponentvalue`, CameraMedium and space-filling media, non-homogeneous media, scattering inside media (σs folds into absorption)
@@ -252,13 +250,6 @@ once looked at. How it should have been built so they could not happen:
   its gobos; the infinite light's `portal`. Area light `power` done 2026-10-05.
 - [ ] **Cameras**: `spherical` → the engine's panorama (a panorama is global, not per camera: needs a per-camera
   projection); `realistic` (lens files). `lensradius` / `focaldistance` → the camera's own DOF done 2026-10-05.
-- [x] **Render settings a file asks for.** Decided and done 2026-11-07 (f0efa681, fe5f9888): the app opens a scene at
-  the shape its file asks for and with its integrator, in Preview and Final Render alike; the next model gets back what
-  each replaced. The shape comes from pbrt's Film, USD's RenderSettings or authored apertures, a glTF camera's
-  `aspectRatio` (Livspace's too: three.js's exporter writes the browser window's shape). The file's integrator wins
-  over the catalogue's, so Glass of Water opens bidirectional and the Bathroom in vertex merging. Size, bounces and
-  samples are not applied (pbrt's counts assume no denoiser and no early stop): Final Render shows them in a line.
-  Left: Film `iso` / `exposuretime` / `whitebalance` not read.
 - [ ] **Materials** approximated as diffuse: `hair`, `measured`. `subsurface` → the engine's SSS done 2026-10-05
   (named media, σa/σs, reflectance + mfp through the dipole).
 - [ ] **Texture filtering** — see Features → Rendering → Texture filtering (kroken's brick dirt read patchy where pbrt's
