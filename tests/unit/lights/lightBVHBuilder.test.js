@@ -428,6 +428,64 @@ describe( 'LightBVHBuilder', () => {
 
 		} );
 
+		// Keys read through a counter: a quadratic selection shows as reads growing with n.
+		const counted = ( values ) => {
+
+			const reads = { n: 0 };
+			return { reads, tris: values.map( v => ( { get cx() {
+
+				reads.n ++;
+				return v;
+
+			} } ) ) };
+
+		};
+
+		it( 'reads each key once when every key is equal', () => {
+
+			const n = 20000, { tris, reads } = counted( new Array( n ).fill( 3 ) );
+			const indices = Int32Array.from( { length: n }, ( _, i ) => i );
+			builder._nthElement( indices, tris, 0, n, n >> 1, 'cx' );
+			expect( reads.n ).toBeLessThanOrEqual( 2 * n );
+
+		} );
+
+		it( 'stays near n log n halving one key down to leaves, as the tree does along a long axis', () => {
+
+			let seed = 7;
+			const n = 80000, { tris, reads } = counted( Array.from( { length: n }, () => ( seed = ( seed * 1103515245 + 12345 ) >>> 0 ) / 2 ** 32 ) );
+			const indices = Int32Array.from( { length: n }, ( _, i ) => i );
+			const split = ( start, end ) => {
+
+				if ( end - start <= 8 ) return;
+				const mid = ( start + end ) >> 1;
+				builder._nthElement( indices, tris, start, end, mid, 'cx' );
+				for ( let i = start; i < end; i ++ ) expect( Math.sign( tris[ indices[ i ] ].cx - tris[ indices[ mid ] ].cx ) !== ( i < mid ? 1 : - 1 ) ).toBe( true );
+				split( start, mid );
+				split( mid, end );
+
+			};
+
+			split( 0, n );
+			reads.n -= 2 * n * Math.log2( n / 8 ); // the checks' own reads, about
+			expect( reads.n / ( n * Math.log2( n ) ) ).toBeLessThan( 3 );
+
+		} );
+
+		// Keys rising to the middle and falling again: a ring of emitters split across, or an organ pipe.
+		it( 'stays near-linear on keys that peak in the middle of the range', () => {
+
+			const n = 40000;
+			for ( const key of [ i => Math.cos( 2 * Math.PI * i / n ), i => Math.min( i, n - i ) ] ) {
+
+				const { tris, reads } = counted( Array.from( { length: n }, ( _, i ) => key( i ) ) );
+				builder._nthElement( Int32Array.from( { length: n }, ( _, i ) => i ), tris, 0, n, n >> 1, 'cx' );
+				expect( reads.n ).toBeLessThan( 8 * n );
+
+			}
+
+		} );
+
 	} );
 
 	describe( 'what sampling reads', () => {
@@ -446,6 +504,11 @@ describe( 'LightBVHBuilder', () => {
 
 		let seed = 1;
 		const random = () => ( seed = ( seed * 1103515245 + 12345 ) >>> 0 ) / 2 ** 32;
+		beforeEach( () => {
+
+			seed = 1;
+
+		} );
 
 		// Unit normals within `cap` radians of +Z (π: anywhere), scattered along `spread`.
 		function scene( count, { cap = Math.PI, spread = [ 100, 10, 1 ], twoSided = () => false } = {} ) {
@@ -521,15 +584,16 @@ describe( 'LightBVHBuilder', () => {
 
 		}
 
-		// Unions taken two at a time widen up the tree: a root 1.2–1.6× the normals' spread at 200 triangles.
-		it( 'bounds the directions every triangle below a node faces, within twice their spread', () => {
+		// Unions taken two at a time widen up the tree; a cone about a node's own mean normal does not (it has no exact
+		// bound against the spread: 1.15× holds for this seed).
+		it( 'bounds the directions every triangle below a node faces, about as tightly as they spread', () => {
 
 			for ( const cap of [ 0.05, 0.35, 1.2 ] ) {
 
 				const tris = scene( 200, { cap } );
 				const tree = builder.build( tris );
 				expectConesHold( tris, tree );
-				if ( cap < 1 ) expect( Math.acos( tree.nodeData[ 15 ] ) ).toBeLessThanOrEqual( 2 * cap );
+				expect( Math.acos( tree.nodeData[ 15 ] ) ).toBeLessThanOrEqual( 1.15 * cap );
 
 			}
 
@@ -540,9 +604,34 @@ describe( 'LightBVHBuilder', () => {
 			[ Math.sin( Math.PI / 6 ), 0, Math.cos( Math.PI / 6 ) ].forEach( ( v, k ) => expect( nodeData[ 12 + k ] ).toBeCloseTo( v, 6 ) );
 
 			const anywhere = scene( 200 );
-			const tree = builder.build( anywhere );
-			expectConesHold( anywhere, tree );
-			expect( tree.nodeData[ 15 ] ).toBe( - 1 );
+			expectConesHold( anywhere, builder.build( anywhere ) );
+
+		} );
+
+		// Cones a hair apart read as parallel to rounding, and their union was the whole sphere.
+		it( 'keeps a gently curved panel\'s cones as narrow as its bend', () => {
+
+			const tris = [];
+			for ( let i = 0; i < 64; i ++ ) for ( let j = 0; j < 16; j ++ ) {
+
+				const a = 0.5 * ( ( i + 0.5 ) / 64 - 0.5 );
+				tris.push( { ...makeEmissiveTri( tris.length, 10 * Math.sin( a ), j * 0.1, 10 * Math.cos( a ) ), nx: Math.sin( a ), ny: 0, nz: Math.cos( a ), twoSided: false } );
+
+			}
+
+			const tree = builder.build( tris );
+			expectConesHold( tris, tree );
+			for ( let node = 0; node < tree.nodeCount; node ++ ) expect( Math.acos( tree.nodeData[ node * 16 + 15 ] ) ).toBeLessThan( 0.26 );
+
+		} );
+
+		// Seven faces up and one 0.6 rad off: the mean leans to the seven (a 0.53 rad cone), the union splits the gap.
+		it( 'keeps the union where it is the tighter cone', () => {
+
+			const tris = Array.from( { length: 8 }, ( _, i ) => ( { ...makeEmissiveTri( i, i, 0, 0 ), nx: i ? 0 : Math.sin( 0.6 ), ny: 0, nz: i ? 1 : Math.cos( 0.6 ), twoSided: false } ) );
+			const tree = builder.build( tris );
+			expectConesHold( tris, tree );
+			expect( tree.nodeData[ 15 ] ).toBeCloseTo( Math.cos( 0.3 ), 6 );
 
 		} );
 

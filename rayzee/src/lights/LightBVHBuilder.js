@@ -12,7 +12,7 @@
  *
  * The orientation cone bounds the emission directions of the cluster (θ_o = spread of emitter
  * normals; θ_e = π/2 assumed for diffuse emitters, applied at sample time). cosThetaO = -1 means
- * "whole sphere" (mixed/two-sided cluster → never culled by orientation).
+ * "whole sphere" (a two-sided cluster → never culled by orientation); a mixed one stores about that.
  *
  * Build algorithm: median split on longest centroid AABB axis, maxLeafSize=8.
  * Output: pre-order flattened array with left child immediately after parent.
@@ -77,6 +77,8 @@ export class LightBVHBuilder {
 			// Also track centroid AABB for split axis
 			let cMinX = Infinity, cMinY = Infinity, cMinZ = Infinity;
 			let cMaxX = - Infinity, cMaxY = - Infinity, cMaxZ = - Infinity;
+			// Sum of normals, for the node's own cone; NaN once a two-sided triangle is in.
+			let sx = 0, sy = 0, sz = 0;
 
 			for ( let i = start; i < end; i ++ ) {
 
@@ -94,6 +96,10 @@ export class LightBVHBuilder {
 				cMaxX = Math.max( cMaxX, tri.cx );
 				cMaxY = Math.max( cMaxY, tri.cy );
 				cMaxZ = Math.max( cMaxZ, tri.cz );
+				if ( tri.twoSided ) sx = NaN;
+				sx += tri.nx;
+				sy += tri.ny;
+				sz += tri.nz;
 
 			}
 
@@ -168,6 +174,8 @@ export class LightBVHBuilder {
 
 			}
 
+			cone = tighterCone( cone, sx, sy, sz, emissiveTriangles, indices, start, end );
+
 			// vec4[3]: [coneAxisX, coneAxisY, coneAxisZ, cosThetaO]
 			nodeData[ nodeOffset + 12 ] = cone.ax;
 			nodeData[ nodeOffset + 13 ] = cone.ay;
@@ -197,46 +205,52 @@ export class LightBVHBuilder {
 	/**
 	 * Partial selection: rearranges indices[start..end) so that indices[k] is
 	 * the element that would be at position k in a sorted array, with elements
-	 * < median to the left and >= median to the right.
-	 * Uses introselect (simple quickselect here).
+	 * <= it to the left and >= it to the right.
+	 * Three-way quickselect around the median of three keys: a two-way one goes quadratic on equal keys and scattered
+	 * emitters, a middle pivot alone on a ring of emitters.
 	 * @private
 	 */
 	_nthElement( indices, tris, start, end, k, axisKey ) {
 
-		while ( start < end - 1 ) {
+		while ( end - start > 1 ) {
 
-			// Pick pivot as median of first/middle/last
-			const mid = ( start + end ) >> 1;
-			const pivotVal = tris[ indices[ mid ] ][ axisKey ];
+			const quarter = ( end - start ) >> 2;
+			const a = tris[ indices[ start + quarter ] ][ axisKey ];
+			const b = tris[ indices[ ( start + end ) >> 1 ] ][ axisKey ];
+			const c = tris[ indices[ end - 1 - quarter ] ][ axisKey ];
+			const pivotVal = Math.max( Math.min( a, b ), Math.min( Math.max( a, b ), c ) );
 
-			// Move pivot to end
-			let tmp = indices[ mid ];
-			indices[ mid ] = indices[ end - 1 ];
-			indices[ end - 1 ] = tmp;
+			// [start, lt) < pivot, [lt, gt) == pivot, [gt, end) > pivot
+			let lt = start, gt = end, i = start;
+			while ( i < gt ) {
 
-			// Partition
-			let store = start;
-			for ( let i = start; i < end - 1; i ++ ) {
+				const v = tris[ indices[ i ] ][ axisKey ];
+				if ( v < pivotVal ) {
 
-				if ( tris[ indices[ i ] ][ axisKey ] < pivotVal ) {
+					const tmp = indices[ i ];
+					indices[ i ] = indices[ lt ];
+					indices[ lt ] = tmp;
+					lt ++;
+					i ++;
 
-					tmp = indices[ i ];
-					indices[ i ] = indices[ store ];
-					indices[ store ] = tmp;
-					store ++;
+				} else if ( v > pivotVal ) {
+
+					gt --;
+					const tmp = indices[ i ];
+					indices[ i ] = indices[ gt ];
+					indices[ gt ] = tmp;
+
+				} else {
+
+					i ++;
 
 				}
 
 			}
 
-			// Restore pivot
-			tmp = indices[ store ];
-			indices[ store ] = indices[ end - 1 ];
-			indices[ end - 1 ] = tmp;
-
-			if ( store === k ) return;
-			else if ( store < k ) start = store + 1;
-			else end = store;
+			if ( k < lt ) end = lt;
+			else if ( k >= gt ) start = gt;
+			else return;
 
 		}
 
@@ -254,6 +268,25 @@ function triangleCone( tri ) {
 
 	if ( tri.twoSided ) return { ax: tri.nx, ay: tri.ny, az: tri.nz, cosO: - 1 };
 	return { ax: tri.nx, ay: tri.ny, az: tri.nz, cosO: 1 };
+
+}
+
+// Unions taken two at a time widen up the tree, and two cones a hair apart read as parallel and give the whole sphere; a
+// cone about the node's own mean normal (s, NaN with a two-sided triangle) does neither. The tighter of the two.
+function tighterCone( cone, sx, sy, sz, tris, indices, start, end ) {
+
+	const len = Math.sqrt( sx * sx + sy * sy + sz * sz );
+	if ( cone.cosO >= 1 || ! ( len > 1e-6 ) ) return cone;
+	sx /= len; sy /= len; sz /= len;
+	let cosO = 1;
+	for ( let i = start; i < end; i ++ ) {
+
+		const tri = tris[ indices[ i ] ];
+		cosO = Math.min( cosO, sx * tri.nx + sy * tri.ny + sz * tri.nz );
+
+	}
+
+	return cosO > cone.cosO ? { ax: sx, ay: sy, az: sz, cosO } : cone;
 
 }
 

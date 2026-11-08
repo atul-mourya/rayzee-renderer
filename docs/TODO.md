@@ -111,13 +111,10 @@
 
 ### Rendering
 
-- [ ] Light tree cones widen up the tree (`LightBVHBuilder`, measured 2026-11-07): children's cones are joined two at a
-  time, as pbrt does, but the split is by position only, so the error compounds. Normals within 0.05–1.2 rad of one
-  direction: root cone 1.2–1.6× that at 200 emitters; at 2,000, past 0.7 rad, the whole sphere — the top of the tree
-  then never skips emitters facing away. pbrt-v4 adds an orientation term to its split (SAOH); a cone from each node's
-  own normals would not compound: at 0.7–1.2 rad and 2k–20k emitters, 38–926 inner nodes are whole spheres pairwise
-  against 0 that way, mean half-angle 35–60 % smaller (but at 0.2 rad / 20k pairwise is tighter, 0.046 vs 0.058: take
-  the tighter of the two). Costs noise, not bias; measure on a curved emitter scene before building.
+- [ ] The light tree splits by position only; pbrt-v4's SAOH adds an orientation term to the split. Cones are the
+  tighter of the children's union and the node's own since 2026-11-08 (unions had made a gently curved panel's nodes
+  whole spheres): in a room of curved LED strips, downlights and a sphere lamp (2,240 emitters), selections landing on
+  an emitter facing away 8.1 → 6.6 % (`~/RayzeeScratch/night/2026-11-08/light-tree-cones/scripts/wasted.mjs`).
 - [ ] Introduce Sequenced HRDIs - https://mattepaint.com/gallery/hdri/skies/
 - [ ] **Fog and light shafts** ROADMAP: "Fog and homogeneous participating media", "Volumetric lighting and shadows";
   - [ ] Follow-ups: fog inside glass; density varying other than with height (noise, VDB); the shadow catcher ignores

@@ -434,7 +434,7 @@ The light BVH organizes emissive triangles into a power-weighted tree so NEE pic
 Shade uses it while `lightBVHNodeCount > 0` and falls back to the uniform-CDF path otherwise. When a BSDF ray hits an emitter, `calculateLightBVHPdf()` re-walks the same descent along the triangle's stored bit trail, so the MIS weight uses the density NEE sampled with.
 
 ### Builder
-`LightBVHBuilder.js` (in `rayzee/src/lights/`, run by `EmissiveTriangleBuilder`): median split on the longest centroid axis, at most 8 triangles a leaf, an orientation cone per node, and a root-to-leaf bit trail per triangle. A scene with no emitters gets one dummy leaf.
+`LightBVHBuilder.js` (in `rayzee/src/lights/`, run by `EmissiveTriangleBuilder`): median split on the longest centroid axis (a three-way quickselect around a median of three keys: the two-way one went quadratic on scattered emitters, 1M in 18.8 s, now 1.5 s, and a middle pivot alone on a ring of emitters), at most 8 triangles a leaf, an orientation cone per node, and a root-to-leaf bit trail per triangle. A node's cone is the tighter of its children's union (pbrt's) and a cone about its own mean normal: unions taken two at a time widen up the tree, and cones a hair apart read as parallel (acos of a dot 1 ulp below 1 is 1.5e-8 rad, their cross product 0) and joined into the whole sphere — on a gently curved panel, a fifth to a half of the inner nodes. A scene with no emitters gets one dummy leaf.
 
 ---
 
