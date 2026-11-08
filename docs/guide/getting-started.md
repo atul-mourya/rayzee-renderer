@@ -348,6 +348,7 @@ Its controls are on the active integrator (the same on `PathTracerApp`):
 ```js
 const integrator = renderer.stages.pathTracer.activeIntegrator;
 integrator.setMergeRadius(1);                        // 'vcm': gather radius in pixels
+integrator.setMergeRadius(0.01, { units: 'scene' }); // or in scene units, as pbrt's sppm `radius`
 integrator.setMergeTrust(0.25);                      // 'vcm': how far merging is trusted against the other strategies
 integrator.setLightGuiding(true);                    // learn where light paths from the sky and sun start
 integrator.setBidirectionalStrategy('connect', { alone: true });  // keep one strategy, for verification

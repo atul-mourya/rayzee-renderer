@@ -703,9 +703,10 @@ describe( 'controls', () => {
 
 		const bd = integrator();
 		bd.setMergeRadius( 0 );
-		expect( bd._mergeRadiusPixels ).toBe( 1e-3 );
+		expect( bd._mergeRadius ).toBe( 1e-3 );
 		bd.setMergeRadius();
-		expect( bd._mergeRadiusPixels ).toBe( 1 );
+		expect( bd._mergeRadius ).toBe( 1 );
+		expect( () => bd.setMergeRadius( 1, { units: 'metres' } ) ).toThrow( /units must be/ );
 		bd.setMergeTrust( - 1 );
 		expect( bd.uniforms.mergeTrust.value ).toBeCloseTo( 1e-4, 8 );
 		bd.setMergeTrust();
@@ -768,6 +769,29 @@ describe( 'the merge radius', () => {
 		bd.setMergeRadius( 1e6 );
 		bd.beginFrame( 3 );
 		expect( bd.uniforms.mergeSlope.value ).toBe( 0.1 );
+
+	} );
+
+	it( 'in scene units, is the same everywhere, shrinks alike, and never passes a tenth of the scene\'s radius', () => {
+
+		const bd = merging();
+		bd.setMergeRadius( 0.01, { units: 'scene' } );
+		bd.beginFrame( 3 );
+		expect( [ bd.uniforms.mergeConst.value, bd.uniforms.mergeSlope.value, bd.uniforms.mergeMin.value ] ).toEqual( [ 0.01, 0, 0.01 ] );
+		pt.frameCount = 15;
+		bd.beginFrame( 3 );
+		expect( bd.uniforms.mergeConst.value ).toBeCloseTo( 0.01 * 16 ** ( - 0.125 ), 9 );
+
+		pt.frameCount = 0;
+		bd.setMergeRadius( 5, { units: 'scene' } );
+		bd.beginFrame( 3 );
+		expect( bd.uniforms.mergeConst.value ).toBeCloseTo( 0.1 * Math.sqrt( 3 ), 9 );
+
+		// Back to pixels.
+		bd.setMergeRadius();
+		bd.beginFrame( 3 );
+		expect( bd.uniforms.mergeConst.value ).toBe( 0 );
+		expect( bd.uniforms.mergeSlope.value ).toBeCloseTo( Math.sqrt( bd.uniforms.pixelArea.value ), 6 );
 
 	} );
 

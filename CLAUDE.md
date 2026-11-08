@@ -551,6 +551,9 @@ bench gates and measurements.
 - **Fewer shadow rays** (`shadowRays`: `'two'` default, `'all'`, `'one'`; path integrator only): each kind of light
   offers its sample to `lightPick`, which stays unbiased; learned visibility in `shaders/LightVisibility.js`. ⚠️ `'one'`
   loses where a white sun and a blue sky are both in view — a sample carries one light's colour, not their mix.
+- **Path regularization** (`pathRegularization`, pbrt's `regularize`; path integrator only): past a rough bounce
+  (`RAY_FLAG.ROUGH_PATH`) smooth lobes are drawn at GGX α ≥ 0.1 (`regularizeRoughness`), so light reached only through
+  mirrors and glass converges. Compiled in only while on; off, renders are byte-identical. The app applies a pbrt file's.
 - **Light radius**: a point or spot light with `userData.radius` is lit as Cycles' Soft Falloff (NEE only), compiled in
   only while some light has one.
 - **Fog** (`shaders/Fog.js`; settings `fogDensity`, `fogColor`, `fogAnisotropy`, `fogBounds`, `fogHeightFalloff`,

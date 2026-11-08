@@ -96,9 +96,11 @@ subtree per element, and the whole thing rarely fits: Moana is 29 GB unpacked.
   one patch of four points needs no indices, and without uvs a patch takes its own — watercolor's floor spots had been
   dropped. A camera's `lensradius`/`focaldistance` become its own effects (`userData.__rayzeeEffects`, applied when it is
   chosen): the same aperture radius in both DOF modes, focused by hand. The `Integrator` (as the engine's `integrator`:
-  bdpt → bidirectional, sppm → vcm) and its maxdepth, `Sampler` pixelsamples and the Film's resolution are
+  bdpt → bidirectional, sppm → vcm), its maxdepth and `regularize` (`pathRegularization`; path, volpath, bdpt and mlt
+  take it), sppm's `radius` (`mergeRadius`, scene units), `Sampler` pixelsamples and the Film's resolution are
   `sceneMetadata.render` (glTF extras may carry it too), with `aspect` the picture's shape (`withSceneAspect`). The engine
-  applies none of it; the app opens the scene at that shape with that integrator and shows the rest in Final Render.
+  applies none of it; the app opens the scene at that shape with that integrator and path regularization, and shows the
+  bounces and samples in Final Render. It leaves sppm's radius: see BIDIRECTIONAL.md, vertex merging's radius.
 - **Templates.** A shape inside `ObjectBegin` keeps its whole transform and a placement's goes on top, as pbrt does —
   never relative to the transform at ObjectBegin. kroken defines its cushions, blanket and rug under a `Transform` and
   places them at `Identity`; the relative reading put all of them at the world origin.

@@ -122,7 +122,7 @@ const DEFAULT_CURVE_SIDES = { flat: 1, ribbon: 1, cylinder: 2 };
 const DEFAULT_CURVE_TOLERANCE = 0.05;
 
 /** Bumped whenever the same scene files build a different graph, so a stored graph is not reused. */
-export const PBRT_BUILD_REVISION = 32;
+export const PBRT_BUILD_REVISION = 33;
 
 function samePlacements( a, b ) {
 
@@ -355,14 +355,17 @@ function lensEffects( camera, radius, focusDistance ) {
 // pbrt's integrators as the engine's `integrator` setting; sppm's photon gathering is closest to vertex merging.
 const PBRT_INTEGRATORS = new Map( [[ 'path', 'path' ], [ 'volpath', 'path' ], [ 'bdpt', 'bidirectional' ], [ 'sppm', 'vcm' ]] );
 
-// What the scene asks the renderer for, where it says: the Integrator and its maxdepth, the Sampler's pixelsamples, the
-// Film's resolution, and as `exposure` pbrt's imaging ratio, shutter time × ISO / 100 — scene metadata's `render`.
+// What the scene asks the renderer for, where it says: the Integrator, its maxdepth and `regularize`, sppm's `radius` as
+// vertex merging's (scene units), the Sampler's pixelsamples, the Film's resolution, and as `exposure` pbrt's imaging
+// ratio, shutter time × ISO / 100 — scene metadata's `render`.
 function renderRequest( ir ) {
 
 	const render = {};
 	const integrator = PBRT_INTEGRATORS.get( ir.integrator?.type );
 	if ( integrator ) render.integrator = integrator;
 	if ( ir.integrator?.maxdepth > 0 ) render.maxBounces = Math.round( ir.integrator.maxdepth );
+	if ( ir.integrator?.regularize ) render.pathRegularization = true;
+	if ( ir.integrator?.radius > 0 ) render.mergeRadius = ir.integrator.radius;
 	if ( ir.sampler?.pixelsamples > 0 ) render.samples = Math.round( ir.sampler.pixelsamples );
 	if ( ir.film?.resolutionGiven ) {
 

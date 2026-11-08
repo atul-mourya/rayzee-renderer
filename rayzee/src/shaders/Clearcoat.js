@@ -11,7 +11,8 @@ import {
 } from 'three/tsl';
 
 import { struct, AnisoFrame, DotProducts, BRDFWeights } from './Struct.js';
-import { MIN_CLEARCOAT_ROUGHNESS, computeDotProductsAniso, anisoTangentFrame, constructTBN, coatNormal } from './Common.js';
+import { MIN_ROUGHNESS, MIN_CLEARCOAT_ROUGHNESS, computeDotProductsAniso, anisoTangentFrame, constructTBN, coatNormal } from './Common.js';
+import { usesRegularization } from './SceneResources.js';
 import { computeAnisoAlphas, calculateBRDFWeightsFromMaterial, calculateBSDFSamplingPDF, diffuseTransmissionPdf } from './MaterialProperties.js';
 import { ImportanceSampleCosine, sampleGGXVNDF, sampleGGXVNDFAniso } from './MaterialSampling.js';
 import { evaluateMaterialResponseFromDots, evaluateDiffuseTransmission } from './MaterialEvaluation.js';
@@ -22,6 +23,8 @@ export const ClearcoatResult = struct( {
 	L: 'vec3',
 	pdf: 'float',
 	isDiffuseTransmission: 'bool',
+	// Drawn from a lobe at most MIN_ROUGHNESS rough; reported only while path regularization is compiled in, else false.
+	isSmooth: 'bool',
 } );
 
 // Improved clearcoat sampling function
@@ -54,6 +57,7 @@ export const sampleClearcoat = Fn( ( [
 	const L = vec3( 0.0 ).toVar();
 	const H = vec3( 0.0 ).toVar();
 	const transmitted = tslBool( false ).toVar();
+	const smoothLobe = usesRegularization( builder ) ? tslBool( false ).toVar() : null;
 
 	If( rand.lessThan( clearcoatWeight ), () => {
 
@@ -61,6 +65,7 @@ export const sampleClearcoat = Fn( ( [
 		const ccTBN = constructTBN( { N: coatNormal( N, material, builder ) } );
 		H.assign( ccTBN.mul( sampleGGXVNDF( { V: ccTBN.transpose().mul( V ), roughness: clearcoatRoughness, Xi: randomSample } ) ) );
 		L.assign( reflect( V.negate(), H ) );
+		smoothLobe?.assign( material.clearcoatRoughness.lessThanEqual( MIN_ROUGHNESS ) );
 
 	} ).ElseIf( rand.lessThan( clearcoatWeight.add( specularWeight ) ), () => {
 
@@ -72,12 +77,14 @@ export const sampleClearcoat = Fn( ( [
 			const a = computeAnisoAlphas( material.roughness, material.anisotropy );
 			const localH = sampleGGXVNDFAniso( { V: localV, alphaX: a.x, alphaY: a.y, Xi: randomSample } );
 			H.assign( f.Ta.mul( localH.x ).add( f.Ba.mul( localH.y ) ).add( N.mul( localH.z ) ) );
+			smoothLobe?.assign( a.x.lessThanEqual( MIN_ROUGHNESS * MIN_ROUGHNESS ) ); // α along the stretch
 
 		} ).Else( () => {
 
 			// VNDF to match the density the MIS sites evaluate for this lobe.
 			const tbn = constructTBN( { N } );
 			H.assign( tbn.mul( sampleGGXVNDF( { V: tbn.transpose().mul( V ), roughness: baseRoughness, Xi: randomSample } ) ) );
+			smoothLobe?.assign( material.roughness.lessThanEqual( MIN_ROUGHNESS ) );
 
 		} );
 		L.assign( reflect( V.negate(), H ) );
@@ -109,6 +116,6 @@ export const sampleClearcoat = Fn( ( [
 	// Return brdf, L direction, and pdf packed together
 	// Caller needs L and pdf - return as struct-like output
 	// We pack: result.xyz = brdf, result.w = pdf, L stored in separate output
-	return ClearcoatResult( { brdf, L, pdf, isDiffuseTransmission: transmitted } );
+	return ClearcoatResult( { brdf, L, pdf, isDiffuseTransmission: transmitted, isSmooth: smoothLobe ?? tslBool( false ) } );
 
 } );

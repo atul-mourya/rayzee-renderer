@@ -37,6 +37,8 @@ const LIGHT_TAG_MAX = ( 1 << 24 ) - 1;
 // Vertex merging: the radius at the first sample, in pixels' footprint where it gathers, shrinking as
 // n^((α − 1) / 2) so the estimate converges (Knaus & Zwicker 2011).
 const MERGE_RADIUS_PIXELS = 1;
+// A radius in scene units is held to this share of the scene's radius: past it every merge gathers half the scene.
+const MERGE_RADIUS_SCENE_MAX = 0.1;
 const MERGE_ALPHA = 0.75;
 const MERGE_TRUST = 0.25;
 
@@ -49,7 +51,8 @@ export class BidirectionalIntegrator {
 		// Sized per bounce with the camera loop's (`PathTracer.bounceKernels`).
 		this.bounceKernels = [ 'connect', 'merge', 'lightCopyback' ];
 		this.merging = false;
-		this._mergeRadiusPixels = MERGE_RADIUS_PIXELS;
+		this._mergeRadius = MERGE_RADIUS_PIXELS;
+		this._mergeRadiusUnits = 'pixels';
 		this._mergeHeadAttr = null;
 		this._lightCacheSlots = 0;
 		this._splatAttr = null;
@@ -439,13 +442,18 @@ export class BidirectionalIntegrator {
 	}
 
 	/**
-	 * Vertex merging's radius at the first sample, in pixels: the footprint where it gathers, so the blur is the same
-	 * on screen at any scene scale. It shrinks with every sample after. Larger gathers more light vertices — less
-	 * noise in caustics, more blur — at more cost.
+	 * Vertex merging's radius at the first sample. In pixels (the default), the footprint where it gathers, so the blur
+	 * is the same on screen at any scene scale; in scene units, the same everywhere, as pbrt's SPPM `radius` (at most a
+	 * tenth of the scene's radius). It shrinks with every sample after. Larger gathers more light vertices — less noise
+	 * in caustics, more blur — at more cost.
+	 * @param {number} [radius=1]
+	 * @param {{ units?: 'pixels'|'scene' }} [options]
 	 */
-	setMergeRadius( pixels = MERGE_RADIUS_PIXELS ) {
+	setMergeRadius( radius = MERGE_RADIUS_PIXELS, { units = 'pixels' } = {} ) {
 
-		this._mergeRadiusPixels = Math.max( pixels, 1e-3 );
+		if ( units !== 'pixels' && units !== 'scene' ) throw new TypeError( `setMergeRadius: units must be 'pixels' or 'scene', got "${units}"` );
+		this._mergeRadius = Math.max( radius, units === 'pixels' ? 1e-3 : 1e-9 );
+		this._mergeRadiusUnits = units;
 
 	}
 
@@ -498,10 +506,22 @@ export class BidirectionalIntegrator {
 	}
 
 	// A pixel's footprint: grows with the distance from a perspective or panoramic camera, constant for an orthographic one.
+	// In scene units, constant.
 	_updateMergeRadius( w, h ) {
 
 		const bd = this.uniforms;
-		const pixels = this._mergeRadiusPixels * Math.pow( this.pt.frameCount + 1, ( MERGE_ALPHA - 1 ) / 2 );
+		const shrink = Math.pow( this.pt.frameCount + 1, ( MERGE_ALPHA - 1 ) / 2 );
+		if ( this._mergeRadiusUnits === 'scene' ) {
+
+			const radius = Math.min( this._mergeRadius, MERGE_RADIUS_SCENE_MAX * bd.sceneRadius.value ) * shrink;
+			bd.mergeSlope.value = 0;
+			bd.mergeConst.value = radius;
+			bd.mergeMin.value = Math.max( radius, 1e-9 );
+			return;
+
+		}
+
+		const pixels = this._mergeRadius * shrink;
 		const projection = this.pt.cameraProjection.value;
 		const p = this.pt.cameraProjectionMatrix.value.elements;
 		let slope = 0, constant = 0;

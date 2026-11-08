@@ -24,7 +24,6 @@
 
 ### pbrt: read but not used (audit of the 26 catalog scenes, 2026-11-01)
 - [ ] PixelFilter (triangle, radius 1; 25 scenes) — engine uses its own pixel reconstruction
-- [ ] volpath `regularize` (BMW), sppm `radius` (Cornell Caustic)
 - [ ] Not read, not in the catalog: spherical / realistic cameras (spherical becomes perspective), perspective `screenwindow`, `frameaspectratio`, shutter (motion blur), Film white balance / sensor / `cropwindow` / `maxcomponentvalue`, CameraMedium and space-filling media, non-homogeneous media, scattering inside media (σs folds into absorption)
 
 ### UX issue

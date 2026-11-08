@@ -18,6 +18,8 @@
  * @property {boolean} [clearcoatNormals] - some coated material has a normal or bump map; false = every coat follows N
  * @property {boolean} [bumpMaps] - some material has a bump map; false = no shading reads one
  * @property {boolean} [relativeIOR] - some transmissive or subsurface material has a relative IOR; false = every IOR is absolute
+ * @property {boolean} [regularize] - path regularization (path tracing only): past a rough bounce, smooth lobes are drawn
+ *   rougher; false = every lobe as authored
  * @property {?Object} [fog] - the fog's uniforms ( density, color, anisotropy, boxMin, boxMax, falloff, floor ) while it has a density
  *   (path tracing only); every shadow ray takes its transmittance. null = no fog
  */
@@ -96,6 +98,16 @@ export function usesClearcoatNormals( builder ) {
 export function usesBumpMaps( builder ) {
 
 	return builder.context[ KEY ]?.bumpMaps ?? true;
+
+}
+
+/**
+ * Whether the kernel being built regularizes paths (`pathRegularization`), so its samplers report whether the lobe they
+ * drew is smooth. A choice of look, not of what the scene holds: outside a scene kernel (a test) it is off.
+ */
+export function usesRegularization( builder ) {
+
+	return builder.context[ KEY ]?.regularize ?? false;
 
 }
 

@@ -85,6 +85,7 @@ const SETTING_ROUTES = {
 	renderMode: { handler: 'handleRenderMode' },
 	integrator: { handler: 'handleIntegrator', reset: true },
 	shadowRays: { handler: 'handleShadowRays', reset: true },
+	pathRegularization: { handler: 'handlePathRegularization', reset: true },
 	environmentRotation: { handler: 'handleEnvironmentRotation' },
 	// Read when the kernels next build.
 	wavefrontSortMaterials: { handler: 'handleWavefrontSortMaterials', reset: false },
@@ -330,6 +331,12 @@ export class RenderSettings extends EventDispatcher {
 			handleShadowRays: ( value ) => {
 
 				stages.pathTracer?.setShadowRays?.( value );
+
+			},
+
+			handlePathRegularization: ( value ) => {
+
+				stages.pathTracer?.setPathRegularization?.( value );
 
 			},
 

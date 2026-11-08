@@ -255,6 +255,17 @@ the shadow terminator, shadow-ray picking, sized lights and fog. CLAUDE.md keeps
   drifts ±7 % between rounds. Rejected: a control variate (add
   every light × its learned visibility, trace one to correct it) — no better than `'one'`, and 7.7 % of a single sample's
   channels negative on the interior, which the denoisers are fed.
+- **Path regularization** (`pathRegularization`, pbrt-v4's `regularize`; path integrator only, else `setting.ignored`) —
+  once a path has scattered off a rough lobe or in a medium (`RAY_FLAG.ROUGH_PATH`, pbrt's `anyNonSpecularBounces`), each
+  later surface's roughness, coat roughness and the raw roughness the delta-lobe test reads go through
+  `regularizeRoughness` (`shaders/Common.js`): GGX α under 0.3 doubles, within [0.1, 0.3], as
+  `TrowbridgeReitzDistribution::Regularize`. Sheen and diffuse roughness keep theirs (pbrt has neither). A drawn lobe is
+  smooth at most `MIN_ROUGHNESS` rough (`isSmooth` from both samplers, a mirror's delta lobe included); a glass or
+  subsurface boundary is rough above it; fog and subsurface scatters are rough. Compiled in only while on
+  (`usesRegularization`); off, BMW M6 renders byte for byte as before. BMW M6 (pbrt asks for it), 700×500, 64 spp against
+  2048 spp with it: relMSE 0.0120 → 0.0072, pixels over 4× the reference 0.015 → 0.001 %; against 2048 spp without it
+  0.0115 → 0.0082; the two references 0.0012 apart; +1 % a sample. `tests/gpu/pathRegularization.test.js` holds the formula
+  to pbrt's and the samplers' word.
 - **Light radius** — a point or spot light with `userData.radius` (USD `SphereLight` radius unless `treatAsPoint`) is lit
   as Cycles' Soft Falloff: NEE samples a disc of that radius facing the shaded point and scales the emission by the disc's
   cosine, so on its axis it gives I / (d² + r²); a spot's cone, gobo and IES are read from the centre. Packed as the

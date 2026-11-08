@@ -785,6 +785,19 @@ describe( 'what a scene\'s file asks for', () => {
 
 	} );
 
+	it( 'regularizes paths while the file asks for it, and leaves sppm\'s merge radius', async () => {
+
+		const app = await withApp();
+		const calls = () => app.settings.set.mock.calls.filter( ( [ key ] ) => key === 'pathRegularization' ).map( ( [ , on, { source } ] ) => [ on, source ] );
+		pt().applySceneRequest( { integrator: 'path', pathRegularization: true } );
+		pt().applySceneRequest( { pathRegularization: true } );
+		pt().applySceneRequest( { integrator: 'vcm', mergeRadius: 0.01 } );
+		pt().applySceneRequest( null );
+		expect( calls() ).toEqual( [[ true, 'scene-metadata' ], [ false, 'scene-metadata' ]] );
+		expect( app.settings.set.mock.calls.flat() ).not.toContain( 'mergeRadius' );
+
+	} );
+
 	it( 'keeps the bounces and samples it asks for to show, applying neither', async () => {
 
 		await withApp();

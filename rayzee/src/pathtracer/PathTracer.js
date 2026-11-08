@@ -180,6 +180,7 @@ export class PathTracer extends PathTracerStage {
 		// The setting's default: starting elsewhere made every first load build the kernels twice.
 		this._shadowRays = ENGINE_DEFAULTS.shadowRays;
 		this._compiledPick = null;
+		this._pathRegularization = ENGINE_DEFAULTS.pathRegularization;
 		this._learnsVisibility = false;
 
 		// Integrators other than the path tracer's own, by name (registerIntegrator); the chosen one's instance, or
@@ -389,6 +390,37 @@ export class PathTracer extends PathTracerStage {
 		if ( this._shadowRays === mode ) return;
 		this._shadowRays = mode;
 		this._outputsChanged = true;
+
+	}
+
+	/**
+	 * pbrt-v4's `regularize`: once a path has scattered off a rough lobe, smooth lobes are drawn rougher (GGX α under 0.3
+	 * doubles, within [0.1, 0.3]) — light reached only through mirrors and glass converges, a little blurred. Path
+	 * integrator only; rebuilds the kernels before the next frame.
+	 * @param {boolean} on
+	 */
+	setPathRegularization( on ) {
+
+		on = Boolean( on );
+		if ( this._pathRegularization === on ) return;
+		this._pathRegularization = on;
+		this._outputsChanged = true;
+
+	}
+
+	/** Whether path regularization is compiled in: it is on, under the path integrator. */
+	_regularizeNeeded() {
+
+		if ( ! this._pathRegularization ) return false;
+		if ( ! this._integrator ) return true;
+		if ( this._regularizeIgnoredBy !== this._integrator.name ) {
+
+			this._regularizeIgnoredBy = this._integrator.name;
+			this.issues?.warn( ISSUE_CODES.SETTING_IGNORED, `path regularization is the path integrator's only: "${this._integrator.name}" renders without it`, { setting: 'pathRegularization', integrator: this._integrator.name } );
+
+		}
+
+		return false;
 
 	}
 
@@ -1926,6 +1958,7 @@ export class PathTracer extends PathTracerStage {
 			bumpMaps: this._compiledBumpMaps = this.materialData.hasBumpMaps(),
 			relativeIOR: this._compiledRelativeIOR = this.materialData.hasRelativeIOR(),
 			clearcoatNormals: this._compiledClearcoatNormals = this._clearcoatNormalsNeeded(),
+			regularize: this._regularizeNeeded(),
 			fog: this._fogNeeded() ? {
 				density: this.fogDensity, color: this.fogColor, anisotropy: this.fogAnisotropy, boxMin: this.fogBoxMin, boxMax: this.fogBoxMax,
 				falloff: this.fogHeightFalloff, floor: this.fogFloor,

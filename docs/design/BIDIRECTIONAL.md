@@ -175,6 +175,12 @@ exactly the unidirectional kernels: everything bidirectional is JS-gated on `par
     shrinking as n^−⅛ (α = 0.75). A function of position alone, so both subpaths agree on η anywhere. ⚠️ A fraction
     of the scene's radius (SmallVCM's choice) made the classroom's 30 cm (its bounds include the outdoors): 5× the
     frame time and 92 % of the image merged. And `sceneRadius` was only measured with a light at infinity.
+  - **Or in scene units** (`setMergeRadius( r, { units: 'scene' } )`: `mergeConst` = r · n^−⅛, no slope, held to a tenth
+    of the scene's radius), pbrt's sppm `radius`, reported as `sceneMetadata.render.mergeRadius`. The app does not apply
+    it. 64 spp: Cornell Caustic (0.01, ~2 px at 512²) relMSE 0.0154 → 0.0078 against 2048 spp, +6–12 % a sample; the
+    Bathroom (0.02, ~3.7 px at 640×480) 0.068 → 0.107 against path tracing at 4096 spp, pixels over 4× the reference
+    0.07 → 0.30 %, +19 % a sample. 2 and 4 px read 0.080 and 0.185 there: the size, not the units. SPPM gathers all the
+    light it finds; merging here is one strategy weighed against the others.
   - **Trust** (`pt.activeIntegrator.setMergeTrust( t )`, default 0.25): the weights take η × t. Any density the strategies agree on
     still sums to one; light only merging reaches keeps weight 1 (the mirror caustic is identical at 1 and 0.25),
     and light other strategies reach goes back to them unblurred. Merging's bias is boundary bias (a sphere past a

@@ -16,7 +16,7 @@ import {
 } from 'three/tsl';
 
 import { sampleEnvironment, groundProjectedEnvDir, sampleEnvironmentExact, environmentPdfExact } from '../Environment.js';
-import { getMaterial, powerHeuristic, balanceHeuristic, classifyMaterial, REC709_LUMINANCE_COEFFICIENTS, PI_INV, EPSILON, diffuseGroundMaterial, offsetRayOrigin, SHADOW_END, triangleRow, MIN_ROUGHNESS, MIN_PDF, passesLight, transmissionTint } from '../Common.js';
+import { getMaterial, powerHeuristic, balanceHeuristic, classifyMaterial, REC709_LUMINANCE_COEFFICIENTS, PI_INV, EPSILON, diffuseGroundMaterial, offsetRayOrigin, SHADOW_END, triangleRow, MIN_ROUGHNESS, MIN_PDF, passesLight, transmissionTint, regularizeRoughness } from '../Common.js';
 import { cosineWeightedSample } from '../MaterialSampling.js';
 import { sampleAllMaterialTextures, processAnisotropyMap, applyExtensionMaps, getTransformedUV, triangleUVTangent, triangleUVAxes, NO_UV_AXES, perturbNormal } from '../TextureSampling.js';
 import { evaluateMaterialResponse } from '../MaterialEvaluation.js';
@@ -33,7 +33,7 @@ import { traverseBVHShadow, triangleSide, emitterSide, sideAccepts } from '../BV
 import { visibilityCell } from '../LightVisibility.js';
 import { handleMaterialTransparency, MaterialInteractionResult } from '../MaterialTransmission.js';
 import { sampleChromaticCollision, sampleHenyeyGreenstein, subsurfaceCoefficients, CollisionSample, MediumCoeffs } from '../Subsurface.js';
-import { ALL_MATERIAL_LAYERS, usesClearcoatNormals, usesBumpMaps, usesRelativeIOR } from '../SceneResources.js';
+import { ALL_MATERIAL_LAYERS, usesClearcoatNormals, usesBumpMaps, usesRelativeIOR, usesRegularization } from '../SceneResources.js';
 import { calculateIndirectLighting } from '../LightsIndirect.js';
 import {
 	IndirectLightingResult, sampleCone, LightSample, DirectionalLight, AreaLight, PointLight, SpotLight,
@@ -224,6 +224,10 @@ export function buildShadeKernel( params ) {
 
 		const threadIdx = instanceIndex;
 		const coatNormals = usesClearcoatNormals( builder );
+		// Path regularization (pbrt-v4's `regularize`): a path that has scattered off a rough lobe draws every smooth lobe
+		// after rougher, so a light it can only reach through them is found by NEE instead of by chance.
+		const regularize = usesRegularization( builder );
+		const roughPath = ( rough ) => select( rough, uint( RAY_FLAG.ROUGH_PATH ), uint( 0 ) );
 
 		// Folds the former resetActiveCounter 1-thread kernel: thread 0 zeroes the survivor counter
 		// before compact re-counts it. Kept ABOVE the ENTERING_COUNT guard so it fires even at bound 0.
@@ -529,7 +533,7 @@ export function buildShadeKernel( params ) {
 
 					// Like an opaque scatter: the sky past it is light, not the backdrop, and the sun's NEE here draws any direction.
 					flags.assign( flags.sub( flags.bitAnd( uint( RAY_FLAG.UNDER_SURFACE ) ) )
-						.bitOr( uint( RAY_FLAG.REDIRECTED | RAY_FLAG.HAS_HIT_OPAQUE | RAY_FLAG.SUN_NEE ) ) );
+						.bitOr( uint( RAY_FLAG.REDIRECTED | RAY_FLAG.HAS_HIT_OPAQUE | RAY_FLAG.SUN_NEE | ( regularize ? RAY_FLAG.ROUGH_PATH : 0 ) ) ) );
 					If( cameraDepth.greaterThanEqual( maxBounceCount ), () => {
 
 						flags.assign( flags.bitOr( uint( RAY_FLAG.EMISSION_ONLY | RAY_FLAG.AUX_LOCKED ) ) );
@@ -966,7 +970,7 @@ export function buildShadeKernel( params ) {
 
 					// free-bounce continuation: ray stays in the same medium, so medium stack + coeffs persist
 					// SSS scatter changes direction → no longer the direct backdrop view.
-					flags.assign( flags.sub( flags.bitAnd( uint( RAY_FLAG.UNDER_SURFACE ) ) ).bitOr( uint( RAY_FLAG.REDIRECTED ) ) );
+					flags.assign( flags.sub( flags.bitAnd( uint( RAY_FLAG.UNDER_SURFACE ) ) ).bitOr( uint( RAY_FLAG.REDIRECTED | ( regularize ? RAY_FLAG.ROUGH_PATH : 0 ) ) ) );
 					writeRayOriginMeta( rayBufferRW, rayID, scatterPoint, cameraDepth, sssSteps, transparentCount );
 					writeRayDirFlags( rayBufferRW, rayID, newDir, flags );
 					// Free bounce: preserve prevBouncePdf (megakernel leaves it untouched across SSS scatter,
@@ -1104,6 +1108,15 @@ export function buildShadeKernel( params ) {
 		material.diffuseTransmission.assign( extMaps.diffuseTransmission );
 		material.diffuseTransmissionColor.assign( extMaps.diffuseTransmissionColor );
 		if ( layers.diffuseRoughness ) material.diffuseRoughness.assign( extMaps.diffuseRoughness );
+
+		// The authored roughness too, so a mirror it roughens is no longer the delta lobe below.
+		if ( regularize ) If( flags.bitAnd( uint( RAY_FLAG.ROUGH_PATH ) ).notEqual( uint( 0 ) ), () => {
+
+			rawRough.assign( regularizeRoughness( rawRough ) );
+			material.roughness.assign( regularizeRoughness( material.roughness ) );
+			material.clearcoatRoughness.assign( regularizeRoughness( material.clearcoatRoughness ) );
+
+		} );
 
 		// Below the floor the GGX peak is past f32, so a plain reflector reflects exactly: roughness 0
 		// is the delta-lobe marker the sampler and evaluator read. The other lobes keep the floor.
@@ -1481,6 +1494,8 @@ export function buildShadeKernel( params ) {
 				const underSurface = interaction.didReflect.and( crossesFacet );
 				flags.assign( flags.sub( flags.bitAnd( uint( RAY_FLAG.UNDER_SURFACE ) ) ).bitOr( uint( RAY_FLAG.REDIRECTED ) )
 					.bitOr( select( underSurface, uint( RAY_FLAG.UNDER_SURFACE ), uint( 0 ) ) ) );
+				// Glass and subsurface boundaries draw both sides from one lobe of the material's roughness.
+				if ( regularize ) flags.assign( flags.bitOr( roughPath( material.roughness.greaterThan( MIN_ROUGHNESS ) ) ) );
 
 				// Not connectible; an alpha skip is no vertex at all.
 				if ( bdpt ) {
@@ -1823,6 +1838,7 @@ export function buildShadeKernel( params ) {
 		const brdfIsTransmission = tslBool( false ).toVar();
 		const brdfColorWeight = vec3( 1.0 ).toVar();
 		const brdfIsDiffuseTransmission = tslBool( false ).toVar();
+		const brdfSmooth = regularize ? tslBool( false ).toVar() : null;
 
 		const sampleLobes = () => {
 
@@ -1839,6 +1855,7 @@ export function buildShadeKernel( params ) {
 			brdfIsTransmission.assign( bs.isTransmission );
 			brdfColorWeight.assign( bs.colorWeight );
 			brdfIsDiffuseTransmission.assign( bs.isDiffuseTransmission );
+			brdfSmooth?.assign( bs.isSmooth );
 
 		};
 
@@ -1859,6 +1876,7 @@ export function buildShadeKernel( params ) {
 			brdfValue.assign( ccResult.brdf );
 			brdfPdf.assign( ccResult.pdf );
 			brdfIsDiffuseTransmission.assign( ccResult.isDiffuseTransmission );
+			brdfSmooth?.assign( ccResult.isSmooth );
 
 		} ).Else( sampleLobes );
 
@@ -2565,6 +2583,7 @@ export function buildShadeKernel( params ) {
 		flags.assign( flags.sub( flags.bitAnd( uint( RAY_FLAG.SUN_NEE | RAY_FLAG.UNDER_SURFACE ) ) )
 			.bitOr( select( sunNEE, uint( RAY_FLAG.SUN_NEE ), uint( 0 ) ) )
 			.bitOr( select( underSurface, uint( RAY_FLAG.UNDER_SURFACE ), uint( 0 ) ) ) );
+		if ( regularize ) flags.assign( flags.bitOr( roughPath( brdfSmooth.not() ) ) );
 
 		// Opaque scatter: the only bounce that advances camera depth.
 		writeRayOriginMeta( rayBufferRW, rayID, newOrigin, cameraDepth.add( 1 ), sssSteps, transparentCount );

@@ -37,6 +37,16 @@ export const MIN_ROUGHNESS = 0.05;
 export const MIN_CLEARCOAT_ROUGHNESS = 0.089;
 export const MAX_ROUGHNESS = 1.0;
 export const MIN_PDF = 0.001;
+
+// pbrt-v4's BSDF regularization (TrowbridgeReitzDistribution::Regularize) on the engine's roughness, GGX α = r²: an α
+// under 0.3 doubles, kept within [0.1, 0.3].
+export const regularizeRoughness = ( r ) => {
+
+	const alpha = r.mul( r );
+	return select( alpha.lessThan( 0.3 ), sqrt( clamp( alpha.mul( 2.0 ), 0.1, 0.3 ) ), r );
+
+};
+
 export const REC709_LUMINANCE_COEFFICIENTS = vec3( 0.2126, 0.7152, 0.0722 );
 
 export const FP16_MAX = 65504.0;

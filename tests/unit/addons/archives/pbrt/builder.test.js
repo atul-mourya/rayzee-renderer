@@ -139,6 +139,28 @@ describe( 'PBRT scene builder', () => {
 
 	} );
 
+	it( 'reports regularize as path regularization, and sppm\'s radius as the merge radius, in scene units', async () => {
+
+		const load = async ( integrator ) => loadPBRTScene( buildArgs( { vfs: { 'scene.pbrt': enc.encode( `Integrator ${integrator}\n` + SCENE ) } } ) );
+		const unused = ( { parameters } ) => Object.keys( parameters.unused ).filter( ( key ) => key.startsWith( 'Integrator' ) );
+
+		// The BMW M6's, written without brackets, and Cornell Caustic's.
+		const bmw = await load( '"volpath" "integer maxdepth" [ 8 ] "bool regularize" true' );
+		expect( bmw.render ).toMatchObject( { integrator: 'path', maxBounces: 8, pathRegularization: true } );
+		expect( unused( bmw ) ).toEqual( [] );
+		const caustic = await load( '"sppm" "float radius" [ 0.01 ] "integer maxdepth" [ 9 ]' );
+		expect( caustic.render ).toMatchObject( { integrator: 'vcm', maxBounces: 9, mergeRadius: 0.01 } );
+		expect( unused( caustic ) ).toEqual( [] );
+
+		expect( ( await load( '"bdpt" "bool regularize" [ "true" ]' ) ).render.pathRegularization ).toBe( true );
+		expect( ( await load( '"path" "bool regularize" false' ) ).render.pathRegularization ).toBeUndefined();
+		expect( ( await load( '"sppm"' ) ).render.mergeRadius ).toBeUndefined();
+		// Neither is sppm's or path's to take: left unread, so reported.
+		expect( unused( await load( '"sppm" "bool regularize" true' ) ) ).toEqual( [ 'Integrator sppm: regularize' ] );
+		expect( unused( await load( '"path" "float radius" 2' ) ) ).toEqual( [ 'Integrator path: radius' ] );
+
+	} );
+
 	it( 'reports the film\'s imaging ratio, shutter time × ISO / 100, as exposure', async () => {
 
 		const load = async ( camera, film ) => ( await loadPBRTScene( buildArgs( { vfs: { 'scene.pbrt': enc.encode( SCENE

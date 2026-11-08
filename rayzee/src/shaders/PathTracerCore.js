@@ -29,6 +29,7 @@ import {
 
 import {
 	MAX_ROUGHNESS,
+	MIN_ROUGHNESS,
 	MIN_CLEARCOAT_ROUGHNESS,
 	MIN_PDF,
 	constructTBN,
@@ -49,7 +50,7 @@ import {
 	diffuseTransmissionPdf,
 } from './MaterialProperties.js';
 import { evaluateMaterialResponseFromDots, evaluateSpecularDeltaFromDots, evaluateDiffuseTransmission } from './MaterialEvaluation.js';
-import { materialLayers } from './SceneResources.js';
+import { materialLayers, usesRegularization } from './SceneResources.js';
 
 import {
 	ImportanceSampleCosine,
@@ -77,6 +78,9 @@ export const generateSampledDirection = Fn( ( [
 ], builder ) => {
 
 	const layers = materialLayers( builder );
+	// Whether the drawn lobe is smooth, for path regularization only; otherwise a constant false.
+	const smoothLobe = usesRegularization( builder ) ? tslBool( false ).toVar() : null;
+	const markSmooth = ( roughness ) => smoothLobe?.assign( roughness.lessThanEqual( MIN_ROUGHNESS ) );
 	const resultDirection = vec3( 0.0 ).toVar();
 	const resultValue = vec3( 0.0 ).toVar();
 	const resultPdf = float( 0.0 ).toVar();
@@ -127,6 +131,7 @@ export const generateSampledDirection = Fn( ( [
 	// has weight 0, so its link could never be taken and is left out.
 	const isotropicSpecular = () => {
 
+		markSmooth( material.roughness );
 		If( material.roughness.greaterThan( 0.0 ), () => {
 
 			const TBN = constructTBN( { N } );
@@ -167,6 +172,7 @@ export const generateSampledDirection = Fn( ( [
 			H.assign( Ta.mul( localH.x ).add( Ba.mul( localH.y ) ).add( N.mul( localH.z ) ) );
 
 			resultDirection.assign( reflect( V.negate(), H ) );
+			smoothLobe?.assign( a.x.lessThanEqual( MIN_ROUGHNESS * MIN_ROUGHNESS ) ); // α along the stretch
 
 		} ).Else( isotropicSpecular );
 
@@ -192,6 +198,7 @@ export const generateSampledDirection = Fn( ( [
 		const ccTBN = constructTBN( { N: coatNormal( N, material, builder ) } );
 		H.assign( ccTBN.mul( sampleGGXVNDF( { V: ccTBN.transpose().mul( V ), roughness: clearcoatRoughness, Xi: xi } ) ) );
 		resultDirection.assign( reflect( V.negate(), H ) );
+		markSmooth( material.clearcoatRoughness );
 
 	} );
 
@@ -217,6 +224,7 @@ export const generateSampledDirection = Fn( ( [
 		resultPdf.assign( max( weights.transmission.mul( mtResult.pdf ), MIN_PDF ) );
 		resultColorWeight.assign( mtResult.colorWeight );
 		resultIsTransmission.assign( true );
+		markSmooth( material.roughness );
 
 	} );
 
@@ -260,6 +268,7 @@ export const generateSampledDirection = Fn( ( [
 		isTransmission: resultIsTransmission,
 		colorWeight: resultColorWeight,
 		isDiffuseTransmission: resultIsDiffuseTransmission,
+		isSmooth: smoothLobe ?? tslBool( false ),
 	} );
 
 } );

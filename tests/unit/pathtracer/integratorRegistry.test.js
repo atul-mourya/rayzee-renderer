@@ -70,4 +70,26 @@ describe( 'the path tracer\'s integrators', () => {
 
 	} );
 
+	it( 'compiles path regularization in only while it is on, under the path integrator, and says so once otherwise', () => {
+
+		const pt = bare();
+		pt.registerIntegrator( [ 'bidirectional', 'vcm' ], p => new FakeIntegrator( p ) );
+		pt._pathRegularization = false;
+		pt._outputsChanged = false;
+
+		pt.setPathRegularization( false );
+		expect( pt._outputsChanged ).toBe( false );
+		pt.setPathRegularization( true );
+		expect( [ pt._outputsChanged, pt._regularizeNeeded() ] ).toEqual( [ true, true ] );
+
+		pt.setIntegrator( 'vcm' );
+		expect( [ pt._regularizeNeeded(), pt._regularizeNeeded() ] ).toEqual( [ false, false ] );
+		expect( pt.issues.list.map( i => [ i.code, i.detail.setting, i.detail.integrator ] ) )
+			.toEqual( [[ ISSUE_CODES.SETTING_IGNORED, 'pathRegularization', 'vcm' ]] );
+
+		pt.setPathRegularization( false );
+		expect( pt._regularizeNeeded() ).toBe( false );
+
+	} );
+
 } );

@@ -13,6 +13,7 @@ export const ENGINE_DEFAULTS = deepFreeze( {
 	maxTransparentBounces: 32, // alpha skips are free bounces; uncapped, cutout foliage eats the loop
 	integrator: 'path', // 'path' | 'bidirectional' | 'vcm'
 	shadowRays: 'two', // 'all' | 'two' | 'one' — shadow rays a hit (path integrator)
+	pathRegularization: false, // pbrt's `regularize`: smooth lobes drawn rougher past a rough bounce (path integrator)
 	samplingTechnique: 2, // 0 PCG, 1 Halton, 2 Sobol
 	enableEmissiveTriangleSampling: false,
 	emissiveBoost: 1.0,

@@ -40,6 +40,9 @@ const TYPED_ARRAY_THRESHOLD = 8;
 
 const START = 1, END = 2, BOTH = 3;
 
+// pbrt-v4's integrators that take `regularize`.
+const REGULARIZING_INTEGRATORS = new Set( [ 'path', 'volpath', 'bdpt', 'mlt' ] );
+
 // Directives whose effect outlives the file that holds them, or that tie its shapes to
 // something other than the transform it was included under. A file containing none of them
 // builds the same shapes wherever it is included, so a repeat is placed rather than re-read.
@@ -721,6 +724,15 @@ export class PBRTParser {
 
 					this.ir.integrator = { type };
 					if ( params.maxdepth ) this.ir.integrator.maxdepth = this._num( param( params, 'maxdepth' ), 5 );
+					if ( REGULARIZING_INTEGRATORS.has( type ) && params.regularize ) {
+
+						const on = this._num( param( params, 'regularize' ), false );
+						this.ir.integrator.regularize = on === true || on === 'true';
+
+					}
+
+					// sppm's first search radius, in scene units.
+					if ( type === 'sppm' && params.radius ) this.ir.integrator.radius = this._num( param( params, 'radius' ), 1 );
 
 				} );
 				break;

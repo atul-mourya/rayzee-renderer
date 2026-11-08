@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import * as THREE from 'three';
 import { DEFAULT_STATE, NRD_QUALITY_PRESETS, computeOutputDimensions, aspectPresetFor, isPanorama, DENOISER_STRATEGIES, SKY_PRESETS } from '@/Constants';
-import { PRODUCTION_RENDER_CONFIG, INTERACTIVE_RENDER_CONFIG, sunPosition, dayOfYearForMonth, timeForSunElevation } from 'rayzee';
+import { PRODUCTION_RENDER_CONFIG, INTERACTIVE_RENDER_CONFIG, SETTING_SOURCE, sunPosition, dayOfYearForMonth, timeForSunElevation } from 'rayzee';
 import { getApp } from '@/lib/appProxy';
 import { useCameraStore } from './camera.js';
 import { handleChange, useStore, useEnvironmentStore, useAssetsStore } from './ui.js';
@@ -494,14 +494,16 @@ export const usePathTracerStore = create( ( set, get ) => ( {
 	},
 
 	// What the loaded scene's file set, each `{ value, previous }`: `integrator`, `exposure`, and `shape` (preset,
-	// orientation, scene ratio); and `asks`, the bounces and samples it asks for.
+	// orientation, scene ratio); `pathRegularization` while it asks for it; and `asks`, the bounces and samples it asks for.
 	_sceneRequest: null,
 
 	/**
 	 * Gives a just-loaded model the light transport, exposure and picture shape its file asks for
-	 * (`app.sceneMetadata.render`: `integrator`, `exposure`, `aspect`). The next model gets back what the scene replaced,
-	 * unless the user changed it since.
-	 * @param {?{ integrator?: string, exposure?: number, aspect?: number }} render
+	 * (`app.sceneMetadata.render`: `integrator`, `pathRegularization`, `exposure`, `aspect`). The next model gets back what
+	 * the scene replaced, unless the user changed it since. Path regularization has no control: it is on while the file
+	 * asks for it. pbrt's sppm `mergeRadius` is not applied: on the catalogue's two it helped Cornell Caustic and hurt
+	 * the Bathroom.
+	 * @param {?{ integrator?: string, pathRegularization?: boolean, exposure?: number, aspect?: number }} render
 	 */
 	applySceneRequest: render => {
 
@@ -537,6 +539,14 @@ export const usePathTracerStore = create( ( set, get ) => ( {
 
 		// Shown in Final Render, not applied: pbrt's counts assume no denoiser and no early stop.
 		if ( render?.maxBounces || render?.samples ) request.asks = { maxBounces: render.maxBounces, samples: render.samples };
+
+		const regularize = render?.pathRegularization === true;
+		if ( regularize ) request.pathRegularization = true;
+		if ( regularize !== ( opened.pathRegularization ?? false ) ) {
+
+			getApp()?.settings.set( 'pathRegularization', regularize, { source: SETTING_SOURCE.SCENE_METADATA } );
+
+		}
 
 		set( { _sceneRequest: request } );
 		if ( integrator !== state.integrator ) state.handleIntegratorChange( integrator );

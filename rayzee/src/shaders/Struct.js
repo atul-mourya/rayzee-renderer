@@ -258,6 +258,8 @@ export const DirectionSample = struct( {
 	colorWeight: 'vec3',
 	// Drawn from the diffuse transmission lobe: `value` is its BTDF and the direction is below N.
 	isDiffuseTransmission: 'bool',
+	// Drawn from a lobe at most MIN_ROUGHNESS rough; reported only while path regularization is compiled in, else false.
+	isSmooth: 'bool',
 } );
 
 export const BRDFWeights = struct( {

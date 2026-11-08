@@ -67,6 +67,7 @@ export const RAY_FLAG = {
 	LIGHT_EMITTED: 1 << 22, // bit 22: light subpath not yet past its first interaction (its MIS start is still open)
 	EMISSION_ONLY: 1 << 23, // bit 23: camera ray past its last bounce, traced only for the light it hits
 	AUX_UNLIKELY: 1 << 24, // bit 24: the deferred aux guide took glass's less likely branch; its commit stays out of the guide average
+	ROUGH_PATH: 1 << 25, // bit 25: the path has scattered off a rough lobe or in a medium (pbrt's anyNonSpecularBounces); set only while pathRegularization is compiled in
 };
 
 export class QueueManager {
