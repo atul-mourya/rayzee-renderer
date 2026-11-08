@@ -39,10 +39,6 @@
   bidirectional shadow rays (see CLAUDE.md, Bidirectional integrator), and since 2026-11-07 the file's integrator is
   applied. Volumetric Caustic's glass ball renders dark where path tracing lights it; Glass of Water opens bidirectional
   too (path matched or beat it, 60268c36).
-- [ ] FBX and Collada cameras' own shape is not used for the picture's (`userData.aspect`): three.js's FBXLoader puts in
-  the window's when a file gives none (`AspectWidth` / `AspectHeight`) and the ColladaLoader leaves its default, so a
-  given shape cannot be told from a missing one without the raw values.
-
 - [ ] **Light radius, what is left** (point and spot lights with a radius, and USD's sphere radius and sun angle, done
   2026-10-12; see Light radius in `CLAUDE.md`): the bidirectional and VCM integrators still treat them as points; glTF
   has no field for a radius (`docs/SCENE_IMPORT.md` → Lights from Blender's glTF exporter); the app has no control for it. ⚠️ Blender

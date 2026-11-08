@@ -105,6 +105,82 @@ describe( 'file formats', () => {
 
 	} );
 
+	it( 'keeps the shape an FBX camera names, and gives one naming none FBX\'s default, whatever the window', async () => {
+
+		const camera = ( id, props ) => `\tNodeAttribute: ${id}, "NodeAttribute::", "Camera" {\n\t\tProperties70:  {\n${props}\t\t}\n\t\tTypeFlags: "Camera"\n\t}\n\tModel: ${id + 1}, "Model::cam${id}", "Camera" {\n\t}\n`;
+		const prop = ( name, value ) => `\t\t\tP: "${name}", "double", "Number", "",${value}\n`;
+		const fbx = FBX.replace( 'Objects:  {\n', `Objects:  {\n${
+			camera( 10, prop( 'AspectWidth', 1920 ) + prop( 'AspectHeight', 1080 ) ) + camera( 20, prop( 'FocalLength', 50 ) )
+		}` ).replace( '\tC: "OO",1,0\n', '\tC: "OO",11,0\n\tC: "OO",10,11\n\tC: "OO",21,0\n\tC: "OO",20,21\n' );
+
+		const cameras = async () => {
+
+			const { model } = await fbxFormat.parse( new File( [ fbx ], 'c.fbx' ), { filename: 'c.fbx', cache: {} } );
+			return [ 'cam10', 'cam20' ].map( name => model.getObjectByName( name ) );
+
+		};
+
+		const [ named, unnamed ] = await cameras();
+		expect( named.userData.aspect ).toBe( 1920 / 1080 );
+		expect( named.aspect ).toBe( 1920 / 1080 );
+		expect( unnamed.userData.aspect ).toBeUndefined();
+		expect( unnamed.aspect ).toBe( 1.6 );
+		expect( unnamed.getFocalLength() ).toBeCloseTo( 50, 6 );
+		expect( globalThis.window ).toBeUndefined();
+
+		// A browser's window is lent the same size for the parse, and left as it was.
+		const innerWidth = { get: () => 3000, configurable: true, enumerable: true };
+		globalThis.window = Object.defineProperties( {}, { innerWidth, innerHeight: { get: () => 1000, configurable: true } } );
+		try {
+
+			const [ , inBrowser ] = await cameras();
+			expect( inBrowser.fov ).toBe( unnamed.fov );
+			expect( Object.getOwnPropertyDescriptor( globalThis.window, 'innerWidth' ) ).toEqual( innerWidth );
+			expect( globalThis.window.innerHeight ).toBe( 1000 );
+
+		} finally {
+
+			delete globalThis.window;
+
+		}
+
+	} );
+
+	it( 'keeps a Collada camera\'s shape, and the view xfov gives it', async () => {
+
+		const { ColladaComposer } = await import( 'three/addons/loaders/collada/ColladaComposer.js' );
+		const buildCamera = ColladaComposer.prototype.buildCamera;
+		const optics = [
+			{ technique: 'perspective', parameters: { xfov: 60, aspect_ratio: 2, znear: 0.1, zfar: 100 } },
+			{ technique: 'perspective', parameters: { xfov: 90, yfov: 60, znear: 0.1, zfar: 100 } },
+			{ technique: 'perspective', parameters: { yfov: 40, znear: 0.1, zfar: 100 } },
+			{ technique: 'orthographic', parameters: { xmag: 4, ymag: 2, znear: 0.1, zfar: 100 } },
+		];
+		// Three builds each camera once and puts clones of it in the scene.
+		const scene = new Group();
+		const cache = { collada: { parse: () => {
+
+			const composer = new ColladaComposer( {}, null, null, null );
+			for ( const data of optics ) scene.add( composer.buildCamera( { name: '', optics: data } ).clone() );
+			return { scene };
+
+		} } };
+
+		await colladaFormat.parse( new File( [ '<COLLADA/>' ], 'c.dae' ), { filename: 'c.dae', cache } );
+		const [ xfovOnly, both, yfovOnly, ortho ] = scene.children;
+		const halfTan = degrees => Math.tan( degrees * Math.PI / 360 );
+
+		expect( xfovOnly.userData.aspect ).toBe( 2 );
+		expect( halfTan( xfovOnly.fov ) * 2 ).toBeCloseTo( halfTan( 60 ), 12 );
+		expect( both.userData.aspect ).toBeCloseTo( halfTan( 90 ) / halfTan( 60 ), 12 );
+		expect( [ both.fov, both.aspect ] ).toEqual( [ 60, both.userData.aspect ] );
+		expect( yfovOnly.userData.aspect ).toBeUndefined();
+		expect( [ yfovOnly.fov, yfovOnly.aspect ] ).toEqual( [ 40, 1 ] );
+		expect( ortho.userData.aspect ).toBe( 2 );
+		expect( ColladaComposer.prototype.buildCamera ).toBe( buildCamera );
+
+	} );
+
 	it( 'hands Collada its text and 3MF its bytes, keeping Collada\'s whole result', async () => {
 
 		const scene = new Group();

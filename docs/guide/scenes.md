@@ -28,7 +28,8 @@ engine.setSceneObjectVisibility(id, visible)                      // Toggle visi
 What the file asks the renderer for is `engine.sceneMetadata?.render`, reported and never applied: the engine renders at
 whatever size you give it. `aspect` is the picture's shape, width ÷ height: of the size the file requests (pbrt's Film,
 USD's RenderSettings, a glTF's `extras.render` width and height), else of the camera the scene opens on, where the file
-gives it one — glTF's `aspectRatio` (or `xmag / ymag`), USD's authored apertures — kept on that camera as
+gives it one — glTF's `aspectRatio` (or `xmag / ymag`), USD's authored apertures, FBX's `AspectWidth / AspectHeight`,
+Collada's `aspect_ratio` (or `xfov` with `yfov`, `xmag / ymag`) — kept on that camera as
 `userData.aspect`. A pbrt scene also carries `integrator`, `maxBounces` and `samples`, and `exposure`, the Film's
 imaging ratio (the camera's shutter time × the Film's `iso` / 100, which pbrt scales every pixel by); where its file says,
 `pathRegularization` (its `regularize`) and `mergeRadius` (sppm's `radius`, in scene units:

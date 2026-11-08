@@ -13,7 +13,7 @@ on Chrome, `FileSystemHandle`s), picks folders (`showDirectoryPicker`, else a `w
 handles in IndexedDB (`RayzeeFolders`) under the scene source's key, so a session or a resumed render reopens the
 folder itself (`SessionDialog` asks only when access lapsed); `.rayzee` projects embed a folder under `sources/folder/`.
 
-## Tar and OBJ + MTL
+## Tar, OBJ + MTL, FBX and Collada
 - **Tar** (`ArchiveReader.js`): ustar, GNU long names, pax `path` / `size`, contiguous files (`7`) and GNU sparse files
   (old `S` with its extension blocks, pax 0.0 / 0.1 / 1.0). A sparse entry lists its full size and `sparse`, its stored
   [ offset, length ] regions; every read fills the gaps with zeros. One whose map cannot be read or does not fit is left
@@ -21,6 +21,11 @@ folder itself (`SessionDialog` asks only when access lapsed); `.rayzee` projects
 - **OBJ + MTL textures** resolve as written, beside the OBJ and the MTL (`..` and `\` included), in `textures/`,
   `texture/`, `materials/`, then by **whole** file name anywhere — never part of one: a missing map is no texture, not
   a neighbour's. MTLLoader's base path is `''`: it joins without a slash.
+- **Camera shape**: FBXLoader gives a camera naming no `AspectWidth` / `AspectHeight` the window's (and crashes in Node);
+  `fbxFormat` lends it FBX's default 320 × 200, a hair off, during the synchronous parse, so only a named shape becomes
+  `userData.aspect`. `colladaFormat` wraps `ColladaComposer.buildCamera` for its parse (clones carry `userData`):
+  `aspect_ratio`, else `xfov` / `yfov` or `xmag` / `ymag`; with `xfov` and no `yfov` (Blender) it sets the view three
+  leaves at 50°.
 
 ## Asset kits
 `findAndLoadModelFromZip` takes an archive with no main file whose shallowest models sit in two or more folders as a

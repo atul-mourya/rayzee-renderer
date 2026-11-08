@@ -1,4 +1,4 @@
-import { FloatType, Mesh, MeshStandardMaterial, Points, PointsMaterial } from 'three';
+import { FloatType, MathUtils, Mesh, MeshStandardMaterial, Points, PointsMaterial } from 'three';
 
 /**
  * File formats beyond glTF and .hdr — `rayzee/addons/formats`: FBX, OBJ, STL, PLY, Collada, 3MF and USD models, and
@@ -16,15 +16,67 @@ import { FloatType, Mesh, MeshStandardMaterial, Points, PointsMaterial } from 't
  * `createLoader( manager )` to a three.js loader whose `loadAsync` resolves to a texture.
  */
 
+// FBXLoader gives a camera naming no shape (AspectWidth / AspectHeight) the window's. It is lent FBX's default, 320 × 200,
+// a hair off so that a shape the file gives (its `userData.aspect`) is told apart.
+const FBX_STAND_IN = { innerWidth: 320, innerHeight: 200 + 2 ** - 20 };
+const FBX_STAND_IN_ASPECT = FBX_STAND_IN.innerWidth / FBX_STAND_IN.innerHeight;
+
+function withWindowSize( size, parse ) {
+
+	const host = globalThis.window;
+	if ( ! host ) {
+
+		globalThis.window = { ...size };
+		try {
+
+			return parse();
+
+		} finally {
+
+			delete globalThis.window;
+
+		}
+
+	}
+
+	const own = Object.fromEntries( Object.keys( size ).map( ( key ) => [ key, Object.getOwnPropertyDescriptor( host, key ) ] ) );
+	for ( const key in size ) Object.defineProperty( host, key, { value: size[ key ], configurable: true } );
+	try {
+
+		return parse();
+
+	} finally {
+
+		for ( const key in own ) own[ key ] ? Object.defineProperty( host, key, own[ key ] ) : delete host[ key ];
+
+	}
+
+}
+
 export const fbxFormat = {
 	name: 'FBX', label: 'FBX', type: 'model', extensions: [ 'fbx' ],
 	async parse( file, { cache } ) {
 
 		cache.fbx ??= new ( await import( 'three/addons/loaders/FBXLoader.js' ) ).FBXLoader();
-		const model = cache.fbx.parse( await file.arrayBuffer() );
+		const data = await file.arrayBuffer();
+		const model = withWindowSize( FBX_STAND_IN, () => cache.fbx.parse( data ) );
 		// FBXLoader reads the file's unit (centimetres a unit) but leaves the model in it; the engine's is the metre.
 		const unit = model.userData.unitScaleFactor;
 		if ( unit > 0 && unit !== 100 ) model.scale.multiplyScalar( unit / 100 );
+		model.traverse( ( camera ) => {
+
+			if ( ! camera.isPerspectiveCamera ) return;
+			if ( camera.aspect !== FBX_STAND_IN_ASPECT ) {
+
+				if ( camera.aspect > 0 && Number.isFinite( camera.aspect ) ) camera.userData.aspect = camera.aspect;
+				return;
+
+			}
+
+			camera.aspect = 320 / 200;
+			camera.updateProjectionMatrix();
+
+		} );
 		return { model };
 
 	},
@@ -79,12 +131,51 @@ export const plyFormat = {
 	},
 };
 
+// ColladaLoader keeps no shape and reads yfov alone. A camera's shape is its aspect_ratio, else xfov with yfov (xmag with
+// ymag); xfov with a shape gives the view's height (Blender writes xfov and aspect_ratio).
+function colladaCameraShape( camera, { technique, parameters: p = {} } = {} ) {
+
+	const halfTan = ( degrees ) => Math.tan( MathUtils.degToRad( degrees ) / 2 );
+	const aspect = p.aspect_ratio ?? ( technique === 'orthographic' ? p.xmag / p.ymag : halfTan( p.xfov ) / halfTan( p.yfov ) );
+	if ( ! ( aspect > 0 && Number.isFinite( aspect ) ) ) return;
+
+	camera.userData.aspect = aspect;
+	if ( ! camera.isPerspectiveCamera ) return;
+	camera.aspect = aspect;
+	if ( p.yfov === undefined && p.xfov > 0 ) camera.fov = MathUtils.radToDeg( 2 * Math.atan( halfTan( p.xfov ) / aspect ) );
+	camera.updateProjectionMatrix();
+
+}
+
 export const colladaFormat = {
 	name: 'Collada', label: 'Collada', type: 'model', extensions: [ 'dae' ],
 	async parse( file, { filename, cache } ) {
 
 		cache.collada ??= new ( await import( 'three/addons/loaders/ColladaLoader.js' ) ).ColladaLoader();
-		const collada = cache.collada.parse( await file.text() );
+		const { ColladaComposer } = await import( 'three/addons/loaders/collada/ColladaComposer.js' );
+		const text = await file.text();
+
+		// The camera is built from the file's values, then cloned into the scene: what it carries, the clones do.
+		const buildCamera = ColladaComposer.prototype.buildCamera;
+		ColladaComposer.prototype.buildCamera = function ( data ) {
+
+			const camera = buildCamera.call( this, data );
+			colladaCameraShape( camera, data.optics );
+			return camera;
+
+		};
+
+		let collada;
+		try {
+
+			collada = cache.collada.parse( text );
+
+		} finally {
+
+			ColladaComposer.prototype.buildCamera = buildCamera;
+
+		}
+
 		collada.scene.name = filename;
 		return { model: collada.scene, result: collada };
 
