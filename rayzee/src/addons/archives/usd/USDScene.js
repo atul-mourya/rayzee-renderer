@@ -2653,7 +2653,8 @@ export class USDSceneReader {
 		const read = ( name, fallback ) => prim.value( `inputs:${name}` ) ?? prim.value( name ) ?? fallback;
 		const color = read( 'color', [ 1, 1, 1 ] );
 		const radiance = read( 'intensity', type === 'DistantLight' ? 50000 : 1 ) * 2 ** read( 'exposure', 0 );
-		if ( read( 'enableColorTemperature', false ) ) this.warnOnce( 'temperature', 'USD light colour temperature is not applied' );
+		// UsdLux: the colour times a blackbody's of luminance 1, 1000–10000 K.
+		const temperature = read( 'enableColorTemperature', false ) ? Math.min( Math.max( read( 'colorTemperature', 6500 ), 1000 ), 10000 ) : null;
 		if ( prim.propertyNames().some( name => name.startsWith( 'collection:lightLink' ) || name.startsWith( 'collection:shadowLink' ) ) && type !== 'DomeLight' ) {
 
 			this.warnOnce( 'linking', 'USD light linking is not supported — every light lights everything' );
@@ -2662,6 +2663,7 @@ export class USDSceneReader {
 
 		if ( type === 'DomeLight' ) {
 
+			if ( temperature !== null ) this.warnOnce( 'temperature', 'USD dome light colour temperature is not applied' );
 			const file = prim.assetPath( 'inputs:texture:file' ) ?? prim.assetPath( 'texture:file' );
 			const excludes = prim.targets( 'collection:lightLink:excludes' );
 			const top = this.stage.pseudoRoot.childNames().map( name => `/${name}` );
@@ -2737,6 +2739,8 @@ export class USDSceneReader {
 		light.color.setRGB( color[ 0 ] / peak, color[ 1 ] / peak, color[ 2 ] / peak );
 		light.intensity *= peak;
 		light.name = prim.name;
+		// The engine's own light temperature (LightSerializer), so it stays apart from the colour and editable.
+		if ( temperature !== null ) Object.assign( light.userData, { useTemperature: true, temperature } );
 		matrix.decompose( light.position, light.quaternion, light.scale );
 		if ( light.target ) {
 

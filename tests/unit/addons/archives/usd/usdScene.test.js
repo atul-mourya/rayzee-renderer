@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { Vector3, Matrix4, Texture, SRGBColorSpace, MirroredRepeatWrapping, ClampToEdgeWrapping } from 'three';
 import { USDFiles, loadUSDScene } from '@/core/addons/archives/usd/index.js';
+import { blackbodyToLinearRGB } from '@/core/lights/LightSerializer.js';
 
 const usda = body => `#usda 1.0\n${body}\n`;
 
@@ -1035,6 +1036,30 @@ ${body}
     bool inputs:normalize = 1` ) } );
 		expect( disk.intensity ).toBeCloseTo( 10 * Math.PI );
 		expect( disk.userData.shape ).toBe( 'disk' );
+
+	} );
+
+	// OpenUSD 25.08's UsdLux.BlackbodyTemperatureAsRgb (Blender 5.1's pxr).
+	const OPENUSD_BLACKBODY = { 2300: [ 2.2283, 0.727, 0.0876 ], 4000: [ 1.414, 0.924, 0.5333 ], 6500: [ 1.0433, 0.9836, 1.0346 ], 10000: [ 0.8718, 0.9947, 1.43 ] };
+
+	it( 'colours a light by its colour temperature, UsdLux\'s blackbody times its colour', async () => {
+
+		const lamp = ( type, body ) => load( { 'root.usda': light( type, `    color3f inputs:color = (1, 0.5, 0.25)\n${body}` ) } );
+		for ( const [ kelvin, rgb ] of Object.entries( OPENUSD_BLACKBODY ) ) {
+
+			const { lights: [ sphere ] } = await lamp( 'SphereLight', `    bool inputs:enableColorTemperature = 1\n    float inputs:colorTemperature = ${kelvin}` );
+			expect( sphere.userData ).toMatchObject( { useTemperature: true, temperature: + kelvin } );
+			blackbodyToLinearRGB( sphere.userData.temperature ).forEach( ( v, i ) => expect( Math.abs( v - rgb[ i ] ) ).toBeLessThan( 0.005 ) );
+			expect( sphere.color.toArray() ).toEqual( [ 1, 0.5, 0.25 ] );
+
+		}
+
+		// UsdLux's range is 1000–10000 K; off by default, whatever the temperature.
+		expect( ( await lamp( 'RectLight', '    bool inputs:enableColorTemperature = 1\n    float inputs:colorTemperature = 20000' ) ).lights[ 0 ].userData.temperature ).toBe( 10000 );
+		expect( ( await lamp( 'DistantLight', '    bool inputs:enableColorTemperature = 1' ) ).lights[ 0 ].userData.temperature ).toBe( 6500 );
+		expect( ( await lamp( 'SphereLight', '    float inputs:colorTemperature = 3000' ) ).lights[ 0 ].userData.useTemperature ).toBeUndefined();
+		const dome = await lamp( 'DomeLight', '    bool inputs:enableColorTemperature = 1' );
+		expect( dome.warnings.some( w => /dome light colour temperature/.test( w ) ) ).toBe( true );
 
 	} );
 

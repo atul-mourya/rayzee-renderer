@@ -220,7 +220,10 @@ USDLoader. Each layer is read only when composition reaches it (`USDFiles` over 
   π·sin²(angle / 2)), so a normalized distant light's intensity is the irradiance on a surface facing it. No 683: USD's
   nits are render units. Spots and distant lights aim down their prim's −Z. A sphere light's `radius` becomes the point
   light's radius (unless `treatAsPoint`; see Light radius in `CLAUDE.md`) and a distant light's `angle` (default 0.53°)
-  its sun's width.
+  its sun's width. With `enableColorTemperature` the light's `colorTemperature` (1000–10000 K, default 6500) becomes the
+  engine's light temperature (`userData.temperature`, editable apart from the colour), UsdLux's blackbody of luminance 1
+  times the colour: the engine's curve is within 0.005 of OpenUSD's `BlackbodyTemperatureAsRgb` from 2300 to 10000 K.
+  Not on a dome light (its hue is not applied either).
 - **Parts** (`listUSDParts`): past `USD_ELEMENT_PROMPT_BYTES` (1 GB of layers) the importer throws `ARCHIVE_NEEDS_ELEMENT` with
   the prims under the root's top prims that bring in sibling directories (Moana's 20 `elements/<name>`). `elementFilter`
   leaves out only the unchosen siblings, so `usd/materials/` comes along; references into them are counted, not warned.
@@ -254,10 +257,11 @@ does. A small point, spot or sun then matches Cycles to render noise (Blender 5.
 within 0.25 %). What the export loses before the engine sees it:
 - **Area lamps** are dropped: `__filter_lights_punctual` rejects `AREA` and `HEMI`, since glTF has no area light, and
   the node arrives as an empty. Use an emissive mesh, which exports, or export USD: Blender writes them as `RectLight` /
-  `DiskLight`, and they match Cycles (2026-10-12: 0.9999, 1.0001). Blender's USD has quirks of its own: a sun is written
+  `DiskLight`, and their brightness matches Cycles (2026-10-12: 0.9999, 1.0001; before Blender 5.2 their colour has the
+  6500 K tint below). Blender's USD has quirks of its own: a sun is written
   at a quarter of its strength (`energy / 4`, "approximately matches Karma" in its source, so it renders at a quarter)
   and half its angle (both still so in Blender 5.3 and `main`), and before 5.2 every light is flagged as using a 6500 K
-  colour temperature, which the reader ignores.
+  colour temperature, which the reader applies as UsdLux says: against Cycles, red +4 %, green −2 %, blue +4 %.
 - **Sun strength**: Blender 5.1.1 writes every sun at 683 lux whatever its energy (a sun of 3 W/m² renders at a third).
   The exporter's sun branch reads the light's Emission node Strength (1.0) and ignores `light.energy`. Fixed upstream in
   glTF-Blender-IO `850fb92e` (2026-07-05), which multiplies the two; it ships in Blender 5.3 (5.2.2 LTS still has the
