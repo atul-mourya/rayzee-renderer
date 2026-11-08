@@ -6,13 +6,12 @@
  */
 
 import http from 'node:http';
-import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
 import puppeteer from 'puppeteer-core';
 
-import { launchBrowser, nativeLaunchOptions } from './browser.js';
+import { launchBrowser, nativeLaunchOptions, processTreeRSS } from './browser.js';
 import { PATHS } from './config.js';
 
 const ROOT = path.join( PATHS.benchRoot, 'harness', 'storage' );
@@ -137,33 +136,6 @@ export function formatStorage( reports ) {
 	}
 
 	return lines.join( '\n' );
-
-}
-
-function processTreeRSS( rootPid ) {
-
-	const out = execFileSync( 'ps', [ '-A', '-o', 'pid=,ppid=,rss=' ], { encoding: 'utf8' } );
-	const rows = out.trim().split( '\n' ).map( ( line ) => line.trim().split( /\s+/ ).map( Number ) );
-	const children = new Map();
-	for ( const [ pid, ppid ] of rows ) {
-
-		if ( ! children.has( ppid ) ) children.set( ppid, [] );
-		children.get( ppid ).push( pid );
-
-	}
-
-	const rss = new Map( rows.map( ( [ pid, , kb ] ) => [ pid, kb * 1024 ] ) );
-	let total = 0;
-	const stack = [ rootPid ];
-	while ( stack.length ) {
-
-		const pid = stack.pop();
-		total += rss.get( pid ) ?? 0;
-		stack.push( ...( children.get( pid ) ?? [] ) );
-
-	}
-
-	return total;
 
 }
 

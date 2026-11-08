@@ -419,6 +419,9 @@ export const LOAD = {
 	gates: {
 		// Above what identical code read in a self-A/B on a busy machine (docs/design/BENCH.md, "Scene loading").
 		unchangedPct: 15,
+		// Parsing and extraction read closer than the totals on identical code. blas and textures run side by side on
+		// the workers and move each other, so they keep the wide floor.
+		phasePct: { parse: 5, pbrtBuild: 5, extraction: 5 },
 		minDeltaMs: 100,
 		// The build's host peak is counted, not sampled, so only a real change moves it.
 		memoryPct: 2,

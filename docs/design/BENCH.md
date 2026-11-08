@@ -427,11 +427,14 @@ Every other suite loads procedural scenes of a few thousand triangles, so nothin
 `bench:calibrate` times one model only to check the browser's CPU speed, and `perf.jsonl`'s `loadMs` is the corpus.
 Both of 2026-09-30's load bugs were found by hand — Zero-Day's shared-`.ply` crash (shipped since 9.1.0) and Node
 packing textures on the main thread (4.5 → 2.1 s once moved to workers). `bench:load` loads a list of real models in
-Node on Dawn and fails on a load error or a recorded engine issue; against another checkout it gates every phase.
+Node on Dawn, or in Chrome with `--chrome`, and fails on a load error or a recorded engine issue; against another
+checkout it gates every phase.
 
 ```bash
 npm run bench:load                                   # this checkout: medians by phase, fails on errors and issues
 npm run bench:load -- --ab main                      # A/B against a git ref (a temporary worktree, removed after)
+npm run bench:load -- --chrome                       # in Chrome: image decoding, the background compile, storage
+npm run bench:load -- --chrome --ab main             # every other flag works the same in Chrome
 npm run bench:load -- --base-dir ../baseline         # A/B against any checkout; --head-dir picks the other side
 npm run bench:load -- --only crown,zero-day --rounds 5
 npm run bench:load -- --heavy                        # also the models marked heavy (kroken: 40M triangles)
@@ -457,6 +460,18 @@ decoders from the checkout's own `three` on a local port, answers OIDN's weight 
 startup, denoising or not) with a 404, and refuses any other fetch, which fails the run — downloading the decoders
 had failed a classroom load with no code change, and timed the network inside `parse`.
 
+**In Chrome** (`--chrome`) a side is a headless Chrome of its own (a fresh profile, so empty storage) with one page
+(`load/page.js`), served with that side's build, its own `three` and `oidn-webgpu` through an import map, from a local
+server that sends the app dev server's cross-origin isolation headers. The engine opens as in Node, plus on-disk storage
+(`storage: 'auto'`). Files reach the page through its file input (`DOM.setFileInputFiles`), so they are disk-backed
+`File`s, as a user's drop is; a folder is listed in Node and paired with its paths in the page. No host but 127.0.0.1
+resolves, and any request elsewhere fails the run. Memory is the whole browser's — renderer, GPU and utility processes
+— sampled from outside every 250 ms, and the page's `gc()` comes from `--js-flags=--expose-gc`. Run alone, each model
+gets a fresh browser too: Chrome keeps compiled pipelines for its whole life, so only a browser's first load compiles
+the kernels (`compile`, below). Each load starts with the cache areas emptied, a first open. A first open that stored
+something (only a scene that took the engine 10 s or more to build) is then measured again, as `<model> reopened`:
+its warm-up, a first open in a fresh browser, stores; the measured load opens from that.
+
 **The phases** (`LOAD_PHASES` in `lib/load.js`), nested as they run:
 
 | phase | from |
@@ -467,14 +482,21 @@ had failed a classroom load with no code change, and timed the network inside `p
 | `scene` | `SceneProcessor.performanceMetrics`: `extraction`, `blas`, `tlas`, `assemble`, and `textures`, built beside the BVH |
 | `upload` | `buildBVH` end → `setupMaterial` (buffers and texture buckets to the GPU) |
 | `kernels`, `finish` | `setupMaterial` (the wavefront kernels' graphs), then the environment table and settings |
-| `firstFrame` | `loadFile` returned → one sample done: the kernels compile at first dispatch in Node, so this is the shader compile |
+| `firstFrame` | `loadFile` returned → one sample done: the kernels compile at first dispatch in Node, so this is the shader compile; in Chrome the compile runs in the background and its pipelines are cached for the browser's life |
+| `store` | Chrome: `ready` → the storage writes the load started (a BLAS or scene store) have committed; only when there were any |
+| `compile` | Chrome: the `firstFrame` of the browser's first load, the kernels compiled cold — every later load's carries it |
+
+In Chrome `decode` is not measured: images decode as the textures pack (inside `textures`) and in the pbrt build. macOS keeps compiled
+Metal shaders across browsers, so `compile` is a cold compile only the first time this machine sees a kernel; after
+that it is WGSL translation and pipeline creation (classroom's first ever: 2.9 s; then 0.4–0.6 s).
 
 The bench marks `buildBVH` and `setupMaterial` by wrapping them on the instance; no engine code knows about it.
 
 **The gate.** A load fails on an error, a request to the network, or an engine issue of severity error (warnings are listed; `--strict` fails on
 them too). Against another checkout, phases are compared like `bench:ab`: per-round ratios (`compareReplicates`), so
 what the machine was doing in a round cancels, and a phase is `slower` only when its median paired change passes both
-the relative floor (`LOAD.gates.unchangedPct`, 15 %, or the rounds' own spread if wider) and `minDeltaMs` (100 ms) —
+the relative floor (`LOAD.gates.unchangedPct`, 15 %, or `phasePct`: 5 % for `parse`, `pbrtBuild` and `extraction`;
+or the rounds' own spread if wider) and `minDeltaMs` (100 ms) —
 a 3 ms TLAS that takes 5 ms is +67 % and means nothing — and moved the same way in every round. A regression shows
 in its phase and in each phase it runs inside; the deepest one that moved is marked `← here` and named in the summary. The build's host peak
 (`getHostMemoryInfo().peakLiveBytes`) is counted rather than sampled, so it is compared without noise: up by
@@ -502,13 +524,32 @@ load average 5–16, swap 14 of 15 GB used):
   3 rounds: 371 s; the four quick models A/B, 3 rounds, while the
   machine was busier: 554 s.
 
+**Measured again** (2026-11-08, the same Mac in normal use, load average 4–7; five models: the default list and
+zero-day and moana-hibiscus from `~/Desktop/3DAssets`):
+
+- **Chrome loads every model cleanly**, with storage on and cross-origin isolated; a fresh browser and 1 warm-up +
+  3 loads each: 108 s.
+  The Moana folder (14,734 files) goes through the file input in one call.
+- **Chrome, identical code** (`--chrome --ab HEAD`, 3 rounds, 314 s): all 76 phases unchanged. **Chrome, a delay**:
+  300 ms in `_createMaterialTextures`, against 24155522, classroom and crown: `slower: 24155522 textures, classroom
+  textures, crown textures`, and 24155522's `blas` faster in every round (median 16 %): textures and the BLAS builds
+  share the workers.
+- **The tighter floors.** On 2026-11-07 (a quiet machine, Node) a self-A/B read the phases of 0.5 s and up within
+  2.5 %, but for 24155522's `ready` and `load` (−11.7 %, moved by `upload` alone). In the two Node self-A/Bs and the
+  Chrome one today, every phase where a 5 % floor would bind (2 s and longer: crown, zero-day and Moana's `parse` and
+  `pbrtBuild`) read within 2.7 % on the median, 5.7 % in any one round. `blas` and
+  `textures` did not hold: zero-day's `blas` (0.9 s) read +9.5 % on identical code, every round the same way, under a
+  floor of 10.8 % (100 ms); they keep 15 %. Re-judged with these floors, the three self-A/Bs have nothing slower (six
+  phases inconclusive in Node).
+- **Reopened**: with the store threshold lowered for one run (a local edit), crown's reopened `blas` was 163 ms against
+  919 ms built. No model of the default list stores at the real threshold.
+
 Times are wall clock on the CPU, from a process that shares the machine — another build or test run lands in them.
 The paired rounds cancel what both sides of a round share; what they cannot cancel shows as a wide floor, and the
 floor is printed on every line.
 
-**Not covered.** Chrome: `measure.js` uses no Node API so a page could share it, but the harness for it (serving each
-side's build with an import map, files handed over as disk-backed `File`s through `DOM.setFileInputFiles`) is not
-built, so browser-only paths — `createImageBitmap` decoding, the background kernel compile, OPFS — are not timed.
+**Not covered.** Image decoding in Chrome on its own (it is inside `textures` and `pbrtBuild`); a reopened scene unless a model of the
+list is slow enough for the engine to store it (kroken, with `--heavy`); Firefox and Safari.
 
 ### Denoisers — a ratio, so there is nothing to bless away
 

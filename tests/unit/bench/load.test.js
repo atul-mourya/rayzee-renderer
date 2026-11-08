@@ -60,6 +60,17 @@ describe( 'bench:load', () => {
 
 		} );
 
+		it( 'holds a phase to its own floor when it has one', () => {
+
+			// +8 % on blas in every round: inside the 15 % floor, past a 5 % one.
+			const head = rounds( BASE, ( k ) => ( k === 'blas' ? 1.08 : 1 ) );
+			expect( compareLoads( rounds( BASE ), head, GATES ).phases.find( ( p ) => p.key === 'blas' ).verdict ).toBe( 'unchanged' );
+			const tight = compareLoads( rounds( BASE ), head, { ...GATES, phasePct: { blas: 5 } } ).phases.find( ( p ) => p.key === 'blas' );
+			expect( tight.verdict ).toBe( 'slower' );
+			expect( tight.noiseFloorPct ).toBe( 5 );
+
+		} );
+
 		it( 'gives no verdict on a change one round contradicts', () => {
 
 			const head = rounds( BASE, ( k, i ) => ( k === 'parse' ? [ 1.8, 0.95, 1.7, 1.6, 0.97 ][ i ] : 1 ) );

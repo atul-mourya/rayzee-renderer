@@ -45,6 +45,34 @@ export function nativeLaunchOptions( executablePath ) {
 
 }
 
+/** Resident memory of a process and every process under it, in bytes (a browser and its GPU and renderer processes). */
+export function processTreeRSS( rootPid ) {
+
+	const out = execFileSync( 'ps', [ '-A', '-o', 'pid=,ppid=,rss=' ], { encoding: 'utf8' } );
+	const rows = out.trim().split( '\n' ).map( ( line ) => line.trim().split( /\s+/ ).map( Number ) );
+	const children = new Map();
+	for ( const [ pid, ppid ] of rows ) {
+
+		if ( ! children.has( ppid ) ) children.set( ppid, [] );
+		children.get( ppid ).push( pid );
+
+	}
+
+	const rss = new Map( rows.map( ( [ pid, , kb ] ) => [ pid, kb * 1024 ] ) );
+	let total = 0;
+	const stack = [ rootPid ];
+	while ( stack.length ) {
+
+		const pid = stack.pop();
+		total += rss.get( pid ) ?? 0;
+		stack.push( ...( children.get( pid ) ?? [] ) );
+
+	}
+
+	return total;
+
+}
+
 /**
  * Builds the harness URL. The harness lives outside the Vite root, so it is served
  * through Vite's /@fs escape hatch (enabled by `server.fs.allow` in app/vite.config.js).

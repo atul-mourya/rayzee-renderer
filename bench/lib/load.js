@@ -26,6 +26,8 @@ export const LOAD_PHASES = [
 	{ key: 'kernels', parent: 'load', about: 'wavefront kernels built (setupMaterial)' },
 	{ key: 'finish', parent: 'load', about: 'environment table and settings' },
 	{ key: 'firstFrame', parent: 'ready', about: 'kernel compile and one sample' },
+	{ key: 'store', parent: null, about: 'Chrome: storage writes the load left running, after ready' },
+	{ key: 'compile', parent: null, about: 'Chrome: firstFrame of a fresh browser\'s first load, whose kernels compile cold' },
 ];
 
 const PARENT = new Map( LOAD_PHASES.map( ( p ) => [ p.key, p.parent ] ) );
@@ -152,12 +154,12 @@ export function summarisePhases( results ) {
 /**
  * Paired per-phase verdicts. Round i of each side was measured back to back, so the per-round ratio cancels what the
  * machine was doing that round (compareReplicates). A phase is unchanged unless its median paired delta passes both
- * the relative floor (`unchangedPct` or the rounds' own spread, whichever is wider) and `minDeltaMs`, and it moved the
- * same way in every round.
+ * the relative floor (its `phasePct`, else `unchangedPct`, or the rounds' own spread, whichever is wider) and
+ * `minDeltaMs`, and it moved the same way in every round.
  *
  * @param {Object[]} baseRounds - measured loads, base side, in round order
  * @param {Object[]} headRounds - measured loads, head side, same rounds
- * @param {{ unchangedPct: number, minDeltaMs: number, memoryPct: number, minMemoryBytes: number }} gates
+ * @param {{ unchangedPct: number, phasePct?: Object<string, number>, minDeltaMs: number, memoryPct: number, minMemoryBytes: number }} gates
  */
 export function compareLoads( baseRounds, headRounds, gates ) {
 
@@ -191,7 +193,8 @@ export function compareLoads( baseRounds, headRounds, gates ) {
 
 		const diffs = base.map( ( b, i ) => head[ i ] - b );
 		const deltaMs = median( diffs );
-		const result = compareReplicates( base, head, { unchangedPct: gates.unchangedPct } );
+		const unchangedPct = gates.phasePct?.[ key ] ?? gates.unchangedPct;
+		const result = compareReplicates( base, head, { unchangedPct } );
 		let verdict = result.verdict;
 		if ( Math.max( ...diffs.map( Math.abs ) ) < gates.minDeltaMs || ( verdict !== 'inconclusive' && Math.abs( deltaMs ) < gates.minDeltaMs ) ) verdict = 'unchanged';
 		// A process carries a bias of its own, so a change has to show in every round.
@@ -203,7 +206,7 @@ export function compareLoads( baseRounds, headRounds, gates ) {
 			head: result.head.median,
 			deltaPct: result.deltaPct,
 			deltaMs,
-			noiseFloorPct: Math.max( gates.unchangedPct, result.noiseFloorPct ),
+			noiseFloorPct: Math.max( unchangedPct, result.noiseFloorPct ),
 			roundDeltasPct: result.ratios.map( ( r ) => ( r - 1 ) * 100 ),
 			verdict,
 		} );

@@ -41,7 +41,8 @@ const finite = ( value ) => ( Number.isFinite( value ) ? value : undefined );
 /**
  * @param {Object} app - a PathTracerApp, opened headless
  * @param {{ id: string, file: string, options?: Object }} model - `options` go to `loadFile` (an archive's `element`, …)
- * @param {Object} runtime - openInput( model ), decodeBusy(), resetDecode(), startSampling(), stopSampling(), collect()
+ * @param {Object} runtime - openInput( model ), decodeBusy(), resetDecode(), startSampling(), stopSampling(), collect(),
+ *   and optionally settle(), which waits out the load's storage writes and says whether there were any
  * @returns {Promise<Object>} `{ phases, counts, memory, issues, error? }`, times in ms and sizes in bytes
  */
 export async function measureLoad( app, model, runtime ) {
@@ -85,6 +86,23 @@ export async function measureLoad( app, model, runtime ) {
 	}
 
 	const t2 = performance.now();
+	// Storage writes run on after the load; the unload below would abandon them.
+	let stored = false;
+	if ( ! error && runtime.settle ) {
+
+		try {
+
+			stored = await runtime.settle();
+
+		} catch ( caught ) {
+
+			error = caught;
+
+		}
+
+	}
+
+	const t3 = performance.now();
 	const sampled = runtime.stopSampling();
 
 	const metrics = app._sdf?.performanceMetrics ?? {};
@@ -112,6 +130,7 @@ export async function measureLoad( app, model, runtime ) {
 			kernels: finite( marks.kernels ),
 			finish: finite( t1 - marks.kernelsEnd ),
 			firstFrame: t2 - t1,
+			store: stored ? t3 - t2 : undefined,
 		},
 		counts: error ? {} : {
 			triangles: stage?.triangleCount ?? null,

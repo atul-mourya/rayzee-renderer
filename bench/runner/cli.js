@@ -12,7 +12,7 @@
  *   node bench/runner/cli.js ab <baseRef> [--head <ref>] [--only a,b]   head defaults to the working tree
  *   node bench/runner/cli.js ab --release   the newest release tag against the one before it
  *   node bench/runner/cli.js trend   writes bench/results/trend.html from the perf and A/B logs
- *   node bench/runner/cli.js load [--ab <ref> | --base-dir <path>] [--head-dir <path>] [--only a,b] [--rounds n] [--heavy] [--strict] [--config f.json] [--json out.json]
+ *   node bench/runner/cli.js load [--chrome] [--ab <ref> | --base-dir <path>] [--head-dir <path>] [--only a,b] [--rounds n] [--heavy] [--strict] [--config f.json] [--json out.json]
  *   node bench/runner/cli.js list
  *   node bench/runner/cli.js storage [--size MiB] [--gz archive.tar.gz] [--firefox]
  *   node bench/runner/cli.js storage --engine [--tar scene.tar] [--gz scene.tar.gz]

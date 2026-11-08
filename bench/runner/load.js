@@ -1,16 +1,21 @@
 /**
- * `bench:load` — real models loaded by phase, in Node on Dawn, with a gate on load errors and engine issues, and an
- * A/B against another checkout gated per phase. See "Scene loading" in docs/design/BENCH.md.
+ * `bench:load` — real models loaded by phase, in Node on Dawn or in Chrome (`--chrome`), with a gate on load errors and
+ * engine issues, and an A/B against another checkout gated per phase. See "Scene loading" in docs/design/BENCH.md.
  */
 
 import { execFile, fork } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { createReadStream, existsSync, readFileSync } from 'node:fs';
 import fs from 'node:fs/promises';
+import http from 'node:http';
+import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 
-import { LOAD, PATHS } from './config.js';
+import puppeteer from 'puppeteer-core';
+
+import { nativeLaunchOptions, processTreeRSS } from './browser.js';
+import { CHROME, LOAD, PATHS, TIMEOUTS } from './config.js';
 import { LOAD_PHASES, compareLoads, loadFailures, parseRoots, phaseDepth, resolveModels, summarisePhases } from '../lib/load.js';
 
 const exec = promisify( execFile );
@@ -155,18 +160,267 @@ class NodeSide {
 
 }
 
+const MIME = { '.js': 'text/javascript', '.mjs': 'text/javascript', '.wasm': 'application/wasm', '.json': 'application/json', '.html': 'text/html' };
+
+/** Import map entries for an installed package: its exports, then any path inside it. */
+function packageImports( name, dir, url ) {
+
+	const pkg = JSON.parse( readFileSync( path.join( dir, 'package.json' ), 'utf8' ) );
+	const imports = { [ `${name}/` ]: `${url}/` };
+	for ( const [ key, target ] of Object.entries( pkg.exports ?? {} ) ) {
+
+		const file = typeof target === 'string' ? target : target.import ?? target.default;
+		if ( typeof file !== 'string' || ! file.startsWith( './' ) ) continue;
+		const spec = name + key.slice( 1 );
+		const to = url + file.slice( 1 );
+		if ( key.endsWith( '*' ) ) imports[ spec.slice( 0, - 1 ) ] = to.slice( 0, - 1 );
+		else imports[ spec ] = to;
+
+	}
+
+	return imports;
+
+}
+
+/**
+ * Serves one side's page: its engine build under /dist/, its own three and oidn-webgpu, and this checkout's
+ * measuring code, cross-origin isolated as the app's dev server is.
+ */
+async function serveSide( tree, dist ) {
+
+	const lookup = createRequire( path.join( tree, 'rayzee', 'package.json' ) ).resolve.paths( 'three' );
+	const roots = { '/dist': dist, '/bench': path.join( PATHS.benchRoot, 'load' ) };
+	const imports = {};
+	for ( const name of [ 'three', 'oidn-webgpu' ] ) {
+
+		const dir = lookup.map( ( base ) => path.join( base, name ) ).find( ( d ) => existsSync( path.join( d, 'package.json' ) ) );
+		if ( ! dir ) continue;
+		roots[ `/${name}` ] = dir;
+		Object.assign( imports, packageImports( name, dir, `/${name}` ) );
+
+	}
+
+	const engine = JSON.parse( readFileSync( path.join( tree, 'rayzee', 'package.json' ), 'utf8' ) ).exports;
+	for ( const [ key, target ] of Object.entries( engine ) ) {
+
+		const file = typeof target === 'string' ? target : target.import;
+		if ( file?.startsWith( './dist/' ) ) imports[ key === '.' ? 'rayzee' : `rayzee${key.slice( 1 )}` ] = `/dist/${file.slice( 7 )}`;
+
+	}
+
+	const page = `<!doctype html><meta charset="utf-8"><title>bench:load</title>
+<script type="importmap">${JSON.stringify( { imports } )}</script>
+<input id="files" type="file" multiple>
+<script type="module">import '/bench/page.js';</script>`;
+
+	const server = http.createServer( ( req, res ) => {
+
+		res.setHeader( 'Cross-Origin-Opener-Policy', 'same-origin' );
+		res.setHeader( 'Cross-Origin-Embedder-Policy', 'credentialless' );
+		const url = decodeURIComponent( new URL( req.url, 'http://local' ).pathname );
+		if ( url === '/' ) {
+
+			res.setHeader( 'Content-Type', 'text/html' );
+			return res.end( page );
+
+		}
+
+		const prefix = Object.keys( roots ).find( ( p ) => url.startsWith( `${p}/` ) );
+		const file = prefix && path.join( roots[ prefix ], path.normalize( url.slice( prefix.length ) ) );
+		if ( ! file?.startsWith( roots[ prefix ] + path.sep ) || ! existsSync( file ) ) {
+
+			res.statusCode = 404;
+			return res.end();
+
+		}
+
+		res.setHeader( 'Content-Type', MIME[ path.extname( file ) ] ?? 'application/octet-stream' );
+		createReadStream( file ).pipe( res );
+
+	} );
+
+	await new Promise( ( resolve ) => server.listen( 0, '127.0.0.1', resolve ) );
+	return { url: `http://127.0.0.1:${server.address().port}`, close: () => new Promise( ( resolve ) => server.close( resolve ) ) };
+
+}
+
+async function listFiles( dir ) {
+
+	const name = path.basename( dir );
+	const files = [];
+	for ( const entry of await fs.readdir( dir, { recursive: true, withFileTypes: true } ) ) {
+
+		if ( ! entry.isFile() ) continue;
+		const abs = path.join( entry.parentPath, entry.name );
+		files.push( { abs, rel: `${name}/${path.relative( dir, abs ).split( path.sep ).join( '/' )}` } );
+
+	}
+
+	return { name, files };
+
+}
+
+/**
+ * One checkout's engine in a Chrome of its own (a fresh profile, so empty storage), one page kept across loads and
+ * restarted if a load fails. Its memory is the whole browser's, sampled from outside.
+ */
+class ChromeSide {
+
+	constructor( { label, tree, dist, verbose } ) {
+
+		Object.assign( this, { label, tree, dist, verbose } );
+		this.browser = null;
+		this.server = null;
+		this.page = null;
+		this.tail = [];
+		this.network = [];
+
+	}
+
+	async start() {
+
+		this.server = await serveSide( this.tree, this.dist );
+		this.browser = await puppeteer.launch( {
+			...nativeLaunchOptions( CHROME.executablePath ),
+			headless: true,
+			// gc() for the collections between loads; no host but this one resolves, so a fetch elsewhere fails fast.
+			args: [ ...CHROME.args, '--js-flags=--expose-gc', '--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1' ],
+			protocolTimeout: LOAD.timeoutMs + 60_000,
+		} );
+
+		const page = this.page = await this.browser.newPage();
+		const keep = ( text ) => {
+
+			if ( this.verbose ) process.stdout.write( `${DIM}[${this.label}] ${text}${RESET}\n` );
+			this.tail.push( text );
+			if ( this.tail.length > 60 ) this.tail.splice( 0, this.tail.length - 60 );
+
+		};
+
+		page.on( 'console', ( message ) => keep( `${message.type()}: ${message.text()}` ) );
+		page.on( 'pageerror', ( error ) => keep( `pageerror: ${error.message}` ) );
+		page.on( 'request', ( request ) => {
+
+			const url = request.url();
+			if ( ! url.startsWith( `${this.server.url}/` ) && ! /^(data|blob):/.test( url ) ) this.network.push( url );
+
+		} );
+
+		await page.goto( this.server.url, { waitUntil: 'load', timeout: TIMEOUTS.boot } );
+		try {
+
+			await page.waitForFunction( 'globalThis.__load !== undefined', { timeout: TIMEOUTS.boot } );
+
+		} catch ( error ) {
+
+			throw new Error( `${this.label}: the page never loaded (${error.message})\n${this.tail.slice( - 20 ).join( '\n' )}` );
+
+		}
+
+		const ready = await page.evaluate( ( o ) => globalThis.__load.start( o ), { ...LOAD.renderSize, hostMemoryGB: os.totalmem() / 2 ** 30 } );
+		this.loads = 0;
+		this.coldFrame = undefined;
+		ready.network = this.network.splice( 0 );
+		ready.browser = await this.browser.version();
+		this.startup = ready;
+		return ready;
+
+	}
+
+	async load( model ) {
+
+		if ( ! this.page ) await this.start();
+
+		const folder = ( await fs.stat( model.file ) ).isDirectory() ? await listFiles( model.file ) : null;
+		await ( await this.page.$( '#files' ) ).uploadFile( ...( folder ? folder.files.map( ( f ) => f.abs ) : [ model.file ] ) );
+
+		const pid = this.browser.process()?.pid;
+		let peak = pid ? processTreeRSS( pid ) : 0;
+		const sampler = pid && setInterval( () => {
+
+			peak = Math.max( peak, processTreeRSS( pid ) );
+
+		}, 250 );
+
+		let timer;
+		let result;
+		try {
+
+			result = await Promise.race( [
+				this.page.evaluate( ( m ) => globalThis.__load.load( m ), {
+					id: model.id, options: model.options, reopen: !! model.reopen,
+					folder: folder && { name: folder.name, paths: folder.files.map( ( f ) => f.rel ) },
+				} ),
+				new Promise( ( resolve ) => {
+
+					timer = setTimeout( () => resolve( { error: `timed out after ${LOAD.timeoutMs / 1000} s` } ), LOAD.timeoutMs );
+
+				} ),
+			] );
+
+		} catch ( error ) {
+
+			result = { error: String( error?.stack ?? error ) };
+
+		} finally {
+
+			clearTimeout( timer );
+			clearInterval( sampler );
+
+		}
+
+		result.phases ??= {};
+		result.issues ??= [];
+		// Chrome keeps compiled pipelines for the browser's life: only its first load compiles the kernels.
+		if ( this.loads ++ === 0 ) this.coldFrame = result.phases.firstFrame;
+		else result.phases.compile = this.coldFrame;
+		result.memory = { ...result.memory, rssPeakBytes: peak || null };
+		result.network = this.network.splice( 0 );
+		if ( result.error ) {
+
+			result.log = this.tail.slice( - 20 );
+			await this.close();
+
+		}
+
+		return result;
+
+	}
+
+	async close() {
+
+		const { browser, server } = this;
+		this.browser = this.server = this.page = null;
+		if ( browser ) {
+
+			const closed = await Promise.race( [ browser.close().then( () => true, () => false ), new Promise( ( resolve ) => setTimeout( resolve, 10_000, false ) ) ] );
+			if ( ! closed ) browser.process()?.kill( 'SIGKILL' );
+
+		}
+
+		await server?.close();
+
+	}
+
+}
+
 /**
  * Loads every model on every side: `warmup` discarded loads, then `rounds` measured ones, the sides alternating which
  * goes first. With two sides each round starts both in fresh processes: a process carries a bias of its own,
- * which the rounds can only average out if each has its own.
+ * which the rounds can only average out if each has its own. In Chrome a first open that stored something is then
+ * measured reopened, from what it stored.
  */
 async function runLoads( sides, models, { rounds, warmup, log } ) {
 
 	const results = {};
+	const cases = [];
 	const fresh = sides.length > 1;
+	const queue = [ ...models ];
 
-	for ( const model of models ) {
+	while ( queue.length ) {
 
+		const model = queue.shift();
+		cases.push( model );
 		log( `\n${model.id}${DIM}  ${model.covers ?? ''}${RESET}` );
 		const entry = results[ model.id ] = Object.fromEntries( sides.map( ( s ) => [ s.label, { warmup: [], rounds: [] } ] ) );
 
@@ -187,7 +441,13 @@ async function runLoads( sides, models, { rounds, warmup, log } ) {
 
 		};
 
-		if ( ! fresh ) for ( const side of sides ) await warm( side );
+		for ( const side of fresh ? [] : sides ) {
+
+			// A fresh browser per model, so each model's first load compiles cold.
+			if ( side instanceof ChromeSide ) await side.close();
+			await warm( side );
+
+		}
 
 		for ( let i = 0; i < rounds; i ++ ) {
 
@@ -202,9 +462,12 @@ async function runLoads( sides, models, { rounds, warmup, log } ) {
 
 		}
 
+		const stored = Object.values( entry ).some( ( s ) => [ ...s.warmup, ...s.rounds ].some( ( r ) => Number.isFinite( r?.phases?.store ) ) );
+		if ( stored && ! model.reopen ) queue.unshift( { ...model, id: `${model.id} reopened`, covers: 'opened again, from what the first open stored', reopen: true } );
+
 	}
 
-	return results;
+	return { results, cases };
 
 }
 
@@ -217,7 +480,7 @@ function reportSide( model, side, { strict, log } ) {
 	if ( last?.counts?.triangles ) {
 
 		const m = last.memory ?? {};
-		log( `${DIM}  ${last.counts.triangles.toLocaleString()} triangles · ${last.counts.meshes} meshes · ${last.counts.materials} materials · ${last.counts.images} images decoded` +
+		log( `${DIM}  ${last.counts.triangles.toLocaleString()} triangles · ${last.counts.meshes} meshes · ${last.counts.materials} materials${Number.isFinite( last.counts.images ) ? ` · ${last.counts.images} images decoded` : ''}` +
 			` · host peak ${mb( m.hostPeakLiveBytes )} · rss ${mb( m.rssPeakBytes )} · vram ${mb( m.vramPeakBytes )}${RESET}` );
 
 	}
@@ -287,7 +550,7 @@ async function addWorktree( ref, log ) {
 }
 
 /**
- * @param {Object} flags - parsed CLI flags: ab, base-dir, head-dir, only, rounds, warmup, models, config, heavy, strict, json, verbose
+ * @param {Object} flags - parsed CLI flags: chrome, ab, base-dir, head-dir, only, rounds, warmup, models, config, heavy, strict, json, verbose
  * @param {{ log: function(string): void, positiveInt: function(*, string): (number|undefined) }} io
  * @returns {Promise<number>} exit code
  */
@@ -308,7 +571,8 @@ export async function commandLoad( flags, { log, positiveInt } ) {
 	const headTree = path.resolve( String( flags[ 'head-dir' ] ?? PATHS.repoRoot ) );
 
 	const [ load1, load5 ] = os.loadavg();
-	log( `scene loading (Node, Dawn) · ${os.cpus().length} cores, load average ${load1.toFixed( 1 )} / ${load5.toFixed( 1 )}` +
+	const chrome = !! flags.chrome;
+	log( `scene loading (${chrome ? 'Chrome, WebGPU' : 'Node, Dawn'}) · ${os.cpus().length} cores, load average ${load1.toFixed( 1 )} / ${load5.toFixed( 1 )}` +
 		`${load1 > os.cpus().length / 2 ? `${YELLOW} — the machine is busy, so expect noisy times${RESET}` : ''}` );
 	for ( const s of skipped ) log( `  ${YELLOW}skipped${RESET} ${s.id}${DIM}  ${s.reason}${RESET}` );
 	if ( ! models.length ) {
@@ -336,7 +600,7 @@ export async function commandLoad( flags, { log, positiveInt } ) {
 			const t = performance.now();
 			await buildEngine( tree, dist );
 			log( `${DIM}  ${label}: ${tree} (${await describeTree( tree )}), engine built in ${ms( performance.now() - t )}${RESET}` );
-			sides.push( new NodeSide( { label, tree, dist, verbose: !! flags.verbose } ) );
+			sides.push( new ( chrome ? ChromeSide : NodeSide )( { label, tree, dist, verbose: !! flags.verbose } ) );
 
 		}
 
@@ -346,14 +610,16 @@ export async function commandLoad( flags, { log, positiveInt } ) {
 			const startup = ready.startupIssues.filter( ( i ) => i.code !== 'asset.unreachable' );
 			if ( startup.length ) log( `  ${YELLOW}${side.label} started with issues${RESET}${DIM}: ${startup.map( ( i ) => i.code ).join( ', ' )}${RESET}` );
 			if ( ready.network.length ) throw new Error( `${side.label} reached for the network at startup: ${ready.network.join( ', ' )}` );
+			if ( chrome && ! ready.storage ) log( `  ${YELLOW}${side.label} has no on-disk storage${RESET}${DIM}: its loads skip the storage paths${RESET}` );
+			if ( chrome && ! ready.crossOriginIsolated ) log( `  ${YELLOW}${side.label} is not cross-origin isolated${RESET}${DIM}: no shared memory, unlike the app${RESET}` );
 
 		}
 
-		log( `${DIM}  ${sides[ 0 ].startup.adapter} · node ${sides[ 0 ].startup.node} · per model and side, ` +
-			`${sides.length > 1 ? `${rounds} rounds of ${warmup} warm-up + 1 measured load in a fresh process` : `${warmup} warm-up + ${rounds} measured loads`}${RESET}` );
+		log( `${DIM}  ${sides[ 0 ].startup.adapter} · ${chrome ? sides[ 0 ].startup.browser : `node ${sides[ 0 ].startup.node}`} · per model and side, ` +
+			`${sides.length > 1 ? `${rounds} rounds of ${warmup} warm-up + 1 measured load in a fresh ${chrome ? 'browser' : 'process'}` : `${warmup} warm-up + ${rounds} measured loads`}${RESET}` );
 		if ( sides.length > 1 ) for ( const side of sides ) await side.close();
 
-		const results = await runLoads( sides, models, { rounds, warmup, log } );
+		const { results, cases } = await runLoads( sides, models, { rounds, warmup, log } );
 
 		const head = sides.at( - 1 );
 		const base = sides.length > 1 ? sides[ 0 ] : null;
@@ -364,7 +630,7 @@ export async function commandLoad( flags, { log, positiveInt } ) {
 
 		log( base ? `\nA/B (${base.label} → ${head.label}), paired by round` : '\nresults (medians of the measured loads)' );
 
-		for ( const model of models ) {
+		for ( const model of cases ) {
 
 			log( `\n${model.id}` );
 			const own = results[ model.id ];
@@ -401,7 +667,7 @@ export async function commandLoad( flags, { log, positiveInt } ) {
 			await fs.writeFile( path.resolve( String( flags.json ) ), `${JSON.stringify( {
 				at: new Date().toISOString(), loadAverage: os.loadavg(), cores: os.cpus().length,
 				sides: sides.map( ( s ) => ( { label: s.label, tree: s.tree, adapter: s.startup?.adapter } ) ),
-				gates: LOAD.gates, rounds, warmup, skipped, models, results, comparisons,
+				runtime: chrome ? 'chrome' : 'node', gates: LOAD.gates, rounds, warmup, skipped, models: cases, results, comparisons,
 			}, null, '\t' )}\n` );
 
 		}
