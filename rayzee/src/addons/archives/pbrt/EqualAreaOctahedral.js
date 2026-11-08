@@ -125,43 +125,61 @@ export function octahedralToEquirect( src, lightToWorld, scale = 1, outWidth = 0
 	const worldToLight = lightToWorld ? M.invert( lightToWorld ) : null;
 	const table = src.srgb ? SRGB_TO_LINEAR : null;
 	const rgb = [ 0, 0, 0 ];
+	// An output pixel covers ~π source pixels: one read miscounts a sun a few pixels wide (a larger sky's spans more).
+	const reads = width > 1024 ? 2 : 4;
 
 	for ( let j = 0; j < height; j ++ ) {
 
-		// Row index IS the v axis the engine samples on, so row 0 is v = 0 (straight down)
-		// and the last row is v = 1 (up). Verified against a rendered frame — inverting
-		// this turns the sky upside down with no other visible symptom.
-		const v = ( j + 0.5 ) / height;
-		const polar = ( 1 - v ) * Math.PI;
-		const sinPolar = Math.sin( polar ), cosPolar = Math.cos( polar );
-
 		for ( let i = 0; i < width; i ++ ) {
 
-			const u = ( i + 0.5 ) / width;
-			const azimuth = ( u - 0.5 ) * 2 * Math.PI;
+			let r = 0, g = 0, b = 0, weight = 0;
 
-			let dx = sinPolar * Math.cos( azimuth );
-			let dy = cosPolar;
-			let dz = sinPolar * Math.sin( azimuth );
+			for ( let sj = 0; sj < reads; sj ++ ) {
 
-			if ( worldToLight ) {
+				// Row index IS the v axis the engine samples on, so row 0 is v = 0 (straight down)
+				// and the last row is v = 1 (up). Verified against a rendered frame — inverting
+				// this turns the sky upside down with no other visible symptom.
+				const v = ( j + ( sj + 0.5 ) / reads ) / height;
+				const polar = ( 1 - v ) * Math.PI;
+				const sinPolar = Math.sin( polar ), cosPolar = Math.cos( polar );
 
-				const m = worldToLight;
-				const tx = m[ 0 ] * dx + m[ 4 ] * dy + m[ 8 ] * dz;
-				const ty = m[ 1 ] * dx + m[ 5 ] * dy + m[ 9 ] * dz;
-				const tz = m[ 2 ] * dx + m[ 6 ] * dy + m[ 10 ] * dz;
-				const len = Math.hypot( tx, ty, tz ) || 1;
-				dx = tx / len; dy = ty / len; dz = tz / len;
+				for ( let si = 0; si < reads; si ++ ) {
+
+					const u = ( i + ( si + 0.5 ) / reads ) / width;
+					const azimuth = ( u - 0.5 ) * 2 * Math.PI;
+
+					let dx = sinPolar * Math.cos( azimuth );
+					let dy = cosPolar;
+					let dz = sinPolar * Math.sin( azimuth );
+
+					if ( worldToLight ) {
+
+						const m = worldToLight;
+						const tx = m[ 0 ] * dx + m[ 4 ] * dy + m[ 8 ] * dz;
+						const ty = m[ 1 ] * dx + m[ 5 ] * dy + m[ 9 ] * dz;
+						const tz = m[ 2 ] * dx + m[ 6 ] * dy + m[ 10 ] * dz;
+						const len = Math.hypot( tx, ty, tz ) || 1;
+						dx = tx / len; dy = ty / len; dz = tz / len;
+
+					}
+
+					const [ su, sv ] = equalAreaSphereToSquare( dx, dy, dz );
+					sampleBilinear( src.data, src.width, src.height, src.channels, su, src.bottomUp ? 1 - sv : sv, rgb, table );
+
+					r += rgb[ 0 ] * sinPolar;
+					g += rgb[ 1 ] * sinPolar;
+					b += rgb[ 2 ] * sinPolar;
+					weight += sinPolar;
+
+				}
 
 			}
 
-			const [ su, sv ] = equalAreaSphereToSquare( dx, dy, dz );
-			sampleBilinear( src.data, src.width, src.height, src.channels, su, src.bottomUp ? 1 - sv : sv, rgb, table );
-
+			const k = weight > 0 ? scale / weight : 0;
 			const o = ( j * width + i ) * 4;
-			out[ o ] = rgb[ 0 ] * scale;
-			out[ o + 1 ] = rgb[ 1 ] * scale;
-			out[ o + 2 ] = rgb[ 2 ] * scale;
+			out[ o ] = r * k;
+			out[ o + 1 ] = g * k;
+			out[ o + 2 ] = b * k;
 			out[ o + 3 ] = 1;
 
 		}

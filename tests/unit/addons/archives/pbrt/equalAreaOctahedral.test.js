@@ -209,4 +209,32 @@ describe( 'equal-area octahedral mapping', () => {
 
 	} );
 
+	it( 'keeps the light of a sun a few source pixels wide', () => {
+
+		const n = 128;
+		let worst = 0;
+		for ( let k = 0; k < 24; k ++ ) {
+
+			const data = new Float32Array( n * n * 3 );
+			const x = 20 + ( k * 37 ) % 88, y = 20 + ( k * 53 ) % 88;
+			for ( const [ dx, dy ] of [[ 0, 0 ], [ 1, 0 ], [ 0, 1 ], [ 1, 1 ]] ) data[ ( ( y + dy ) * n + x + dx ) * 3 ] = 1000;
+			const source = 4 * 1000 * 4 * Math.PI / ( n * n );
+
+			const { data: out, width, height } = octahedralToEquirect( { data, width: n, height: n, channels: 3 }, null, 1 );
+			let light = 0;
+			for ( let j = 0; j < height; j ++ ) {
+
+				const dOmega = ( 2 * Math.PI / width ) * ( Math.PI / height ) * Math.sin( ( 1 - ( j + 0.5 ) / height ) * Math.PI );
+				for ( let i = 0; i < width; i ++ ) light += out[ ( j * width + i ) * 4 ] * dOmega;
+
+			}
+
+			worst = Math.max( worst, Math.abs( light / source - 1 ) );
+
+		}
+
+		expect( worst ).toBeLessThan( 0.02 );
+
+	} );
+
 } );
