@@ -44,7 +44,7 @@ import { sunRadianceToward, sampleSunDisc } from '../Sun.js';
 import { regularizePathContribution, generateSampledDirection, computeNDCDepth, handleRussianRoulette, DELTA_PDF } from '../PathTracerCore.js';
 import { evaluateSpecularDFG, baseFresnelParams } from '../MaterialProperties.js';
 import { fresnelDielectric } from '../Fresnel.js';
-import { sampleClearcoat, ClearcoatResult, coatDarkenedColor } from '../Clearcoat.js';
+import { sampleClearcoat, ClearcoatResult } from '../Clearcoat.js';
 import { refineDisplacedIntersection, DisplacementResult } from '../Displacement.js';
 import {
 	calculateEmissiveTriangleContribution, calculateEmissiveLightPdf, EmissiveSample, EmissiveSampleIndexed,
@@ -1104,7 +1104,6 @@ export function buildShadeKernel( params ) {
 		material.diffuseTransmission.assign( extMaps.diffuseTransmission );
 		material.diffuseTransmissionColor.assign( extMaps.diffuseTransmissionColor );
 		if ( layers.diffuseRoughness ) material.diffuseRoughness.assign( extMaps.diffuseRoughness );
-		if ( layers.coatDarkening ) material.color.assign( coatDarkenedColor( material, int( hitMatIdx ), materialBuffer ) );
 
 		// Below the floor the GGX peak is past f32, so a plain reflector reflects exactly: roughness 0
 		// is the delta-lobe marker the sampler and evaluator read. The other lobes keep the floor.
@@ -1115,7 +1114,7 @@ export function buildShadeKernel( params ) {
 
 		} );
 
-		const albedo = ( layers.coatDarkening ? material.color : matSamples.albedo ).toVar();
+		const albedo = matSamples.albedo.toVar();
 		If(
 			displaced,
 			() => {

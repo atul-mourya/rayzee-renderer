@@ -101,43 +101,11 @@ export const threeMFFormat = {
 	},
 };
 
-// OpenPBR's coat darkens its base (coat_darkening, default 1), which three's composer does not read.
-function readCoatDarkening( USDComposer ) {
-
-	const proto = USDComposer.prototype;
-	const apply = proto._applyOpenPBRSurface;
-	if ( typeof apply !== 'function' || proto.__rayzeeCoatDarkening ) return;
-
-	proto._applyOpenPBRSurface = function ( material, shaderPath ) {
-
-		apply.call( this, material, shaderPath );
-		if ( material.clearcoat > 0 ) {
-
-			const value = this._getAttributes( shaderPath )[ 'inputs:coat_darkening' ];
-			material.coatDarkening = typeof value === 'number' ? value : 1;
-
-		}
-
-	};
-
-	proto.__rayzeeCoatDarkening = true;
-
-}
-
 export const usdFormat = {
 	name: 'USD (Universal Scene Description)', label: 'USD', type: 'model', extensions: [ 'usd', 'usda', 'usdc', 'usdz' ],
 	async parse( file, { filename, cache } ) {
 
-		if ( ! cache.usd ) {
-
-			const [ { USDLoader }, { USDComposer } ] = await Promise.all( [
-				import( 'three/addons/loaders/USDLoader.js' ), import( 'three/addons/loaders/usd/USDComposer.js' ),
-			] );
-			readCoatDarkening( USDComposer );
-			cache.usd = new USDLoader();
-
-		}
-
+		cache.usd ??= new ( await import( 'three/addons/loaders/USDLoader.js' ) ).USDLoader();
 		const data = await file.arrayBuffer();
 		// parse() returns the group at once but resolves textures later; the materials are read after, so wait for them.
 		const model = await new Promise( ( resolve, reject ) => cache.usd.parse( data, '', resolve, reject ) );

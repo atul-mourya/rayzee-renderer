@@ -98,7 +98,6 @@ exports[`defaults that shape pixels — a change here says how renders change in
     1,
   ],
   "clearcoatRoughness": 0,
-  "coatDarkening": 0,
   "color": [
     1,
     1,

@@ -511,12 +511,9 @@ bench gates and measurements.
   both integrators through one function. ⚠️ EON's form is 0/0 at roughness 0 and only near Lambert in f32: roughness 0
   branches to the old Lambert expression, bit for bit.
 - **Material layers** (`MATERIAL_LAYERS`, `shaders/SceneResources.js`): clear coat, sheen, iridescence, anisotropy,
-  subsurface, dispersion, diffuse transmission, diffuse roughness and coat darkening compile in only while some
-  material has them (`materialLayers( builder )`, a plain JS `if`). ⚠️ Removing a layer's code must be exact for a
-  material without it: the iridescence weight keeps `min( 0, diffuse )`, and a sampling link may go only because its
-  weight is 0.
-- **Coat darkening** (`coatDarkening`, OpenPBR's): the base under a coat takes back what the coat reflects down
-  (`coatDarkenedColor`, `Clearcoat.js`). Off for glTF; pbrt coats and USD OpenPBR set it.
+  subsurface, dispersion, diffuse transmission and diffuse roughness compile in only while some material has them
+  (`materialLayers( builder )`, a plain JS `if`). ⚠️ Removing a layer's code must be exact for a material without it:
+  the iridescence weight keeps `min( 0, diffuse )`, and a sampling link may go only because its weight is 0.
 - **Glass** (`sampleDielectric`, `shaders/MaterialTransmission.js`): facets drawn from the visible normals, weighed over
   the interface's albedo from the DFG LUT; only refraction takes the base colour, √ of it a crossing
   (`transmissionTint`). `ior` is absolute through nested volumes (glTF); `relativeIOR` (pbrt) makes it the surface's own

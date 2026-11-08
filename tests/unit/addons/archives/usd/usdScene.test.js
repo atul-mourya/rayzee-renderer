@@ -416,8 +416,7 @@ ${extra}` ), 'wood.png': '', 'rough.png': '', 'normal.png': '', 'leather.png': '
 
 		expect( material.color.toArray() ).toEqual( [ 0.4, 0.2, 0.1 ] );
 		expect( [ material.metalness, material.roughness, material.ior, material.diffuseRoughness ] ).toEqual( [ 0.25, 0.35, 1.45, 0.6 ] );
-		// OpenPBR's coat darkens the base unless coat_darkening says otherwise.
-		expect( [ material.clearcoat, material.clearcoatRoughness, material.coatDarkening ] ).toEqual( [ 0.5, 0.1, 1 ] );
+		expect( [ material.clearcoat, material.clearcoatRoughness ] ).toEqual( [ 0.5, 0.1 ] );
 		expect( [ material.sheen, ...material.sheenColor.toArray() ] ).toEqual( [ 1, 1, 0, 0 ] );
 		expect( [ material.iridescence, material.iridescenceThicknessMinimum, material.iridescenceThicknessMaximum ] ).toEqual( [ 1, 300, 300 ] );
 		expect( [ ...material.emissive.toArray(), material.emissiveIntensity ] ).toEqual( [ 1, 0.5, 0.25, 2 ] );
@@ -589,39 +588,6 @@ ${extra}` ), 'wood.png': '', 'rough.png': '', 'normal.png': '', 'leather.png': '
     }` ) );
 		expect( gltf.material.color.toArray() ).toEqual( [ 0.2, 0.4, 0.6 ] );
 		expect( [ gltf.material.metalness, gltf.material.roughness, gltf.material.transmission, gltf.material.ior ] ).toEqual( [ 0, 0.7, 1, 1.33 ] );
-
-	} );
-
-	it( 'deepens a Standard Surface base under its coat by coat_affect_color, approximated over a texture', async () => {
-
-		const plain = await materialOf( scene( `    token outputs:mtlx:surface.connect = </mat/ss.outputs:out>
-    def Shader "ss"
-    {
-        uniform token info:id = "ND_standard_surface_surfaceshader"
-        float inputs:base = 0.5
-        color3f inputs:base_color = (1, 0.5, 0.25)
-        float inputs:coat = 1
-        float inputs:coat_affect_color = 1
-    }` ) );
-		expect( plain.material.color.toArray() ).toEqual( [ 0.5, 0.125, 0.03125 ] );
-		expect( plain.material.coatDarkening ).toBeUndefined();
-
-		const textured = await materialOf( scene( `    token outputs:mtlx:surface.connect = </mat/ss.outputs:out>
-    def Shader "ss"
-    {
-        uniform token info:id = "ND_standard_surface_surfaceshader"
-        color3f inputs:base_color.connect = </mat/img.outputs:out>
-        float inputs:coat = 0.5
-        float inputs:coat_affect_color = 0.8
-    }
-    def Shader "img"
-    {
-        uniform token info:id = "ND_image_color3"
-        asset inputs:file = @./leather.png@
-    }` ), images );
-		expect( textured.material.map ).toBeTruthy();
-		expect( textured.material.coatDarkening ).toBeCloseTo( 0.8, 6 );
-		expect( textured.result.warnings.some( w => /coat_affect_color/.test( w ) ) ).toBe( true );
 
 	} );
 

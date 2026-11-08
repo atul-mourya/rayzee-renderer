@@ -122,7 +122,7 @@ const DEFAULT_CURVE_SIDES = { flat: 1, ribbon: 1, cylinder: 2 };
 const DEFAULT_CURVE_TOLERANCE = 0.05;
 
 /** Bumped whenever the same scene files build a different graph, so a stored graph is not reused. */
-export const PBRT_BUILD_REVISION = 30;
+export const PBRT_BUILD_REVISION = 31;
 
 function samePlacements( a, b ) {
 
@@ -2219,7 +2219,7 @@ export class PBRTSceneBuilder {
 			`${material.specularIntensity}|${material.diffuseTransmission ?? 0}|${material.diffuseTransmissionColor?.toArray() ?? '-'}|` +
 			`${material.diffuseTransmissionColorMap?.uuid ?? '-'}|` +
 			`${material.subsurface ?? 0}|${material.subsurfaceColor?.toArray() ?? '-'}|${material.subsurfaceRadius ?? '-'}|${material.subsurfaceAnisotropy ?? 0}|` +
-			`${material.diffuseRoughness ?? 0}|${material.coatDarkening ?? 0}`;
+			`${material.diffuseRoughness ?? 0}`;
 
 		const existing = this._materialBySignature.get( key );
 		if ( existing ) return existing;

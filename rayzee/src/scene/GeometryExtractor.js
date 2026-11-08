@@ -1350,7 +1350,6 @@ export class GeometryExtractor {
 			diffuseTransmission: pick( 'diffuseTransmission' ),
 			diffuseTransmissionColor: pick( 'diffuseTransmissionColor' ),
 			diffuseRoughness: pick( 'diffuseRoughness' ),
-			coatDarkening: pick( 'coatDarkening' ),
 
 			normalScale: pick( 'normalScale' ),
 			normalGreenUp: greenUp( textures.normalMap, material.normalScale ),

@@ -21,7 +21,7 @@ const TRANSFORMS = [
 export const UNIT_RANGE_PROPERTIES = Object.freeze( new Set( [
 	'metalness', 'roughness', 'transmission', 'opacity', 'clearcoat', 'clearcoatRoughness',
 	'sheen', 'sheenRoughness', 'specularIntensity', 'iridescence', 'subsurface', 'anisotropy', 'diffuseTransmission',
-	'diffuseRoughness', 'coatDarkening',
+	'diffuseRoughness',
 ] ) );
 
 export const clampUnit = ( value ) => Math.min( Math.max( value, 0 ), 1 );
@@ -172,7 +172,5 @@ export function packMaterial( data, base, mat ) {
 	data[ base + M.BUMP_MAP_WIDTH ] = num( mat.bumpMapSize?.[ 0 ], 0 );
 	data[ base + M.BUMP_MAP_HEIGHT ] = num( mat.bumpMapSize?.[ 1 ], 0 );
 	s( M.RELATIVE_IOR, mat.relativeIOR, D.relativeIOR );
-	u( M.COAT_DARKENING, mat.coatDarkening, D.coatDarkening );
-	data.fill( 0, base + M.COAT_DARKENING + 1, base + M.FLOATS_PER_MATERIAL );
 
 }

@@ -22,17 +22,6 @@ describe( 'pbrt materials', () => {
 
 	} );
 
-	it( 'makes a coated diffuse a Lambertian base under a coat that darkens it, as pbrt\'s layered coat does', async () => {
-
-		const mat = await buildMaterial( { type: 'coateddiffuse', params: { reflectance: param( 'rgb', 1, 0.38, 0.01 ) } }, ctx );
-		expect( mat.color.toArray() ).toEqual( [ 1, 0.38, 0.01 ] );
-		expect( [ mat.clearcoat, mat.coatDarkening, mat.specularIntensity, mat.metalness, mat.roughness ] ).toEqual( [ 1, 1, 0, 0, 1 ] );
-
-		const gold = await buildMaterial( { type: 'coatedconductor', params: { 'conductor.eta': param( 'spectrum', 'metal-Au-eta' ) } }, ctx );
-		expect( [ gold.clearcoat, gold.coatDarkening ] ).toEqual( [ 1, 1 ] );
-
-	} );
-
 	it( 'makes a conductor without a roughness a mirror, as pbrt does', async () => {
 
 		expect( ( await buildMaterial( { type: 'conductor', params: {} }, ctx ) ).roughness ).toBe( 0 );

@@ -105,47 +105,6 @@ describe( 'file formats', () => {
 
 	} );
 
-	it( 'reads OpenPBR\'s coat darkening through three\'s USD loader, 1 where the file does not say', async () => {
-
-		const coated = ( darkening ) => `#usda 1.0
-def Xform "root"
-{
-	def Mesh "tri" (
-		prepend apiSchemas = ["MaterialBindingAPI"]
-	)
-	{
-		int[] faceVertexCounts = [3]
-		int[] faceVertexIndices = [0, 1, 2]
-		point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
-		rel material:binding = </root/mat>
-	}
-	def Material "mat"
-	{
-		token outputs:surface.connect = </root/mat/pbr.outputs:surface>
-		def Shader "pbr"
-		{
-			uniform token info:id = "arnold:openpbr_surface"
-			float inputs:coat_weight = 1
-			${darkening === undefined ? '' : `float inputs:coat_darkening = ${darkening}`}
-			token outputs:surface
-		}
-	}
-}
-`;
-		const material = async ( darkening ) => {
-
-			const { model } = await usdFormat.parse( new File( [ coated( darkening ) ], 'c.usda' ), { filename: 'c.usda', cache: {} } );
-			let found = null;
-			model.traverse( o => o.isMesh && ( found = o.material ) );
-			return found;
-
-		};
-
-		expect( [ ( await material( 0.25 ) ).clearcoat, ( await material( 0.25 ) ).coatDarkening ] ).toEqual( [ 1, 0.25 ] );
-		expect( ( await material() ).coatDarkening ).toBe( 1 );
-
-	} );
-
 	it( 'hands Collada its text and 3MF its bytes, keeping Collada\'s whole result', async () => {
 
 		const scene = new Group();
