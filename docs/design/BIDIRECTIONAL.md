@@ -181,6 +181,12 @@ exactly the unidirectional kernels: everything bidirectional is JS-gated on `par
     crease or a small object): Livspace read +6.1 % at 2 px, +0.69 % at 1 px, +0.17 % at 1 px with trust 0.25; the
     classroom +0.95 / +0.28 / +0.08 %. ⚠️ Rejecting light vertices of a differently facing surface (a corner's
     other wall) made it −3 % instead: their light stands in for the sphere past the crease.
+  - **Not at light tracing's vertex** (`cameraMerges`): the camera's first vertex merges only while its dVCM is 0 —
+    glass or a mirror before it, or no light tracing (a lens, a panorama). Elsewhere light tracing finds the same light
+    unblurred, and a merge there spread each light vertex over its neighbouring pixels: clumps OIDN kept as glitter (the
+    pbrt bathroom's wall by its bulbs, 768², 30 spp, after OIDN against 1024 spp: 9.1 → 6.1 levels RMSE; image mean
+    unchanged, within 0.2 % of bidirectional). Every sum leaves that merge out: Shade's and ConnectKernel's η² there is
+    0, LightSplat's has none. Merging alone keeps it, so that view still sums every merge of a path.
   - **Grid:** light vertices are filed by their radius in shells (ratio 1.25; a sphere reaches at most two), each a
     hash grid of cells 2 · its largest radius / (1 − slope) wide — one list a cell through the cached record's spare
     lane (`next`, record quad 3 .w; `extra` moved to the material word's top 8 bits). `mergeClear` + `mergeInsert`

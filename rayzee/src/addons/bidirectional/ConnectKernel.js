@@ -15,7 +15,7 @@ import { traverseBVHShadow } from '../../shaders/BVHTraversal.js';
 import { offsetRayOrigin, SHADOW_END, luminance } from '../../shaders/Common.js';
 import { regularizePathContribution } from '../../shaders/PathTracerCore.js';
 import {
-	resolveSurfaceMaterial, lightEndCosine, misPartial, misWeight, strategyWeight, facingSide, STRATEGY, DIM_CONNECT_PATH, DIM_CONNECT_VERTEX,
+	resolveSurfaceMaterial, lightEndCosine, misPartial, misWeight, strategyWeight, facingSide, cameraMerges, STRATEGY, DIM_CONNECT_PATH, DIM_CONNECT_VERTEX,
 } from './Bidirectional.js';
 import { COUNTER } from '../../pathtracer/QueueManager.js';
 import {
@@ -57,7 +57,8 @@ export function buildConnectKernel( params ) {
 		} );
 
 		const camRecord = readVertexRecord( hitBufferRO, pending );
-		const cam = { ...camRecord, vm: mergeVm?.( camRecord.position ) ?? null };
+		// As Shade's subpath.vm.
+		const cam = { ...camRecord, vm: mergeVm ? select( cameraMerges( camRecord.extra, camRecord.dVCM ), mergeVm( camRecord.position ), float( 0.0 ) ) : null };
 		const cameraVertices = int( cam.extra ).add( int( 1 ) ).toVar();
 
 		const resX = int( resolution.x );

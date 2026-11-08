@@ -102,6 +102,12 @@ export const mergeVmAt = ( bdpt, p ) => {
 
 };
 
+/**
+ * Whether a camera vertex merges: not its first while dVCM, light tracing's term, is live (no glass or mirror before
+ * it, a pinhole). There a merge repeats light tracing's light in clumps the denoisers keep; every sum leaves it out.
+ */
+export const cameraMerges = ( cameraDepth, dVCM ) => int( cameraDepth ).greaterThan( int( 0 ) ).or( dVCM.lessThanEqual( 0.0 ) );
+
 // Georgiev (38)-(39), a merge at a camera vertex: each side's sum, `density` the camera vertex's BSDF density
 // (of the light's arrival direction for the light side, back along its own for the camera side); `vc` = 1 / η².
 export const misMergePartial = ( state, density, vc ) => finite( finite( state.dVCM.add( state.dVC.mul( mis( density ) ) ) ).mul( vc ) );

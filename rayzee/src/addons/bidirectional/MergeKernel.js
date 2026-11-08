@@ -1,8 +1,9 @@
 /**
  * MergeKernel.js — vertex merging (Georgiev et al. 2012, "Light Transport Simulation with Vertex Connection and
  * Merging"): each camera vertex Shade left pending gathers the light vertices within the merge radius, as photon
- * mapping does, MIS-weighted against every other strategy. It is the one strategy for light no path can connect:
- * a lamp behind glass seen in a mirror, a caustic seen through water.
+ * mapping does, MIS-weighted against every other strategy — except where light tracing reaches it (Bidirectional.js
+ * cameraMerges). It is the one strategy for light no path can connect: a lamp behind glass seen in a mirror, a
+ * caustic seen through water.
  *
  * The radius is a few pixels' footprint where the camera vertex is (Bidirectional.js mergeRadiusAt), so it grows
  * with the distance from the camera. The light vertex cache is filed by that radius in shells, each a hash grid of
@@ -19,7 +20,7 @@ import { evaluateMaterialResponse } from '../../shaders/MaterialEvaluation.js';
 import { calculateMaterialPDF } from '../../shaders/LightsSampling.js';
 import { luminance } from '../../shaders/Common.js';
 import { regularizePathContribution } from '../../shaders/PathTracerCore.js';
-import { resolveSurfaceMaterial, misMergePartial, misWeight, strategyWeight, mergeRadiusAt, mergeEta, facingSide, STRATEGY } from './Bidirectional.js';
+import { resolveSurfaceMaterial, misMergePartial, misWeight, strategyWeight, mergeRadiusAt, mergeEta, facingSide, cameraMerges, STRATEGY, STRATEGY_ALONE } from './Bidirectional.js';
 import { COUNTER } from '../../pathtracer/QueueManager.js';
 import {
 	readRayRadiance, writeRayRadiance, pendingVertex, cachedVertex, readVertexTag, readVertexRecord, readVertexPosition,
@@ -129,6 +130,13 @@ export function buildMergeKernel( params ) {
 
 		const cam = readVertexRecord( hitBufferRO, pending );
 		const cameraDepth = int( cam.extra ).toVar();
+		// Light tracing's vertex: no merge (cameraMerges), except merging alone, where every vertex of a path merges.
+		If( cameraMerges( cameraDepth, cam.dVCM ).not().and( strategyView.notEqual( uint( STRATEGY.MERGE + STRATEGY_ALONE ) ) ), () => {
+
+			Return();
+
+		} );
+
 		// A merged path of k scattering vertices: the camera's cameraDepth + 1 and the light's l share one.
 		const lightBudget = int( maxBounceCount ).add( int( 1 ) ).sub( cameraDepth ).toVar();
 		const material = resolveSurfaceMaterial( cam.materialIndex, cam.uv, cam.N, materialBuffer );

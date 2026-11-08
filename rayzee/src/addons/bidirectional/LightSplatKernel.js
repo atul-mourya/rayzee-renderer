@@ -32,7 +32,6 @@ export function buildLightSplatKernel( params ) {
 		cameraPosition, cameraForward, cameraClipStart, cameraViewMatrix, cameraProjectionMatrix, pixelArea,
 		renderWidth, renderHeight,
 		globalIlluminationIntensity, fireflyThreshold, accumFrame, frame,
-		mergeVm = null,
 		// Some material passes light through diffusely: the camera may then see a light vertex from behind its surface.
 		diffuseTransmission = true,
 	} = params;
@@ -55,7 +54,8 @@ export function buildLightSplatKernel( params ) {
 		} );
 
 		const record = readVertexRecord( hitBufferRO, cachedVertex( slot ) );
-		const v = { ...record, vm: mergeVm?.( record.position ) ?? null };
+		// The camera's first vertex, which never merges (cameraMerges).
+		const v = { ...record, vm: null };
 
 		const toCamera = cameraPosition.sub( v.position ).toVar();
 		const dist2 = max( dot( toCamera, toCamera ), 1e-12 ).toVar();

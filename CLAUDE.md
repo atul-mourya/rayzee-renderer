@@ -708,6 +708,8 @@ bounce limit takes one more segment flagged `RAY_FLAG.EMISSION_ONLY` (the BSDF-h
 environment's exact table (`environment/EnvironmentExactTable.js`) serves both integrators' NEE and the miss weight.
 - ⚠️ A new integrator plugs into the same hooks; never add `if ( bidirectional )` to `PathTracer`.
 - ⚠️ Light tracing obeys the camera's face culling (`traverseBVHShadowCameraCulled`).
+- ⚠️ The camera's first vertex does not merge where light tracing reaches it (`cameraMerges`; every sum drops that
+  merge): merged there, light tracing's light came out in clumps OIDN kept as glitter.
 - ⚠️ A light path ends where light arrives from below the shading normal; geometry terms use the exact facet
   (`exactFacetN`), not the hit record's 11-bit one.
 - ⚠️ Glass blocks the bidirectional shadow rays, so in a glass scene the integrators legitimately differ; the unbiased

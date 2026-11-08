@@ -2,13 +2,13 @@
  * The bidirectional MIS recursion, composed as the kernels compose it, against the power heuristic from
  * explicit densities, for camera z0 → x1 → x2 → light y0 and its strategies (hit, NEE, connect, light trace):
  * an emitter, a point or directional lamp (no hit), and the environment (at infinity); then the emitter with
- * vertex merging, which adds a merge at x1 and at x2.
+ * vertex merging: a merge at x2, and at x1 only where light tracing does not reach it (a lens).
  */
 
 import { afterAll, beforeAll, expect, it } from 'vitest';
-import { float, vec4 } from 'three/tsl';
+import { float, int, select, vec4 } from 'three/tsl';
 import { describeGPU, createRenderer, evaluate } from './gpu.js';
-import { mis, misOnHit, misOnScatter, misPartial, misMergePartial, misWeight } from '@/core/addons/bidirectional/Bidirectional.js';
+import { mis, misOnHit, misOnScatter, misPartial, misMergePartial, misWeight, cameraMerges } from '@/core/addons/bidirectional/Bidirectional.js';
 
 const CASES = 64;
 
@@ -282,7 +282,8 @@ describeGPU( 'bidirectional MIS', () => {
 
 	// Vertex merging at η = πr² · light paths, r each vertex's own radius: a merge at x2 is the camera reaching x2 and
 	// a light path reaching it; at x1, a light path through x2 reaching x1. Against the connection: camX2 · η2, lightX1 · η1.
-	it( 'weighs an emitter path\'s six strategies with merging by the power heuristic, summing to one', async () => {
+	// With a pinhole, light tracing reaches x1 and nothing merges there (cameraMerges); with a lens, no light tracing.
+	for ( const pinhole of [ true, false ] ) it( `weighs an emitter path's five strategies with merging ${pinhole ? 'and light tracing, none merging at x1' : 'and a lens, merging at x1'} by the power heuristic, summing to one`, async () => {
 
 		const cases = makeCases().map( ( c, i ) => ( {
 			...c, eta1: 10 ** ( - 2 + 4 * ( ( i * 29 ) % 64 ) / 64 ), eta2: 10 ** ( - 2 + 4 * ( ( i * 41 + 7 ) % 64 ) / 64 ),
@@ -310,13 +311,16 @@ describeGPU( 'bidirectional MIS', () => {
 			const neePdfA = neePdf.mul( cL ).div( d3.mul( d3 ) );
 			const snapshot = ( state, vm ) => ( { dVCM: state.dVCM.toVar(), dVC: state.dVC.toVar(), vm } );
 
-			const camera = { dVCM: mis( lightPaths.mul( pixelArea ).mul( cosCamera.mul( cosCamera ).mul( cosCamera ) ) ).toVar(), dVC: float( 0 ).toVar(), vm: vm1 };
+			// Generate: light tracing's term, or 0 without it.
+			const camera = { dVCM: pinhole ? mis( lightPaths.mul( pixelArea ).mul( cosCamera.mul( cosCamera ).mul( cosCamera ) ) ).toVar() : float( 0 ).toVar(), dVC: float( 0 ).toVar(), vm: null };
 			misOnHit( camera, d1, cIn1 );
-			const atX1 = snapshot( camera, vm1 );
+			// Shade at x1, the camera's first vertex.
+			camera.vm = select( cameraMerges( int( 0 ), camera.dVCM ), vm1, float( 0 ) ).toVar();
+			const atX1 = snapshot( camera, camera.vm );
 			misOnScatter( camera, cOut1, f1, r1 );
 			misOnHit( camera, d2, cIn2 );
-			const atX2 = snapshot( camera, vm2 );
-			camera.vm = vm2;
+			camera.vm = select( cameraMerges( int( 1 ), camera.dVCM ), vm2, float( 0 ) ).toVar();
+			const atX2 = snapshot( camera, camera.vm );
 			misOnScatter( camera, cOut2, f2, r2 );
 			misOnHit( camera, d3, cL );
 
@@ -326,7 +330,8 @@ describeGPU( 'bidirectional MIS', () => {
 			const lightAtX2 = snapshot( light, vm2 );
 			misOnScatter( light, cIn2, r2, f2 );
 			misOnHit( light, d2, cOut1 );
-			light.vm = vm1;
+			// LightSplat: x1 is the camera's first vertex, which never merges.
+			light.vm = null;
 
 			if ( which === 'merge' ) return vec4(
 				misWeight( misMergePartial( light, f1, float( 1 ).div( vm1 ) ), misMergePartial( atX1, r1, float( 1 ).div( vm1 ) ) ),
@@ -356,9 +361,11 @@ describeGPU( 'bidirectional MIS', () => {
 			const neeY0 = c.neePdf * c.cL / c.d3 ** 2;
 			const lightX2 = c.areaPdf * ( c.cL / Math.PI ) * c.cOut2 / c.d3 ** 2;
 			const lightX1 = c.r2 * c.cOut1 / c.d2 ** 2;
-			const q = [ camX2 * camY0 / lightX2, camX2 * neeY0 / lightX2, 1, c.lightPaths * lightX1 / camX1, lightX1 * c.eta1, camX2 * c.eta2 ];
+			// Hit, NEE, connection, then light tracing (pinhole) or the merge at x1 (lens), then the merge at x2.
+			const q = [ camX2 * camY0 / lightX2, camX2 * neeY0 / lightX2, 1, pinhole ? c.lightPaths * lightX1 / camX1 : lightX1 * c.eta1, camX2 * c.eta2 ];
 			const sum = q.reduce( ( s, x ) => s + x * x, 0 );
-			const got = [ ...connection.subarray( i * 4, i * 4 + 4 ), ...merge.subarray( i * 4, i * 4 + 2 ) ];
+			const at = ( array, k ) => array[ i * 4 + k ];
+			const got = [ at( connection, 0 ), at( connection, 1 ), at( connection, 2 ), pinhole ? at( connection, 3 ) : at( merge, 0 ), at( merge, 1 ) ];
 			expect( got.reduce( ( s, w ) => s + w, 0 ) ).toBeCloseTo( 1, 4 );
 			got.forEach( ( w, k ) => expect( w ).toBeCloseTo( q[ k ] * q[ k ] / sum, 4 ) );
 

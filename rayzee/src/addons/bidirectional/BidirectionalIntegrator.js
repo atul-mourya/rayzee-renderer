@@ -327,7 +327,6 @@ export class BidirectionalIntegrator {
 			fireflyThreshold: this.pt.fireflyThreshold,
 			accumFrame: this.pt.frame,
 			frame: this.pt.seedFrame,
-			mergeVm: bd.merging ? ( p ) => mergeVmAt( bd, p ) : null,
 			diffuseTransmission: transmits,
 		} )() ).compute( [ Math.ceil( this._lightCacheSlots / LIGHT_SPLAT_WG_SIZE ), 1, 1 ], [ LIGHT_SPLAT_WG_SIZE, 1, 1 ] ) );
 

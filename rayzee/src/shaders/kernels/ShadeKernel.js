@@ -150,7 +150,7 @@ export function buildShadeKernel( params ) {
 
 	// The bidirectional shading functions come with the integrator's uniforms (BidirectionalIntegrator), only used where bdpt is.
 	const {
-		mis, misOnHit, misOnSpecular, misOnScatter, misPartial, misWeight, emitterSideProbability, emitterAreaPdf, lightEndCosine, mergeVmAt, strategyWeight, sunEmissionPdf, STRATEGY, LIGHT_PIXEL_ROW_OFFSET, sourcePick, lampSource, sourceLampType, sourceLampIndex, SOURCE, guidedDiscPdf, recordEscape, LampPick, pickLamp, lampPickPdf, lampCount, spotConeSolidAngle, directionalConeSolidAngle, areaLightDirectPdfW,
+		mis, misOnHit, misOnSpecular, misOnScatter, misPartial, misWeight, emitterSideProbability, emitterAreaPdf, lightEndCosine, mergeVmAt, cameraMerges, strategyWeight, sunEmissionPdf, STRATEGY, LIGHT_PIXEL_ROW_OFFSET, sourcePick, lampSource, sourceLampType, sourceLampIndex, SOURCE, guidedDiscPdf, recordEscape, LampPick, pickLamp, lampPickPdf, lampCount, spotConeSolidAngle, directionalConeSolidAngle, areaLightDirectPdfW,
 	} = bdpt?.lib ?? {};
 
 	const auxOn = gBuffer ? auxGBufferEnabled.greaterThan( uint( 0 ) ) : null;
@@ -787,8 +787,8 @@ export function buildShadeKernel( params ) {
 
 		// On the triangle's plane: Extend stores the distance to it (ExtendKernel).
 		const hitPoint = origin.add( direction.mul( hitDist ) ).toVar();
-		// Vertex merging: a merge here, weighed in every sum this vertex ends or scatters.
-		if ( bdpt?.merging ) subpath.vm = mergeVmAt( bdpt, hitPoint ).toVar();
+		// Vertex merging: a merge here, weighed in every sum this vertex ends or scatters (none where the camera does not merge).
+		if ( bdpt?.merging ) subpath.vm = select( isLight.or( cameraMerges( cameraDepth, subpath.dVCM ) ), mergeVmAt( bdpt, hitPoint ), float( 0.0 ) ).toVar();
 		const N = normalize( hitNormal ).toVar();
 		// The hit record's facet is 11-bit; light tracing's and connections' grazing geometry terms need it exact.
 		const exactFacetN = bdpt ? hitFacet( {
