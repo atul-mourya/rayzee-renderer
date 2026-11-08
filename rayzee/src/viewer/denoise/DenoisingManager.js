@@ -351,7 +351,9 @@ export class DenoisingManager extends EventDispatcher {
 				if ( history ) return history;
 				const readTextures = pt.storageTextures.getReadTextures();
 				const { backend } = this.renderer;
-				const variance = pt.getPixelVariance?.();
+				// Under an integrator of its own, light paths bring much of the light in a few bright samples: a pixel's own
+				// samples read its noise far too low, and leaning back to the input brought its grain back as specks.
+				const variance = pt.activeIntegrator ? null : pt.getPixelVariance?.();
 				return {
 					color: backend.get( readTextures.color ).texture,
 					normal: backend.get( readTextures.normalDepth ).texture,

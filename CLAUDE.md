@@ -788,7 +788,9 @@ environment's exact table (`environment/EnvironmentExactTable.js`) serves both i
   OIDN back to noise (mixed-lights at 150 spp 0.30 → 0.41), so OIDN keeps m2. ⚠️ Never even and odd frames as halves:
   Sobol' puts them in opposite halves of every dimension. NRD at 16 spp went 1.03–2.22 → 0.62–0.91 of raw's error;
   OIDN at 150 spp 1.153 / 1.209 → 1.052 / 1.006 (1.036 / 0.996 at 5×5 without slack, which also had iridescence at 64
-  spp 0.54 where it is now 0.66).
+  spp 0.54 where it is now 0.66). ⚠️ Neither leans under an integrator of its own (bidirectional, vcm): light paths bring
+  much of the light in a few bright samples, so most pixels' own samples read their noise far too low and the lean put
+  their grain back as grey flecks (NRD_DENOISER.md, "Handing back to the input").
 - **The guide behind smooth glass follows its likelier branch**: a path that took the other one is flagged
   `RAY_FLAG.AUX_UNLIKELY` and FinalWrite averages the guide over unflagged samples per pixel (`guideWeights`). Following
   the sampled branch speckled the guide behind thick glass and the clean-guide OIDN models kept the speckle. See "Render

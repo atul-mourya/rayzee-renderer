@@ -7,9 +7,10 @@ vi.mock( '@/core/viewer/denoise/OIDNDenoiser.js', async () => {
 	const { EventDispatcher } = await import( 'three' );
 	return { OIDNDenoiser: class extends EventDispatcher {
 
-		constructor() {
+		constructor( renderer, options ) {
 
 			super();
+			this.options = options;
 			this.enabled = false;
 			this.state = {};
 			this.hasOutput = false;
@@ -254,6 +255,34 @@ describe( 'DenoisingManager — leaving live OIDN', () => {
 
 		dn.dispatchEvent( { type: 'end', continuous: true } );
 		expect( published ).toContain( 'oidn:output' );
+
+	} );
+
+} );
+
+describe( 'leaning back to the input', () => {
+
+	it( 'is OIDN\'s and NRD\'s under the path integrator only: an integrator of its own reads its noise far too low', async () => {
+
+		const { manager, stages } = makeManager();
+		const variance = { m2: {}, samples: 30, width: 8 };
+		Object.assign( stages.pathTracer, {
+			storageTextures: { readTarget: {}, getReadTextures: () => ( { color: {}, normalDepth: {}, albedo: {} } ) },
+			getPixelVariance: () => variance,
+			activeIntegrator: null,
+		} );
+		manager.renderer = { backend: { get: () => ( { texture: {}, buffer: 'm2' } ) } };
+		manager.setupDenoiser();
+		const textures = () => manager.denoiser.options.getGPUTextures();
+
+		expect( textures().variance ).toMatchObject( { samples: 30, buffer: 'm2' } );
+		stages.pathTracer.activeIntegrator = { name: 'vcm' };
+		expect( textures().variance ).toBeNull();
+
+		const { NRD } = await import( '@/core/viewer/denoise/NRD.js' );
+		const nrd = { pathTracer: stages.pathTracer, resW: { value: 8 }, resH: { value: 8 }, _snapCapacity: 0, _buildBlend: vi.fn() };
+		expect( NRD.prototype._blendTowardsInput.call( nrd, 4 ) ).toBe( false );
+		expect( nrd._buildBlend ).not.toHaveBeenCalled();
 
 	} );
 

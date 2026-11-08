@@ -1355,7 +1355,8 @@ export class NRD extends RenderStage {
 
 		const pt = this.pathTracer;
 		const pixels = this.resW.value * this.resH.value;
-		if ( ! pt || ! ( pixels > 0 ) ) return false;
+		// Not under an integrator of its own, as OIDN's (DenoisingManager): its few bright samples read as no error.
+		if ( ! pt || pt.activeIntegrator || ! ( pixels > 0 ) ) return false;
 		if ( this._snapCapacity < pixels ) this._buildBlend( pixels );
 
 		// The accumulation is the one that started at this traced frame; while the camera moves it restarts every frame.

@@ -111,6 +111,11 @@ squared luminance change and `variance` the input's variance of the mean, change
 keeps variance / change of its change — the blend with the least squared error (`DENOISE_BLEND_WGSL`, shared with
 OIDN's output pass). It writes `tmpB`, which nothing reads by then.
 
+Neither denoiser leans under an integrator of its own (bidirectional, vcm; `DenoisingManager` hands OIDN no variance,
+`_blendTowardsInput` returns false). Light paths bring much of the light there in a few bright samples, so most pixels'
+own samples read their noise far too low: on the pbrt Bathroom's wall at 30 spp the median pixel was 0.079 against a
+mean of 0.161, OIDN's output was right on average (0.162) and the lean put the raw grain back as grey flecks.
+
 The variance comes from the input's luminance at the last two powers of two of its samples, which NRD snapshots as
 they pass (`_blendTowardsInput`, 8 B a pixel). Each half of a power of two of Owen-scrambled Sobol' samples is a whole
 net, so the snapshots' difference, squared and scaled by 2^k / N, is the input's real error: 0.64–1.0 of it against a
