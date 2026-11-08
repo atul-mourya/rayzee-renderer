@@ -74,20 +74,23 @@ subtree per element, and the whole thing rarely fits: Moana is 29 GB unpacked.
   (`_lastPlyUse`), never while a template or an unmerged shape holds it: Zero-Day names one file from
   up to 320 shapes, and freeing on the first merge failed the load with a detached ArrayBuffer.
 - **Lights.** `infinite` becomes the environment; a scene without one renders with the environment off
-  (`sceneMetadata.environment.enabled === false`, applied at the replace-load seam, and what it replaced comes
-  back with the next model unless someone changed it). `distant`, `point` and `spot` become three.js lamps in
-  the engine's units (pbrt's L / I × `scale`, `power` and `illuminance` honoured; flagged as converted so the
-  photometric conversion skips them; stored in the scene cache). A non-RGB light spectrum (blackbody, named) is
-  brought to luminance 1 as pbrt does. `.pfm` images load (`addons/archives/pbrt/PFM.js`). An area light is one-sided
-  unless `"bool twosided"`: a surface on both faces (`DoubleSide`) emitting from its front (`emissiveSide: FrontSide`),
-  so from behind it is dark, never a hole, as in pbrt; its triangles rewound to face the vertex normals, or turned over by
-  ReverseOrientation where it has none (`_facingEmission`). An area light's `power` scales its radiance to that power
-  over the shape's area (a quadric's in its own space, a mesh's in the scene's, as pbrt measures them). A shape of
-  `"float alpha" 0` is dropped: pbrt never hits it and an area light on it emits nothing (kroken's 90-unit "sun" sphere).
-  Any other `alpha` is the engine's blend mode — a ray passes with chance 1 − α, shadow rays too — on a material per
-  material and alpha (`_withAlpha`): a constant becomes `opacity`, a texture the colour map's alpha channel (the map's
-  own image when it is the same file, its alpha decoded as pbrt decodes every 8-bit channel; baked otherwise). Bistro's
-  leaves and curtains had drawn as solid cards.
+  (`sceneMetadata.environment.enabled === false`, applied at the replace-load seam, and what it replaced comes back with
+  the next model unless someone changed it). `distant`, `point` and `spot` become three.js lamps in the engine's units
+  (pbrt's L / I × `scale`, `power` and `illuminance` honoured; flagged as converted so the photometric conversion skips
+  them; stored in the scene cache). A non-RGB light spectrum (blackbody, named, sampled) is brought to luminance 1 as
+  pbrt does, in pbrt's colour: a blackbody (Planck's law) or sampled spectrum summed every 1 nm against CIE 1931
+  (`emissionRGB`; blackbodies within 0.002 of pbrt-v4's own render from 1000 to 40000 K, a negative channel clipped to 0
+  as the engine cannot emit one), `stdillum-A` a 2856 K blackbody, `stdillum-D65` white. pbrt's other illuminant tables
+  (D50, F1–F12) are not kept: white, reported. `.pfm` images load (`addons/archives/pbrt/PFM.js`). An area light is
+  one-sided unless `"bool twosided"`: a surface on both faces (`DoubleSide`) emitting from its front (`emissiveSide:
+  FrontSide`), so from behind it is dark, never a hole, as in pbrt; its triangles rewound to face the vertex normals, or
+  turned over by ReverseOrientation where it has none (`_facingEmission`). An area light's `power` scales its radiance
+  to that power over the shape's area (a quadric's in its own space, a mesh's in the scene's, as pbrt measures them). A
+  shape of `"float alpha" 0` is dropped: pbrt never hits it and an area light on it emits nothing (kroken's 90-unit
+  "sun" sphere). Any other `alpha` is the engine's blend mode — a ray passes with chance 1 − α, shadow rays too — on a
+  material per material and alpha (`_withAlpha`): a constant becomes `opacity`, a texture the colour map's alpha channel
+  (the map's own image when it is the same file, its alpha decoded as pbrt decodes every 8-bit channel; baked
+  otherwise). Bistro's leaves and curtains had drawn as solid cards.
 - **Shapes and cameras.** `sphere`, `disk` and `cylinder` are pbrt's quadrics (`quadric()`): partial by `zmin`/`zmax`/
   `phimax`, in pbrt's uv, facing ∂p/∂u × ∂p/∂v. A `bilinearmesh` patch's corners are p00, p10, p01, p11 (not a ring),
   one patch of four points needs no indices, and without uvs a patch takes its own — watercolor's floor spots had been

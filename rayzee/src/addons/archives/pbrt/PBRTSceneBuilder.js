@@ -23,7 +23,7 @@ import {
 	NumberKeyframeTrack, BooleanKeyframeTrack, DirectionalLight, PointLight, SpotLight, FrontSide, DoubleSide,
 	RepeatWrapping
 } from 'three';
-import { buildMaterial, pBool, pFloat, pString, resolveSpectrum } from './PBRTMaterials.js';
+import { blackbodyRGB, buildMaterial, pBool, pFloat, pString, resolveSpectrum, sampledEmissionRGB } from './PBRTMaterials.js';
 import { makeLayer, layerMean, bake, mixOf, srgbToLinear, linearToSRGB, hasAlpha, generateUV, uvKey } from './PBRTTextureBake.js';
 import { loopSubdivide } from './LoopSubdivision.js';
 import { approximated, param } from './PBRTParser.js';
@@ -39,7 +39,17 @@ const LAMP_TYPES = new Set( [ 'distant', 'point', 'spot' ] );
 async function lightRGB( params, name, ctx ) {
 
 	const p = param( params, name );
-	if ( p?.type === 'spectrum' && typeof p.value[ 0 ] === 'string' && p.value[ 0 ].startsWith( 'stdillum' ) ) return [ 1, 1, 1 ];
+	if ( p?.type === 'spectrum' && typeof p.value[ 0 ] === 'string' && p.value[ 0 ].startsWith( 'stdillum' ) ) {
+
+		// CIE illuminant A is a 2856 K blackbody. pbrt's other tables (D50, F1–F12) are not kept: white.
+		if ( p.value[ 0 ] === 'stdillum-A' ) return blackbodyRGB( 2856 );
+		if ( p.value[ 0 ] !== 'stdillum-D65' ) approximated( params, name );
+		return [ 1, 1, 1 ];
+
+	}
+
+	if ( p?.type === 'blackbody' ) return blackbodyRGB( p.value[ 0 ] );
+	if ( p?.type === 'spectrum' && typeof p.value[ 0 ] === 'number' ) return sampledEmissionRGB( p.value );
 	const rgb = ( await resolveSpectrum( params, name, ctx, [ 1, 1, 1 ] ) ).rgb || [ 1, 1, 1 ];
 	if ( ! p || p.type === 'rgb' || p.type === 'color' || p.type === 'float' ) return rgb;
 	const y = 0.2126 * rgb[ 0 ] + 0.7152 * rgb[ 1 ] + 0.0722 * rgb[ 2 ];
@@ -112,7 +122,7 @@ const DEFAULT_CURVE_SIDES = { flat: 1, ribbon: 1, cylinder: 2 };
 const DEFAULT_CURVE_TOLERANCE = 0.05;
 
 /** Bumped whenever the same scene files build a different graph, so a stored graph is not reused. */
-export const PBRT_BUILD_REVISION = 28;
+export const PBRT_BUILD_REVISION = 29;
 
 function samePlacements( a, b ) {
 

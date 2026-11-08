@@ -245,12 +245,19 @@ once looked at. How it should have been built so they could not happen:
 - [ ] **Single-sheet dielectric**: kroken's picture glass is one quad of `dielectric`; the card behind it renders very
   noisy at 512 spp and OIDN turns the noise into a bumpy texture. See Known → `thickness` / thin-walled; check how the
   medium stack treats an open sheet against pbrt's per-interface orientation.
-- [ ] **Blackbody** is a curve fit (`blackbodyToRGB`): integrate Planck's law against CIE as pbrt does (kroken reads
-  warmer partly here). The rest of the named spectra done 2026-11-07: pbrt's seven glasses (`GLASS_ETA`, read like any
-  spectral `eta`; kroken's F11 was 1.5, now 1.78) and seven metals (`METAL_ALBEDO`: normal-incidence reflectance of each
-  one's eta and k through CIE 1931 under D65, Real-Time Rendering's table to 3 digits; brass was grey, TiO2 50 % grey
-  metal where it reflects 24 %, MgO 90 % where it reflects 7 %).
-- [ ] **A second infinite light** is dropped (watercolor has two); the engine has one environment.
+- [ ] **Spectra, what is left**: pbrt's illuminant tables other than A and D65 (D50, F1–F12, `illum-acesD60`) and
+  spectra read from a file light white (reported); a reflectance given as ( λ, value ) samples reads as its mean grey,
+  and a blackbody one as its hue at 1 (pbrt reflects the curve itself, peaking at 1). Blackbody and sampled emission
+  done 2026-11-08: Planck's law or the samples against CIE 1931, within 0.002 of pbrt-v4's own render (the old curve was
+  up to 0.07 off: kroken's 6500 K sky and lights too yellow, zero-day's 2300 K too red). Named spectra done 2026-11-07:
+  pbrt's seven glasses (`GLASS_ETA`, read like any spectral `eta`; kroken's F11 was 1.5, now 1.78) and seven metals
+  (`METAL_ALBEDO`: normal-incidence reflectance of each one's eta and k through CIE 1931 under D65, Real-Time
+  Rendering's table to 3 digits; brass was grey, TiO2 50 % grey metal where it reflects 24 %, MgO 90 % where it reflects
+  7 %).
+- [ ] **A second infinite light** is dropped; the engine has one environment. Not a loss in watercolor (checked
+  2026-11-08): its two are the same image and scale, each limited to one window by `portal` (pbrt's
+  `PortalImageInfiniteLight::Le` is 0 outside it), and one environment with the portal ignored lights both windows
+  alike. Two different infinite lights (an image and a constant, say) would need summing into one.
 - [ ] **Lights**: area light `filename` (an image that emits); `goniometric` → the engine's IES profiles; `projection` →
   its gobos; the infinite light's `portal`. Area light `power` done 2026-10-05.
 - [ ] **Cameras**: `spherical` → the engine's panorama (a panorama is global, not per camera: needs a per-camera

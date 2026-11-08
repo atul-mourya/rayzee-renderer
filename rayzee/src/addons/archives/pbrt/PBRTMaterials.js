@@ -85,33 +85,73 @@ const GLASS_ETA = {
 	]
 };
 
-/** Crude blackbody-temperature → linear RGB (Planckian locus approximation). */
-function blackbodyToRGB( kelvin ) {
+// CIE 1931 2° colour matching functions, x̄ ȳ z̄ every 5 nm from 360 to 830 nm (pbrt-v4 src/pbrt/util/spectrum.cpp).
+const CIE_1931 = [
+	0.0001299, 0.000003917, 0.0006061, 0.0002321, 0.000006965, 0.001086, 0.0004149, 0.00001239, 0.001946,
+	0.0007416, 0.00002202, 0.003486, 0.001368, 0.000039, 0.00645, 0.002236, 0.000064, 0.01055,
+	0.004243, 0.00012, 0.02005, 0.00765, 0.000217, 0.03621, 0.01431, 0.000396, 0.06785,
+	0.02319, 0.00064, 0.1102, 0.04351, 0.00121, 0.2074, 0.07763, 0.00218, 0.3713,
+	0.1344, 0.004, 0.6456, 0.2148, 0.0073, 1.039, 0.2839, 0.0116, 1.386,
+	0.3285, 0.01684, 1.623, 0.3483, 0.023, 1.747, 0.3481, 0.0298, 1.783,
+	0.3362, 0.038, 1.772, 0.3187, 0.048, 1.744, 0.2908, 0.06, 1.669,
+	0.2511, 0.0739, 1.528, 0.1954, 0.09098, 1.288, 0.1421, 0.1126, 1.042,
+	0.09564, 0.139, 0.813, 0.05795, 0.1693, 0.6162, 0.03201, 0.208, 0.4652,
+	0.0147, 0.2586, 0.3533, 0.0049, 0.323, 0.272, 0.0024, 0.4073, 0.2123,
+	0.0093, 0.503, 0.1582, 0.0291, 0.6082, 0.1117, 0.06327, 0.71, 0.07825,
+	0.1096, 0.7932, 0.05725, 0.1655, 0.862, 0.04216, 0.2257, 0.9149, 0.02984,
+	0.2904, 0.954, 0.0203, 0.3597, 0.9803, 0.0134, 0.4334, 0.995, 0.00875,
+	0.5121, 1, 0.00575, 0.5945, 0.995, 0.0039, 0.6784, 0.9786, 0.00275,
+	0.7621, 0.952, 0.0021, 0.8425, 0.9154, 0.0018, 0.9163, 0.87, 0.00165,
+	0.9786, 0.8163, 0.0014, 1.026, 0.757, 0.0011, 1.057, 0.6949, 0.001,
+	1.062, 0.631, 0.0008, 1.046, 0.5668, 0.0006, 1.003, 0.503, 0.00034,
+	0.9384, 0.4412, 0.00024, 0.8544, 0.381, 0.00019, 0.7514, 0.321, 0.0001,
+	0.6424, 0.265, 0.00005, 0.5419, 0.217, 0.00003, 0.4479, 0.175, 0.00002,
+	0.3608, 0.1382, 0.00001, 0.2835, 0.107, 0, 0.2187, 0.0816, 0,
+	0.1649, 0.061, 0, 0.1212, 0.04458, 0, 0.0874, 0.032, 0,
+	0.0636, 0.0232, 0, 0.04677, 0.017, 0, 0.0329, 0.01192, 0,
+	0.0227, 0.00821, 0, 0.01584, 0.005723, 0, 0.01136, 0.004102, 0,
+	0.008111, 0.002929, 0, 0.00579, 0.002091, 0, 0.004109, 0.001484, 0,
+	0.002899, 0.001047, 0, 0.002049, 0.00074, 0, 0.00144, 0.00052, 0,
+	0.0009999, 0.0003611, 0, 0.0006901, 0.0002492, 0, 0.000476, 0.0001719, 0,
+	0.0003323, 0.00012, 0, 0.0002348, 0.0000848, 0, 0.0001662, 0.00006, 0,
+	0.0001174, 0.0000424, 0, 0.00008308, 0.00003, 0, 0.00005871, 0.0000212, 0,
+	0.00004151, 0.00001499, 0, 0.00002935, 0.0000106, 0, 0.00002067, 0.000007466, 0,
+	0.00001456, 0.000005258, 0, 0.00001025, 0.000003703, 0, 0.000007221, 0.000002608, 0,
+	0.000005086, 0.000001837, 0, 0.000003582, 0.000001293, 0, 0.000002523, 9.109e-7, 0,
+	0.000001777, 6.415e-7, 0, 0.000001251, 4.518e-7, 0
+];
 
-	const t = Math.max( 1000, Math.min( 40000, kelvin ) ) / 100;
-	let r, g, b;
+const XYZ_TO_REC709 = [ 3.2404542, - 1.5371385, - 0.4985314, - 0.9692660, 1.8760108, 0.0415560, 0.0556434, - 0.2040259, 1.0572252 ];
 
-	if ( t <= 66 ) {
+// An emission spectrum s( λ nm ) as pbrt's default sensor sees it: linear Rec.709 at luminance 1, negatives clipped.
+// Summed every 1 nm: 5 nm steps miss a band's hard edges.
+function emissionRGB( s ) {
 
-		r = 255;
-		g = 99.47 * Math.log( t ) - 161.12;
+	let x = 0, y = 0, z = 0;
+	for ( let lambda = 360; lambda <= 830; lambda ++ ) {
 
-	} else {
-
-		r = 329.7 * Math.pow( t - 60, - 0.1332 );
-		g = 288.12 * Math.pow( t - 60, - 0.0755 );
+		const v = s( lambda );
+		if ( ! v ) continue;
+		const i = Math.min( Math.floor( ( lambda - 360 ) / 5 ), 93 ) * 3, t = ( lambda - 360 ) / 5 - i / 3;
+		x += ( CIE_1931[ i ] + ( CIE_1931[ i + 3 ] - CIE_1931[ i ] ) * t ) * v;
+		y += ( CIE_1931[ i + 1 ] + ( CIE_1931[ i + 4 ] - CIE_1931[ i + 1 ] ) * t ) * v;
+		z += ( CIE_1931[ i + 2 ] + ( CIE_1931[ i + 5 ] - CIE_1931[ i + 2 ] ) * t ) * v;
 
 	}
 
-	if ( t >= 66 ) b = 255;
-	else if ( t <= 19 ) b = 0;
-	else b = 138.52 * Math.log( t - 10 ) - 305.04;
-
-	const clamp = v => Math.max( 0, Math.min( 255, v ) ) / 255;
-	// sRGB → approx linear
-	return [ clamp( r ) ** 2.2, clamp( g ) ** 2.2, clamp( b ) ** 2.2 ];
+	const m = XYZ_TO_REC709;
+	const rgb = [ 0, 3, 6 ].map( r => m[ r ] * x + m[ r + 1 ] * y + m[ r + 2 ] * z );
+	const lum = 0.2126 * rgb[ 0 ] + 0.7152 * rgb[ 1 ] + 0.0722 * rgb[ 2 ];
+	// Clipped after: pbrt's luminance counts the negative channel, and its picture shows the others at that brightness.
+	return lum > 0 ? rgb.map( v => Math.max( 0, v / lum ) ) : [ 0, 0, 0 ];
 
 }
+
+// Planck's law, unscaled (hc / k = 1.4387769e7 nm·K); black at 0 K and below.
+export const blackbodyRGB = ( kelvin ) => emissionRGB( lambda => 1 / ( ( lambda / 100 ) ** 5 * Math.expm1( 1.4387769e7 / ( lambda * kelvin ) ) ) );
+
+// pbrt's sampled spectrum: 0 outside its samples (spectrumAt holds the end values, as an eta wants).
+export const sampledEmissionRGB = ( v ) => emissionRGB( lambda => lambda < v[ 0 ] || lambda > v[ v.length - ( v.length % 2 ) - 2 ] ? 0 : spectrumAt( v, lambda ) );
 
 // ── param accessors ────────────────────────────────────────────────
 
@@ -219,8 +259,11 @@ export async function resolveSpectrum( params, name, ctx, dfltRGB = null ) {
 
 	if ( p.type === 'blackbody' ) {
 
+		// A light's is exact (lightRGB); pbrt reads any other as a reflectance, the curve peaking at 1.
 		approximated( params, name );
-		return { rgb: blackbodyToRGB( p.value[ 0 ] ), texture: null };
+		const rgb = blackbodyRGB( p.value[ 0 ] );
+		const max = Math.max( ...rgb );
+		return { rgb: max > 0 ? rgb.map( v => v / max ) : rgb, texture: null };
 
 	}
 

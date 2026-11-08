@@ -53,7 +53,6 @@ const REPORT = {
 		'Texture imagemap: wrap': 2,
 	},
 	approximated: {
-		'LightSource distant: L': 1,
 		'Material coateddiffuse: eta': 1,
 		'Material mix: amount': 1,
 	},
