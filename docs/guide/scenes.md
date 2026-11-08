@@ -29,12 +29,15 @@ What the file asks the renderer for is `engine.sceneMetadata?.render`, reported 
 whatever size you give it. `aspect` is the picture's shape, width ÷ height: of the size the file requests (pbrt's Film,
 USD's RenderSettings, a glTF's `extras.render` width and height), else of the camera the scene opens on, where the file
 gives it one — glTF's `aspectRatio` (or `xmag / ymag`), USD's authored apertures — kept on that camera as
-`userData.aspect`. A pbrt scene also carries `integrator`, `maxBounces` and `samples`, and USD's RenderSettings `width`
-and `height`. To render as the file frames it:
+`userData.aspect`. A pbrt scene also carries `integrator`, `maxBounces` and `samples`, and `exposure`, the Film's
+imaging ratio (the camera's shutter time × the Film's `iso` / 100, which pbrt scales every pixel by); USD's RenderSettings
+carry `width` and `height`. To render as the file frames and exposes it:
 
 ```js
 const aspect = engine.sceneMetadata?.render?.aspect;
 if ( aspect ) engine.setCanvasSize( 1024, Math.round( 1024 / aspect ) );
+const exposure = engine.sceneMetadata?.render?.exposure;
+if ( exposure ) engine.settings.set( 'exposure', exposure );
 ```
 
 Of USD's RenderSettings, the one the stage names (`renderSettingsPrimPath`) is read, else the only one: its camera opens

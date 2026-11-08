@@ -493,14 +493,15 @@ export const usePathTracerStore = create( ( set, get ) => ( {
 
 	},
 
-	// What the loaded scene's file set, each `{ value, previous }`: `integrator`, and `shape` (preset, orientation, scene
-	// ratio); and `asks`, the bounces and samples it asks for.
+	// What the loaded scene's file set, each `{ value, previous }`: `integrator`, `exposure`, and `shape` (preset,
+	// orientation, scene ratio); and `asks`, the bounces and samples it asks for.
 	_sceneRequest: null,
 
 	/**
-	 * Gives a just-loaded model the light transport and the picture shape its file asks for (`app.sceneMetadata.render`:
-	 * `integrator`, `aspect`). The next model gets back what the scene replaced, unless the user changed it since.
-	 * @param {?{ integrator?: string, aspect?: number }} render
+	 * Gives a just-loaded model the light transport, exposure and picture shape its file asks for
+	 * (`app.sceneMetadata.render`: `integrator`, `exposure`, `aspect`). The next model gets back what the scene replaced,
+	 * unless the user changed it since.
+	 * @param {?{ integrator?: string, exposure?: number, aspect?: number }} render
 	 */
 	applySceneRequest: render => {
 
@@ -509,6 +510,7 @@ export const usePathTracerStore = create( ( set, get ) => ( {
 		const shapeOf = ( { aspectRatioPreset, orientation, sceneAspect } ) => ( { aspectRatioPreset, orientation, sceneAspect } );
 		const same = ( a, b ) => a.aspectRatioPreset === b.aspectRatioPreset && a.orientation === b.orientation && a.sceneAspect === b.sceneAspect;
 		let integrator = opened.integrator && state.integrator === opened.integrator.value ? opened.integrator.previous : state.integrator;
+		let exposure = opened.exposure && state.exposure === opened.exposure.value ? opened.exposure.previous : state.exposure;
 		let shape = opened.shape && same( shapeOf( state ), opened.shape.value ) ? opened.shape.previous : shapeOf( state );
 
 		const request = {};
@@ -516,6 +518,13 @@ export const usePathTracerStore = create( ( set, get ) => ( {
 
 			request.integrator = { value: render.integrator, previous: integrator };
 			integrator = render.integrator;
+
+		}
+
+		if ( render?.exposure > 0 ) {
+
+			request.exposure = { value: render.exposure, previous: exposure };
+			exposure = render.exposure;
 
 		}
 
@@ -531,6 +540,7 @@ export const usePathTracerStore = create( ( set, get ) => ( {
 
 		set( { _sceneRequest: request } );
 		if ( integrator !== state.integrator ) state.handleIntegratorChange( integrator );
+		if ( exposure !== state.exposure ) state.handleExposureChange( exposure );
 		if ( ! same( shape, shapeOf( state ) ) ) state._applyCanvasDimensions( shape );
 
 	},

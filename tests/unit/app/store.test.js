@@ -769,6 +769,22 @@ describe( 'what a scene\'s file asks for', () => {
 
 	} );
 
+	it( 'opens at the exposure it asks for and gives the next model back what it replaced', async () => {
+
+		const app = await withApp();
+		const before = pt().exposure;
+		pt().applySceneRequest( { exposure: 1.1 } );
+		expect( [ pt().exposure, app.settings.set.mock.lastCall ] ).toEqual( [ 1.1, [ 'exposure', 1.1 ]] );
+		pt().applySceneRequest( null );
+		expect( pt().exposure ).toBe( before );
+
+		pt().applySceneRequest( { exposure: 2 } );
+		pt().handleExposureChange( 3 );
+		pt().applySceneRequest( null );
+		expect( pt().exposure ).toBe( 3 );
+
+	} );
+
 	it( 'keeps the bounces and samples it asks for to show, applying neither', async () => {
 
 		await withApp();

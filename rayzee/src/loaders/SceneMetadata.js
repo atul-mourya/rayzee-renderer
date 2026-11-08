@@ -21,7 +21,7 @@
  *   }
  *
  * Once the model is read, `render.aspect` joins it (withSceneAspect, from AssetLoader.onModelLoad): width ÷ height of the
- * size asked for, else of the camera the scene opens on. A pbrt scene's also carries `integrator`.
+ * size asked for, else of the camera the scene opens on. A pbrt scene's also carries `integrator` and `exposure`.
  *
  * Values may also arrive as JSON strings — DCC custom-property round-trips often
  * stringify nested objects — so every container is parsed leniently.

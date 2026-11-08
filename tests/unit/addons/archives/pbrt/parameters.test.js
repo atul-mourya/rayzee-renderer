@@ -46,7 +46,6 @@ const REPORT = {
 	unused: {
 		'AreaLightSource diffuse: filename': 1,
 		'Camera perspective: frameaspectratio': 1,
-		'Film rgb: iso': 1,
 		'Material coateddiffuse: thickness': 1,
 		'Option: disablepixeljitter': 1,
 		'Shape trianglemesh: edgelength': 2,

@@ -139,6 +139,19 @@ describe( 'PBRT scene builder', () => {
 
 	} );
 
+	it( 'reports the film\'s imaging ratio, shutter time × ISO / 100, as exposure', async () => {
+
+		const load = async ( camera, film ) => ( await loadPBRTScene( buildArgs( { vfs: { 'scene.pbrt': enc.encode( SCENE
+			.replace( 'Camera "perspective" "float fov" 40', camera )
+			.replace( 'Film "rgb"', film ) ) } } ) ) ).render;
+
+		expect( ( await load( 'Camera "perspective" "float fov" 40', 'Film "rgb" "float iso" 110' ) ).exposure ).toBeCloseTo( 1.1, 9 );
+		const timed = await load( 'Camera "perspective" "float fov" 40 "float shutteropen" 0 "float shutterclose" 0.5', 'Film "rgb" "float iso" 400' );
+		expect( timed.exposure ).toBe( 2 );
+		expect( ( await load( 'Camera "perspective" "float fov" 40', 'Film "rgb"' ) ).exposure ).toBeUndefined();
+
+	} );
+
 	it( 'gives a thin-lens camera its own depth of field: the same aperture radius in both DOF modes', async () => {
 
 		const scene = SCENE.replace( 'Camera "perspective" "float fov" 40', 'Camera "perspective" "float fov" 40 "float lensradius" 0.05 "float focaldistance" 4' );

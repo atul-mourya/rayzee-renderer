@@ -164,8 +164,9 @@ owns it), exports, test layout, docs and comments; how a cleanup is run; the aud
   colours past 1 are scaled to 1, hue kept, as the pbrt importer does.
 - **What a file asks for** (`applySceneRequest`, store `pathTracer.js`, on `MODEL_LOADED`): a scene opens at
   `sceneMetadata.render.aspect` (a preset within 0.5 %, else the Aspect Ratio's "Scene" entry, `sceneAspect`) with its
-  `integrator`, in both modes; the next model gets back what each replaced unless the user changed it. Bounces and
-  samples are only shown (Final Render). The engine applies none of it (`withSceneAspect`, `docs/guide/scenes.md`).
+  `integrator` and `exposure` (pbrt's shutter × ISO / 100), in both modes; the next model gets back what each replaced
+  unless the user changed it. Bounces and samples are only shown (Final Render). The engine applies none of it
+  (`withSceneAspect`, `docs/guide/scenes.md`).
 - **`VideoEncoder.js`**: WebCodecs encodes, Mediabunny muxes MP4 (H.264, level picked by size, odd sides cropped) or WebM
   (VP9, then VP8); imported only when a video is exported (Mediabunny is 40 KB gzip). `videoJob.js` journals each frame's
   chunks and muxes at the end (MP4 index first, `fastStart: 'reserve'`); a job from before the Export window has no

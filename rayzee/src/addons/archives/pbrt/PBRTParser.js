@@ -703,7 +703,8 @@ export class PBRTParser {
 						xresolution: this._num( param( params, 'xresolution' ), 1280 ),
 						yresolution: this._num( param( params, 'yresolution' ), 720 ),
 						resolutionGiven: Boolean( params.xresolution || params.yresolution ),
-						filename: this._str( param( params, 'filename' ), null )
+						filename: this._str( param( params, 'filename' ), null ),
+						iso: this._num( param( params, 'iso' ), 100 )
 					};
 
 				} );

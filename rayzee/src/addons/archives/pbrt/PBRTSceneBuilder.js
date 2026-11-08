@@ -122,7 +122,7 @@ const DEFAULT_CURVE_SIDES = { flat: 1, ribbon: 1, cylinder: 2 };
 const DEFAULT_CURVE_TOLERANCE = 0.05;
 
 /** Bumped whenever the same scene files build a different graph, so a stored graph is not reused. */
-export const PBRT_BUILD_REVISION = 31;
+export const PBRT_BUILD_REVISION = 32;
 
 function samePlacements( a, b ) {
 
@@ -356,7 +356,7 @@ function lensEffects( camera, radius, focusDistance ) {
 const PBRT_INTEGRATORS = new Map( [[ 'path', 'path' ], [ 'volpath', 'path' ], [ 'bdpt', 'bidirectional' ], [ 'sppm', 'vcm' ]] );
 
 // What the scene asks the renderer for, where it says: the Integrator and its maxdepth, the Sampler's pixelsamples, the
-// Film's resolution — scene metadata's `render`.
+// Film's resolution, and as `exposure` pbrt's imaging ratio, shutter time × ISO / 100 — scene metadata's `render`.
 function renderRequest( ir ) {
 
 	const render = {};
@@ -370,6 +370,10 @@ function renderRequest( ir ) {
 		render.height = ir.film.yresolution;
 
 	}
+
+	const shutter = ir.camera ? pFloat( ir.camera.params, 'shutterclose', 1 ) - pFloat( ir.camera.params, 'shutteropen', 0 ) : 1;
+	const exposure = ( shutter > 0 ? shutter : 1 ) * ( ir.film?.iso ?? 100 ) / 100;
+	if ( exposure > 0 && exposure !== 1 ) render.exposure = exposure;
 
 	return Object.keys( render ).length ? render : null;
 
