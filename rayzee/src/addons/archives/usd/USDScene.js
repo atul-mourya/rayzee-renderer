@@ -167,6 +167,10 @@ function elementAt( pv, face, corner, point ) {
 
 }
 
+const boundMaterial = bindings => bindings.full?.target ?? bindings.all?.target ?? null;
+// One key a resolving state: below a full binding the all-purpose one can no longer matter.
+const bindingKey = b => b?.full ? `F|${b.full.target}|${b.full.strong}` : b?.all ? `A|${b.all.target}|${b.all.strong}` : '';
+
 const perCorner = pv => pv && ( pv.indices || pv.interpolation === 'faceVarying' || pv.interpolation === 'uniform' || pv.interpolation === 'constant' );
 
 /** Fan triangles; a primvar that varies per face corner makes each corner a vertex of its own. */
@@ -451,7 +455,7 @@ export class USDSceneReader {
 		for ( const name of root.childNames() ) {
 
 			const prim = await this.stage.child( root, name );
-			if ( prim ) await this.visit( prim, top, this.world(), { binding: null, depth: 0 } );
+			if ( prim ) await this.visit( prim, top, this.world(), { bindings: null, depth: 0 } );
 			this.stage.release();
 
 		}
@@ -559,22 +563,23 @@ export class USDSceneReader {
 
 		const { matrix: local, reset } = localTransform( prim );
 		const matrix = reset ? local : new Matrix4().multiplyMatrices( parent, local );
-		const binding = this.bindingOf( prim ) ?? ctx.binding;
+		const bindings = this.bindingsOf( prim, ctx.bindings );
+		const binding = boundMaterial( bindings );
 
 		if ( prim.meta( 'instanceable' ) === true && prim.childNames().length ) {
 
-			const proto = await this.instancePrototype( prim, binding );
+			const proto = await this.instancePrototype( prim, bindings );
 			if ( proto ) out.place( proto, matrix );
 			return;
 
 		}
 
-		if ( type === 'Mesh' ) await this.mesh( prim, matrix, out, binding );
+		if ( type === 'Mesh' ) await this.mesh( prim, matrix, out, binding, bindings );
 		else if ( type === 'BasisCurves' ) await this.curves( prim, matrix, out, binding );
 		else if ( GPRIMS.has( type ) ) await this.gprim( prim, matrix, out, binding );
 		else if ( type === 'PointInstancer' ) {
 
-			await this.pointInstancer( prim, matrix, out, binding );
+			await this.pointInstancer( prim, matrix, out );
 			return;
 
 		} else if ( type === 'Camera' ) {
@@ -604,7 +609,7 @@ export class USDSceneReader {
 		for ( const name of prim.childNames() ) {
 
 			const child = await this.stage.child( prim, name );
-			if ( child ) await this.visit( child, matrix, out, { binding, depth: ctx.depth + 1 } );
+			if ( child ) await this.visit( child, matrix, out, { bindings, depth: ctx.depth + 1 } );
 			// A top prim's children are usually whole assets (Moana's elements): what one read is let go before the next.
 			if ( ctx.depth === 0 && out.isWorld ) this.stage.release();
 
@@ -612,16 +617,19 @@ export class USDSceneReader {
 
 	}
 
-	bindingOf( prim ) {
+	// UsdShade's resolution for the full purpose, top down: a full binding anywhere above beats an all-purpose one, and
+	// one marked strongerThanDescendants is kept below it.
+	bindingsOf( prim, inherited ) {
 
-		for ( const name of [ 'material:binding:full', 'material:binding' ] ) {
+		const out = { ...inherited };
+		for ( const [ purpose, name ] of [[ 'full', 'material:binding:full' ], [ 'all', 'material:binding' ]] ) {
 
 			const [ target ] = prim.targets( name );
-			if ( target ) return target;
+			if ( target && ! inherited?.[ purpose ]?.strong ) out[ purpose ] = { target, strong: prim.propertyMeta( name, 'bindMaterialAs' ) === 'strongerThanDescendants' };
 
 		}
 
-		return null;
+		return out;
 
 	}
 
@@ -646,9 +654,9 @@ export class USDSceneReader {
 
 	}
 
-	async instancePrototype( prim, binding ) {
+	async instancePrototype( prim, bindings ) {
 
-		const key = `instance|${prim.instanceKey()}|${binding ?? ''}`;
+		const key = `instance|${prim.instanceKey()}|${bindingKey( bindings )}`;
 		if ( this.prototypes.has( key ) ) return this.prototypes.get( key );
 		const proto = this.newPrototype();
 		this.prototypes.set( key, proto );
@@ -656,7 +664,7 @@ export class USDSceneReader {
 		for ( const name of prim.childNames() ) {
 
 			const child = await this.stage.child( prim, name );
-			if ( child ) await this.visit( child, new Matrix4(), out, { binding, depth: Infinity } );
+			if ( child ) await this.visit( child, new Matrix4(), out, { bindings, depth: Infinity } );
 
 		}
 
@@ -666,14 +674,26 @@ export class USDSceneReader {
 
 	}
 
-	/** A point instancer prototype: its root prim and everything under it, the root's own transform included. */
-	async instancerPrototype( prim, binding ) {
+	/**
+	 * A point instancer prototype: its root prim and everything under it, the root's own transform included. Its
+	 * bindings come from its own place in the namespace, as UsdShade's do, not from the instancer using it.
+	 */
+	async instancerPrototype( prim ) {
 
 		const key = `proto|${prim.path}`;
 		if ( this.prototypes.has( key ) ) return this.prototypes.get( key );
 		const proto = this.newPrototype();
 		this.prototypes.set( key, proto );
-		await this.visit( prim, new Matrix4(), this.collector( proto ), { binding, depth: Infinity } );
+		let bindings = null;
+		const names = prim.path.split( '/' ).filter( Boolean );
+		for ( let i = 1; i < names.length; i ++ ) {
+
+			const ancestor = await this.stage.primAt( `/${names.slice( 0, i ).join( '/' )}` );
+			if ( ancestor ) bindings = this.bindingsOf( ancestor, bindings );
+
+		}
+
+		await this.visit( prim, new Matrix4(), this.collector( proto ), { bindings, depth: Infinity } );
 		const result = this.register( proto );
 		this.prototypes.set( key, result );
 		return result;
@@ -784,7 +804,7 @@ export class USDSceneReader {
 
 	}
 
-	async pointInstancer( prim, matrix, out, binding ) {
+	async pointInstancer( prim, matrix, out ) {
 
 		const protoIndices = prim.value( 'protoIndices' );
 		if ( ! protoIndices?.length ) return;
@@ -794,7 +814,7 @@ export class USDSceneReader {
 		for ( const path of prim.targets( 'prototypes' ) ) {
 
 			const target = await this.stage.primAt( path );
-			protos.push( target ? await this.instancerPrototype( target, binding ) : null );
+			protos.push( target ? await this.instancerPrototype( target ) : null );
 
 		}
 
@@ -902,7 +922,7 @@ export class USDSceneReader {
 
 	}
 
-	async mesh( prim, matrix, out, binding ) {
+	async mesh( prim, matrix, out, binding, bindings ) {
 
 		const subsets = [];
 		for ( const name of prim.childNames() ) {
@@ -910,8 +930,8 @@ export class USDSceneReader {
 			const subset = await this.stage.child( prim, name );
 			if ( subset?.typeName !== 'GeomSubset' || ( subset.value( 'elementType' ) ?? 'face' ) !== 'face' ) continue;
 			const family = subset.value( 'familyName' );
-			const target = this.bindingOf( subset );
-			if ( target && ( ! family || family === 'materialBind' ) ) subsets.push( { subset, target } );
+			const target = boundMaterial( this.bindingsOf( subset, bindings ) );
+			if ( target && target !== binding && ( ! family || family === 'materialBind' ) ) subsets.push( { subset, target } );
 
 		}
 
@@ -1076,11 +1096,18 @@ export class USDSceneReader {
 			case 'Cylinder': geometry = new CylinderGeometry( radius, radius, height, 48 ); break;
 			case 'Cone': geometry = new ConeGeometry( radius, height, 48 ); break;
 			case 'Capsule': geometry = new CapsuleGeometry( radius, height, 8, 32 ); break;
-			default: geometry = new PlaneGeometry( prim.value( 'width' ) ?? 2, prim.value( 'length' ) ?? 2 );
+			default: {
+
+				// A plane's axis is its normal: width along x (z on an x axis), length along y (z on a y axis).
+				geometry = new PlaneGeometry( prim.value( 'width' ) ?? 2, prim.value( 'length' ) ?? 2 );
+				if ( axis === 'X' ) geometry.rotateY( Math.PI / 2 );
+				else if ( axis === 'Y' ) geometry.rotateX( - Math.PI / 2 );
+
+			}
 
 		}
 
-		const arrays = geometryArrays( geometry, prim.typeName === 'Plane' ? ( axis === 'Z' ? 'none' : axis ) : axis );
+		const arrays = geometryArrays( geometry, prim.typeName === 'Plane' ? 'none' : axis );
 		geometry.dispose();
 		if ( this.dry ) {
 

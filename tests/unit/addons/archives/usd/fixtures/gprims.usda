@@ -1,0 +1,95 @@
+#usda 1.0
+def Cylinder "CylinderX" {
+        uniform token axis = "X"
+        double radius = 0.5
+        double height = 3
+        double3 xformOp:translate = (10, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+def Cylinder "CylinderY" {
+        uniform token axis = "Y"
+        double radius = 0.5
+        double height = 3
+        double3 xformOp:translate = (20, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+def Cylinder "CylinderZ" {
+        uniform token axis = "Z"
+        double radius = 0.5
+        double height = 3
+        double3 xformOp:translate = (30, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+def Cone "ConeX" {
+        uniform token axis = "X"
+        double radius = 0.75
+        double height = 2.5
+        double3 xformOp:translate = (40, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+def Cone "ConeY" {
+        uniform token axis = "Y"
+        double radius = 0.75
+        double height = 2.5
+        double3 xformOp:translate = (50, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+def Cone "ConeZ" {
+        uniform token axis = "Z"
+        double radius = 0.75
+        double height = 2.5
+        double3 xformOp:translate = (60, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+def Capsule "CapsuleX" {
+        uniform token axis = "X"
+        double radius = 0.4
+        double height = 1.5
+        double3 xformOp:translate = (70, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+def Capsule "CapsuleY" {
+        uniform token axis = "Y"
+        double radius = 0.4
+        double height = 1.5
+        double3 xformOp:translate = (80, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+def Capsule "CapsuleZ" {
+        uniform token axis = "Z"
+        double radius = 0.4
+        double height = 1.5
+        double3 xformOp:translate = (90, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+def Plane "PlaneX" {
+        uniform token axis = "X"
+        double width = 3
+        double length = 1.25
+        double3 xformOp:translate = (100, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+def Plane "PlaneY" {
+        uniform token axis = "Y"
+        double width = 3
+        double length = 1.25
+        double3 xformOp:translate = (110, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+def Plane "PlaneZ" {
+        uniform token axis = "Z"
+        double width = 3
+        double length = 1.25
+        double3 xformOp:translate = (120, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+def Cube "Cube" {
+        double size = 1.5
+        double3 xformOp:translate = (200, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+def Sphere "Sphere" {
+        double radius = 0.6
+        double3 xformOp:translate = (210, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }

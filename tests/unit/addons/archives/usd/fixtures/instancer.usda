@@ -1,0 +1,30 @@
+#usda 1.0
+def Xform "Root" {
+    double3 xformOp:translate = (0, 1, 0)
+    float xformOp:rotateZ = 30
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateZ"]
+    def PointInstancer "Scatter" {
+        rel prototypes = [</Root/Scatter/Protos/Small>, </Root/Scatter/Protos/Large>]
+        int[] protoIndices = [0, 1, 1, 0, 1]
+        point3f[] positions = [(0, 0, 0), (2, 0, 0), (0, 3, 0), (-1, -1, 2), (4, 4, 4)]
+        quath[] orientations = [(1, 0, 0, 0), (0.5, 0.5, 0.5, 0.5), (0.5, -0.5, 0.5, -0.5), (0, 0, 1, 0), (0, 0, 0, 1)]
+        float3[] scales = [(1, 1, 1), (2, 2, 2), (1, 3, 1), (0.5, 0.5, 0.5), (1, 1, 2)]
+        int64[] invisibleIds = [3]
+        def Scope "Protos" {
+            def Mesh "Small" {
+                point3f[] points = [(1, 0, 0), (0, 2, 0), (0, 0, 3)]
+                int[] faceVertexCounts = [3]
+                int[] faceVertexIndices = [0, 1, 2]
+            }
+            def Xform "Large" {
+                double3 xformOp:translate = (0, 0, 1)
+                uniform token[] xformOpOrder = ["xformOp:translate"]
+                def Mesh "Tri" {
+                    point3f[] points = [(4, 0, 0), (0, 5, 0), (0, 0, 6)]
+                    int[] faceVertexCounts = [3]
+                    int[] faceVertexIndices = [0, 1, 2]
+                }
+            }
+        }
+    }
+}

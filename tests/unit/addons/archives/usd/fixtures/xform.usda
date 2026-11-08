@@ -1,0 +1,105 @@
+#usda 1.0
+def Xform "XYZ" {
+        def Mesh "tri_XYZ" {
+            point3f[] points = [(1, 0, 0), (0, 2, 0), (0, 0, 3)]
+            int[] faceVertexCounts = [3]
+            int[] faceVertexIndices = [0, 1, 2]
+        }
+        double3 xformOp:rotateXYZ = (30, 45, 60)
+        uniform token[] xformOpOrder = ["xformOp:rotateXYZ"]
+    }
+def Xform "XZY" {
+        def Mesh "tri_XZY" {
+            point3f[] points = [(2, 0, 0), (0, 3, 0), (0, 0, 4)]
+            int[] faceVertexCounts = [3]
+            int[] faceVertexIndices = [0, 1, 2]
+        }
+        double3 xformOp:rotateXZY = (30, 45, 60)
+        uniform token[] xformOpOrder = ["xformOp:rotateXZY"]
+    }
+def Xform "YXZ" {
+        def Mesh "tri_YXZ" {
+            point3f[] points = [(3, 0, 0), (0, 4, 0), (0, 0, 5)]
+            int[] faceVertexCounts = [3]
+            int[] faceVertexIndices = [0, 1, 2]
+        }
+        double3 xformOp:rotateYXZ = (30, 45, 60)
+        uniform token[] xformOpOrder = ["xformOp:rotateYXZ"]
+    }
+def Xform "YZX" {
+        def Mesh "tri_YZX" {
+            point3f[] points = [(4, 0, 0), (0, 5, 0), (0, 0, 6)]
+            int[] faceVertexCounts = [3]
+            int[] faceVertexIndices = [0, 1, 2]
+        }
+        double3 xformOp:rotateYZX = (30, 45, 60)
+        uniform token[] xformOpOrder = ["xformOp:rotateYZX"]
+    }
+def Xform "ZXY" {
+        def Mesh "tri_ZXY" {
+            point3f[] points = [(5, 0, 0), (0, 6, 0), (0, 0, 7)]
+            int[] faceVertexCounts = [3]
+            int[] faceVertexIndices = [0, 1, 2]
+        }
+        double3 xformOp:rotateZXY = (30, 45, 60)
+        uniform token[] xformOpOrder = ["xformOp:rotateZXY"]
+    }
+def Xform "ZYX" {
+        def Mesh "tri_ZYX" {
+            point3f[] points = [(6, 0, 0), (0, 7, 0), (0, 0, 8)]
+            int[] faceVertexCounts = [3]
+            int[] faceVertexIndices = [0, 1, 2]
+        }
+        double3 xformOp:rotateZYX = (30, 45, 60)
+        uniform token[] xformOpOrder = ["xformOp:rotateZYX"]
+    }
+def Xform "Stack" {
+        def Mesh "tri_Stack" {
+            point3f[] points = [(7, 0, 0), (0, 8, 0), (0, 0, 9)]
+            int[] faceVertexCounts = [3]
+            int[] faceVertexIndices = [0, 1, 2]
+        }
+    double3 xformOp:translate = (1, 2, 3)
+    float xformOp:rotateY = 90
+    double3 xformOp:rotateXYZ:pivot = (10, 0, 0)
+    float3 xformOp:scale = (2, 3, 4)
+    double3 xformOp:translate:pivot = (0.5, 0, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:translate:pivot", "xformOp:rotateY", "xformOp:rotateXYZ:pivot", "xformOp:scale", "!invert!xformOp:translate:pivot"]
+}
+def Xform "Uniform" {
+        def Mesh "tri_Uniform" {
+            point3f[] points = [(8, 0, 0), (0, 9, 0), (0, 0, 10)]
+            int[] faceVertexCounts = [3]
+            int[] faceVertexIndices = [0, 1, 2]
+        }
+        float3 xformOp:scale = (2, 2, 2)
+        quatf xformOp:orient = (0.9238795, 0, 0.3826834, 0)
+        uniform token[] xformOpOrder = ["xformOp:orient", "xformOp:scale"]
+    }
+def Xform "Matrix" {
+        def Mesh "tri_Matrix" {
+            point3f[] points = [(9, 0, 0), (0, 10, 0), (0, 0, 11)]
+            int[] faceVertexCounts = [3]
+            int[] faceVertexIndices = [0, 1, 2]
+        }
+        matrix4d xformOp:transform = ((1, 0, 0, 0), (0, 0, 1, 0), (0, -1, 0, 0), (5, 6, 7, 1))
+        uniform token[] xformOpOrder = ["xformOp:transform"]
+    }
+def Xform "Parent" {
+        def Mesh "tri_Parent" {
+            point3f[] points = [(10, 0, 0), (0, 11, 0), (0, 0, 12)]
+            int[] faceVertexCounts = [3]
+            int[] faceVertexIndices = [0, 1, 2]
+        }
+    double3 xformOp:translate = (0, 0, 9)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+    def Xform "Reset" {
+        def Mesh "tri_Reset" {
+            point3f[] points = [(11, 0, 0), (0, 12, 0), (0, 0, 13)]
+            int[] faceVertexCounts = [3]
+            int[] faceVertexIndices = [0, 1, 2]
+        }
+        double3 xformOp:translate = (1, 0, 0)
+        uniform token[] xformOpOrder = ["!resetXformStack!", "xformOp:translate"]
+    }
+}

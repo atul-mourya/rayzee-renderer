@@ -182,8 +182,13 @@ USDLoader. Each layer is read only when composition reaches it (`USDFiles` over 
   prototype. `release()` drops composed prims and non-root layers after each child of a top prim (one Moana element).
 - **Translation** (`USDScene.js`) writes the pbrt builder's IR, so USD gets its instancing, budgets, merging and curves:
   meshes (fan triangulation, `leftHanded` reversed, faceVarying primvars per corner, GeomSubset materials), BasisCurves
-  (`curves` shape → `tessellateCurves`, per-vertex widths, ribbons oriented by normals), gprims, instanceable prims and
-  point instancers as templates (nested ones multiplied out; placements stop at the budget). ⚠️ The builder frees a shape's
+  (`curves` shape → `tessellateCurves`, per-vertex widths, ribbons oriented by normals), gprims (a Plane's `axis` is its
+  normal), instanceable prims and point instancers as templates (nested ones multiplied out; placements stop at the
+  budget). Material bindings resolve as UsdShade's for the full purpose: a `material:binding:full` above beats a
+  `material:binding` below, `bindMaterialAs = "strongerThanDescendants"` keeps a binding below it, and a point
+  instancer's prototype takes its own parents' bindings, not the instancer's (collection bindings are not read; a
+  binding with several targets is taken by its first, where OpenUSD ignores it). Transforms, primvars per corner, point instancers, gprim bounds and bindings are held to
+  OpenUSD's own answers (`usdOpenUSDParity.test.js`, from Blender's `pxr`). ⚠️ The builder frees a shape's
   arrays after merging it, so an array is handed over once (`own()`). Materials: PxrDisneyBsdf (Burley 2015 as pbrt-v3
   reads it: clear coat ×0.25, thin diffTrans ÷2), PxrSurface's main lobes, UsdPreviewSurface with UsdUVTexture; connections
   followed through PxrColorCorrect's gamma, PxrBlend (bottom input), primvar readers and node graphs. MaterialX
