@@ -43,10 +43,6 @@
   the window's when a file gives none (`AspectWidth` / `AspectHeight`) and the ColladaLoader leaves its default, so a
   given shape cannot be told from a missing one without the raw values.
 
-- [ ] An OBJ + MTL pair in a zip (`loadOBJMTLPairFromZip`): a texture the MTL names but the zip lacks resolves loosely
-  to any entry ending with its name (`k.png` → `models/oak.png`) or, past 5 characters, containing or contained in it
-  (`max.png` → `maps/x.png`): the wrong texture instead of none. Lookup order pinned by `archiveImporterLookup.test.js`
-  (2026-11-08); a fix would match whole names only.
 - [ ] **Light radius, what is left** (point and spot lights with a radius, and USD's sphere radius and sun angle, done
   2026-10-12; see Light radius in `CLAUDE.md`): the bidirectional and VCM integrators still treat them as points; glTF
   has no field for a radius (`docs/SCENE_IMPORT.md` → Lights from Blender's glTF exporter); the app has no control for it. ⚠️ Blender

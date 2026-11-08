@@ -1,4 +1,5 @@
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
+import { Texture, TextureLoader } from 'three';
 import { resolveObjectURL } from 'node:buffer';
 import { gzipSync, zipSync } from 'three/addons/libs/fflate.module.js';
 import { ArchiveImporter } from '@/core/addons/archives/ArchiveImporter.js';
@@ -113,15 +114,72 @@ describe( 'resolveTextureInZip', () => {
 
 	} );
 
-	it( 'falls back to the file name anywhere, then to a name containing or contained in it', async () => {
+	it( 'falls back to the whole file name anywhere, never to part of one', async () => {
 
 		expect( await lands( 'C:/work/leaf.png' ) ).toBe( 'deep/a/b/leaf.png' );
-		expect( await lands( 'walnut_diffuse.jpg' ) ).toBe( 'maps/darkwalnut_diffuse.jpg' );
-		expect( await lands( 'darkwalnut_diffuse' ) ).toBe( 'maps/darkwalnut_diffuse.jpg' );
+		expect( await lands( 'C:\\work\\leaf.png' ) ).toBe( 'deep/a/b/leaf.png' );
 		expect( await lands( 'elsewhere/x.png' ) ).toBe( 'maps/x.png' );
-		// Names of five characters or fewer are never matched loosely.
-		expect( lands( 'z.jpg' ) ).toEqual( { url: 'z.jpg', created: [] } );
-		expect( lands( 'nowhere/missing-texture.png' ) ).toEqual( { url: 'nowhere/missing-texture.png', created: [] } );
+		for ( const missing of [ 'k.png', 'max.png', 'walnut_diffuse.jpg', 'darkwalnut_diffuse', 'z.jpg', 'nowhere/missing-texture.png' ] ) {
+
+			expect( lands( missing ) ).toEqual( { url: missing, created: [] } );
+
+		}
+
+	} );
+
+} );
+
+// Both ways an OBJ in an archive gets its MTL: paired by name, or named by its `mtllib` line.
+describe( 'OBJ + MTL textures in an archive', () => {
+
+	const ZIP = {
+		'decoy/oak.png': text( 'decoy' ),
+		'models/chair.obj': text( 'mtllib chair.mtl\nusemtl wood\nv 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n' ),
+		'models/chair.mtl': text( 'newmtl wood\nmap_Kd oak.png\nmap_Bump textures/oak_n.png\nmap_Ks ..\\shared\\spec.png\nmap_d k.png\nnorm max.png\n' ),
+		'models/oak.png': text( 'oak' ),
+		'models/textures/oak_n.png': text( 'oak_n' ),
+		'shared/spec.png': text( 'spec' ),
+		'maps/x.png': text( 'x' ),
+	};
+
+	// Every texture three asks for, as the archive answers it: an entry's text, or the reference itself when none.
+	const requested = () => {
+
+		const asked = [];
+		vi.spyOn( TextureLoader.prototype, 'load' ).mockImplementation( function ( url, onLoad ) {
+
+			const resolved = this.manager.resolveURL( url );
+			asked.push( resolved.startsWith( 'blob:' ) ? resolveObjectURL( resolved ).text() : resolved );
+			const texture = new Texture();
+			queueMicrotask( () => onLoad( texture ) );
+			return texture;
+
+		} );
+		return async () => ( await Promise.all( asked ) ).sort();
+
+	};
+
+	afterEach( () => vi.restoreAllMocks() );
+
+	const EXPECTED = [ 'k.png', 'max.png', 'oak', 'oak_n', 'spec' ];
+
+	it( 'finds each beside its MTL, and none for a missing one', async () => {
+
+		const asked = requested();
+		const loaded = [];
+		const importer = new ArchiveImporter( { _issues: null, releaseTargetModel() {}, onModelLoad: async m => loaded.push( m ), dispatchEvent() {} } );
+		await importer.processObjMtlPairsInZip( ZIP, 'chair.zip' );
+
+		expect( loaded ).toHaveLength( 1 );
+		expect( await asked() ).toEqual( EXPECTED );
+
+	} );
+
+	it( 'finds each beside the MTL an OBJ names', async () => {
+
+		const asked = requested();
+		await new ArchiveImporter( { _issues: null } )._parseObjFromZip( ZIP[ 'models/chair.obj' ], 'models/chair.obj', ZIP );
+		expect( await asked() ).toEqual( EXPECTED );
 
 	} );
 
@@ -129,12 +187,12 @@ describe( 'resolveTextureInZip', () => {
 
 describe( 'prepareFixedMtlContent', () => {
 
-	it( 'removes the MTL file name before a texture and splits a folder from its slash', async () => {
+	it( 'removes the MTL file name before a texture and parts a statement from a path run into it', async () => {
 
 		const importer = new ArchiveImporter( {} );
-		const mtl = 'newmtl wood\nmap_Kd chair.mtl  oak.png\nmap_Bump textures/oak_n.png\n';
+		const mtl = 'newmtl wood\nmap_Kd chair.mtl  oak.png\nmap_Bump textures/oak_n.png\nmap_Ks/maps\\spec.png\n';
 		const fixed = await importer.prepareFixedMtlContent( { path: 'models/chair.mtl', content: text( mtl ) } );
-		expect( fixed ).toBe( 'newmtl wood\nmap_Kd  oak.png\nmap_Bump textures /oak_n.png\n' );
+		expect( fixed ).toBe( 'newmtl wood\nmap_Kd  oak.png\nmap_Bump textures/oak_n.png\nmap_Ks /maps\\spec.png\n' );
 
 	} );
 

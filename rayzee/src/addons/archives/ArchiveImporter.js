@@ -1686,7 +1686,7 @@ export class ArchiveImporter {
 		const objDir = objPath.split( '/' ).slice( 0, - 1 ).join( '/' );
 		const possibleMtlPaths = [
 			mtlFilename,
-			`${objDir}/${mtlFilename}`,
+			joinPath( objDir, mtlFilename ),
 			mtlFilename.split( '/' ).pop()
 		];
 
@@ -1697,9 +1697,9 @@ export class ArchiveImporter {
 				const { MTLLoader } = await import( 'three/examples/jsm/loaders/MTLLoader.js' );
 				const mtlContent = await textOf( zipContents[ path ] );
 				const manager = new LoadingManager();
-				manager.setURLModifier( url => this.resolveZipResource( url, objDir, zipContents ) );
-				const mtlLoader = new MTLLoader( manager );
-				const materials = mtlLoader.parse( mtlContent, objDir );
+				const mtlDir = path.split( '/' ).slice( 0, - 1 ).join( '/' );
+				manager.setURLModifier( url => this.resolveZipResource( url, mtlDir, zipContents ) );
+				const materials = new MTLLoader( manager ).parse( mtlContent, '' );
 				await this.preloadMtlTextures( materials );
 				return materials;
 
@@ -1715,7 +1715,7 @@ export class ArchiveImporter {
 
 		if ( /^(data|blob|https?):/i.test( url ) ) return url;
 
-		const raw = url.replace( /^\.\/|^\//, '' );
+		const raw = url.replace( /\\/g, '/' ).replace( /^\.\/|^\//, '' );
 		let decoded = raw;
 		try {
 
@@ -1752,7 +1752,7 @@ export class ArchiveImporter {
 
 		manager.setURLModifier( url => this.resolveTextureInZip( url, objDir, mtlDir, mtlFile, zip, createdUrls ) );
 		const mtlContent = await this.prepareFixedMtlContent( mtlFile );
-		const materials = new MTLLoader( manager ).parse( mtlContent, mtlDir );
+		const materials = new MTLLoader( manager ).parse( mtlContent, '' );
 		await this.preloadMtlTextures( materials );
 
 		const objLoader = new OBJLoader( manager );
@@ -1780,82 +1780,27 @@ export class ArchiveImporter {
 		const mtlContent = await textOf( mtlFile.content );
 		return mtlContent
 			.replace( new RegExp( `${mtlFile.path.split( '/' ).pop()}\\s+`, 'g' ), ' ' )
-			.replace( /([a-zA-Z_]+)([\\/])/g, '$1 $2' );
+			.replace( /^(\s*[a-zA-Z_]+)([\\/])/gm, '$1 $2' );
 
 	}
 
 	resolveTextureInZip( url, objDir, mtlDir, mtlFile, zip, createdUrls ) {
 
-		const cleanUrl = url.split( '?' )[ 0 ].split( '#' )[ 0 ];
-		let normalizedUrl = cleanUrl.replace( /^\.\/|^\//, '' );
+		let ref = url.split( '?' )[ 0 ].split( '#' )[ 0 ].replace( /\\/g, '/' ).replace( /^\.\/|^\//, '' );
 
 		const mtlFilename = mtlFile.path.split( '/' ).pop();
-		if ( normalizedUrl.startsWith( mtlFilename ) ) {
+		if ( ref.startsWith( mtlFilename ) ) ref = ref.substring( mtlFilename.length ).replace( /^\.\/|^\/|^\./, '' );
 
-			normalizedUrl = normalizedUrl.substring( mtlFilename.length ).replace( /^\.\/|^\/|^\./, '' );
+		const name = ref.split( '/' ).pop();
+		const path = [ ref, joinPath( objDir, ref ), joinPath( mtlDir, ref ), `textures/${ref}`, `texture/${ref}`, `materials/${ref}`, name ]
+			.find( p => zip[ p ] )
+			// A whole file name only: part of one names another texture.
+			?? ( name ? Object.keys( zip ).find( p => p.endsWith( `/${name}` ) ) : undefined );
+		if ( ! path ) return url;
 
-		}
-
-		const possibleLocations = [
-			normalizedUrl,
-			`${objDir}/${normalizedUrl}`,
-			`${mtlDir}/${normalizedUrl}`,
-			`textures/${normalizedUrl}`,
-			`texture/${normalizedUrl}`,
-			`materials/${normalizedUrl}`,
-			normalizedUrl.split( '/' ).pop()
-		];
-
-		for ( const location of possibleLocations ) {
-
-			if ( zip[ location ] ) {
-
-				const blobUrl = URL.createObjectURL( asBlob( zip[ location ] ) );
-				createdUrls.push( blobUrl );
-				return blobUrl;
-
-			}
-
-		}
-
-		return this.findTextureWithFuzzyMatch( normalizedUrl, zip, createdUrls ) || url;
-
-	}
-
-	findTextureWithFuzzyMatch( normalizedUrl, zip, createdUrls ) {
-
-		const textureFilename = normalizedUrl.split( '/' ).pop();
-
-		for ( const zipPath in zip ) {
-
-			if ( zipPath.endsWith( textureFilename ) ) {
-
-				const blobUrl = URL.createObjectURL( asBlob( zip[ zipPath ] ) );
-				createdUrls.push( blobUrl );
-				return blobUrl;
-
-			}
-
-		}
-
-		if ( textureFilename && textureFilename.length > 5 ) {
-
-			for ( const zipPath in zip ) {
-
-				const zipFilename = zipPath.split( '/' ).pop();
-				if ( zipFilename.includes( textureFilename ) || textureFilename.includes( zipFilename ) ) {
-
-					const blobUrl = URL.createObjectURL( asBlob( zip[ zipPath ] ) );
-					createdUrls.push( blobUrl );
-					return blobUrl;
-
-				}
-
-			}
-
-		}
-
-		return null;
+		const blobUrl = URL.createObjectURL( asBlob( zip[ path ] ) );
+		createdUrls.push( blobUrl );
+		return blobUrl;
 
 	}
 

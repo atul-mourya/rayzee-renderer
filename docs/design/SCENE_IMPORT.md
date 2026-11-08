@@ -13,11 +13,14 @@ on Chrome, `FileSystemHandle`s), picks folders (`showDirectoryPicker`, else a `w
 handles in IndexedDB (`RayzeeFolders`) under the scene source's key, so a session or a resumed render reopens the
 folder itself (`SessionDialog` asks only when access lapsed); `.rayzee` projects embed a folder under `sources/folder/`.
 
-## Tar
+## Tar and OBJ + MTL
 - **Tar** (`ArchiveReader.js`): ustar, GNU long names, pax `path` / `size`, contiguous files (`7`) and GNU sparse files
   (old `S` with its extension blocks, pax 0.0 / 0.1 / 1.0). A sparse entry lists its full size and `sparse`, its stored
   [ offset, length ] regions; every read fills the gaps with zeros. One whose map cannot be read or does not fit is left
   out. All 1,574 tars on the dev Mac that Python's `tarfile` reads list and read the same, five ways (2026-11-08).
+- **OBJ + MTL textures** resolve as written, beside the OBJ and the MTL (`..` and `\` included), in `textures/`,
+  `texture/`, `materials/`, then by **whole** file name anywhere — never part of one: a missing map is no texture, not
+  a neighbour's. MTLLoader's base path is `''`: it joins without a slash.
 
 ## Asset kits
 `findAndLoadModelFromZip` takes an archive with no main file whose shallowest models sit in two or more folders as a
