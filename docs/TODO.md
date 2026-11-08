@@ -9,7 +9,6 @@
 -   pbrt camera all info parsing
 -   pbrt folliage
 -   make bvh an independent library
--   this fbx scene not loading correctly: https://www.fab.com/listings/578d0ceb-5ccb-425f-abd5-e791a21551b6 , /Users/atulkumar/Desktop/3DAssets/south_african_slate_quarry_low.zip
 
 ### MVP
 - [ ] White balance control: reference pictures are finished after rendering — pbrt's own (watercolor's makepngs.sh:
@@ -63,7 +62,6 @@
   panes against this bias), not a bug fix; the same cause as the thick-block line above. Experiments:
   `~/RayzeeScratch/night/2026-11-04/rough-glass-furnace/`.
 - [ ] Extension maps (transmission, clearcoat, sheen, …) are read on the base-colour map's UV transform (the coat's normal map on the base normal map's, or its own when there is none) and the first UV set; glTF gives each its own `texCoord` and `KHR_texture_transform`.
-- [ ] OIDN's guide jumps from "see through" to "this surface" at a hard step (pure metal: roughness 0.049). Cycles' smooth ramp was tried (2026-08) and lost on 9 of 10 `bench:denoise` OIDN tests; a retry must keep one surface per pixel.
 - [ ] Fluted glass (24233846.glb): firefly threshold, bounce counts and LED brightness change nothing — don't retry. The leftover noise is the LED-lit cabinet seen through the glass; it needs ReSTIR DI or a radiance cache (neither built).
 - [ ] Same glass at `normalScale` 100 loses half its light: steep normals send samples under the surface and the leak guard kills them. Cycles' fix (`ensure_valid_specular_reflection`) on the shared normal brightened diffuse +17.6 % (2026-09), so it needs a separate normal for the glossy lobe.
 
@@ -99,10 +97,6 @@
 
 ### Rendering
 
-- [ ] The light tree splits by position only; pbrt-v4's SAOH adds an orientation term to the split. Cones are the
-  tighter of the children's union and the node's own since 2026-11-08 (unions had made a gently curved panel's nodes
-  whole spheres): in a room of curved LED strips, downlights and a sphere lamp (2,240 emitters), selections landing on
-  an emitter facing away 8.1 → 6.6 % (`~/RayzeeScratch/night/2026-11-08/light-tree-cones/scripts/wasted.mjs`).
 - [ ] Introduce Sequenced HRDIs - https://mattepaint.com/gallery/hdri/skies/
 - [ ] **Fog and light shafts** ROADMAP: "Fog and homogeneous participating media", "Volumetric lighting and shadows";
   - [ ] Follow-ups: fog inside glass; density varying other than with height (noise, VDB); the shadow catcher ignores
@@ -243,12 +237,10 @@ once looked at. How it should have been built so they could not happen:
   2026-11-08): its two are the same image and scale, each limited to one window by `portal` (pbrt's
   `PortalImageInfiniteLight::Le` is 0 outside it), and one environment with the portal ignored lights both windows
   alike. Two different infinite lights (an image and a constant, say) would need summing into one.
-- [ ] **Lights**: area light `filename` (an image that emits); `goniometric` → the engine's IES profiles; `projection` →
-  its gobos; the infinite light's `portal`. Area light `power` done 2026-10-05.
-- [ ] **Cameras**: `spherical` → the engine's panorama (a panorama is global, not per camera: needs a per-camera
-  projection); `realistic` (lens files). `lensradius` / `focaldistance` → the camera's own DOF done 2026-10-05.
-- [ ] **Materials** approximated as diffuse: `hair`, `measured`. `subsurface` → the engine's SSS done 2026-10-05
-  (named media, σa/σs, reflectance + mfp through the dipole).
+- [ ] **Lights**: area light `filename` (an emitting image); `goniometric` → IES; `projection` → gobos; infinite `portal`.
+- [ ] **Cameras**: `spherical` → panorama (needs per-camera projection); `realistic` (lens files). A bare
+  `Camera "spherical"` loads as a 90° perspective with no warning.
+- [ ] **Materials**: `hair`, `measured` load as diffuse.
 - [ ] **Texture filtering** — see Features → Rendering → Texture filtering (kroken's brick dirt read patchy where pbrt's
   MIP-filtered render is even).
 - [ ] `bench:pbrt` — the reference-image gate above, over a local copy of pbrt-v4-scenes (skip what is not downloaded).
