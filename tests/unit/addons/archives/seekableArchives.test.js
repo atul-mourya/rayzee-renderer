@@ -70,6 +70,99 @@ describe( 'tar header index', () => {
 
 	} );
 
+	it( 'takes a pax size over the header\'s, and reads a contiguous file as a regular one', async () => {
+
+		const tar = makeTar( [
+			{ path: 'big.bin', body: text( 'x'.repeat( 700 ) ), size: 0, pax: [[ 'size', 700 ]] },
+			{ path: 'contiguous.bin', body: text( 'c' ), type: '7' },
+			{ path: 'after.txt', body: text( 'after' ) },
+		] );
+		const listing = [[ 'big.bin', 700 ], [ 'contiguous.bin', 1 ], [ 'after.txt', 5 ]];
+		expect( ( await readTar( blob( tar ) ) ).listing.map( e => [ e.path, e.size ] ) ).toEqual( listing );
+		expect( ( await indexTarHeaders( blob( tar ) ) ).map( e => [ e.path, e.size ] ) ).toEqual( listing );
+
+	} );
+
+} );
+
+describe( 'GNU sparse files', () => {
+
+	// 100 stored parts: an old map takes five blocks of its own, a 1.0 map the body's first three.
+	const regions = Array.from( { length: 100 }, ( _, i ) => [ 64 * i + 16, 8 ] );
+	const body = new Uint8Array( 64 * 100 + 100 );
+	for ( const [ offset, length ] of regions ) for ( let i = offset; i < offset + length; i ++ ) body[ i ] = i % 251 + 1;
+	const sparseTar = ( format, member = { path: 'deep/sparse.bin', body, sparse: { format, regions } } ) => makeTar( [
+		{ path: 'before.txt', body: text( 'before' ) }, member, { path: 'after.txt', body: text( 'after' ) },
+	] );
+	const decode = bytes => new TextDecoder().decode( bytes );
+
+	// By its headers, from an index made as it streamed by, and from what an unpack of chosen entries wrote.
+	const opened = async ( tar ) => {
+
+		const fed = ( indexer ) => {
+
+			for ( let i = 0; i < tar.length; i += 100 ) indexer.push( tar.subarray( i, i + 100 ) );
+			return { v: 1, listing: indexer.finish() };
+
+		};
+
+		const sunk = [];
+		const part = fed( createTarIndexer( { filter: () => true, sink: bytes => sunk.push( bytes.slice() ) } ) );
+		return [
+			await openTar( blob( tar ), { headersOnly: true } ),
+			await openTar( blob( tar ), { index: fed( createTarIndexer() ) } ),
+			await openTar( new Blob( sunk ), { index: part } ),
+		];
+
+	};
+
+	it( 'reads one, in each of its four layouts, as the file it stands for', async () => {
+
+		for ( const format of [ 'S', '0.0', '0.1', '1.0' ] ) {
+
+			const tar = sparseTar( format );
+			const streamed = await readTar( blob( tar ) );
+			expect( streamed.listing.map( e => [ e.path, e.size ] ) ).toEqual( [[ 'before.txt', 6 ], [ 'deep/sparse.bin', body.length ], [ 'after.txt', 5 ]] );
+			expect( streamed.entries[ 'deep/sparse.bin' ] ).toEqual( body );
+			expect( decode( streamed.entries[ 'after.txt' ] ) ).toBe( 'after' );
+
+			const [ headers, indexed, unpacked ] = await opened( tar );
+			expect( headers.listing ).toEqual( indexed.listing );
+			for ( const archive of [ headers, indexed, unpacked ] ) {
+
+				expect( await archive.read( 'deep/sparse.bin' ) ).toEqual( body );
+				expect( await archive.readHead( 'deep/sparse.bin', 100 ) ).toEqual( body.subarray( 0, 100 ) );
+				expect( new Uint8Array( await ( await archive.slice( 'deep/sparse.bin' ) ).arrayBuffer() ) ).toEqual( body );
+				expect( decode( await archive.read( 'after.txt' ) ) ).toBe( 'after' );
+
+			}
+
+		}
+
+	} );
+
+	it( 'leaves out one whose map cannot be read or does not fit, and reads on', async () => {
+
+		const unreadable = sparseTar( '1.0' );
+		const count = unreadable.indexOf( 0x0a, new TextDecoder().decode( unreadable ).indexOf( '100\n16\n8\n' ) ) - 3;
+		unreadable.set( text( 'x' ), count );
+		const overrun = sparseTar( 'S', { path: 'deep/sparse.bin', body: body.subarray( 0, 100 ), sparse: { format: 'S', regions: [[ 0, 8 ], [ 200, 8 ]] } } );
+
+		for ( const tar of [ unreadable, overrun ] ) {
+
+			const paths = [ 'before.txt', 'after.txt' ];
+			expect( ( await readTar( blob( tar ) ) ).listing.map( e => e.path ) ).toEqual( paths );
+			for ( const archive of await opened( tar ) ) {
+
+				expect( archive.listing.map( e => e.path ) ).toEqual( paths );
+				expect( decode( await archive.read( 'after.txt' ) ) ).toBe( 'after' );
+
+			}
+
+		}
+
+	} );
+
 } );
 
 describe( 'ZipReader', () => {

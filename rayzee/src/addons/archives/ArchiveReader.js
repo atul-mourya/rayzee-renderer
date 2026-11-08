@@ -89,13 +89,54 @@ function normalizeTarPath( p ) {
 
 }
 
-function paxPath( bytes ) {
+/** A pax header's records in order: `length keyword=value\n`, the length in bytes. */
+function paxRecords( bytes ) {
 
-	const text = textDecoder.decode( bytes );
-	const m = text.match( /^\d+ path=(.*)$/m );
-	return m ? m[ 1 ] : null;
+	const records = [];
+	for ( let at = 0; at < bytes.length; ) {
+
+		const space = bytes.indexOf( 0x20, at );
+		const length = space > at ? Number( textDecoder.decode( bytes.subarray( at, space ) ) ) : 0;
+		if ( ! ( length > space - at ) || at + length > bytes.length ) break;
+		const record = textDecoder.decode( bytes.subarray( space + 1, at + length - 1 ) );
+		const eq = record.indexOf( '=' );
+		if ( eq > 0 ) records.push( [ record.slice( 0, eq ), record.slice( eq + 1 ) ] );
+		at += length;
+
+	}
+
+	return records;
 
 }
+
+/**
+ * What a pax header sets for the member after it: name, size, and a GNU sparse file's — its full size and its map, given
+ * here (formats 0.0 and 0.1) or at the start of its body (1.0).
+ */
+function paxMember( bytes ) {
+
+	const set = {};
+	const pairs = [];
+	for ( const [ key, value ] of paxRecords( bytes ) ) {
+
+		if ( key === 'path' ) set.name ??= value;
+		else if ( key === 'GNU.sparse.name' ) set.name = value;
+		else if ( key === 'size' ) set.size = Number( value );
+		else if ( key === 'GNU.sparse.size' ) set.sparse = [];
+		else if ( key === 'GNU.sparse.map' ) pairs.push( ...value.split( ',' ) );
+		else if ( key === 'GNU.sparse.offset' || key === 'GNU.sparse.numbytes' ) pairs.push( value );
+		else if ( key === 'GNU.sparse.major' ) set.mapInBody = value === '1';
+		if ( key === 'GNU.sparse.size' || key === 'GNU.sparse.realsize' ) set.realsize = Number( value );
+
+	}
+
+	if ( set.sparse ) for ( let i = 0; i + 1 < pairs.length; i += 2 ) set.sparse.push( [ Number( pairs[ i ] ), Number( pairs[ i + 1 ] ) ] );
+	return set;
+
+}
+
+/** What a long name ('L') or pax header sets for the member after it. */
+const setsNext = ( type, body ) => ( type === 'L' ? { name: fieldString( body, 0, body.length ) } : paxMember( body ) );
 
 const paddedSize = size => size + ( ( BLOCK - ( size % BLOCK ) ) % BLOCK );
 
@@ -103,13 +144,79 @@ const isSpecialType = type => type === 'L' || type === 'x' || type === 'X';
 
 function parseHeader( h ) {
 
-	const prefix = fieldString( h, 345, 155 );
+	const type = String.fromCharCode( h[ 156 ] || 0x30 );
+	// An old GNU sparse header keeps its map where ustar has the prefix.
+	const prefix = type === 'S' ? '' : fieldString( h, 345, 155 );
 	const raw = fieldString( h, 0, 100 );
-	return {
-		type: String.fromCharCode( h[ 156 ] || 0x30 ),
-		size: fieldNumber( h, 124, 12 ),
-		name: prefix ? `${prefix}/${raw}` : raw,
-	};
+	return { type, size: fieldNumber( h, 124, 12 ), name: prefix ? `${prefix}/${raw}` : raw };
+
+}
+
+/** An old GNU sparse map's [ offset, length ] pairs, 24 bytes each, from `count` slots of a block. */
+function sparseSlots( block, at, count, regions ) {
+
+	for ( let i = 0; i < count; i ++, at += 24 ) {
+
+		const length = fieldNumber( block, at + 12, 12 );
+		if ( length ) regions.push( [ fieldNumber( block, at, 12 ), length ] );
+
+	}
+
+}
+
+/**
+ * The member a header starts, with what a long name or pax header before it set. A GNU sparse file (old type 'S', or
+ * pax) stores only its data regions, one after another: `sparse` maps them into its `realsize` bytes (null until read).
+ * `extended` says more of an old map follows in blocks of its own; `mapInBody`, that the map opens the body.
+ */
+function member( h, pending ) {
+
+	const header = parseHeader( h );
+	if ( isSpecialType( header.type ) ) return header;
+
+	const m = { ...header, name: pending?.name ?? header.name, size: pending?.size ?? header.size };
+	if ( m.type === 'S' ) {
+
+		m.sparse = [];
+		sparseSlots( h, 386, 4, m.sparse );
+		m.extended = h[ 482 ] !== 0;
+		m.realsize = fieldNumber( h, 483, 12 );
+
+	} else if ( pending?.sparse || pending?.mapInBody ) {
+
+		m.sparse = pending.sparse ?? null;
+		m.mapInBody = ! m.sparse;
+		m.realsize = pending.realsize;
+
+	}
+
+	return m;
+
+}
+
+function extendSparse( m, block ) {
+
+	sparseSlots( block, 0, 21, m.sparse );
+	m.extended = block[ 504 ] !== 0;
+
+}
+
+/**
+ * Takes a pax 1.0 map from the body's first blocks — a count, then an offset and a length a region, each a decimal line —
+ * once they hold it: true, and the member's size is now its data's. A map that cannot be read leaves `sparse` null.
+ */
+function takeBodyMap( m, bytes ) {
+
+	const lines = textDecoder.decode( bytes ).split( '\n' );
+	// The count reads as 0 until its line ends.
+	const count = lines.length > 1 ? Number( lines[ 0 ] ) : 0;
+	const valid = Number.isInteger( count ) && count >= 0;
+	const whole = valid && lines.length >= 2 + 2 * count;
+	if ( valid && ! whole && bytes.length < paddedSize( m.size ) ) return false;
+
+	if ( whole ) m.sparse = Array.from( { length: count }, ( _, i ) => [ Number( lines[ 1 + 2 * i ] ), Number( lines[ 2 + 2 * i ] ) ] );
+	m.size = Math.max( 0, m.size - bytes.length );
+	return true;
 
 }
 
@@ -117,8 +224,63 @@ function parseHeader( h ) {
 function regularPath( type, name ) {
 
 	if ( type === '5' || type === 'g' || type === 'K' || name.endsWith( '/' ) ) return null;
-	if ( type !== '0' && type !== ' ' ) return null;
+	if ( type !== '0' && type !== ' ' && type !== '7' && type !== 'S' ) return null;
 	return normalizeTarPath( name ) || null;
+
+}
+
+/** A member's listing entry, or null: not a regular file, or a sparse map that cannot be read or does not fit. */
+function listed( m ) {
+
+	const path = regularPath( m.type, m.name );
+	if ( ! path || m.sparse === null ) return null;
+	if ( ! m.sparse ) return { path, size: m.size };
+
+	let end = 0, stored = 0;
+	for ( const [ offset, length ] of m.sparse ) {
+
+		if ( ! ( offset >= end && length >= 0 ) ) return null;
+		end = offset + length;
+		stored += length;
+
+	}
+
+	return end <= m.realsize && stored <= m.size ? { path, size: m.realsize, sparse: m.sparse } : null;
+
+}
+
+/** A sparse file's bytes from its stored data regions, zeros between them. */
+function expandSparse( stored, { size, sparse } ) {
+
+	const out = new Uint8Array( size );
+	let at = 0;
+	for ( const [ offset, length ] of sparse ) {
+
+		out.set( stored.subarray( at, at + length ), offset );
+		at += length;
+
+	}
+
+	return out;
+
+}
+
+/** The same, read from a seekable source. */
+function sparseBlob( source, { offset, size, sparse } ) {
+
+	const parts = [];
+	let at = offset, end = 0;
+	for ( const [ start, length ] of sparse ) {
+
+		if ( start > end ) parts.push( new Uint8Array( start - end ) );
+		parts.push( source.slice( at, at + length ) );
+		at += length;
+		end = start + length;
+
+	}
+
+	if ( size > end ) parts.push( new Uint8Array( size - end ) );
+	return new Blob( parts );
 
 }
 
@@ -163,7 +325,11 @@ class TarStream {
 		this._copied = 0;
 		this._dst = null;
 		this._special = null;
-		this._pendingName = null;
+		this._pending = null;
+		this._member = null;
+		this._mapBytes = null;
+		// What the next whole block is: a header, or more of a sparse file's map.
+		this._nextBlock = this._readHeader;
 		this._abs = 0; // absolute byte offset of the next byte `push` will consume
 
 	}
@@ -186,7 +352,7 @@ class TarStream {
 
 					this._headerLen = 0;
 					this._bodyStart = base + i; // body begins right after the header block
-					this._readHeader();
+					this._nextBlock();
 
 				}
 
@@ -239,24 +405,62 @@ class TarStream {
 	_readHeader() {
 
 		const h = this._header;
-		let zero = true;
-		for ( let i = 0; i < BLOCK; i ++ ) if ( h[ i ] !== 0 ) {
-
-			zero = false; break;
-
-		}
-
-		if ( zero ) {
+		if ( isZeroBlock( h ) ) {
 
 			this.finished = true;
 			return;
 
 		}
 
-		const { type, size, name: headerName } = parseHeader( h );
-		const name = this._pendingName ?? headerName;
-		this._pendingName = null;
+		const m = member( h, this._pending );
+		if ( isSpecialType( m.type ) ) {
 
+			this._startBody( m.size );
+			this._special = m.type;
+			this._dst = new Uint8Array( m.size );
+			return;
+
+		}
+
+		this._pending = null;
+		this._member = m;
+		if ( m.extended ) {
+
+			this._nextBlock = this._readSparseBlock;
+
+		} else if ( m.mapInBody && m.size > 0 ) {
+
+			this._mapBytes = new Uint8Array( 0 );
+			this._nextBlock = this._readMapBlock;
+
+		} else {
+
+			this._beginMember();
+
+		}
+
+	}
+
+	_readSparseBlock() {
+
+		extendSparse( this._member, this._header );
+		if ( ! this._member.extended ) this._beginMember();
+
+	}
+
+	_readMapBlock() {
+
+		const bytes = new Uint8Array( this._mapBytes.length + BLOCK );
+		bytes.set( this._mapBytes );
+		bytes.set( this._header, this._mapBytes.length );
+		this._mapBytes = bytes;
+		if ( takeBodyMap( this._member, bytes ) ) this._beginMember();
+
+	}
+
+	_startBody( size ) {
+
+		this._nextBlock = this._readHeader;
 		this._size = size;
 		this._copied = 0;
 		this._remaining = paddedSize( size );
@@ -265,24 +469,25 @@ class TarStream {
 		this._indexed = false;
 		this._state = this._remaining > 0 ? 'body' : 'header';
 
-		if ( isSpecialType( type ) ) {
+	}
 
-			this._special = type === 'L' ? 'longname' : 'pax';
-			this._dst = new Uint8Array( size );
-			return;
+	_beginMember() {
 
-		}
+		const m = this._member;
+		this._mapBytes = null;
+		this._startBody( m.size );
 
-		const path = regularPath( type, name );
-		if ( ! path ) return;
+		const entry = listed( m );
+		if ( ! entry ) return;
 
-		this.listing.push( { path, size } );
+		const { path, size } = entry;
+		this.listing.push( entry );
 		this._indexed = this.filter ? this.filter( path, size ) : true;
 		if ( this.sink && this._indexed ) {
 
 			this._sinkStart = this._sunk;
-			this._sinkLeft = size;
-			this._sunk += size;
+			this._sinkLeft = m.size;
+			this._sunk += m.size;
 
 		}
 
@@ -294,7 +499,7 @@ class TarStream {
 
 			} else {
 
-				this._dst = new Uint8Array( size );
+				this._dst = new Uint8Array( m.size );
 				this.retainedBytes += size;
 
 			}
@@ -310,18 +515,9 @@ class TarStream {
 
 		this._state = 'header';
 
-		if ( this._special === 'longname' ) {
+		if ( this._special ) {
 
-			this._pendingName = fieldString( this._dst, 0, this._dst.length );
-			this._dst = null;
-			return;
-
-		}
-
-		if ( this._special === 'pax' ) {
-
-			const p = paxPath( this._dst );
-			if ( p ) this._pendingName = p;
+			this._pending = { ...this._pending, ...setsNext( this._special, this._dst ) };
 			this._dst = null;
 			return;
 
@@ -338,8 +534,9 @@ class TarStream {
 
 		if ( this._dst ) {
 
-			this.entries[ entry.path ] = this._dst;
-			this.onEntry?.( entry.path, this._dst );
+			const bytes = entry.sparse ? expandSparse( this._dst, entry ) : this._dst;
+			this.entries[ entry.path ] = bytes;
+			this.onEntry?.( entry.path, bytes );
 			this._dst = null;
 
 		}
@@ -461,7 +658,7 @@ export async function indexTarHeaders( source, { onProgress = null } = {} ) {
 	const listing = [];
 	let window = null;
 	let windowStart = 0;
-	let pendingName = null;
+	let pending = null;
 	let pos = 0;
 	let nextReport = 0;
 
@@ -485,24 +682,33 @@ export async function indexTarHeaders( source, { onProgress = null } = {} ) {
 		const h = await bytesAt( pos, BLOCK );
 		if ( isZeroBlock( h ) ) break;
 
-		const { type, size: bodySize, name: headerName } = parseHeader( h );
-		const name = pendingName ?? headerName;
-		pendingName = null;
-		const bodyStart = pos + BLOCK;
+		const m = member( h, pending );
+		let start = pos + BLOCK;
 
-		if ( isSpecialType( type ) ) {
+		if ( isSpecialType( m.type ) ) {
 
-			const body = await bytesAt( bodyStart, bodySize );
-			pendingName = type === 'L' ? fieldString( body, 0, body.length ) : paxPath( body );
+			const body = await bytesAt( start, m.size );
+			pending = { ...pending, ...setsNext( m.type, body ) };
+			pos = start + paddedSize( m.size );
 
 		} else {
 
-			const path = regularPath( type, name );
-			if ( path ) listing.push( { path, size: bodySize, offset: bodyStart } );
+			pending = null;
+			for ( ; m.extended && start + BLOCK <= size; start += BLOCK ) extendSparse( m, await bytesAt( start, BLOCK ) );
+			pos = start + paddedSize( m.size );
+
+			if ( m.mapInBody && m.size > 0 ) {
+
+				let read = BLOCK;
+				while ( ! takeBodyMap( m, await bytesAt( start, read ) ) && start + read < size ) read += BLOCK;
+				start += read;
+
+			}
+
+			const entry = listed( m );
+			if ( entry ) listing.push( { ...entry, offset: start } );
 
 		}
-
-		pos = bodyStart + paddedSize( bodySize );
 
 		if ( onProgress && pos >= nextReport ) {
 
@@ -576,12 +782,14 @@ export async function openTar( source, options = {} ) {
 	const byPath = new Map();
 	for ( const e of listing ) if ( e.offset !== undefined ) byPath.set( e.path, e );
 
+	const blobOf = ( e, end = e.size ) => ( e.sparse ? sparseBlob( source, e ).slice( 0, end ) : source.slice( e.offset, e.offset + end ) );
+
 	const read = async ( path ) => {
 
 		if ( entries[ path ] ) return entries[ path ];
 		const e = byPath.get( path );
 		if ( ! e ) return null;
-		return new Uint8Array( await source.slice( e.offset, e.offset + e.size ).arrayBuffer() );
+		return new Uint8Array( await blobOf( e ).arrayBuffer() );
 
 	};
 
@@ -590,7 +798,7 @@ export async function openTar( source, options = {} ) {
 		if ( entries[ path ] ) return entries[ path ].subarray( 0, bytes );
 		const e = byPath.get( path );
 		if ( ! e ) return null;
-		return new Uint8Array( await source.slice( e.offset, e.offset + Math.min( e.size, bytes ) ).arrayBuffer() );
+		return new Uint8Array( await blobOf( e, Math.min( e.size, bytes ) ).arrayBuffer() );
 
 	};
 
@@ -598,7 +806,7 @@ export async function openTar( source, options = {} ) {
 
 		if ( entries[ path ] ) return new Blob( [ entries[ path ] ] );
 		const e = byPath.get( path );
-		return e ? source.slice( e.offset, e.offset + e.size ) : null;
+		return e ? blobOf( e ) : null;
 
 	};
 
