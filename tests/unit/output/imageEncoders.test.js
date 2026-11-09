@@ -5,7 +5,7 @@ import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
 import { FloatType } from 'three';
 import {
 	encodePNG, encodeEXR, encodeHDR, crc32, displayP3Profile, primariesToXYZ, canEncodeWithCanvas, encodeWithCanvas, standardChromaticities,
-	isoMetadata, jpegWithGainMap, heifFile, canEncodeStill, prepareStill,
+	isoMetadata, jpegWithGainMap, heifFile, canEncodeStill, prepareStill, encodeGainMapJPEG,
 } from '@/core/output/ImageEncoders.js';
 
 const bytesOf = async blob => new Uint8Array( await blob.arrayBuffer() );
@@ -406,6 +406,89 @@ describe( 'gain maps', () => {
 
 	// The smallest shape the assembly reads: SOI, APP0, DQT, SOS and its scan.
 	const fakeJPEG = scan => new Uint8Array( [ 0xFF, 0xD8, 0xFF, 0xE0, 0, 4, 1, 2, 0xFF, 0xDB, 0, 3, 9, 0xFF, 0xDA, 0, 2, ...scan, 0xFF, 0xD9 ] );
+
+	it( 'gives back the HDR picture from the SDR one and its gain map, as a viewer decodes it, within half a map step', async () => {
+
+		// A canvas that keeps what it is handed: the SDR picture, then the gain map.
+		const drawn = [];
+		vi.stubGlobal( 'ImageData', class {
+
+			constructor( data, width, height ) {
+
+				Object.assign( this, { data, width, height } );
+
+			}
+
+		} );
+		vi.stubGlobal( 'OffscreenCanvas', class {
+
+			getContext() {
+
+				return { putImageData: ( image ) => drawn.push( Uint8ClampedArray.from( image.data ) ) };
+
+			}
+
+			async convertToBlob() {
+
+				return new Blob( [ fakeJPEG( [ drawn.length ] ) ], { type: 'image/jpeg' } );
+
+			}
+
+		} );
+
+		try {
+
+			const count = 4096;
+			let seed = 3;
+			const rand = () => ( seed = ( seed * 16807 ) % 2147483647 ) / 2147483647;
+			const hdr = new Float32Array( count * 4 ), sdr = new Uint8ClampedArray( count * 4 );
+			const encode = v => ( v <= 0.0031308 ? 12.92 * v : 1.055 * v ** ( 1 / 2.4 ) - 0.055 );
+			const decode = c => ( c <= 0.04045 ? c / 12.92 : ( ( c + 0.055 ) / 1.055 ) ** 2.4 );
+			for ( let p = 0; p < count; p ++ ) for ( let c = 0; c < 4; c ++ ) {
+
+				const v = c === 3 ? 1 : 2 ** ( rand() * 9 - 5 ); // 1/32 to 16
+				hdr[ p * 4 + c ] = v;
+				sdr[ p * 4 + c ] = Math.round( encode( Math.min( v, 1 ) ) * 255 );
+
+			}
+
+			const file = new TextDecoder( 'latin1' ).decode( await bytesOf( await encodeGainMapJPEG( { sdr, hdr, width: 64, height: 64 } ) ) );
+			const read = name => Number( new RegExp( `hdrgm:${name}="([^"]+)"` ).exec( file.slice( file.lastIndexOf( '\xFF\xD8' ) ) )[ 1 ] );
+			const [ min, max, offSDR, offHDR ] = [ 'GainMapMin', 'GainMapMax', 'OffsetSDR', 'OffsetHDR' ].map( read );
+			expect( read( 'HDRCapacityMax' ) ).toBeGreaterThanOrEqual( max );
+
+			// Ultra HDR / ISO 21496-1 at full headroom, gamma 1.
+			const map = drawn[ 1 ];
+			let worst = 0;
+			for ( let p = 0; p < count; p ++ ) {
+
+				expect( map[ p * 4 + 3 ] ).toBe( 255 );
+				for ( let c = 0; c < 3; c ++ ) {
+
+					const r = map[ p * 4 + c ] / 255;
+					const shown = ( decode( sdr[ p * 4 + c ] / 255 ) + offSDR ) * 2 ** ( min * ( 1 - r ) + max * r ) - offHDR;
+					worst = Math.max( worst, Math.abs( Math.log2( ( shown + offHDR ) / ( hdr[ p * 4 + c ] + offHDR ) ) ) );
+
+				}
+
+			}
+
+			expect( worst ).toBeLessThanOrEqual( ( max - min ) / 255 / 2 * 1.01 );
+
+			// One pixel past any number (Inf, NaN) keeps the map's range finite and gets no gain.
+			hdr.set( [ Infinity, NaN, 2 ], 0 );
+			const broken = new TextDecoder( 'latin1' ).decode( await bytesOf( await encodeGainMapJPEG( { sdr, hdr, width: 64, height: 64 } ) ) );
+			const range = /hdrgm:GainMapMin="([^"]+)" hdrgm:GainMapMax="([^"]+)"/.exec( broken.slice( broken.lastIndexOf( '\xFF\xD8' ) ) ).slice( 1 ).map( Number );
+			expect( range.every( Number.isFinite ) ).toBe( true );
+			expect( range[ 1 ] ).toBeCloseTo( max, 5 );
+
+		} finally {
+
+			vi.unstubAllGlobals();
+
+		}
+
+	} );
 
 	it( 'lays out an Ultra HDR JPEG whose index finds its gain map', async () => {
 

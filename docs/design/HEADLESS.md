@@ -47,6 +47,9 @@ Public renderer methods for offline rendering and reproducible output — on `Ra
   AVIF are one keyframe from WebCodecs (HEVC, AV1; 8-bit, quantizer mode; the RGBA frame labelled Rec.709 so no gamut
   conversion runs; AV1's av1C built from its sequence header, temporal delimiters dropped). macOS 26's ImageIO reads
   all three as ISO gain maps and CoreImage's `expandToHDR` matches the app's HDR picture within 3–4 % (compression).
+  The map's 8 bits round to nearest once: decoded as a viewer decodes it, before compression, the HDR picture is back
+  within half a step of the map's range (`imageEncoders.test.js`); a non-finite HDR value keeps the SDR one's light; `+ 0.5` into its clamped array had rounded twice, a whole step up as often
+  as not (fixed 2026-11-08).
   ⚠️ Chrome (macOS) starts its first hardware video encoder of a browser launch in ~5 s, HEVC or H.264 alike, then in
   ~2 ms (Apple's own: 60 ms); an encoder asked for meanwhile waits only for the rest, and nothing stalls. The Export window
   starts one on open (`prepareStill( 'heic' )`, 64×64, nothing encoded): first HDR HEIC 4.9 s → 0.12 s. Writers in

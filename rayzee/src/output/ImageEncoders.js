@@ -894,7 +894,9 @@ async function gainMapPixels( sdr, hdr, count ) {
 
 		for ( let c = 0; c < 3; c ++ ) {
 
-			const g = Math.log2( ( Math.max( hdr[ p * 4 + c ], 0 ) + GAIN_OFFSET ) / ( decoded[ sdr[ p * 4 + c ] ] + GAIN_OFFSET ) );
+			// Inf / NaN keep the SDR value: Inf would make the map's range infinite.
+			const h = hdr[ p * 4 + c ];
+			const g = Number.isFinite( h ) ? Math.log2( ( Math.max( h, 0 ) + GAIN_OFFSET ) / ( decoded[ sdr[ p * 4 + c ] ] + GAIN_OFFSET ) ) : 0;
 			gains[ p * 3 + c ] = g;
 			if ( g < min ) min = g;
 			if ( g > max ) max = g;
@@ -910,7 +912,8 @@ async function gainMapPixels( sdr, hdr, count ) {
 	const scale = 255 / ( max - min );
 	for ( let p = 0; p < count; p ++ ) {
 
-		for ( let c = 0; c < 3; c ++ ) map[ p * 4 + c ] = ( gains[ p * 3 + c ] - min ) * scale + 0.5;
+		// The clamped array rounds itself: no + 0.5.
+		for ( let c = 0; c < 3; c ++ ) map[ p * 4 + c ] = ( gains[ p * 3 + c ] - min ) * scale;
 		map[ p * 4 + 3 ] = 255;
 
 	}
