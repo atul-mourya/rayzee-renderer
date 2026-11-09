@@ -1,9 +1,10 @@
 /**
  * The pbrt texture baker's fast paths give what the plain arithmetic gives, byte for byte: the sRGB byte from a table,
- * an image's own texels read directly when a bake runs at its size, and the layer loops for bytes through a table.
+ * an image's own texels read directly when a bake runs at its size, the layer loops for bytes through a table, and a
+ * one-channel map's bytes worked out once a value.
  */
 import { describe, it, expect } from 'vitest';
-import { bake, makeLayer, srgbByte, linearToSRGB, srgbToLinear } from '@/core/addons/archives/pbrt/PBRTTextureBake.js';
+import { bake, makeLayer, mixOf, srgbByte, linearToSRGB, srgbToLinear } from '@/core/addons/archives/pbrt/PBRTTextureBake.js';
 
 let seed = 11;
 const rand = () => ( seed = ( seed * 16807 ) % 2147483647 ) / 2147483647;
@@ -90,6 +91,132 @@ describe( 'the pbrt texture baker', () => {
 		const layer = { width: 11, height: 1, channels: 1, data: Float32Array.from( { length: 11 }, ( _, i ) => ( i === 7 ? 0.5 : i === 3 ? Infinity : 0.3 ) ), su: 1, sv: 1, du: 0, dv: 0, uv: null };
 		const linear = bake( [ { layer } ], ( [ v ] ) => v, { linear: true } ).data;
 		expect( [ linear[ 7 * 4 ], linear[ 3 * 4 ], linear[ 2 * 4 ], linear[ 4 * 4 ] ] ).toEqual( [ 128, 255, 77, 77 ] );
+
+	} );
+
+	it( 'works a one-channel map out once a value, byte for byte as texel by texel', () => {
+
+		const w = 64, h = 48, ramp = Float32Array.from( { length: 256 }, ( _, b ) => srgbToLinear( b / 255 ) * 1.2 );
+		const data = Float32Array.from( { length: w * h }, () => ramp[ Math.floor( rand() * 256 ) ] );
+		[ NaN, - 0, 0, Infinity, - Infinity, 3.5, - 0.25 ].forEach( ( v, k ) => {
+
+			data[ 17 * k + 5 ] = v;
+
+		} );
+		const layer = { width: w, height: h, channels: 1, data, su: 1, sv: 1, du: 0, dv: 0, uv: null };
+		const other = { ...layer, data: data.map( () => rand() ) };
+		let calls = 0;
+		const combine = ( [ a, b, c ] ) => {
+
+			calls ++;
+			return [ 0, 1, 2 ].map( ( k ) => Math.sqrt( Math.max( 0, a[ k ] ) ) * 0.7 + b[ k ] * c[ k ] );
+
+		};
+
+		const alphaOf = ( [ a ] ) => 1 - a[ 0 ];
+		const terms = ( second ) => [ { layer }, { layer: second, tint: [ 0.5, 2, 1 ], clamp: true }, { rgb: [ 0.25, 0.5, 1 ] } ];
+		const expected = ( second, linear ) => {
+
+			const out = new Uint8Array( w * h * 4 );
+			for ( let j = 0; j < h; j ++ ) for ( let i = 0; i < w; i ++ ) {
+
+				const at = ( h - 1 - j ) * w + i, a = data[ at ], b = second.data[ at ];
+				const tinted = [ 0.5, 2, 1 ].map( ( t ) => Math.min( 1, Math.max( 0, b * t ) ) );
+				const rgb = combine( [[ a, a, a ], tinted, [ 0.25, 0.5, 1 ]] );
+				for ( let c = 0; c < 3; c ++ ) {
+
+					const v = Math.min( 1, Math.max( 0, rgb[ c ] ) );
+					out[ ( j * w + i ) * 4 + c ] = linear ? Math.round( 255 * v ) : srgbByte( v );
+
+				}
+
+				out[ ( j * w + i ) * 4 + 3 ] = Math.round( 255 * Math.min( 1, Math.max( 0, 1 - a ) ) );
+
+			}
+
+			return out;
+
+		};
+
+		for ( const linear of [ true, false ] ) {
+
+			const want = expected( layer, linear );
+			calls = 0;
+			expect( bake( terms( layer ), combine, { alphaOf, linear } ).data ).toEqual( want );
+			expect( calls ).toBeLessThanOrEqual( 256 + 7 );
+
+		}
+
+		// Another image in the same uv set: each texel is worked out.
+		const want = expected( other, true );
+		calls = 0;
+		expect( bake( terms( other ), combine, { alphaOf, linear: true } ).data ).toEqual( want );
+		expect( calls ).toBe( w * h );
+
+	} );
+
+	it( 'works out a float map with more values than it keeps, and one resampled past the bake size, texel by texel', () => {
+
+		const w = 600, h = 500, data = Float32Array.from( { length: w * h }, () => rand() );
+		const layer = { width: w, height: h, channels: 1, data, su: 1, sv: 1, du: 0, dv: 0, uv: null };
+		const baked = bake( [ { layer } ], ( [ v ] ) => v, { linear: true } ).data;
+		for ( let j = 0; j < h; j ++ ) for ( let i = 0; i < w; i ++ ) {
+
+			const want = Math.round( 255 * data[ ( h - 1 - j ) * w + i ] );
+			if ( baked[ ( j * w + i ) * 4 ] !== want ) expect( baked[ ( j * w + i ) * 4 ], `${i}, ${j}` ).toBe( want );
+
+		}
+
+		// 4,097 texels wide bakes at 4,096: each texel is a blend of two, never a copy of one.
+		const wide = { width: 4097, height: 1, channels: 1, data: Float32Array.from( { length: 4097 }, ( _, i ) => ( i % 7 ) / 6 ), su: 1, sv: 1, du: 0, dv: 0, uv: null };
+		const resampled = bake( [ { layer: wide } ], ( [ v ] ) => v, { linear: true } );
+		expect( resampled.width ).toBe( 4096 );
+		for ( let i = 0; i < 4096; i ++ ) {
+
+			const x = ( i + 0.5 ) / 4096 * 4097 - 0.5, x0 = Math.floor( x ), fx = x - x0;
+			const d = wide.data, a = d[ ( x0 + 4097 ) % 4097 ], b = d[ ( x0 + 1 ) % 4097 ];
+			const v = ( a * ( 1 - fx ) + b * fx ) * 1 + ( a * ( 1 - fx ) + b * fx ) * 0;
+			expect( resampled.data[ i * 4 ], `${i}` ).toBe( Math.round( 255 * Math.min( 1, Math.max( 0, v ) ) ) );
+
+		}
+
+	} );
+
+	it( 'works a colour image out once a value a channel when the combine goes channel by channel', () => {
+
+		const w = 64, h = 48;
+		const layer = makeLayer( { data: bytes( w * h * 4 ), width: w, height: h }, { channels: 3, decode: srgbToLinear, scale: 1.3 } );
+		[ NaN, - 0, Infinity, - 0.5 ].forEach( ( v, k ) => {
+
+			layer.data[ 29 * k + 4 ] = v;
+
+		} );
+		let calls = 0;
+		const counted = ( values ) => {
+
+			calls ++;
+			return mixOf( values );
+
+		};
+
+		const terms = [ { layer, tint: [ 0.9, 1.1, 1 ], clamp: true }, { rgb: [ 0.2, 0.4, 0.8 ] }, { rgb: [ 0.3, 0.3, 0.3 ] } ];
+		for ( const linear of [ false, true ] ) {
+
+			const plain = bake( terms, mixOf, { linear } ).data;
+			calls = 0;
+			expect( bake( terms, counted, { linear, perChannel: true } ).data ).toEqual( plain );
+			expect( calls ).toBeLessThan( w * h / 2 );
+
+		}
+
+		// Not without the promise, nor with an alpha channel.
+		calls = 0;
+		bake( terms, counted, {} );
+		expect( calls ).toBe( w * h );
+		calls = 0;
+		const withAlpha = bake( terms, counted, { perChannel: true, alphaOf: ( [ a ] ) => a[ 0 ] } );
+		expect( calls ).toBe( w * h );
+		expect( withAlpha.data ).toEqual( bake( terms, mixOf, { alphaOf: ( [ a ] ) => a[ 0 ] } ).data );
 
 	} );
 

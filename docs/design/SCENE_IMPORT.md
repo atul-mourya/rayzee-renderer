@@ -179,6 +179,12 @@ subtree per element, and the whole thing rarely fits: Moana is 29 GB unpacked.
   to `Math.round( 255 · linearToSRGB( v ) )` (`srgbByte`), layers read bytes through their table in plain loops, and
   float maps reuse their arrays. Every bake and layer of zero-day, crown, the bathroom, kitchen and veach-ajar hashed the
   same before and after; zero-day's `pbrtBuild` 8.54 → 4.08 s in Node, 7.18 → 3.24 s in Chrome (`bench:load --ab`).
+  A one-channel map's bytes are worked out once a value and copied (`TexelMemo`, keyed by the float's bits: an 8-bit
+  grey map holds at most 256 values, a colour image read as a float tens of thousands). Exporters define a texture per
+  material even for one image: definitions reading a file the same way (encoding, scale, invert, uv mapping) share one
+  layer (`_imageLayer`), and materials whose roughness reads the same layers and values share one bake and one texture,
+  which the engine packs once (`_floatMap`'s `id`). zero-day: 23 roughness maps → 13, material textures on the GPU
+  414 → 249 MB, `pbrtBuild` 3.99 → 1.84 s in Node and 2.94 → 1.72 s in Chrome; renders byte-identical.
   An imagemap's `uscale`/`vscale`/`udelta`/`vdelta` become the texture's repeat/offset. A `planar`/`spherical`/
   `cylindrical` mapping (pbrt-v4 `textures.h`; planar reads `v1`/`v2`/`udelta`/`vdelta`, the others nothing) is a uv set
   generated per shape from its world positions, taken into the space the texture was declared in (`generateUV`): a

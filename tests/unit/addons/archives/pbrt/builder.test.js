@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { BufferGeometry, DataTexture, DoubleSide, Float32BufferAttribute, FrontSide, Matrix4, Mesh, NoColorSpace, OrthographicCamera, PerspectiveCamera, SRGBColorSpace, Texture, Vector3 } from 'three';
+import { BufferGeometry, DataTexture, DoubleSide, Float32BufferAttribute, FloatType, FrontSide, Matrix4, Mesh, NoColorSpace, OrthographicCamera, PerspectiveCamera, SRGBColorSpace, Texture, Vector3 } from 'three';
 import { loadPBRTScene, pickEntryPath, PBRTParser, PBRTSceneBuilder } from '@/core/addons/archives/pbrt/index.js';
 import { deriveAlphaMode } from '@/core/scene/GeometryExtractor.js';
 import { srgbToLinear } from '@/core/addons/archives/pbrt/PBRTTextureBake.js';
@@ -37,7 +37,7 @@ describe( 'PBRT scene builder', () => {
 
 	it( 'auto-detects the entry .pbrt', () => {
 
-		expect( pickEntryPath( { 'a/deep/foo.pbrt': 1, 'scene.pbrt': 1 } ) ).toBe( 'scene.pbrt' );
+		expect( pickEntryPath( { 'a/deep/foo.pbrt': enc.encode( '' ), 'scene.pbrt': enc.encode( '' ) } ) ).toBe( 'scene.pbrt' );
 
 	} );
 
@@ -50,6 +50,20 @@ describe( 'PBRT scene builder', () => {
 		};
 
 		expect( pickEntryPath( entries ) ).toBe( 'contemporary-bathroom.pbrt' );
+
+	} );
+
+	it( 'finds WorldBegin and Include at a line start anywhere, the last bytes included, past near misses', () => {
+
+		// A shorter name wins a tie: each pick below is the content's.
+		expect( pickEntryPath( {
+			'b.pbrt': enc.encode( 'x WorldBegin\nWorldBegi' ),
+			'zz-scene.pbrt': enc.encode( '# WWorldBegin World\n  WorldBegin' )
+		} ) ).toBe( 'zz-scene.pbrt' );
+		expect( pickEntryPath( {
+			'x.pbrt': enc.encode( 'WorldBegin\n' ),
+			'zz-scene.pbrt': enc.encode( 'WorldBegin\nIInclude "y.pbrt"\nInclude "x.pbrt"' )
+		} ) ).toBe( 'zz-scene.pbrt' );
 
 	} );
 
@@ -1367,6 +1381,74 @@ describe( 'PBRT scene builder: pbrt-v4 fidelity', () => {
 		// remaproughness false: α is the value, √ of it.
 		expect( coated.clearcoatRoughness ).toBe( 1 );
 		expect( Array.from( coated.clearcoatRoughnessMap.image.data.filter( ( _, i ) => i % 4 === 1 ) ) ).toEqual( [ 0, 64, 255 ] );
+
+	} );
+
+	it( 'bakes one roughness image for every material reading the same image the same way, whatever its texture\'s name', async () => {
+
+		const tri = ( z ) => `Shape "trianglemesh" "point3 P" [ 0 0 ${z}  1 0 ${z}  0 1 ${z} ] "integer indices" [ 0 1 2 ] "point2 uv" [ 0 0 1 0 0 1 ]`;
+		const result = await meshesOf( `
+			Texture "rough" "float" "imagemap" "string filename" "rough.png" "string encoding" "linear"
+			Texture "same" "float" "imagemap" "string filename" "rough.png" "string encoding" "linear"
+			Texture "asSRGB" "float" "imagemap" "string filename" "rough.png"
+			Texture "tiled" "float" "imagemap" "string filename" "rough.png" "string encoding" "linear" "float uscale" 2
+			Texture "dimmer" "float" "imagemap" "string filename" "rough.png" "string encoding" "linear" "float scale" 0.5
+			Texture "inverted" "float" "imagemap" "string filename" "rough.png" "string encoding" "linear" "bool invert" true
+			Material "conductor" "texture roughness" "rough"
+			${tri( 0 )}
+			Material "conductor" "texture roughness" "rough" "rgb reflectance" [ 0.5 0.5 0.5 ]
+			${tri( 1 )}
+			Material "conductor" "texture roughness" "rough" "bool remaproughness" false
+			${tri( 2 )}
+			Material "conductor" "texture roughness" "same"
+			${tri( 3 )}
+			Material "conductor" "texture uroughness" "rough" "texture vroughness" "rough"
+			${tri( 4 )}
+			Material "conductor" "texture uroughness" "rough" "float vroughness" 0.5
+			${tri( 5 )}
+			Material "conductor" "texture uroughness" "rough" "float vroughness" 0.25
+			${tri( 6 )}
+			Material "conductor" "texture roughness" "asSRGB"
+			${tri( 7 )}
+			Material "conductor" "texture roughness" "tiled"
+			${tri( 8 )}
+			Material "conductor" "texture roughness" "dimmer"
+			${tri( 9 )}
+			Material "conductor" "texture roughness" "inverted"
+			${tri( 10 )}
+		`, {}, { 'rough.png': image( 0, 16, 255 ) } );
+
+		const [ a, b, raw, same, uv, half, quarter, srgb, tiled, dimmer, inverted ] = result.meshes.map( ( m ) => m.material.roughnessMap );
+		expect( result.meshes[ 0 ].material ).not.toBe( result.meshes[ 1 ].material );
+		// Each material its own texture over one image: packed once, and materials stay apart.
+		expect( b.source ).toBe( a.source );
+		expect( same.source ).toBe( a.source );
+		expect( new Set( [ a, b, same ] ).size ).toBe( 3 );
+		expect( new Set( [ a, raw, uv, half, quarter, srgb, tiled, dimmer, inverted ].map( ( t ) => t.source ) ).size ).toBe( 9 );
+		expect( [ tiled.repeat.x, a.repeat.x ] ).toEqual( [ 2, 1 ] );
+		expect( dimmer.image.data ).not.toEqual( a.image.data );
+		expect( inverted.image.data ).not.toEqual( a.image.data );
+		expect( quarter.image.data ).not.toEqual( half.image.data );
+		expect( srgb.image.data ).not.toEqual( a.image.data );
+		// The second material's roughness was read too, though its map was already baked.
+		expect( Object.keys( result.parameters.unused ).filter( ( key ) => key.startsWith( 'Material' ) ) ).toEqual( [] );
+
+	} );
+
+	it( 'reports a float roughness image\'s encoding unread, and reads what an unreadable one names', async () => {
+
+		const result = await meshesOf( `
+			Texture "missing" "float" "imagemap" "string filename" "nowhere.png" "float uscale" 2 "string encoding" "linear"
+			Texture "hdr" "float" "imagemap" "string filename" "rough.pfm" "string encoding" "linear"
+			Material "conductor" "texture roughness" "missing"
+			${TRI}
+			Material "conductor" "texture roughness" "hdr" "rgb reflectance" [ 0.5 0.5 0.5 ]
+			Shape "trianglemesh" "point3 P" [ 0 0 1  1 0 1  0 1 1 ] "integer indices" [ 0 1 2 ] "point2 uv" [ 0 0 1 0 0 1 ]
+		`, {}, { 'rough.pfm': Object.assign( new DataTexture( new Float32Array( [ 0.25, 0.25, 0.25, 1 ] ), 1, 1 ), { type: FloatType } ) } );
+
+		// A float image takes no encoding (pbrt-v4 reads it for 8-bit images only); as before the shared layers.
+		expect( result.meshes[ 0 ].material.roughnessMap ).toBeTruthy();
+		expect( Object.keys( result.parameters.unused ) ).toEqual( [ 'Texture imagemap: encoding' ] );
 
 	} );
 

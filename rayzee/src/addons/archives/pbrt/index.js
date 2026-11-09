@@ -190,9 +190,8 @@ function findBytes( bytes, needle, from = 0 ) {
 
 	const first = needle[ 0 ];
 	const last = bytes.length - needle.length;
-	outer: for ( let i = from; i <= last; i ++ ) {
+	outer: for ( let i = bytes.indexOf( first, from ); i >= 0 && i <= last; i = bytes.indexOf( first, i + 1 ) ) {
 
-		if ( bytes[ i ] !== first ) continue;
 		for ( let j = 1; j < needle.length; j ++ ) if ( bytes[ i + j ] !== needle[ j ] ) continue outer;
 		return i;
 

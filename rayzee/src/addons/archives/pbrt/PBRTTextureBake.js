@@ -184,9 +184,10 @@ function sample( layer, s, t, out ) {
  * @param {object} [options]
  * @param {(values: number[][]) => number} [options.alphaOf] - the alpha channel, linear; opaque without it
  * @param {boolean} [options.linear=false] - linear bytes, for a data map
+ * @param {boolean} [options.perChannel=false] - each output channel follows from the same channel of the inputs alone
  * @returns {{ data: Uint8Array, width: number, height: number, mapping: { su: number, sv: number, du: number, dv: number, uv: object|null }, averaged: number } | null}
  */
-export function bake( terms, combine, { alphaOf = null, linear = false } = {} ) {
+export function bake( terms, combine, { alphaOf = null, linear = false, perChannel = false } = {} ) {
 
 	const set = uvKey( terms.find( ( term ) => term.layer )?.layer.uv );
 	let driver = null, averaged = 0;
@@ -212,6 +213,15 @@ export function bake( terms, combine, { alphaOf = null, linear = false } = {} ) 
 	const values = terms.map( () => [ 0, 0, 0 ] );
 	// At its own size a texel centre is the texel itself: read, not blended.
 	const whole = width === driver.width && height === driver.height;
+	// A one-channel driver that every image term reads at its own size: a texel's bytes follow from its one value, so
+	// they are worked out once a value (an 8-bit map has at most 256) and copied, keyed by the float's bits.
+	// A colour driver whose combine works channel by channel (`perChannel`, opaque): each byte from its channel's value.
+	const alone = whole && terms.every( ( term ) => ! term.layer || term.layer === driver );
+	let memo = alone && driver.channels === 1 ? new TexelMemo( width * height ) : null;
+	let channelMemos = alone && driver.channels === 3 && perChannel && ! alphaOf ? [ 0, 1, 2 ].map( () => new TexelMemo( width * height ) ) : null;
+	const bits = ( memo || channelMemos ) && new Uint32Array( driver.data.buffer, driver.data.byteOffset, driver.data.length );
+	const texels = memo && new Uint32Array( out.buffer );
+	const known = [ - 1, - 1, - 1 ];
 
 	for ( let j = 0; j < height; j ++ ) {
 
@@ -219,6 +229,35 @@ export function bake( terms, combine, { alphaOf = null, linear = false } = {} ) 
 		const v = ( t - driver.dv ) / driver.sv;
 
 		for ( let i = 0; i < width; i ++ ) {
+
+			const key = memo ? bits[ ( height - 1 - j ) * width + i ] : 0;
+			if ( memo ) {
+
+				const texel = memo.get( key );
+				if ( texel >= 0 ) {
+
+					texels[ j * width + i ] = texel;
+					continue;
+
+				}
+
+			}
+
+			const at3 = ( ( height - 1 - j ) * width + i ) * 3;
+			if ( channelMemos ) {
+
+				known[ 0 ] = channelMemos[ 0 ].get( bits[ at3 ] );
+				known[ 1 ] = channelMemos[ 1 ].get( bits[ at3 + 1 ] );
+				known[ 2 ] = channelMemos[ 2 ].get( bits[ at3 + 2 ] );
+				if ( known[ 0 ] >= 0 && known[ 1 ] >= 0 && known[ 2 ] >= 0 ) {
+
+					const o = ( j * width + i ) * 4;
+					out[ o ] = known[ 0 ]; out[ o + 1 ] = known[ 1 ]; out[ o + 2 ] = known[ 2 ]; out[ o + 3 ] = 255;
+					continue;
+
+				}
+
+			}
 
 			const s = ( i + 0.5 ) / width;
 			const u = ( s - driver.du ) / driver.su;
@@ -258,12 +297,63 @@ export function bake( terms, combine, { alphaOf = null, linear = false } = {} ) 
 			}
 
 			out[ o + 3 ] = alphaOf ? Math.round( 255 * Math.min( 1, Math.max( 0, alphaOf( values ) ) ) ) : 255;
+			if ( memo ) {
+
+				memo.set( key, texels[ j * width + i ] );
+				// Full: a float image's values seldom repeat, and a lookup that always misses costs more than it saves.
+				if ( memo.room === 0 ) memo = null;
+
+			} else if ( channelMemos ) {
+
+				for ( let c = 0; c < 3; c ++ ) if ( known[ c ] < 0 ) channelMemos[ c ].set( bits[ at3 + c ], out[ o + c ] );
+				if ( channelMemos.some( ( m ) => m.room === 0 ) ) channelMemos = null;
+
+			}
 
 		}
 
 	}
 
 	return { data: out, width, height, mapping: { su: driver.su, sv: driver.sv, du: driver.du, dv: driver.dv, uv: driver.uv ?? null }, averaged };
+
+}
+
+// Open addressing on 32-bit keys: twice the texels, up to 2^18 slots, at most half filled.
+const MEMO_MAX_BITS = 18;
+
+class TexelMemo {
+
+	constructor( texels ) {
+
+		const bits = Math.min( MEMO_MAX_BITS, Math.max( 10, Math.ceil( Math.log2( 2 * texels ) ) ) );
+		this.shift = 32 - bits;
+		this.mask = ( 1 << bits ) - 1;
+		this.keys = new Uint32Array( 1 << bits );
+		this.values = new Uint32Array( 1 << bits );
+		this.used = new Uint8Array( 1 << bits );
+		this.room = 1 << ( bits - 1 );
+
+	}
+
+	/** The value stored under `key`, or −1. */
+	get( key ) {
+
+		for ( let h = Math.imul( key, 0x9e3779b1 ) >>> this.shift; this.used[ h ]; h = ( h + 1 ) & this.mask ) if ( this.keys[ h ] === key ) return this.values[ h ];
+		return - 1;
+
+	}
+
+	set( key, value ) {
+
+		if ( this.room === 0 ) return;
+		let h = Math.imul( key, 0x9e3779b1 ) >>> this.shift;
+		while ( this.used[ h ] ) h = ( h + 1 ) & this.mask;
+		this.keys[ h ] = key;
+		this.values[ h ] = value;
+		this.used[ h ] = 1;
+		this.room --;
+
+	}
 
 }
 

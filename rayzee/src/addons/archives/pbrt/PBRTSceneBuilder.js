@@ -675,6 +675,9 @@ export class PBRTSceneBuilder {
 		this._imageCache = new Map(); // filename -> Promise<Texture|null>, decoded once for every named texture
 		this._heldImages = new Map(); // source -> its hold: images a bake read, held until the build ends
 		this._termCache = new Map(); // texture name + channels -> Promise<{rgb}|{layer, tint?}|null>
+		this._layers = new Map(); // an image map's file, encoding, scale, invert and mapping -> its layer
+		this._layerIds = new Map(); // layer -> its number in the keys below
+		this._floatMaps = new Map(); // what a float map computes from which layers and values -> DataTexture|null
 		this._mediumMaterials = new Map(); // material -> Map(medium name -> material with its attenuation)
 		this._mediumWarnings = new Set();
 		this._alphaMaterials = new Map(); // material -> Map(alpha texture name or #value -> Promise<material>)
@@ -2072,7 +2075,7 @@ export class PBRTSceneBuilder {
 
 			},
 			bakeMaterialMix: ( a, b, amountName ) => this._bakeMaterialMix( a, b, amountName ),
-			bakeFloatMap: ( params, keys, combine ) => this._floatMap( params, keys, combine ),
+			bakeFloatMap: ( params, keys, combine, id ) => this._floatMap( params, keys, combine, id ),
 			heightMap: ( params, key ) => this._heightMap( params, key ),
 			textureMeanRGB: async ( n ) => {
 
@@ -2450,7 +2453,7 @@ export class PBRTSceneBuilder {
 		if ( scale > 1 || pBool( def.params, 'invert', false ) || encodingCurve( def.params ) ) {
 
 			const term = await this._bakeTerm( name, 3 );
-			const baked = term?.layer && this._bake( `texture "${name}"`, [ { ...term, clamp: true } ], ( [ v ] ) => v );
+			const baked = term?.layer && this._bake( `texture "${name}"`, [ { ...term, clamp: true } ], ( [ v ] ) => v, { perChannel: true } );
 			if ( baked ) return { texture: bakedTexture( baked ) };
 			this.warn( `texture "${name}": its scale, invert or encoding could not be baked here — ignored` );
 
@@ -2467,13 +2470,32 @@ export class PBRTSceneBuilder {
 
 	/**
 	 * A data map (linear, in every channel) of `combine` over float parameters `keys`, constants or textures; null when
-	 * one cannot be read here or all are constants.
+	 * one cannot be read here or all are constants. Given `id`, naming what `combine` computes, materials reading the
+	 * same images and values share one bake and one image.
 	 * @private
 	 */
-	async _floatMap( params, keys, combine ) {
+	async _floatMap( params, keys, combine, id = null ) {
 
 		const terms = await Promise.all( keys.map( ( key ) => this._paramTerm( params, key, 1, [ 0, 0, 0 ] ) ) );
 		if ( terms.some( ( term ) => ! term ) ) return null;
+		if ( id === null ) return this._bakeFloatMap( keys, terms, combine );
+		const key = [ id, ...terms.map( ( term ) => ( term.layer ? `${this._layerId( term.layer )} ${term.tint ?? ''}` : `${term.rgb}` ) ) ].join( '\0' );
+		if ( ! this._floatMaps.has( key ) ) {
+
+			const baked = this._bakeFloatMap( keys, terms, combine );
+			this._floatMaps.set( key, baked );
+			return baked;
+
+		}
+
+		// A clone per material over one image: packed once (images are keyed by source), and materials stay distinct
+		// (_dedupeMaterial compares maps by texture).
+		return this._floatMaps.get( key )?.clone() ?? null;
+
+	}
+
+	_bakeFloatMap( keys, terms, combine ) {
+
 		// One pair of arrays for every texel: bake reads the result before the next.
 		const scalars = new Array( keys.length ), rgb = [ 0, 0, 0 ];
 		const baked = this._bake( `"${keys.join( '", "' )}"`, terms, ( values ) => {
@@ -2484,6 +2506,14 @@ export class PBRTSceneBuilder {
 
 		}, { linear: true } );
 		return baked && bakedTexture( baked, { srgb: false } );
+
+	}
+
+	/** A number for each layer, naming it in a cache key. @private */
+	_layerId( layer ) {
+
+		if ( ! this._layerIds.has( layer ) ) this._layerIds.set( layer, this._layerIds.size );
+		return this._layerIds.get( layer );
 
 	}
 
@@ -2508,7 +2538,7 @@ export class PBRTSceneBuilder {
 
 		if ( def?.class !== 'imagemap' ) {
 
-			const map = await this._floatMap( params, [ key ], ( [ height ] ) => height );
+			const map = await this._floatMap( params, [ key ], ( [ height ] ) => height, 'height' );
 			return map && { map, distance: 1 };
 
 		}
@@ -2545,7 +2575,7 @@ export class PBRTSceneBuilder {
 		}
 
 		const unit = ( rgb ) => rgb.map( ( v ) => Math.min( 1, Math.max( 0, v ) ) );
-		const baked = this._bake( `texture "${name}"`, [ { ...a, clamp: true }, { ...b, clamp: true }, amount ], mixOf );
+		const baked = this._bake( `texture "${name}"`, [ { ...a, clamp: true }, { ...b, clamp: true }, amount ], mixOf, { perChannel: ! amount.layer } );
 		return baked ? { texture: bakedTexture( baked ) } : { constant: mixOf( [ unit( a.rgb ), unit( b.rgb ), amount.rgb ] ) };
 
 	}
@@ -2600,10 +2630,15 @@ export class PBRTSceneBuilder {
 
 		const filename = pString( def.params, 'filename', null );
 		const pixels = await this._readPixels( filename && await this._image( filename ) );
-		return pixels && makeLayer( pixels, {
-			channels, decode: pixels.float ? null : decoderFor( def.params ),
-			scale: pFloat( def.params, 'scale', 1 ), invert: pBool( def.params, 'invert', false ), mapping: this._textureMapping( name, def )
-		} );
+		if ( ! pixels ) return null;
+		const decode = pixels.float ? null : decoderFor( def.params );
+		const scale = pFloat( def.params, 'scale', 1 ), invert = pBool( def.params, 'invert', false );
+		const mapping = this._textureMapping( name, def );
+		// Exporters name a texture per material: one file read the same way is one layer.
+		const { su, sv, du, dv, uv } = mapping;
+		const key = [ filename, channels, decode ? pString( def.params, 'encoding', 'sRGB' ) : '', scale, invert, su, sv, du, dv, uvKey( uv ) ].join( '\0' );
+		if ( ! this._layers.has( key ) ) this._layers.set( key, makeLayer( pixels, { channels, decode, scale, invert, mapping } ) );
+		return this._layers.get( key );
 
 	}
 
@@ -2660,7 +2695,7 @@ export class PBRTSceneBuilder {
 
 		const a = await term( matA ), b = await term( matB );
 		if ( ! a || ! b ) return { mean, texture: null };
-		const baked = this._bake( `mix amount "${amountName}"`, [ a, b, amount ], mixOf );
+		const baked = this._bake( `mix amount "${amountName}"`, [ a, b, amount ], mixOf, { perChannel: ! amount.layer } );
 		return { mean, texture: baked ? bakedTexture( baked ) : null };
 
 	}
@@ -2696,7 +2731,7 @@ export class PBRTSceneBuilder {
 			const product = ( [ a, f ] ) => [ a[ 0 ] * f[ 0 ], a[ 1 ] * f[ 0 ], a[ 2 ] * f[ 0 ] ];
 			if ( inner && factor ) {
 
-				const baked = this._bake( `texture "${name}"`, [ { ...inner, clamp: true }, factor ], product );
+				const baked = this._bake( `texture "${name}"`, [ { ...inner, clamp: true }, factor ], product, { perChannel: ! factor.layer } );
 				return baked ? { texture: bakedTexture( baked ) } : { constant: product( [ inner.rgb, factor.rgb ] ) };
 
 			}

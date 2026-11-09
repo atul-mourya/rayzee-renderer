@@ -363,7 +363,7 @@ async function applyRoughness( mat, target, params, dflt, ctx, prefix = '' ) {
 
 		const remap = remapsRoughness( params );
 		const alpha = ( r ) => ( remap ? Math.sqrt( Math.max( r, 0 ) ) : Math.max( r, 0 ) );
-		const map = await ctx.bakeFloatMap( params, keys, ( values ) => Math.sqrt( values.reduce( ( sum, r ) => sum + alpha( r ), 0 ) / values.length ) );
+		const map = await ctx.bakeFloatMap( params, keys, ( values ) => Math.sqrt( values.reduce( ( sum, r ) => sum + alpha( r ), 0 ) / values.length ), remap ? 'remapped roughness' : 'roughness' );
 		if ( map ) {
 
 			mat[ `${target}Map` ] = map;
