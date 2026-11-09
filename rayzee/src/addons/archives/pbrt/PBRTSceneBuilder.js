@@ -122,7 +122,7 @@ const DEFAULT_CURVE_SIDES = { flat: 1, ribbon: 1, cylinder: 2 };
 const DEFAULT_CURVE_TOLERANCE = 0.05;
 
 /** Bumped whenever the same scene files build a different graph, so a stored graph is not reused. */
-export const PBRT_BUILD_REVISION = 33;
+export const PBRT_BUILD_REVISION = 34;
 
 function samePlacements( a, b ) {
 
@@ -2296,9 +2296,8 @@ export class PBRTSceneBuilder {
 
 		} else if ( def.class === 'constant' ) {
 
-			const v = param( def.params, 'value' );
-			if ( v && v.type === 'rgb' ) result = { constant: [ v.value[ 0 ], v.value[ 1 ], v.value[ 2 ] ] };
-			else if ( v ) result = { constant: [ v.value[ 0 ], v.value[ 0 ], v.value[ 0 ] ] };
+			// pbrt-v4's value is 1 when none is given (FloatConstantTexture / SpectrumConstantTexture::Create).
+			result = { constant: ( await resolveSpectrum( def.params, 'value', this._materialContext(), [ 1, 1, 1 ] ) ).rgb ?? [ 1, 1, 1 ] };
 
 		} else if ( def.class === 'checkerboard' || def.class === 'bilerp' ) {
 

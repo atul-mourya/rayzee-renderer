@@ -122,6 +122,11 @@ subtree per element, and the whole thing rarely fits: Moana is 29 GB unpacked.
   `sceneMetadata.render` (glTF extras may carry it too), with `aspect` the picture's shape (`withSceneAspect`). The engine
   applies none of it; the app opens the scene at that shape with that integrator and path regularization, and shows the
   bounces and samples in Final Render. It leaves sppm's radius: see BIDIRECTIONAL.md, vertex merging's radius.
+- **Defaults are pbrt-v4's** (`pbrt/defaults.test.js`): each material, light, shape, camera and baked texture read bare
+  must build as with every parameter written at the default its pbrt-v4 `Create()` gives (materials.cpp, lights.cpp,
+  shapes.cpp, cameras.cpp, textures.cpp). Found 2026-11-08: a `constant` texture with no `value` was dropped (pbrt: 1 —
+  a bare constant roughness rendered a mirror), and one given as a named, sampled or blackbody spectrum read as NaN.
+  The coat `eta` of coateddiffuse / coatedconductor is approximated, so it cannot show there.
 - **Templates.** A shape inside `ObjectBegin` keeps its whole transform and a placement's goes on top, as pbrt does —
   never relative to the transform at ObjectBegin. kroken defines its cushions, blanket and rug under a `Transform` and
   places them at `Identity`; the relative reading put all of them at the world origin.
