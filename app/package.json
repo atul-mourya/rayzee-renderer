@@ -35,7 +35,6 @@
     "lucide-react": "^0.541.0",
     "mediabunny": "^1.62.1",
     "oidn-webgpu": "^0.6.0",
-    "onnxruntime-web": "^1.24.3",
     "rayzee": "*",
     "react": "19.0.0",
     "react-dom": "19.0.0",

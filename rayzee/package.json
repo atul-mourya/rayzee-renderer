@@ -63,7 +63,6 @@
     "three": ">=0.187.0"
   },
   "optionalDependencies": {
-    "oidn-webgpu": ">=0.6.0",
-    "onnxruntime-web": ">=1.0.0"
+    "oidn-webgpu": ">=0.6.0"
   }
 }

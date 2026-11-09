@@ -30,24 +30,6 @@ export default defineConfig( {
 	},
 	assetsInclude: [ "**/*.hdr" ],
 	plugins: [
-		// Strip onnxruntime WASM files from build output — loaded from CDN at runtime.
-		// Prevents Cloudflare Pages 25MB file size limit violation.
-		{
-			name: 'exclude-ort-wasm',
-			generateBundle( _, bundle ) {
-
-				for ( const key of Object.keys( bundle ) ) {
-
-					if ( key.includes( 'ort-wasm' ) && key.endsWith( '.wasm' ) ) {
-
-						delete bundle[ key ];
-
-					}
-
-				}
-
-			}
-		},
 		// HTTPS so WebGPU works on remote devices (requires secure context)
 		// basicSsl(),
 		react(),

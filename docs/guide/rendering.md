@@ -326,10 +326,8 @@ console.log(engine.getReservedRenderResolution());   // 4096, or 2048 if the dev
 | Package | Purpose | Install needed? |
 |---|---|---|
 | `oidn-webgpu` | Intel Open Image Denoise for high-quality final renders | Yes — `npm install oidn-webgpu` (**>=0.6.0**; it was `oidn-web` up to 0.5.0) |
-| `onnxruntime-web` | AI-powered upscaling | No — loaded from CDN at runtime |
+| `onnxruntime-web` | AI-powered upscaling | No — fetched from a CDN at runtime (`ortRuntimeUrl` / `ortWasmPaths` in [Configuring Assets](getting-started.md#configuring-assets-cdn-urls--cache-namespace) point it at your own copy) |
 | `@bb-studio/ocio` | OpenColorIO runtime for [Colour Management](#colour-management) (~6 MB WebAssembly) | Only to load colour configs — `npm install @bb-studio/ocio`, then pass it as `ocioRuntimeFactory` |
-
-> **Note:** `onnxruntime-web` is also listed in `package.json` under `optionalDependencies` for bundler compatibility, but the engine's own runtime path always fetches it from a CDN (see `ortRuntimeUrl` / `ortWasmPaths` in [Configuring Assets](getting-started.md#configuring-assets-cdn-urls--cache-namespace)) rather than importing the installed package — installing it locally has no effect unless you also override those URLs to point at your own copy.
 
 ### Enabling OIDN (Intel Open Image Denoise)
 
