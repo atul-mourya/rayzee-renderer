@@ -143,7 +143,8 @@
   every edge). Since 2026-11-07 the wavelength is drawn by how much it adds to the picture (`sampleWavelengthForDispersion`,
   three logistic lobes on the CIE → sRGB weights; weight variance 7.5 → 4.6): 0.047 → 0.039. Hero wavelengths would not
   help: pbrt too drops to one at a dispersive interface (`TerminateSecondary`). Left: following one wavelength is the cost.
-  Also not glTF's: `MaterialEvaluation` saturates the base colour of a dispersive transmissive material.
+  (`MaterialEvaluation` no longer saturates a dispersive part-transmissive material's base colour, which glTF never
+  asked for: 2026-11-08, `tests/gpu/dispersion.test.js`.)
 - [ ] Supporting GPU-compressed texture arrays requires adding  per-scene format selection at build time - the TSL compiler doesn't support clean teardown/rebuild of compute pipelines when texture binding types change.
 
 ### Environment

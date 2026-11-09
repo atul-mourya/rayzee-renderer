@@ -150,7 +150,8 @@ the shadow terminator, shadow-ray picking, sized lights and fog. CLAUDE.md keeps
   now amber, with the preview's pattern through the bottom under the scene's original environment. pbrt glass whose
   medium is outside it is turned over.
 - **Dispersion** is glTF's, as three.js reads it: `ior` at the d line, the F–C spread ( ior − 1 ) · dispersion / 20
-  (`iorFromWavelength`, `tests/gpu/dispersion.test.js`); pbrt's spectral `eta` maps onto it. A path carries one
+  (`iorFromWavelength`, `tests/gpu/dispersion.test.js`); pbrt's spectral `eta` maps onto it. It moves only the IOR of
+  what refracts: the reflection and the base colour are the same with it as without. A path carries one
   wavelength (pbrt's too, past a dispersive interface), drawn by its weight in the picture
   (`sampleWavelengthForDispersion`), so dispersive glass adds colour grain however small its split (BK7:
   transparent-machines' 64-spp error 0.022 → 0.039; 0.047 drawn uniformly).

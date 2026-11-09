@@ -73,23 +73,6 @@ const makeEvaluateMaterialResponse = ( deltaOnly ) => Fn( ( [ material, dots ], 
 		const F0 = bf.F0.toVar();
 		const iridF = vec3( 0.0 ).toVar();
 
-		// Modify material color for dispersive materials to enhance color separation
-		const materialColor = material.color.rgb.toVar();
-		if ( layers.dispersion ) If( material.dispersion.greaterThan( 0.0 ).and( material.transmission.greaterThan( 0.5 ) ), () => {
-
-			// For highly dispersive transmissive materials, boost color saturation
-			const dispersionEffect = clamp( material.dispersion.mul( 0.1 ), 0.0, 0.8 );
-			const maxComp = max( max( materialColor.r, materialColor.g ), materialColor.b );
-			const minComp = min( min( materialColor.r, materialColor.g ), materialColor.b );
-			If( maxComp.greaterThan( minComp ), () => {
-
-				const saturatedColor = materialColor.sub( minComp ).div( maxComp.sub( minComp ) );
-				materialColor.assign( mix( materialColor, saturatedColor, dispersionEffect.mul( 0.3 ) ) );
-
-			} );
-
-		} );
-
 		// Add iridescence effect if enabled
 		if ( layers.iridescence ) If( material.iridescence.greaterThan( 0.0 ), () => {
 
@@ -141,7 +124,7 @@ const makeEvaluateMaterialResponse = ( deltaOnly ) => Fn( ( [ material, dots ], 
 			.mul( float( 1.0 ).sub( material.metalness ) )
 			.mul( float( 1.0 ).sub( material.transmission ) )
 			.mul( float( 1.0 ).sub( material.diffuseTransmission ) );
-		const diffuse = deltaOnly ? vec3( 0.0 ) : diffuseLobe( layers, material, dots, kD.mul( materialColor ).mul( PI_INV ), materialColor, kD );
+		const diffuse = deltaOnly ? vec3( 0.0 ) : diffuseLobe( layers, material, dots, kD.mul( material.color.rgb ).mul( PI_INV ), material.color.rgb, kD );
 
 		const baseLayer = diffuse.add( specular ).toVar();
 
