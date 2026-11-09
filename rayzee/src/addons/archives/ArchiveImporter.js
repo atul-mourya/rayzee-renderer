@@ -23,6 +23,7 @@ import { VERSION } from '../../Version.js';
 import { loadPBRTScene, pickEntryPath, VirtualFS, PBRT_BUILD_REVISION, texturePixels } from './pbrt/index.js';
 import { loadUSDScene, listUSDRootLayers, listUSDParts, USDFiles, USDStage, USD_LAYER } from './usd/index.js';
 import { pfmTexture } from './pbrt/PFM.js';
+import { parseBinaryPLY } from './pbrt/BinaryPLY.js';
 import { extractSceneMetadata } from '../../loaders/SceneMetadata.js';
 import { ISSUE_CODES, ISSUE_SEVERITY, EngineIssueError } from '../../EngineIssues.js';
 import { ARCHIVE_FORMATS } from '../../loaders/ArchiveFormats.js';
@@ -833,7 +834,7 @@ export class ArchiveImporter {
 
 		updateLoading( { isLoading: true, status: 'Parsing PBRT scene...', progress: 5 } );
 
-		// Geometry decoder — reuse the cached PLYLoader (pbrt leans on .ply meshes).
+		// Geometry decoder: binary meshes read directly, anything else by the cached PLYLoader (pbrt leans on .ply meshes).
 		if ( ! this.loader.loaderCache.ply ) {
 
 			const { PLYLoader } = await import( 'three/examples/jsm/loaders/PLYLoader.js' );
@@ -841,7 +842,7 @@ export class ArchiveImporter {
 
 		}
 
-		const plyParser = ( buf ) => this.loader.loaderCache.ply.parse( buf );
+		const plyParser = ( buf ) => parseBinaryPLY( buf ) ?? this.loader.loaderCache.ply.parse( buf );
 		const imageFromBytes = ( bytes, fname ) => this._archiveImage( bytes, fname );
 		const envFromBytes = ( bytes, fname ) => this._archiveEnvironment( bytes, fname );
 
