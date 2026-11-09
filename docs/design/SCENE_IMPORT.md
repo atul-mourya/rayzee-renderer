@@ -174,6 +174,11 @@ subtree per element, and the whole thing rarely fits: Moana is 29 GB unpacked.
   material with a textured amount (its colours baked, everything else weighed by the amount's mean). Each colour
   input is clamped to [0, 1] before mixing, as pbrt clamps an albedo. A float texture reads an image's alpha where it has
   one, else the mean of its colour, as pbrt does. 2D `checkerboard` and `bilerp` are baked too (`_proceduralTexture`).
+  The baker is half the pbrt build on texture-heavy scenes, so its loops avoid per-texel work that changes nothing: at
+  its own size the driving image is read at its texels (no bilinear blend, no wrap), sRGB bytes come from a table exact
+  to `Math.round( 255 · linearToSRGB( v ) )` (`srgbByte`), layers read bytes through their table in plain loops, and
+  float maps reuse their arrays. Every bake and layer of zero-day, crown, the bathroom, kitchen and veach-ajar hashed the
+  same before and after; zero-day's `pbrtBuild` 8.54 → 4.08 s in Node, 7.18 → 3.24 s in Chrome (`bench:load --ab`).
   An imagemap's `uscale`/`vscale`/`udelta`/`vdelta` become the texture's repeat/offset. A `planar`/`spherical`/
   `cylindrical` mapping (pbrt-v4 `textures.h`; planar reads `v1`/`v2`/`udelta`/`vdelta`, the others nothing) is a uv set
   generated per shape from its world positions, taken into the space the texture was declared in (`generateUV`): a

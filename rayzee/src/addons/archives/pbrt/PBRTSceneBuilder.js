@@ -2474,10 +2474,13 @@ export class PBRTSceneBuilder {
 
 		const terms = await Promise.all( keys.map( ( key ) => this._paramTerm( params, key, 1, [ 0, 0, 0 ] ) ) );
 		if ( terms.some( ( term ) => ! term ) ) return null;
+		// One pair of arrays for every texel: bake reads the result before the next.
+		const scalars = new Array( keys.length ), rgb = [ 0, 0, 0 ];
 		const baked = this._bake( `"${keys.join( '", "' )}"`, terms, ( values ) => {
 
-			const v = combine( values.map( ( value ) => value[ 0 ] ) );
-			return [ v, v, v ];
+			for ( let k = 0; k < scalars.length; k ++ ) scalars[ k ] = values[ k ][ 0 ];
+			rgb[ 0 ] = rgb[ 1 ] = rgb[ 2 ] = combine( scalars );
+			return rgb;
 
 		}, { linear: true } );
 		return baked && bakedTexture( baked, { srgb: false } );

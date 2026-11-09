@@ -146,14 +146,63 @@ async function dataStart( blob, entry ) {
 
 }
 
+// The platform's own inflater where it has one (faster than fflate): null until asked, false where 'deflate-raw' is not
+// offered.
+let nativeInflate = null;
+
+function hasNativeInflate() {
+
+	if ( nativeInflate === null ) {
+
+		try {
+
+			nativeInflate = typeof DecompressionStream === 'function' && !! new DecompressionStream( 'deflate-raw' );
+
+		} catch {
+
+			nativeInflate = false;
+
+		}
+
+	}
+
+	return nativeInflate;
+
+}
+
+async function inflateNative( source, entry ) {
+
+	const out = new Uint8Array( entry.size );
+	const reader = source.stream().pipeThrough( new DecompressionStream( 'deflate-raw' ) ).getReader();
+	let at = 0;
+	for ( let part = await reader.read(); ! part.done; part = await reader.read() ) {
+
+		if ( at + part.value.length > out.length ) {
+
+			reader.cancel().catch( () => {} );
+			throw new Error( `zip: "${entry.name}" inflates past its stated size` );
+
+		}
+
+		out.set( part.value, at );
+		at += part.value.length;
+
+	}
+
+	if ( at !== out.length ) throw new Error( `zip: "${entry.name}" inflates short of its stated size` );
+	return out;
+
+}
+
 async function readEntry( blob, entry ) {
 
+	if ( entry.method !== 0 && entry.method !== 8 ) throw new Error( `zip: "${entry.name}" uses compression method ${entry.method}, which is not supported` );
 	const start = await dataStart( blob, entry );
-	const raw = await bytes( blob, start, start + entry.compSize );
+	if ( entry.method === 8 && entry.size === 0 ) return new Uint8Array( 0 );
+	if ( entry.method === 8 && hasNativeInflate() ) return inflateNative( blob.slice( start, start + entry.compSize ), entry );
 
-	if ( entry.method === 0 ) return raw;
-	if ( entry.method === 8 ) return entry.size === 0 ? new Uint8Array( 0 ) : inflateSync( raw, { out: new Uint8Array( entry.size ) } );
-	throw new Error( `zip: "${entry.name}" uses compression method ${entry.method}, which is not supported` );
+	const raw = await bytes( blob, start, start + entry.compSize );
+	return entry.method === 0 ? raw : inflateSync( raw, { out: new Uint8Array( entry.size ) } );
 
 }
 

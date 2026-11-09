@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { gzipSync, zipSync, unzipSync, deflateSync } from 'three/addons/libs/fflate.module.js';
 import { openTar, indexTarHeaders, readTar, createTarIndexer } from '@/core/addons/archives/ArchiveReader.js';
 import { openZip, readZipDirectory } from '@/core/addons/archives/ZipReader.js';
@@ -185,6 +185,45 @@ describe( 'ZipReader', () => {
 		const paths = zip.listing.map( e => e.path );
 		expect( paths.sort() ).toEqual( Object.keys( expected ).filter( p => ! p.endsWith( '/' ) ).sort() );
 		for ( const path of paths ) expect( await zip.read( path ) ).toEqual( expected[ path ] );
+
+	} );
+
+	// The platform's 'deflate-raw' stream reads every entry above (Node has one); fflate where there is none.
+	it( 'reads every entry the same with fflate where the platform has no deflate-raw stream', async () => {
+
+		vi.stubGlobal( 'DecompressionStream', undefined );
+		vi.resetModules();
+		try {
+
+			const { openZip: openZipWithFflate } = await import( '@/core/addons/archives/ZipReader.js' );
+			const bytes = zipSync( files );
+			const expected = unzipSync( bytes );
+			const zip = await openZipWithFflate( blob( bytes ) );
+			for ( const { path } of zip.listing ) expect( await zip.read( path ) ).toEqual( expected[ path ] );
+
+		} finally {
+
+			vi.unstubAllGlobals();
+			vi.resetModules();
+
+		}
+
+	} );
+
+	it( 'refuses a deflated entry whose stated size is not what it inflates to', async () => {
+
+		const bytes = zipSync( { 'a.bin': new Uint8Array( 5000 ).map( ( _, i ) => i % 7 ) } );
+		const central = bytes.findIndex( ( _, i ) => i + 4 <= bytes.length && new DataView( bytes.buffer ).getUint32( i, true ) === 0x02014b50 );
+		const stated = ( size ) => {
+
+			const copy = bytes.slice();
+			new DataView( copy.buffer ).setUint32( central + 24, size, true );
+			return blob( copy );
+
+		};
+
+		await expect( ( await openZip( stated( 4000 ) ) ).read( 'a.bin' ) ).rejects.toThrow( /past its stated size/ );
+		await expect( ( await openZip( stated( 6000 ) ) ).read( 'a.bin' ) ).rejects.toThrow( /short of its stated size/ );
 
 	} );
 

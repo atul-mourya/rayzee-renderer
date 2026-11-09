@@ -697,8 +697,8 @@ export class AnimationManager extends EventDispatcher {
 
 		if ( this.mixer ) {
 
+			// Stopping restores every node. Not uncacheRoot: three recounts the remaining bindings at each removal.
 			this.mixer.stopAllAction();
-			this.mixer.uncacheRoot( this._mixerRoot );
 			this.mixer = null;
 
 		}

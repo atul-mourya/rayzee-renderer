@@ -17,6 +17,41 @@ export const uvKey = ( uv ) => uv?.key ?? '';
 export const srgbToLinear = ( v ) => ( v <= 0.04045 ? v / 12.92 : ( ( v + 0.055 ) / 1.055 ) ** 2.4 );
 export const linearToSRGB = ( v ) => ( v <= 0.0031308 ? v * 12.92 : 1.055 * v ** ( 1 / 2.4 ) - 0.055 );
 
+// Math.round( 255 * linearToSRGB( v ) ) without the power: SRGB_STEPS holds the least v of each byte (bisected on that
+// expression), and the bins are narrower than the closest two steps, so no bin spans two.
+const SRGB_BINS = 4096;
+const SRGB_STEPS = new Float64Array( 257 ).fill( Infinity );
+const SRGB_BIN_BYTE = new Uint8Array( SRGB_BINS + 1 );
+{
+
+	const byte = ( v ) => Math.round( 255 * linearToSRGB( v ) );
+	for ( let k = 1; k <= 255; k ++ ) {
+
+		let lo = 0, hi = 1;
+		for ( let mid = ( lo + hi ) / 2; mid !== lo && mid !== hi; mid = ( lo + hi ) / 2 ) if ( byte( mid ) >= k ) hi = mid; else lo = mid;
+		SRGB_STEPS[ k ] = hi;
+
+	}
+
+	for ( let b = 0, k = 0; b <= SRGB_BINS; b ++ ) {
+
+		while ( SRGB_STEPS[ k + 1 ] <= b / SRGB_BINS ) k ++;
+		SRGB_BIN_BYTE[ b ] = k;
+
+	}
+
+}
+
+/** `Math.round( 255 * linearToSRGB( v ) )`, exactly, for v in [ 0, 1 ]; 0 below (and NaN), 255 above. */
+export function srgbByte( v ) {
+
+	if ( ! ( v > 0 ) ) return 0;
+	if ( v >= 1 ) return 255;
+	const k = SRGB_BIN_BYTE[ ( v * SRGB_BINS ) | 0 ];
+	return v >= SRGB_STEPS[ k + 1 ] ? k + 1 : k;
+
+}
+
 /**
  * @param {{ data: ArrayLike<number>, width: number, height: number, channels?: number, topDown?: boolean }} pixels -
  *   8-bit (0–255) or float values, `channels` per texel (4 if unsaid)
@@ -39,6 +74,28 @@ export function makeLayer( pixels, { channels, decode = null, scale = 1, invert 
 	const read = lut ? ( i ) => lut[ pixels.data[ i ] ] : ( i ) => ( decode ? decode( pixels.data[ i ] / 255 ) : pixels.data[ i ] );
 	const fromAlpha = channels === 1 && stride === 4 && hasAlpha( pixels );
 	const mean = channels === 1 && stride >= 3 && ! fromAlpha;
+
+	// The common cases — bytes through the table, nothing inverted — in plain loops: channel for channel, a grey from
+	// the mean of three, or the alpha.
+	if ( lut && ! invert && ( fromAlpha || mean || channels <= stride ) ) {
+
+		const src = pixels.data;
+		for ( let y = 0; y < height; y ++ ) {
+
+			const row = topDown ? y : height - 1 - y;
+			for ( let x = 0, from = row * width * stride, to = y * width * channels; x < width; x ++, from += stride, to += channels ) {
+
+				if ( fromAlpha ) data[ to ] = scale * lut[ src[ from + 3 ] ];
+				else if ( mean ) data[ to ] = scale * ( ( lut[ src[ from ] ] + lut[ src[ from + 1 ] ] + lut[ src[ from + 2 ] ] ) / 3 );
+				else for ( let c = 0; c < channels; c ++ ) data[ to + c ] = scale * lut[ src[ from + c ] ];
+
+			}
+
+		}
+
+		return { width, height, channels, data, su: 1, sv: 1, du: 0, dv: 0, uv: null, ...mapping };
+
+	}
 
 	for ( let y = 0; y < height; y ++ ) {
 
@@ -99,7 +156,7 @@ function sample( layer, s, t, out ) {
 	const x = s * w - 0.5, y = ( 1 - t ) * h - 0.5;
 	const x0 = Math.floor( x ), y0 = Math.floor( y );
 	const fx = x - x0, fy = y - y0;
-	const wrap = ( i, size ) => ( ( i % size ) + size ) % size;
+	const wrap = ( i, size ) => ( i >= 0 && i < size ? i : ( ( i % size ) + size ) % size );
 	const xa = wrap( x0, w ), xb = wrap( x0 + 1, w ), ya = wrap( y0, h ), yb = wrap( y0 + 1, h );
 
 	for ( let c = 0; c < 3; c ++ ) {
@@ -153,6 +210,8 @@ export function bake( terms, combine, { alphaOf = null, linear = false } = {} ) 
 	const width = Math.min( driver.width, MAX_BAKE_SIZE ), height = Math.min( driver.height, MAX_BAKE_SIZE );
 	const out = new Uint8Array( width * height * 4 );
 	const values = terms.map( () => [ 0, 0, 0 ] );
+	// At its own size a texel centre is the texel itself: read, not blended.
+	const whole = width === driver.width && height === driver.height;
 
 	for ( let j = 0; j < height; j ++ ) {
 
@@ -167,7 +226,13 @@ export function bake( terms, combine, { alphaOf = null, linear = false } = {} ) 
 			for ( let k = 0; k < terms.length; k ++ ) {
 
 				const term = terms[ k ], value = values[ k ];
-				if ( term.layer ) {
+				if ( term.layer === driver && whole ) {
+
+					const { channels: n, data } = driver, at = ( ( height - 1 - j ) * width + i ) * n;
+					value[ 0 ] = data[ at ]; value[ 1 ] = data[ at + Math.min( 1, n - 1 ) ]; value[ 2 ] = data[ at + Math.min( 2, n - 1 ) ];
+					if ( term.tint ) for ( let c = 0; c < 3; c ++ ) value[ c ] *= term.tint[ c ];
+
+				} else if ( term.layer ) {
 
 					const L = term.layer;
 					sample( L, L === driver ? s : L.su * u + L.du, L === driver ? t : L.sv * v + L.dv, value );
@@ -188,7 +253,7 @@ export function bake( terms, combine, { alphaOf = null, linear = false } = {} ) 
 			for ( let c = 0; c < 3; c ++ ) {
 
 				const v = Math.min( 1, Math.max( 0, rgb[ c ] ) );
-				out[ o + c ] = Math.round( 255 * ( linear ? v : linearToSRGB( v ) ) );
+				out[ o + c ] = linear ? Math.round( 255 * v ) : srgbByte( v );
 
 			}
 
