@@ -25,6 +25,15 @@ import * as M from './PBRTMath.js';
  */
 export function equalAreaSphereToSquare( dx, dy, dz ) {
 
+	const out = [ 0, 0 ];
+	toSquare( dx, dy, dz, out );
+	return out;
+
+}
+
+// equalAreaSphereToSquare into `out`: no array a call.
+function toSquare( dx, dy, dz, out ) {
+
 	const x = Math.abs( dx ), y = Math.abs( dy ), z = Math.abs( dz );
 	const r = Math.sqrt( Math.max( 0, 1 - z ) );
 
@@ -48,7 +57,8 @@ export function equalAreaSphereToSquare( dx, dy, dz ) {
 	if ( dx < 0 ) u = - u;
 	if ( dy < 0 ) v = - v;
 
-	return [ 0.5 * ( u + 1 ), 0.5 * ( v + 1 ) ];
+	out[ 0 ] = 0.5 * ( u + 1 );
+	out[ 1 ] = 0.5 * ( v + 1 );
 
 }
 
@@ -124,11 +134,36 @@ export function octahedralToEquirect( src, lightToWorld, scale = 1, outWidth = 0
 	// renderFromLight.ApplyInverse(ray.d) before the square lookup.
 	const worldToLight = lightToWorld ? M.invert( lightToWorld ) : null;
 	const table = src.srgb ? SRGB_TO_LINEAR : null;
-	const rgb = [ 0, 0, 0 ];
+	const rgb = [ 0, 0, 0 ], square = [ 0, 0 ];
 	// An output pixel covers ~π source pixels: one read miscounts a sun a few pixels wide (a larger sky's spans more).
 	const reads = width > 1024 ? 2 : 4;
 
+	// Each read's azimuth depends on its column alone and its polar angle on its row: worked out once, not a pixel.
+	const cosAzimuth = new Float64Array( width * reads ), sinAzimuth = new Float64Array( width * reads );
+	for ( let i = 0; i < width; i ++ ) for ( let si = 0; si < reads; si ++ ) {
+
+		const u = ( i + ( si + 0.5 ) / reads ) / width;
+		const azimuth = ( u - 0.5 ) * 2 * Math.PI;
+		cosAzimuth[ i * reads + si ] = Math.cos( azimuth );
+		sinAzimuth[ i * reads + si ] = Math.sin( azimuth );
+
+	}
+
+	const sinPolars = new Float64Array( reads ), cosPolars = new Float64Array( reads );
+
 	for ( let j = 0; j < height; j ++ ) {
+
+		for ( let sj = 0; sj < reads; sj ++ ) {
+
+			// Row index IS the v axis the engine samples on, so row 0 is v = 0 (straight down)
+			// and the last row is v = 1 (up). Verified against a rendered frame — inverting
+			// this turns the sky upside down with no other visible symptom.
+			const v = ( j + ( sj + 0.5 ) / reads ) / height;
+			const polar = ( 1 - v ) * Math.PI;
+			sinPolars[ sj ] = Math.sin( polar );
+			cosPolars[ sj ] = Math.cos( polar );
+
+		}
 
 		for ( let i = 0; i < width; i ++ ) {
 
@@ -136,21 +171,13 @@ export function octahedralToEquirect( src, lightToWorld, scale = 1, outWidth = 0
 
 			for ( let sj = 0; sj < reads; sj ++ ) {
 
-				// Row index IS the v axis the engine samples on, so row 0 is v = 0 (straight down)
-				// and the last row is v = 1 (up). Verified against a rendered frame — inverting
-				// this turns the sky upside down with no other visible symptom.
-				const v = ( j + ( sj + 0.5 ) / reads ) / height;
-				const polar = ( 1 - v ) * Math.PI;
-				const sinPolar = Math.sin( polar ), cosPolar = Math.cos( polar );
+				const sinPolar = sinPolars[ sj ], cosPolar = cosPolars[ sj ];
 
 				for ( let si = 0; si < reads; si ++ ) {
 
-					const u = ( i + ( si + 0.5 ) / reads ) / width;
-					const azimuth = ( u - 0.5 ) * 2 * Math.PI;
-
-					let dx = sinPolar * Math.cos( azimuth );
+					let dx = sinPolar * cosAzimuth[ i * reads + si ];
 					let dy = cosPolar;
-					let dz = sinPolar * Math.sin( azimuth );
+					let dz = sinPolar * sinAzimuth[ i * reads + si ];
 
 					if ( worldToLight ) {
 
@@ -163,8 +190,8 @@ export function octahedralToEquirect( src, lightToWorld, scale = 1, outWidth = 0
 
 					}
 
-					const [ su, sv ] = equalAreaSphereToSquare( dx, dy, dz );
-					sampleBilinear( src.data, src.width, src.height, src.channels, su, src.bottomUp ? 1 - sv : sv, rgb, table );
+					toSquare( dx, dy, dz, square );
+					sampleBilinear( src.data, src.width, src.height, src.channels, square[ 0 ], src.bottomUp ? 1 - square[ 1 ] : square[ 1 ], rgb, table );
 
 					r += rgb[ 0 ] * sinPolar;
 					g += rgb[ 1 ] * sinPolar;

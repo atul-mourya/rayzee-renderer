@@ -99,7 +99,9 @@ subtree per element, and the whole thing rarely fits: Moana is 29 GB unpacked.
   attributes, classes, index and bounds as three's PLYLoader, byte for byte on every mesh of six local scenes — and
   anything else (ASCII, colours, texcoord lists, other elements, the `__MACOSX` copies) by PLYLoader. Watercolor's
   803 meshes: 8.2 s of PLYLoader, its load 80 → 72 s.
-- **Lights.** `infinite` becomes the environment; a scene without one renders with the environment off
+- **Lights.** `infinite` becomes the environment — pbrt-v4's equal-area octahedral square resampled once into the
+  engine's lat-long map (`EqualAreaOctahedral.js`, 4 or 16 reads a pixel, each read's angles tabulated per row and
+  column: a 4096-wide sky 2.6 → 2.0 s, the same floats); a scene without one renders with the environment off
   (`sceneMetadata.environment.enabled === false`, applied at the replace-load seam, and what it replaced comes back with
   the next model unless someone changed it). `distant`, `point` and `spot` become three.js lamps in the engine's units
   (pbrt's L / I × `scale`, `power` and `illuminance` honoured; flagged as converted so the photometric conversion skips

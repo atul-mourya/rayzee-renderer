@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { equalAreaSphereToSquare, octahedralToEquirect } from '@/core/addons/archives/pbrt/EqualAreaOctahedral.js';
+import { invert } from '@/core/addons/archives/pbrt/PBRTMath.js';
 
 /**
  * pbrt-v4 `EqualAreaSquareToSphere` — the forward map, transcribed here purely so the
@@ -234,6 +235,77 @@ describe( 'equal-area octahedral mapping', () => {
 		}
 
 		expect( worst ).toBeLessThan( 0.02 );
+
+	} );
+
+	it( 'gives every float the per-read evaluation gives, rotated or not, float or 8-bit, at either read count', () => {
+
+		// Each read worked out from scratch: its angles, its square position and a bilinear fetch, clamped at the edges.
+		const reference = ( src, worldToLight, scale, width ) => {
+
+			const height = width >> 1, out = new Float32Array( width * height * 4 ), reads = width > 1024 ? 2 : 4;
+			const decode = ( v ) => ( src.srgb ? Math.fround( v / 255 <= 0.04045 ? v / 255 / 12.92 : Math.pow( ( v / 255 + 0.055 ) / 1.055, 2.4 ) ) : v );
+			const fetch = ( u, v, c ) => {
+
+				const fx = Math.min( Math.max( u * src.width - 0.5, 0 ), src.width - 1 ), fy = Math.min( Math.max( v * src.height - 0.5, 0 ), src.height - 1 );
+				const x0 = Math.floor( fx ), y0 = Math.floor( fy ), x1 = Math.min( x0 + 1, src.width - 1 ), y1 = Math.min( y0 + 1, src.height - 1 );
+				const tx = fx - x0, ty = fy - y0, at = ( x, y ) => decode( src.data[ ( y * src.width + x ) * src.channels + c ] );
+				return ( at( x0, y0 ) * ( 1 - tx ) + at( x1, y0 ) * tx ) * ( 1 - ty ) + ( at( x0, y1 ) * ( 1 - tx ) + at( x1, y1 ) * tx ) * ty;
+
+			};
+
+			for ( let j = 0; j < height; j ++ ) for ( let i = 0; i < width; i ++ ) {
+
+				const sum = [ 0, 0, 0 ];
+				let weight = 0;
+				for ( let sj = 0; sj < reads; sj ++ ) for ( let si = 0; si < reads; si ++ ) {
+
+					const polar = ( 1 - ( j + ( sj + 0.5 ) / reads ) / height ) * Math.PI;
+					const azimuth = ( ( i + ( si + 0.5 ) / reads ) / width - 0.5 ) * 2 * Math.PI;
+					let d = [ Math.sin( polar ) * Math.cos( azimuth ), Math.cos( polar ), Math.sin( polar ) * Math.sin( azimuth ) ];
+					if ( worldToLight ) {
+
+						const m = worldToLight, t = [ 0, 1, 2 ].map( ( r ) => m[ r ] * d[ 0 ] + m[ r + 4 ] * d[ 1 ] + m[ r + 8 ] * d[ 2 ] );
+						const len = Math.hypot( ...t ) || 1;
+						d = t.map( ( v ) => v / len );
+
+					}
+
+					const [ su, sv ] = equalAreaSphereToSquare( ...d );
+					for ( let c = 0; c < 3; c ++ ) sum[ c ] += fetch( su, src.bottomUp ? 1 - sv : sv, c ) * Math.sin( polar );
+					weight += Math.sin( polar );
+
+				}
+
+				const k = weight > 0 ? scale / weight : 0;
+				for ( let c = 0; c < 3; c ++ ) out[ ( j * width + i ) * 4 + c ] = sum[ c ] * k;
+				out[ ( j * width + i ) * 4 + 3 ] = 1;
+
+			}
+
+			return out;
+
+		};
+
+		let seed = 5;
+		const rand = () => ( seed = ( seed * 16807 ) % 2147483647 ) / 2147483647;
+		// pbrt's CTM for a light turned about a tilted axis and moved.
+		const turn = [ 0.36, 0.48, - 0.8, 0, - 0.8, 0.6, 0, 0, 0.48, 0.64, 0.6, 0, 1, 2, 3, 1 ];
+		const bits = ( a ) => Array.from( new Uint32Array( a.buffer, a.byteOffset, a.length ) );
+		for ( const [ n, channels, kind, ctm, scale, width ] of [[ 40, 3, 'float', null, 1, 64 ], [ 33, 4, 'srgb', turn, 2.5, 96 ], [ 37, 3, 'bottomUp', turn, 1, 1025 ]] ) {
+
+			const src = {
+				data: kind === 'srgb' ? Uint8Array.from( { length: n * n * channels }, () => Math.floor( rand() * 256 ) ) : Float32Array.from( { length: n * n * channels }, () => rand() * 3 ),
+				width: n, height: n, channels, srgb: kind === 'srgb', bottomUp: kind === 'bottomUp'
+			};
+			const fast = octahedralToEquirect( src, ctm, scale, width ).data;
+			const want = reference( src, ctm && invert( ctm ), scale, width );
+			// The first differing float, not a diff of a million (which never finishes printing).
+			const a = bits( fast ), b = bits( want );
+			const first = a.findIndex( ( v, k ) => v !== b[ k ] );
+			expect( [ a.length, first ] ).toEqual( [ b.length, - 1 ] );
+
+		}
 
 	} );
 
