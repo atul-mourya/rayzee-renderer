@@ -151,6 +151,11 @@ owns it), exports, test layout, docs and comments; how a cleanup is run; the aud
   `useStore.exportRequest`. Picture choices persist in localStorage, video choices in `useAnimationStore.videoExport`; the
   EXR colour space is `app.color.exportSpace`. A saved render exports its picture (edited, as rendered, AI) or its EXR
   copy, as saved or converted to Radiance HDR. Both import `rayzee/encoders` only when used (the window on open).
+- **AI edits** (Results → AI; `store/ai.js`, `lib/aiEdit.js`, `services/geminiApi.js`): Gemini (`gemini-nano-banana-2.1`,
+  `generateContent` with `imageConfig` shape and size) makes versions of a saved render, each kept with its prompt in a
+  `renders` entry of its own (`render:<id>:v<n>`, `database.js`); an earlier build's single `ai.png` reads as v1. An
+  edit belongs to the render it started from and outlives the panel. "Part of it" sends only the marked area, grown to
+  a shape Gemini returns, and blends the answer back. ⚠️ The model has no streaming endpoint, so no drafts while waiting.
 - **Material catalogue** (Assets → Materials → Physically Based; `services/MaterialService.js`): the physicallybased.info
   database (CC0) plus pbrt's measured media and optical glasses it lacks (`services/MeasuredMaterials.js`). Its colours
   are linear Rec.709 and lengths centimetres: `subsurfaceRadius` is the diffuse mean free path 1 / σtr, turned into the

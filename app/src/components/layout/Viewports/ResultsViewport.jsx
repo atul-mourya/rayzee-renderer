@@ -1,10 +1,12 @@
 import { useRef, useEffect, useState, forwardRef, useMemo, useCallback } from 'react';
 import { debounce } from '@/lib/utils';
-import { RotateCcw, Save, Eye, Image as ImageIcon } from "lucide-react";
+import { RotateCcw, Save, Eye } from "lucide-react";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { TooltipProvider } from '@radix-ui/react-tooltip';
 import { useToast } from '@/hooks/use-toast';
-import { useStore } from '@/store';
+import { useStore, useAIStore } from '@/store';
+import { fitArea } from '@/lib/aiEdit';
+import { AreaLayer, CompareSwitch, JobChip, SplitHandle, VersionStrip } from './AIOverlay';
 import { ImageProcessorComposer, pictureGrade } from '@/lib/ImageProcessor';
 import ViewportToolbar from './ViewportToolbar';
 import { updateRender, getRenderHDR } from '@/lib/database';
@@ -73,11 +75,26 @@ const ResultsViewport = forwardRef( function ResultsViewport( props, ref ) {
 	const longPressActiveRef = useRef( false );
 	const longPressTimeoutRef = useRef( null );
 	const [ isHovering, setIsHovering ] = useState( false );
-	const [ viewingAIVariant, setViewingAIVariant ] = useState( false );
+	const [ loadedId, setLoadedId ] = useState( null );
 	// The render's saved light, shown as an HDR screen showed it (`app.createPictureView`).
 	const [ hdrShown, setHdrShown ] = useState( false );
 	const [ grade ] = useState( pictureGrade );
 	const hdrOn = !! useColorStatus()?.hdr?.on;
+
+	const renderId = imageData?.id;
+	const renderImage = imageData?.image;
+	const shown = useAIStore( s => s.shown[ renderId ] ?? 'render' );
+	const compare = useAIStore( s => s.compare );
+	const split = useAIStore( s => s.split );
+	const where = useAIStore( s => s.where );
+	const area = useAIStore( s => s.areas[ renderId ] );
+	const from = useAIStore( s => s.startFrom[ renderId ] ?? 'render' );
+	const job = useAIStore( s => s.jobs[ renderId ] );
+	const version = imageData?.aiVersions?.find( v => v.n === shown ) ?? null;
+	const [ drawnVersion, setDrawnVersion ] = useState( null );
+	const showingVersion = !! version && drawnVersion === version.url && ! viewingOriginal;
+	const marking = where === 'part' && !! imageData && ! job;
+	const side = showingVersion && compare === 'side';
 
 	// Auto-fit scaling logic
 	const {
@@ -88,7 +105,7 @@ const ResultsViewport = forwardRef( function ResultsViewport( props, ref ) {
 		handleResetToAutoFit
 	} = useAutoFitScale( {
 		viewportRef,
-		canvasWidth: actualCanvasWidth,
+		canvasWidth: side ? actualCanvasWidth * 2 + 16 : actualCanvasWidth,
 		canvasHeight: actualCanvasHeight,
 		padding: 80,
 		minScale: 5,
@@ -130,6 +147,20 @@ const ResultsViewport = forwardRef( function ResultsViewport( props, ref ) {
 
 	}, [ originalSettings, imageProcessing ] );
 
+	const loadedIdRef = useRef( null );
+	useEffect( () => {
+
+		loadedIdRef.current = loadedId;
+
+	}, [ loadedId ] );
+
+	const imageDataRef = useRef( imageData );
+	useEffect( () => {
+
+		imageDataRef.current = imageData;
+
+	}, [ imageData ] );
+
 	// Expose ref functions
 	useEffect( () => {
 
@@ -139,7 +170,7 @@ const ResultsViewport = forwardRef( function ResultsViewport( props, ref ) {
 		ref.current = {
 			getCanvas: () => originalCanvasRef.current,
 			getEditedCanvas: () => editedCanvasRef.current,
-			getAICanvas: () => aiCanvasRef.current,
+			getLoadedId: () => loadedIdRef.current,
 			getImageProcessor: () => imageProcessorRef.current,
 		};
 
@@ -236,34 +267,21 @@ const ResultsViewport = forwardRef( function ResultsViewport( props, ref ) {
 
 	}, [] );
 
-	// Optimized image loading for 4K images
+	// Loads when the render changes, not when its record is re-read (a new AI version): that would drop unsaved edits.
 	useEffect( () => {
 
-		if ( ! originalCanvasRef.current || ! editedCanvasRef.current || ! aiCanvasRef.current || ! imageData || ! imageData.image ) {
-
-			console.log( 'Missing required data for image loading:', {
-				originalCanvas: !! originalCanvasRef.current,
-				editedCanvas: !! editedCanvasRef.current,
-				aiCanvas: !! aiCanvasRef.current,
-				imageData: !! imageData,
-				imageDataImage: !! imageData?.image
-			} );
-			return;
-
-		}
+		const imageData = imageDataRef.current;
+		if ( ! originalCanvasRef.current || ! editedCanvasRef.current || ! imageData?.image ) return;
 
 		const originalCanvas = originalCanvasRef.current;
-		const aiCanvas = aiCanvasRef.current;
 		const originalCtx = originalCanvas.getContext( '2d' );
-		const aiCtx = aiCanvas.getContext( '2d' );
 		const abortController = new AbortController();
 
 		// Clear canvases and reset state
 		originalCtx.clearRect( 0, 0, originalCanvas.width, originalCanvas.height );
-		aiCtx.clearRect( 0, 0, aiCanvas.width, aiCanvas.height );
 		setIsImageDrawn( false );
 		setImageLoadState( { loaded: false, error: false } );
-		setViewingAIVariant( false );
+		setLoadedId( null );
 		resetPan();
 
 		// Create image with optimized loading
@@ -282,8 +300,6 @@ const ResultsViewport = forwardRef( function ResultsViewport( props, ref ) {
 				// to avoid disrupting its WebGL context
 				originalCanvas.width = img.width;
 				originalCanvas.height = img.height;
-				aiCanvas.width = img.width;
-				aiCanvas.height = img.height;
 
 				// Calculate display dimensions (capped for on-screen display)
 				const maxDim = 1024;
@@ -293,32 +309,6 @@ const ResultsViewport = forwardRef( function ResultsViewport( props, ref ) {
 
 				// Draw image at full size (canvas matches image, no letterboxing needed)
 				originalCtx.drawImage( img, 0, 0 );
-
-				// Load AI variant if it exists
-				if ( imageData.aiGeneratedImage ) {
-
-					const aiImg = new Image();
-					aiImg.crossOrigin = 'anonymous';
-
-					aiImg.onload = () => {
-
-						if ( ! abortController.signal.aborted ) {
-
-							aiCtx.drawImage( aiImg, 0, 0, aiCanvas.width, aiCanvas.height );
-
-						}
-
-					};
-
-					aiImg.onerror = ( error ) => {
-
-						console.error( 'Failed to load AI variant image:', error );
-
-					};
-
-					aiImg.src = imageData.aiGeneratedImage;
-
-				}
 
 				setIsImageDrawn( true );
 				setImageLoadState( { loaded: true, error: false } );
@@ -333,6 +323,7 @@ const ResultsViewport = forwardRef( function ResultsViewport( props, ref ) {
 
 				// Save the ID of the selected image for later use
 				setSelectedImageId( imageData.id );
+				setLoadedId( imageData.id );
 
 				// Store the original color correction settings
 				const settings = { ...imageData.colorCorrection, gamma: imageData.colorCorrection.gamma ?? 2.2 };
@@ -382,7 +373,42 @@ const ResultsViewport = forwardRef( function ResultsViewport( props, ref ) {
 
 		};
 
-	}, [ imageData, setImageProcessingParam, resetPan ] );
+	}, [ renderId, renderImage, setImageProcessingParam, resetPan ] );
+
+	// The version shown, at the render's size; a version of another shape keeps its own, centred.
+	const versionUrl = version?.url;
+	useEffect( () => {
+
+		const canvas = aiCanvasRef.current;
+		if ( ! canvas || ! versionUrl || ! imageLoadState.loaded ) return;
+		let cancelled = false;
+		const img = new Image();
+		img.onload = () => {
+
+			if ( cancelled ) return;
+			const { width, height } = originalCanvasRef.current;
+			canvas.width = width;
+			canvas.height = height;
+			const scale = Math.min( width / img.width, height / img.height );
+			const w = img.width * scale;
+			const h = img.height * scale;
+			const ctx = canvas.getContext( '2d' );
+			ctx.fillStyle = 'black';
+			ctx.fillRect( 0, 0, width, height );
+			ctx.drawImage( img, ( width - w ) / 2, ( height - h ) / 2, w, h );
+			setDrawnVersion( versionUrl );
+
+		};
+
+		img.onerror = () => console.error( 'Could not show the AI version:', versionUrl );
+		img.src = versionUrl;
+		return () => {
+
+			cancelled = true;
+
+		};
+
+	}, [ versionUrl, imageLoadState.loaded ] );
 
 	// Apply image processing when parameters change (debounced for 4K performance)
 	useEffect( () => {
@@ -454,7 +480,7 @@ const ResultsViewport = forwardRef( function ResultsViewport( props, ref ) {
 
 	}, [ hdrShown, imageProcessing, viewingOriginal, grade ] );
 
-	const showHDR = hdrShown && imageLoadState.loaded && ! viewingAIVariant;
+	const showHDR = hdrShown && imageLoadState.loaded && ! showingVersion;
 
 	// Long press handling for original/edited view toggling
 	const startLongPress = useCallback( () => {
@@ -525,8 +551,8 @@ const ResultsViewport = forwardRef( function ResultsViewport( props, ref ) {
 
 	// Memoize style objects with pan offset
 	const { wrapperStyle: baseWrapperStyle, containerStyle } = useMemo( () =>
-		generateViewportStyles( actualCanvasWidth, actualCanvasHeight, viewportScale ),
-	[ actualCanvasWidth, actualCanvasHeight, viewportScale ]
+		generateViewportStyles( side ? actualCanvasWidth * 2 + 16 : actualCanvasWidth, actualCanvasHeight, viewportScale ),
+	[ side, actualCanvasWidth, actualCanvasHeight, viewportScale ]
 	);
 
 	const wrapperStyle = useMemo( () => ( {
@@ -611,6 +637,15 @@ const ResultsViewport = forwardRef( function ResultsViewport( props, ref ) {
 	// Tells the toolbar its export button is for this saved render.
 	const resultsToolbarRef = useRef( null );
 
+	const ai = useAIStore.getState();
+	const fitted = useMemo( () => {
+
+		if ( ! area || ! imageData?.width ) return area ?? null;
+		const { x, y, w, h } = fitArea( area, imageData.width, imageData.height );
+		return { x: x / imageData.width, y: y / imageData.height, w: w / imageData.width, h: h / imageData.height };
+
+	}, [ area, imageData?.width, imageData?.height ] );
+
 	return (
 		<div
 			ref={viewportRef}
@@ -618,8 +653,11 @@ const ResultsViewport = forwardRef( function ResultsViewport( props, ref ) {
 			style={{ cursor: isPanning ? 'grabbing' : ( imageData ? 'grab' : 'default' ) }}
 			onPointerDown={imageData ? handlePointerDown : undefined}
 		>
-			{/* Long press hint - only shows when hovering over the canvas or actively viewing original */}
-			{imageData && ( isHovering || viewingOriginal ) && (
+			{job ? (
+				<div className="absolute top-2 left-1/2 -translate-x-1/2 z-20">
+					<JobChip job={job} onCancel={() => ai.cancel( renderId )} />
+				</div>
+			) : imageData && ( isHovering || viewingOriginal ) && ! marking && (
 				<div className="absolute top-2 left-1/2 transform -translate-x-1/2 z-20">
 					<div className="px-2 py-1 bg-black/80 rounded-md text-xs text-gray-300 flex items-center gap-1 shadow-md">
 						<Eye size={12} className="text-gray-400" />
@@ -628,21 +666,27 @@ const ResultsViewport = forwardRef( function ResultsViewport( props, ref ) {
 				</div>
 			)}
 
-			{/* AI/Render toggle button - appears when AI variant exists */}
-			{imageData && imageData.aiGeneratedImage && ! viewingOriginal && (
-				<div className="absolute top-2 right-2 z-20 flex space-x-2">
-					<button
-						onClick={() => setViewingAIVariant( ! viewingAIVariant )}
-						className="flex items-center justify-center bg-purple-600 hover:bg-purple-700 text-white px-3 py-1 rounded-md text-xs"
-					>
-						<ImageIcon size={12} className="mr-1" />
-						{viewingAIVariant ? 'Show Render' : 'Show AI'}
-					</button>
+			{showingVersion && (
+				<div className="absolute top-2 left-2 z-20 flex gap-1.5 max-w-[45%]">
+					{compare !== 'version' && <span className="px-2 py-1 bg-black/60 rounded-md text-xs text-gray-300">Render</span>}
+					<span className="px-2 py-1 bg-purple-600 rounded-md text-xs text-white truncate" title={version.prompt}>v{version.n}{version.prompt ? ` · ${version.prompt}` : ''}</span>
+				</div>
+			)}
+
+			{showingVersion && (
+				<div className="absolute top-2 right-2 z-20">
+					<CompareSwitch value={compare} onChange={ai.setCompare} n={version.n} />
+				</div>
+			)}
+
+			{imageData && imageLoadState.loaded && (
+				<div className="absolute left-2 bottom-12 z-20 max-w-[calc(100%-1rem)]">
+					<VersionStrip render={imageData} shown={shown} job={job} onShow={which => ai.show( renderId, which )} />
 				</div>
 			)}
 
 			{/* Save button only appears when changes have been made */}
-			{imageData && hasChanges && ! viewingOriginal && ! viewingAIVariant && (
+			{imageData && hasChanges && ! viewingOriginal && ! showingVersion && (
 				<div className="absolute top-2 right-20 z-20 flex space-x-2">
 					<button
 						onClick={saveEditedImage}
@@ -707,7 +751,8 @@ const ResultsViewport = forwardRef( function ResultsViewport( props, ref ) {
 				{/* Container with fixed size */}
 				<div
 					ref={containerRef}
-					className="relative"
+					data-compare
+					className={side ? 'relative flex gap-4' : 'relative'}
 					style={containerStyle}
 				>
 					{/* Loading indicator for 4K images */}
@@ -737,7 +782,7 @@ const ResultsViewport = forwardRef( function ResultsViewport( props, ref ) {
 							width: `${actualCanvasWidth}px`,
 							height: `${actualCanvasHeight}px`,
 							backgroundColor: 'black',
-							display: ( viewingOriginal || viewingAIVariant || showHDR || ! imageLoadState.loaded ) ? 'none' : 'block',
+							display: ( viewingOriginal || showHDR || ! imageLoadState.loaded || ( showingVersion && compare === 'version' ) ) ? 'none' : 'block',
 							imageRendering: 'pixelated' // Better for 4K images
 						}}
 					/>
@@ -765,17 +810,23 @@ const ResultsViewport = forwardRef( function ResultsViewport( props, ref ) {
 						}}
 					/>
 
-					{/* Canvas for AI variant - optimized for 4K */}
+					{/* The AI version: over the render behind the slider, beside it, or alone */}
 					<canvas
 						ref={aiCanvasRef}
 						style={{
 							width: `${actualCanvasWidth}px`,
 							height: `${actualCanvasHeight}px`,
 							backgroundColor: 'black',
-							display: ( viewingAIVariant && imageLoadState.loaded && ! viewingOriginal ) ? 'block' : 'none',
-							imageRendering: 'pixelated' // Better for 4K images
+							display: showingVersion && imageLoadState.loaded ? 'block' : 'none',
+							...( showingVersion && compare === 'slider' ? { position: 'absolute', top: 0, left: 0, clipPath: `inset(0 0 0 ${split * 100}%)` } : {} ),
 						}}
 					/>
+
+					{showingVersion && compare === 'slider' && <SplitHandle split={split} onChange={ai.setSplit} label={`Compare the render with v${version.n}`} />}
+
+					{where === 'part' && imageLoadState.loaded && ! side && shown === from && (
+						<AreaLayer fitted={fitted} editable={marking} onChange={next => ai.setArea( renderId, next )} />
+					)}
 
 					{/* Message when no image is selected */}
 					{! imageData && (

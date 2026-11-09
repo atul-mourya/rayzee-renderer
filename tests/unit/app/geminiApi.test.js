@@ -1,72 +1,112 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { geminiImageGenerator } from '@/services/geminiApi';
+import { checkKey, generateImage, GeminiError } from '@/services/geminiApi';
 
-const URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-nano-banana-2.1:generateContent';
+const MODEL_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-nano-banana-2.1';
 
 const reply = ( body, status = 200 ) => new Response( JSON.stringify( body ), { status, headers: { 'content-type': 'application/json' } } );
+const image = { mimeType: 'image/jpeg', data: 'BBBB' };
+
+async function failureOf( promise ) {
+
+	try {
+
+		await promise;
+
+	} catch ( error ) {
+
+		return error;
+
+	}
+
+	throw new Error( 'expected a failure' );
+
+}
 
 let fetchMock;
 
-beforeEach( async () => {
+beforeEach( () => {
 
 	fetchMock = vi.fn();
 	vi.stubGlobal( 'fetch', fetchMock );
-	await geminiImageGenerator.initialize( 'TEST_KEY' );
 
 } );
 
 afterEach( () => vi.unstubAllGlobals() );
 
-describe( 'geminiImageGenerator', () => {
+describe( 'generateImage', () => {
 
-	it( 'sends the request the Gemini SDK sent, and reads the image past thought parts', async () => {
+	it( 'asks for the shape and size, sends references after the picture, and reads the image past thought parts', async () => {
 
-		fetchMock.mockResolvedValue( reply( { candidates: [ { content: { parts: [
+		fetchMock.mockResolvedValue( reply( { candidates: [ { finishReason: 'STOP', content: { parts: [
 			{ text: 'draft', thought: true },
-			{ inlineData: { mimeType: 'image/png', data: 'DRAFT' }, thought: true },
+			{ inlineData: { mimeType: 'image/png', data: btoa( 'DRAFT' ) }, thought: true },
 			{ text: 'Done.' },
-			{ inlineData: { mimeType: 'image/png', data: 'AAAA' } },
+			{ inlineData: { mimeType: 'image/jpeg', data: btoa( 'FINAL' ) } },
 		] } } ] } ) );
 
-		const result = await geminiImageGenerator.generateImage( 'a red chair', 'data:image/jpeg;base64,BBBB' );
+		const result = await generateImage( { key: 'K', image, references: [ { mimeType: 'image/png', data: 'RRRR' } ], prompt: 'a red chair', aspectRatio: '4:3', imageSize: '2K' } );
 
 		const [ url, init ] = fetchMock.mock.calls[ 0 ];
-		expect( url ).toBe( URL );
-		expect( init.method ).toBe( 'POST' );
-		expect( init.headers ).toEqual( { 'Content-Type': 'application/json', 'x-goog-api-key': 'TEST_KEY' } );
+		expect( url ).toBe( `${MODEL_URL}:generateContent` );
+		expect( init.headers ).toEqual( { 'Content-Type': 'application/json', 'x-goog-api-key': 'K' } );
 		expect( JSON.parse( init.body ) ).toEqual( {
-			contents: [ { role: 'user', parts: [
-				{ inlineData: { data: 'BBBB', mimeType: 'image/jpeg' } },
-				{ text: 'Based on this image, a red chair. Generate a modified version of this image.' },
-			] } ],
-			generationConfig: { responseModalities: [ 'IMAGE', 'TEXT' ] },
+			contents: [ { role: 'user', parts: [ { inlineData: image }, { inlineData: { mimeType: 'image/png', data: 'RRRR' } }, { text: 'a red chair' } ] } ],
+			generationConfig: { responseModalities: [ 'IMAGE', 'TEXT' ], imageConfig: { aspectRatio: '4:3', imageSize: '2K' } },
 		} );
-		expect( result ).toEqual( { success: true, text: 'Done.', imageUrl: 'data:image/png;base64,AAAA' } );
+		expect( result.text ).toBe( 'Done.' );
+		expect( result.blob.type ).toBe( 'image/jpeg' );
+		expect( await result.blob.text() ).toBe( 'FINAL' );
 
 	} );
 
-	it( 'reports a quota error with its retry delay', async () => {
+	it( 'names each failure so the panel can say it plainly', async () => {
 
-		fetchMock.mockResolvedValue( reply( { error: { code: 429, message: 'Quota exceeded. Please retry in 37.2s.', status: 'RESOURCE_EXHAUSTED' } }, 429 ) );
+		const run = () => failureOf( generateImage( { key: 'K', image, prompt: 'x' } ) );
 
-		const result = await geminiImageGenerator.generateImage( 'a lamp' );
+		fetchMock.mockResolvedValueOnce( reply( { error: { code: 400, message: 'API key not valid.', status: 'INVALID_ARGUMENT', details: [ { reason: 'API_KEY_INVALID' } ] } }, 400 ) );
+		expect( await run() ).toMatchObject( { kind: 'key' } );
 
-		expect( result ).toMatchObject( { success: false, quotaError: true, retryAfter: 37.2 } );
+		fetchMock.mockResolvedValueOnce( reply( { error: { code: 429, message: 'Quota exceeded.', status: 'RESOURCE_EXHAUSTED', details: [ { '@type': 'type.googleapis.com/google.rpc.RetryInfo', retryDelay: '37s' } ] } }, 429 ) );
+		expect( await run() ).toMatchObject( { kind: 'quota', retryAfter: 37 } );
+
+		fetchMock.mockResolvedValueOnce( reply( { error: { code: 429, message: 'Quota exceeded. Please retry in 12.5s.', status: 'RESOURCE_EXHAUSTED' } }, 429 ) );
+		expect( await run() ).toMatchObject( { kind: 'quota', retryAfter: 12.5 } );
+
+		fetchMock.mockResolvedValueOnce( reply( { promptFeedback: { blockReason: 'SAFETY' } } ) );
+		expect( await run() ).toMatchObject( { kind: 'declined' } );
+
+		fetchMock.mockResolvedValueOnce( reply( { candidates: [ { finishReason: 'IMAGE_SAFETY', content: { parts: [] } } ] } ) );
+		expect( await run() ).toMatchObject( { kind: 'declined' } );
+
+		fetchMock.mockResolvedValueOnce( reply( { candidates: [ { finishReason: 'STOP', content: { parts: [ { text: 'I cannot draw that.' } ] } } ] } ) );
+		expect( await run() ).toMatchObject( { kind: 'no-image', text: 'I cannot draw that.' } );
+
+		fetchMock.mockResolvedValueOnce( reply( { error: { code: 500, message: 'Internal error' } }, 500 ) );
+		expect( await run() ).toMatchObject( { kind: 'other', message: 'Internal error' } );
+
+		fetchMock.mockRejectedValueOnce( new TypeError( 'Failed to fetch' ) );
+		expect( await run() ).toMatchObject( { kind: 'network' } );
+
+		fetchMock.mockRejectedValueOnce( new DOMException( 'The user aborted a request.', 'AbortError' ) );
+		const aborted = await run();
+		expect( aborted ).toBeInstanceOf( GeminiError );
+		expect( aborted.kind ).toBe( 'aborted' );
 
 	} );
 
-	it( 'passes other errors and an image-less reply through as failures', async () => {
+} );
 
-		vi.spyOn( console, 'error' ).mockImplementation( () => {} );
-		fetchMock.mockResolvedValueOnce( reply( { error: { code: 400, message: 'API key not valid.', status: 'INVALID_ARGUMENT' } }, 400 ) );
-		fetchMock.mockResolvedValueOnce( reply( { candidates: [ { content: { parts: [ { text: 'I cannot draw that.' } ] } } ] } ) );
+describe( 'checkKey', () => {
 
-		const bad = await geminiImageGenerator.generateImage( 'a lamp' );
-		expect( bad.success ).toBe( false );
-		expect( bad.error ).toContain( 'API key not valid.' );
+	it( 'asks for the model with the key and says when Google refuses it', async () => {
 
-		const empty = await geminiImageGenerator.generateImage( 'a lamp' );
-		expect( empty ).toEqual( { success: false, error: 'No image data received from Gemini' } );
+		fetchMock.mockResolvedValueOnce( reply( { name: 'models/gemini-nano-banana-2.1' } ) );
+		expect( await checkKey( 'GOOD' ) ).toBe( true );
+		expect( fetchMock.mock.calls[ 0 ][ 0 ] ).toBe( MODEL_URL );
+		expect( fetchMock.mock.calls[ 0 ][ 1 ].headers ).toEqual( { 'x-goog-api-key': 'GOOD' } );
+
+		fetchMock.mockResolvedValueOnce( reply( { error: { code: 400, message: 'API key not valid.', details: [ { reason: 'API_KEY_INVALID' } ] } }, 400 ) );
+		expect( await failureOf( checkKey( 'BAD' ) ) ).toMatchObject( { kind: 'key' } );
 
 	} );
 

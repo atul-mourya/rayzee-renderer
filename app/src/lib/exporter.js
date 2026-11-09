@@ -103,13 +103,13 @@ const canvasBlob = ( canvas, type, quality ) => new Promise( ( resolve, reject )
 /**
  * A render from the Results library as a file: a picture of it (edited, as rendered, or the AI version) as PNG, JPEG
  * or WebP, or the full-range copy it kept — EXR as saved, or converted to Radiance HDR.
- * @param {{id: number, canvas?: HTMLCanvasElement, format: string, quality?: number}} options
+ * @param {{id: number, canvas?: HTMLCanvasElement, format: string, quality?: number, suffix?: string}} options `suffix` goes after the id in the file name
  */
-export async function exportSavedRender( { id, canvas, format, quality = 0.92 } ) {
+export async function exportSavedRender( { id, canvas, format, quality = 0.92, suffix = '' } ) {
 
 	const { IMAGE_FORMATS, encodeHDR, encodeStill } = await import( 'rayzee/encoders' );
 	const { mimeType, extension } = IMAGE_FORMATS[ format ];
-	const name = `render-${id}.${extension}`;
+	const name = `render-${id}${suffix}.${extension}`;
 
 	if ( format === 'heic' || format === 'avif' ) {
 

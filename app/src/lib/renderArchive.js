@@ -7,7 +7,7 @@ const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
 /**
- * Writes every saved render — image, thumbnail, AI variant, HDR copy and details — into one zip.
+ * Writes every saved render — image, thumbnail, AI versions, HDR copy and details — into one zip.
  * @returns {Promise<number>} renders exported
  */
 export async function exportRenders() {
@@ -91,9 +91,18 @@ export async function importRenders( file ) {
 
 		}
 
+		const aiVersions = [];
+		for ( const version of details.aiVersions ?? [] ) {
+
+			const file = await blob( version.file );
+			if ( file ) aiVersions.push( { ...version, blob: file } );
+
+		}
+
 		await saveRender( {
 			image,
 			hdr: await blob( RENDER_FILES.HDR ),
+			aiVersions: details.aiVersions ? aiVersions : undefined,
 			aiGeneratedImage: await blob( RENDER_FILES.AI ),
 			colorCorrection: details.colorCorrection,
 			renderTime: details.renderTime,

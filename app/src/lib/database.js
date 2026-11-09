@@ -103,6 +103,21 @@ export function startRenderMaintenance() {
 }
 
 const renderKey = ( id ) => `render:${id}`;
+const versionKey = ( id, n ) => `render:${id}:v${n}`;
+
+const EXTENSIONS = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' };
+const versionFile = ( n, type ) => `ai-${n}.${EXTENSIONS[ type ] ?? 'png'}`;
+
+/** A render's AI versions, oldest first; an earlier build's single AI image reads as version 1. */
+function versionsOf( record ) {
+
+	if ( record.aiVersions ) return record.aiVersions;
+	const legacy = record.aiGeneratedImage || record.blobs?.[ RENDER_FILES.AI ] || record.files?.includes( RENDER_FILES.AI );
+	return legacy ? [ { n: 1, file: RENDER_FILES.AI, prompt: record.aiPrompt ?? '', legacy: true } ] : [];
+
+}
+
+const nextVersion = ( record, versions ) => record.aiNext ?? versions.reduce( ( m, v ) => Math.max( m, v.n ), 0 ) + 1;
 
 const IMAGE_FIELDS = [ 'image', 'aiGeneratedImage', 'blobs', 'files' ];
 
@@ -129,19 +144,6 @@ async function toBlob( image ) {
 
 }
 
-function blobToDataURL( blob ) {
-
-	return new Promise( ( resolve, reject ) => {
-
-		const reader = new FileReader();
-		reader.onload = () => resolve( reader.result );
-		reader.onerror = () => reject( reader.error );
-		reader.readAsDataURL( blob );
-
-	} );
-
-}
-
 /** A small WebP for the list, and the image's size. */
 export async function makeThumbnail( blob ) {
 
@@ -156,16 +158,14 @@ export async function makeThumbnail( blob ) {
 }
 
 /** Writes files into the render's storage entry; resolves the names written, or null to keep them in IndexedDB. */
-async function writeFiles( id, files, { edit = false } = {} ) {
+async function writeFiles( id, files ) {
 
 	const area = rendersArea();
 	if ( ! area ) return null;
 
 	const present = Object.entries( files ).filter( ( [ , blob ] ) => blob );
 	const bytes = present.reduce( ( n, [ , blob ] ) => n + blob.size, 0 );
-	const writer = edit
-		? await area.edit( renderKey( id ) )
-		: await area.create( renderKey( id ), { label: `Render ${id}`, expectedBytes: bytes } );
+	const writer = await area.create( renderKey( id ), { label: `Render ${id}`, expectedBytes: bytes } );
 	if ( ! writer ) return null;
 
 	try {
@@ -207,41 +207,81 @@ function forget( id ) {
 
 	const urls = urlCache.get( id );
 	if ( ! urls ) return;
-	for ( const url of Object.values( urls ) ) if ( url ) URL.revokeObjectURL( url );
+	for ( const url of [ urls.image, urls.thumb, ...Object.values( urls.versions ) ] ) if ( url ) URL.revokeObjectURL( url );
 	urlCache.delete( id );
 
 }
 
-/** What the Results UI reads: the record, with `image`, `thumb` and `aiGeneratedImage` as URLs. */
+async function versionBlob( record, version ) {
+
+	if ( version.legacy ) return typeof record.aiGeneratedImage === 'string' ? toBlob( record.aiGeneratedImage ) : fileOf( record, RENDER_FILES.AI );
+	if ( record.blobs?.[ version.file ] ) return record.blobs[ version.file ];
+
+	const entry = await rendersArea()?.open( versionKey( record.id, version.n ) );
+	if ( ! entry ) return null;
+	try {
+
+		return await entry.file( version.file );
+
+	} finally {
+
+		entry.release();
+
+	}
+
+}
+
+/** Writes a version into an entry of its own, so deleting it frees its space. */
+async function writeVersion( id, version, blob ) {
+
+	const writer = await rendersArea()?.create( versionKey( id, version.n ), { label: `Render ${id} v${version.n}`, expectedBytes: blob.size } );
+	if ( ! writer ) return false;
+
+	try {
+
+		await writer.writeFile( version.file, blob );
+		await writer.commit();
+		return true;
+
+	} catch ( error ) {
+
+		await writer.abort();
+		log.warn( `Could not store version ${version.n} of render ${id} as a file, keeping it in the database:`, error );
+		return false;
+
+	}
+
+}
+
+/** What the Results UI reads: the record, with `image`, `thumb` and each AI version's `url` as URLs. */
 async function toView( record ) {
+
+	const versions = versionsOf( record );
 
 	if ( typeof record.image === 'string' ) {
 
-		return { ...record, thumb: record.image, hasHDR: false };
+		const { aiGeneratedImage, ...rest } = record;
+		return { ...rest, thumb: record.image, hasHDR: false, aiVersions: versions.map( v => ( { ...v, url: aiGeneratedImage } ) ) };
 
 	}
 
 	let urls = urlCache.get( record.id );
+	const url = async ( blob ) => blob ? URL.createObjectURL( blob ) : null;
 	if ( ! urls ) {
 
-		const url = async ( name ) => {
-
-			const file = await fileOf( record, name );
-			return file ? URL.createObjectURL( file ) : null;
-
-		};
-
-		urls = { image: await url( RENDER_FILES.IMAGE ), thumb: await url( RENDER_FILES.THUMB ), ai: await url( RENDER_FILES.AI ) };
+		urls = { image: await url( await fileOf( record, RENDER_FILES.IMAGE ) ), thumb: await url( await fileOf( record, RENDER_FILES.THUMB ) ), versions: {} };
 		urlCache.set( record.id, urls );
 
 	}
+
+	for ( const version of versions ) urls.versions[ version.n ] ??= await url( await versionBlob( record, version ) );
 
 	const has = ( name ) => !! ( record.blobs?.[ name ] || record.files?.includes( name ) );
 	return {
 		...withoutImages( record ),
 		image: urls.image,
 		thumb: urls.thumb ?? urls.image,
-		aiGeneratedImage: urls.ai,
+		aiVersions: versions.map( v => ( { ...v, url: urls.versions[ v.n ] } ) ).filter( v => v.url ),
 		hasHDR: has( RENDER_FILES.HDR ),
 	};
 
@@ -250,7 +290,9 @@ async function toView( record ) {
 /**
  * Save a render.
  * @param {{image: Blob|string, hdr?: Blob|Uint8Array, colorCorrection?: Object, renderTime?: number,
- *   isEdited?: boolean, aiPrompt?: string, aiGeneratedImage?: Blob|string, timestamp?: Date}} data
+ *   isEdited?: boolean, aiVersions?: Array<Object>, aiPrompt?: string, aiGeneratedImage?: Blob|string, timestamp?: Date}} data
+ *   `aiVersions` are the details `addAIVersion` keeps, each with its `blob`; an earlier export's single AI image comes as
+ *   `aiGeneratedImage` and `aiPrompt`.
  * @returns {Promise<number>} the new render's id
  */
 export const saveRender = async ( data ) => {
@@ -262,24 +304,43 @@ export const saveRender = async ( data ) => {
 	const files = {
 		[ RENDER_FILES.IMAGE ]: image,
 		[ RENDER_FILES.THUMB ]: thumb,
-		[ RENDER_FILES.AI ]: await toBlob( data.aiGeneratedImage ),
 		[ RENDER_FILES.HDR ]: await toBlob( data.hdr ),
 	};
+
+	const given = data.aiVersions ?? ( data.aiGeneratedImage ? [ { n: 1, prompt: data.aiPrompt ?? '', blob: data.aiGeneratedImage } ] : [] );
+	const versions = [];
+	for ( const { blob: source, legacy, file, url, ...meta } of given ) {
+
+		const blob = await toBlob( source );
+		if ( blob ) versions.push( { meta: { ...meta, file: versionFile( meta.n, blob.type ) }, blob } );
+
+	}
 
 	const record = {
 		timestamp: data.timestamp ?? new Date(),
 		renderTime: data.renderTime ?? null,
 		isEdited: data.isEdited ?? false,
 		colorCorrection: { ...data.colorCorrection },
-		aiPrompt: data.aiPrompt ?? null,
 		width,
 		height,
 	};
+	if ( versions.length ) {
+
+		record.aiVersions = versions.map( v => v.meta );
+		record.aiNext = versions.reduce( ( m, v ) => Math.max( m, v.meta.n ), 0 ) + 1;
+
+	}
 
 	const id = await request( ( await store( 'readwrite' ) ).add( record ) );
 	const names = await writeFiles( id, files );
 	if ( names ) record.files = names;
 	else record.blobs = Object.fromEntries( Object.entries( files ).filter( ( [ , blob ] ) => blob ) );
+	for ( const { meta, blob } of versions ) {
+
+		if ( ! names || ! await writeVersion( id, meta, blob ) ) record.blobs = { ...record.blobs, [ meta.file ]: blob };
+
+	}
+
 	await putRecord( { ...record, id } );
 
 	log.debug( 'Render saved with ID:', id );
@@ -333,38 +394,93 @@ export const updateRender = async ( id, patch ) => {
 
 export const deleteRender = async ( id ) => {
 
+	const record = await getRecord( id );
 	await request( ( await store( 'readwrite' ) ).delete( id ) );
 	forget( id );
-	await rendersArea()?.remove( renderKey( id ) );
+	const area = rendersArea();
+	await area?.remove( renderKey( id ) );
+	for ( const version of record ? versionsOf( record ) : [] ) if ( ! version.legacy ) await area?.remove( versionKey( id, version.n ) );
 	log.debug( `Render with ID ${id} deleted` );
 	return true;
 
 };
 
-/** Attaches (or replaces) a render's AI-generated variant. */
-export const updateRenderWithAI = async ( id, aiPrompt, aiGeneratedImage ) => {
+/** An earlier build's record, its images in data URLs, turned into one keeping Blobs. */
+async function withBlobs( record ) {
+
+	if ( typeof record.image !== 'string' ) return record;
+	const image = await toBlob( record.image );
+	const { thumb, width, height } = await makeThumbnail( image );
+	const blobs = { [ RENDER_FILES.IMAGE ]: image, [ RENDER_FILES.THUMB ]: thumb };
+	if ( record.aiGeneratedImage ) blobs[ RENDER_FILES.AI ] = await toBlob( record.aiGeneratedImage );
+	forget( record.id );
+	return { ...withoutImages( record ), width, height, blobs };
+
+}
+
+/**
+ * Adds an AI version to a render.
+ * @param {number} id
+ * @param {{blob: Blob, prompt: string} & Object} version its picture and the details shown with it
+ * @returns {Promise<number>} the version's number
+ */
+export const addAIVersion = async ( id, { blob, ...meta } ) => {
+
+	const found = await getRecord( id );
+	if ( ! found ) throw new Error( `Render with ID ${id} not found` );
+
+	const record = await withBlobs( found );
+	const versions = versionsOf( record );
+	const n = nextVersion( record, versions );
+	const version = { ...meta, n, file: versionFile( n, blob.type ), createdAt: meta.createdAt ?? Date.now() };
+	const next = { ...record, aiVersions: [ ...versions, version ], aiNext: n + 1 };
+	if ( ! await writeVersion( id, version, blob ) ) next.blobs = { ...next.blobs, [ version.file ]: blob };
+
+	await putRecord( next );
+	return n;
+
+};
+
+export const deleteAIVersion = async ( id, n ) => {
 
 	const record = await getRecord( id );
 	if ( ! record ) throw new Error( `Render with ID ${id} not found` );
+	const versions = versionsOf( record );
+	const version = versions.find( v => v.n === n );
+	if ( ! version ) return false;
 
-	if ( typeof record.image === 'string' ) {
+	const rest = versions.filter( v => v !== version );
+	// Numbers are not reused while versions remain; with none left the next is v1 again.
+	const next = { ...record, aiVersions: rest, aiNext: rest.length ? nextVersion( record, versions ) : undefined };
+	if ( next.blobs?.[ version.file ] ) {
 
-		const dataUrl = typeof aiGeneratedImage === 'string' ? aiGeneratedImage : await blobToDataURL( await toBlob( aiGeneratedImage ) );
-		await putRecord( { ...record, aiPrompt, aiGeneratedImage: dataUrl } );
-		return true;
+		next.blobs = { ...next.blobs };
+		delete next.blobs[ version.file ];
 
 	}
 
-	const blob = await toBlob( aiGeneratedImage );
-	const next = { ...withoutImages( record, [ 'files', 'blobs' ] ), aiPrompt };
-
-	const names = record.files ? await writeFiles( id, { [ RENDER_FILES.AI ]: blob }, { edit: true } ) : null;
-	if ( names ) next.files = names;
-	else next.blobs = { ...record.blobs, [ RENDER_FILES.AI ]: blob };
+	// An earlier build's file sits in the render's own entry, which cannot drop one file: it stays until the render goes.
+	if ( version.legacy ) delete next.aiGeneratedImage;
+	else await rendersArea()?.remove( versionKey( id, n ) );
 
 	await putRecord( next );
-	forget( id );
+	const urls = urlCache.get( id );
+	if ( urls?.versions[ n ] ) {
+
+		URL.revokeObjectURL( urls.versions[ n ] );
+		delete urls.versions[ n ];
+
+	}
+
 	return true;
+
+};
+
+export const getAIVersionFile = async ( id, n ) => {
+
+	const record = await getRecord( id );
+	const version = record && versionsOf( record ).find( v => v.n === n );
+	return version ? versionBlob( record, version ) : null;
 
 };
 
@@ -381,20 +497,24 @@ export const getRenderFiles = async ( id ) => {
 
 	const record = await getRecord( id );
 	if ( ! record ) return {};
-	if ( typeof record.image === 'string' ) {
 
-		return Object.fromEntries( [
-			[ RENDER_FILES.IMAGE, await toBlob( record.image ) ],
-			[ RENDER_FILES.AI, await toBlob( record.aiGeneratedImage ) ],
-		].filter( ( [ , blob ] ) => blob ) );
+	const out = {};
+	if ( typeof record.image === 'string' ) out[ RENDER_FILES.IMAGE ] = await toBlob( record.image );
+	else {
+
+		for ( const name of [ RENDER_FILES.IMAGE, RENDER_FILES.THUMB, RENDER_FILES.HDR ] ) {
+
+			const file = await fileOf( record, name );
+			if ( file ) out[ name ] = file;
+
+		}
 
 	}
 
-	const out = {};
-	for ( const name of Object.values( RENDER_FILES ) ) {
+	for ( const version of versionsOf( record ) ) {
 
-		const file = await fileOf( record, name );
-		if ( file ) out[ name ] = file;
+		const blob = await versionBlob( record, version );
+		if ( blob ) out[ version.file ] = blob;
 
 	}
 
@@ -429,6 +549,15 @@ async function maintain() {
 		const files = legacy
 			? { [ RENDER_FILES.IMAGE ]: image, [ RENDER_FILES.AI ]: await toBlob( record.aiGeneratedImage ) }
 			: { ...record.blobs };
+		const kept = {};
+		for ( const version of versionsOf( record ) ) {
+
+			if ( version.legacy || ! files[ version.file ] ) continue;
+			if ( ! await writeVersion( record.id, version, files[ version.file ] ) ) kept[ version.file ] = files[ version.file ];
+			delete files[ version.file ];
+
+		}
+
 		let size = { width: record.width, height: record.height };
 		if ( ! files[ RENDER_FILES.THUMB ] ) {
 
@@ -441,13 +570,15 @@ async function maintain() {
 		const names = await writeFiles( record.id, files );
 		if ( ! names ) break;
 
-		await putRecord( { ...withoutImages( record ), ...size, files: names } );
+		const next = { ...withoutImages( record ), ...size, files: names };
+		if ( Object.keys( kept ).length ) next.blobs = kept;
+		await putRecord( next );
 		forget( record.id );
 		moved ++;
 
 	}
 
-	const known = new Set( records.map( ( r ) => renderKey( r.id ) ) );
+	const known = new Set( records.flatMap( ( r ) => [ renderKey( r.id ), ...versionsOf( r ).filter( v => ! v.legacy ).map( v => versionKey( r.id, v.n ) ) ] ) );
 	for ( const entry of await area.list() ) if ( ! known.has( entry.key ) ) await area.removeById( entry.id );
 
 	if ( moved > 0 ) {

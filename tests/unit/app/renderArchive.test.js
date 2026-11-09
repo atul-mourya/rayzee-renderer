@@ -110,7 +110,7 @@ describe( 'render archives', () => {
 		const manifest = JSON.parse( new TextDecoder().decode( await zip.read( 'manifest.json' ) ) );
 		expect( manifest ).toMatchObject( { format: 'rayzee-renders', v: 1, count: 2 } );
 		const paths = zip.listing.map( ( e ) => e.path );
-		for ( const name of [ 'details.json', 'image.png', 'thumb.webp', 'ai.png', 'hdr.exr' ] ) expect( paths ).toContain( `renders/${first}/${name}` );
+		for ( const name of [ 'details.json', 'image.png', 'thumb.webp', 'ai-1.png', 'hdr.exr' ] ) expect( paths ).toContain( `renders/${first}/${name}` );
 		expect( paths.filter( ( p ) => p.startsWith( `renders/${second}/` ) ).sort() ).toEqual( [ 'details.json', 'image.png', 'thumb.webp' ].map( ( n ) => `renders/${second}/${n}` ) );
 
 		const before = ( await db.getRenderRecords() ).map( ( { id, ...rest } ) => rest );
@@ -125,7 +125,8 @@ describe( 'render archives', () => {
 		expect( records.map( ( { id, ...rest } ) => rest ) ).toEqual( before );
 		const restored = records.find( ( r ) => r.renderTime === 10 ).id;
 		expect( [ ...new Uint8Array( await ( await db.getRenderHDR( restored ) ).arrayBuffer() ) ] ).toEqual( [ 9, 8 ] );
-		expect( await ( await db.getRenderFiles( restored ) )[ 'ai.png' ].text() ).toBe( '1x1' );
+		expect( await ( await db.getRenderFiles( restored ) )[ 'ai-1.png' ].text() ).toBe( '1x1' );
+		expect( records.find( ( r ) => r.id === restored ).aiVersions ).toEqual( [ { n: 1, prompt: 'dusk', file: 'ai-1.png' } ] );
 
 		expect( await archive.importRenders( sink.file() ) ).toEqual( { added: 0, skipped: 2 } );
 		expect( saved ).toHaveBeenCalledTimes( 1 );

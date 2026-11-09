@@ -121,14 +121,15 @@ describe( 'saved renders', () => {
 		const record = stored( id );
 		expect( [ ...record.files ].sort() ).toEqual( [ 'hdr.exr', 'image.png', 'thumb.webp' ] );
 		expect( record.blobs ).toBeUndefined();
-		expect( record ).toMatchObject( { id, width: 1000, height: 500, renderTime: 12, isEdited: false, aiPrompt: null, colorCorrection: { exposure: 2 } } );
+		expect( record ).toMatchObject( { id, width: 1000, height: 500, renderTime: 12, isEdited: false, colorCorrection: { exposure: 2 } } );
+		expect( record.aiVersions ).toBeUndefined();
 		expect( record.timestamp.getTime() ).toBe( 1000 );
 		expect( await storage.area( 'renders' ).has( `render:${id}` ) ).toBe( true );
 
 		const view = await db.getRenderById( id );
 		expect( await textAt( view.image ) ).toBe( '1000x500' );
 		expect( await textAt( view.thumb ) ).toBe( 'thumb 320x160' );
-		expect( view.aiGeneratedImage ).toBeNull();
+		expect( view.aiVersions ).toEqual( [] );
 		expect( view.hasHDR ).toBe( true );
 		expect( view.files ).toBeUndefined();
 		expect( ( await db.getRenderById( id ) ).image ).toBe( view.image );
@@ -144,15 +145,15 @@ describe( 'saved renders', () => {
 
 		const record = stored( id );
 		expect( record.files ).toBeUndefined();
-		expect( Object.keys( record.blobs ).sort() ).toEqual( [ 'ai.png', 'image.png', 'thumb.webp' ] );
+		expect( Object.keys( record.blobs ).sort() ).toEqual( [ 'ai-1.png', 'image.png', 'thumb.webp' ] );
 
 		const [ view ] = await db.getAllRenders();
 		expect( await textAt( view.image ) ).toBe( '40x30' );
 		expect( await textAt( view.thumb ) ).toBe( 'thumb 40x30' );
-		expect( await textAt( view.aiGeneratedImage ) ).toBe( '8x8' );
+		expect( await textAt( view.aiVersions[ 0 ].url ) ).toBe( '8x8' );
 		expect( view.hasHDR ).toBe( false );
 		expect( await db.getRenderHDR( id ) ).toBeNull();
-		expect( await ( await db.getRenderFiles( id ) )[ 'ai.png' ].text() ).toBe( '8x8' );
+		expect( await ( await db.getRenderFiles( id ) )[ 'ai-1.png' ].text() ).toBe( '8x8' );
 
 	} );
 
@@ -227,6 +228,7 @@ describe( 'saved renders', () => {
 		expect( view.image ).toBe( dataURL( '4x4' ) );
 		expect( view.thumb ).toBe( view.image );
 		expect( view.hasHDR ).toBe( false );
+		expect( view.aiVersions ).toEqual( [ { n: 1, file: 'ai.png', prompt: '', legacy: true, url: dataURL( 'ai' ) } ] );
 
 		const files = await db.getRenderFiles( 7 );
 		expect( Object.keys( files ).sort() ).toEqual( [ 'ai.png', 'image.png' ] );
@@ -265,42 +267,104 @@ describe( 'saved renders', () => {
 
 	} );
 
-	it( 'attaches an AI variant to a render kept as files', async () => {
+	it( 'keeps each AI version in an entry of its own, numbered and never reused', async () => {
 
 		withStorage();
 		const id = await db.saveRender( { image: png( 2, 2 ) } );
-		expect( ( await db.getRenderById( id ) ).aiGeneratedImage ).toBeNull();
+		const area = storage.area( 'renders' );
 
-		expect( await db.updateRenderWithAI( id, 'a sunset', png( 8, 8 ) ) ).toBe( true );
-		expect( [ ...stored( id ).files ].sort() ).toEqual( [ 'ai.png', 'image.png', 'thumb.webp' ] );
-		expect( stored( id ).aiPrompt ).toBe( 'a sunset' );
+		expect( await db.addAIVersion( id, { blob: png( 8, 8 ), prompt: 'a sunset', scope: 'only', width: 8, height: 8 } ) ).toBe( 1 );
+		expect( await db.addAIVersion( id, { blob: new Blob( [ '6x6' ], { type: 'image/jpeg' } ), prompt: 'snow' } ) ).toBe( 2 );
+		expect( [ ...stored( id ).files ].sort() ).toEqual( [ 'image.png', 'thumb.webp' ] );
+		expect( stored( id ).aiVersions.map( ( v ) => [ v.n, v.file, v.prompt ] ) ).toEqual( [[ 1, 'ai-1.png', 'a sunset' ], [ 2, 'ai-2.jpg', 'snow' ]] );
+		expect( await area.has( `render:${id}:v1` ) ).toBe( true );
 
-		const view = await db.getRenderById( id );
-		expect( await textAt( view.aiGeneratedImage ) ).toBe( '8x8' );
+		let view = await db.getRenderById( id );
+		expect( view.aiVersions.map( ( v ) => v.n ) ).toEqual( [ 1, 2 ] );
+		expect( await textAt( view.aiVersions[ 0 ].url ) ).toBe( '8x8' );
 		expect( await textAt( view.image ) ).toBe( '2x2' );
-		await expect( db.updateRenderWithAI( 42, 'x', png( 1, 1 ) ) ).rejects.toThrow( 'not found' );
+		expect( await ( await db.getAIVersionFile( id, 2 ) ).text() ).toBe( '6x6' );
+		expect( Object.keys( await db.getRenderFiles( id ) ).sort() ).toEqual( [ 'ai-1.png', 'ai-2.jpg', 'image.png', 'thumb.webp' ] );
+
+		expect( await db.deleteAIVersion( id, 2 ) ).toBe( true );
+		expect( await area.has( `render:${id}:v2` ) ).toBe( false );
+		expect( await db.deleteAIVersion( id, 2 ) ).toBe( false );
+		expect( await db.addAIVersion( id, { blob: png( 3, 3 ), prompt: 'again' } ) ).toBe( 3 );
+		view = await db.getRenderById( id );
+		expect( view.aiVersions.map( ( v ) => v.n ) ).toEqual( [ 1, 3 ] );
+
+		await db.deleteRender( id );
+		expect( await area.has( `render:${id}:v1` ) ).toBe( false );
+		expect( await area.has( `render:${id}:v3` ) ).toBe( false );
+		await expect( db.addAIVersion( 42, { blob: png( 1, 1 ) } ) ).rejects.toThrow( 'not found' );
 
 	} );
 
-	it( 'attaches an AI variant to a render kept in the database', async () => {
+	it( 'keeps AI versions in the database without storage', async () => {
 
 		const id = await db.saveRender( { image: png( 2, 2 ) } );
-		await db.updateRenderWithAI( id, 'p', dataURL( 'ai' ) );
-		expect( Object.keys( stored( id ).blobs ).sort() ).toEqual( [ 'ai.png', 'image.png', 'thumb.webp' ] );
-		expect( await stored( id ).blobs[ 'ai.png' ].text() ).toBe( 'ai' );
+		await db.addAIVersion( id, { blob: png( 5, 5 ), prompt: 'p' } );
+		expect( Object.keys( stored( id ).blobs ).sort() ).toEqual( [ 'ai-1.png', 'image.png', 'thumb.webp' ] );
+		expect( await textAt( ( await db.getRenderById( id ) ).aiVersions[ 0 ].url ) ).toBe( '5x5' );
+
+		await db.deleteAIVersion( id, 1 );
+		expect( Object.keys( stored( id ).blobs ).sort() ).toEqual( [ 'image.png', 'thumb.webp' ] );
+		expect( ( await db.getRenderById( id ) ).aiVersions ).toEqual( [] );
 
 	} );
 
-	it( 'attaches an AI variant to an earlier build\'s render as a data URL', async () => {
+	it( 'reads an earlier build\'s AI image as version 1 and numbers on from it', async () => {
 
-		seed( [ { id: 1, timestamp: new Date( 1 ), image: dataURL( '1x1' ) }, { id: 2, timestamp: new Date( 2 ), image: dataURL( '1x1' ) } ] );
+		seed( [ { id: 1, timestamp: new Date( 1 ), image: dataURL( '1x1' ), aiGeneratedImage: dataURL( 'old' ), aiPrompt: 'given' } ] );
 
-		await db.updateRenderWithAI( 1, 'given', dataURL( 'as text' ) );
-		expect( stored( 1 ) ).toMatchObject( { aiPrompt: 'given', aiGeneratedImage: dataURL( 'as text' ) } );
+		expect( await db.addAIVersion( 1, { blob: png( 3, 3 ), prompt: 'new' } ) ).toBe( 2 );
+		const record = stored( 1 );
+		expect( record.image ).toBeUndefined();
+		expect( record.aiGeneratedImage ).toBeUndefined();
+		expect( Object.keys( record.blobs ).sort() ).toEqual( [ 'ai-2.png', 'ai.png', 'image.png', 'thumb.webp' ] );
+		expect( record.aiVersions.map( ( v ) => [ v.n, v.prompt, !! v.legacy ] ) ).toEqual( [[ 1, 'given', true ], [ 2, 'new', false ]] );
 
-		await db.updateRenderWithAI( 2, 'read', png( 3, 3 ) );
-		expect( stored( 2 ).aiGeneratedImage ).toMatch( /^data:image\/png;base64,/ );
-		expect( await ( await fetch( stored( 2 ).aiGeneratedImage ) ).text() ).toBe( '3x3' );
+		const view = await db.getRenderById( 1 );
+		expect( await textAt( view.aiVersions[ 0 ].url ) ).toBe( 'old' );
+		expect( await textAt( view.image ) ).toBe( '1x1' );
+
+		await db.deleteAIVersion( 1, 1 );
+		expect( Object.keys( stored( 1 ).blobs ).sort() ).toEqual( [ 'ai-2.png', 'image.png', 'thumb.webp' ] );
+		expect( ( await db.getRenderById( 1 ) ).aiVersions.map( ( v ) => v.n ) ).toEqual( [ 2 ] );
+
+	} );
+
+	it( 'hides an earlier build\'s AI file once its version is deleted', async () => {
+
+		withStorage();
+		const id = await db.saveRender( { image: png( 2, 2 ) } );
+		const writer = await storage.area( 'renders' ).edit( `render:${id}` );
+		await writer.writeFile( 'ai.png', png( 4, 4 ) );
+		const meta = await writer.commit();
+		await db.updateRender( id, { files: Object.keys( meta.files ), aiPrompt: 'old one' } );
+
+		const view = await db.getRenderById( id );
+		expect( view.aiVersions.map( ( v ) => [ v.n, v.prompt ] ) ).toEqual( [[ 1, 'old one' ]] );
+		expect( await textAt( view.aiVersions[ 0 ].url ) ).toBe( '4x4' );
+
+		await db.deleteAIVersion( id, 1 );
+		expect( ( await db.getRenderById( id ) ).aiVersions ).toEqual( [] );
+		expect( await db.addAIVersion( id, { blob: png( 1, 1 ) } ) ).toBe( 1 );
+
+	} );
+
+	it( 'moves AI versions kept in a record into entries of their own, and keeps those entries', async () => {
+
+		seed( [ { id: 1, timestamp: new Date( 1 ), width: 2, height: 2, blobs: { 'image.png': png( 2, 2 ), 'thumb.webp': new Blob( [ 't' ] ), 'ai-1.png': png( 7, 7 ) },
+			aiVersions: [ { n: 1, file: 'ai-1.png', prompt: 'kept' } ], aiNext: 2 } ] );
+		withStorage();
+		vi.spyOn( console, 'log' ).mockImplementation( () => {} );
+
+		expect( await db.startRenderMaintenance() ).toBe( 1 );
+		expect( stored( 1 ).blobs ).toBeUndefined();
+		expect( [ ...stored( 1 ).files ].sort() ).toEqual( [ 'image.png', 'thumb.webp' ] );
+		expect( await storage.area( 'renders' ).has( 'render:1:v1' ) ).toBe( true );
+		expect( await ( await db.getAIVersionFile( 1, 1 ) ).text() ).toBe( '7x7' );
 
 	} );
 

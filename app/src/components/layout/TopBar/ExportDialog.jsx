@@ -19,6 +19,7 @@ import {
 	holdsLight, takesGainMap, isLossy, isFrameSequence, exportPicture, exportSavedRender, canPickFolder, videoBitrate,
 } from '@/lib/exporter';
 import { pickFramesFolder } from '@/lib/folders';
+import { getAIVersionFile } from '@/lib/database';
 
 const WORKING = '__working__';
 
@@ -223,7 +224,7 @@ function SavedPicture( { settings, update, result, source, setSource, formats: a
 	const sources = [
 		{ value: 'edited', label: 'With your edits' },
 		{ value: 'original', label: 'As rendered' },
-		...( result.aiGeneratedImage ? [ { value: 'ai', label: 'AI version' } ] : [] ),
+		...( result.aiVersions ?? [] ).map( v => ( { value: `v${v.n}`, label: `AI version ${v.n}` } ) ),
 	];
 	const formats = available.map( f => ( holdsLight( f.value ) && ! result.hasHDR ? { ...f, disabled: true, hint: 'this render kept no full-range copy' } : f ) );
 	const format = holdsLight( settings.format ) && ! result.hasHDR ? 'png' : settings.format;
@@ -274,6 +275,21 @@ function VideoOptions( { settings, update, info, duration, animates } ) {
 
 }
 
+/** An AI version at its own size. */
+async function versionCanvas( id, n ) {
+
+	const file = await getAIVersionFile( id, n );
+	if ( ! file ) throw new Error( `AI version ${n} is no longer there.` );
+	const bitmap = await createImageBitmap( file );
+	const canvas = document.createElement( 'canvas' );
+	canvas.width = bitmap.width;
+	canvas.height = bitmap.height;
+	canvas.getContext( '2d' ).drawImage( bitmap, 0, 0 );
+	bitmap.close();
+	return canvas;
+
+}
+
 /**
  * Export: the live render as a picture or a video, or a render from the Results library as a picture. The
  * choices are remembered on this device; the EXR colour space is the colour management's export space.
@@ -305,6 +321,7 @@ const ExportDialog = () => {
 
 		if ( ! request ) return;
 		setTab( request.tab ?? 'picture' );
+		setSavedSource( request.source ?? 'edited' );
 
 	}, [ request ] );
 
@@ -329,9 +346,10 @@ const ExportDialog = () => {
 			if ( fromResult ) {
 
 				const viewport = useStore.getState().resultsViewportRef?.current;
-				const canvas = savedSource === 'original' ? viewport?.getCanvas() : savedSource === 'ai' ? viewport?.getAICanvas?.() : viewport?.getEditedCanvas();
+				const version = savedSource.startsWith( 'v' ) ? Number( savedSource.slice( 1 ) ) : null;
+				const canvas = version ? await versionCanvas( result.id, version ) : savedSource === 'original' ? viewport?.getCanvas() : viewport?.getEditedCanvas();
 				const format = holdsLight( picture.format ) && ! result.hasHDR ? 'png' : picture.format;
-				const name = await exportSavedRender( { id: result.id, canvas, format, quality: picture.quality } );
+				const name = await exportSavedRender( { id: result.id, canvas, format, quality: picture.quality, suffix: version ? `-v${version}` : '' } );
 				toast( { title: 'Saved', description: name } );
 
 			} else {

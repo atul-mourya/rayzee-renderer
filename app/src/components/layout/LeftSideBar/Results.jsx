@@ -1,8 +1,8 @@
-import { useStore } from '@/store';
+import { useStore, useAIStore } from '@/store';
 import { createContext, useContext, useEffect, useState, useCallback, useRef, memo, useMemo } from 'react';
 import { getAllRenders, deleteRender } from '@/lib/database';
 import { debounce } from '@/lib/utils';
-import { Trash2, AlertTriangle, Check, Sparkles, CalendarDays, Timer, Clock } from 'lucide-react';
+import { Trash2, AlertTriangle, Check, Sparkles, CalendarDays, Timer, Clock, Loader2 } from 'lucide-react';
 import {
 	AlertDialog,
 	AlertDialogAction,
@@ -608,7 +608,8 @@ const RenderItem = memo( ( {
 
 	}, [ onDelete, image, index ] );
 
-	const hasAIVariant = image.aiGeneratedImage && image.aiPrompt;
+	const versions = image.aiVersions ?? [];
+	const job = useAIStore( s => s.jobs[ image.id ] );
 
 	return (
 		<div
@@ -645,24 +646,27 @@ const RenderItem = memo( ( {
 							</Tooltip>
 						</TooltipProvider>
 					)}
-					{hasAIVariant && (
+					{versions.length > 0 && ! job && (
 						<TooltipProvider>
 							<Tooltip>
 								<TooltipTrigger asChild>
-									<div className="bg-purple-600/90 p-0.5 rounded-full cursor-default">
-										<Sparkles size={12} className="text-white" />
+									<div className="bg-purple-600/90 h-4 pl-0.5 pr-1.5 rounded-full cursor-default flex items-center gap-0.5 text-white text-[11px] font-semibold">
+										<Sparkles size={11} />{versions.length}
 									</div>
 								</TooltipTrigger>
 								<TooltipContent side="left" className="text-xs max-w-xs">
-									{image.aiPrompt && (
-										<div className="space-y-1">
-											<p className="font-medium">AI Prompt</p>
-											<p className="italic">{image.aiPrompt}</p>
-										</div>
-									)}
+									<div className="space-y-1">
+										<p className="font-medium">{versions.length} AI version{versions.length > 1 ? 's' : ''}</p>
+										{versions.at( - 1 ).prompt && <p className="italic">{versions.at( - 1 ).prompt}</p>}
+									</div>
 								</TooltipContent>
 							</Tooltip>
 						</TooltipProvider>
+					)}
+					{job && (
+						<div className="bg-black/80 h-4 pl-1 pr-1.5 rounded-full flex items-center gap-1 text-gray-300 text-[11px]" title="Making an AI version">
+							<Loader2 size={10} className="animate-spin text-purple-400" />v{job.n}
+						</div>
 					)}
 				</div>
 			</div>
@@ -776,15 +780,29 @@ const DeleteConfirmationDialog = memo( ( {
 DeleteConfirmationDialog.displayName = 'DeleteConfirmationDialog';
 
 // Component for header section
-const ResultsHeader = memo( ( { loading, error, renderedImages } ) => {
+const ResultsHeader = memo( ( { loading, error, renderedImages, aiOnly, setAiOnly } ) => {
+
+	const withAI = renderedImages.filter( r => r.aiVersions?.length ).length;
+	const toggle = ( on, label ) => (
+		<button type="button" aria-pressed={aiOnly === on} onClick={() => setAiOnly( on )}
+			className={`h-7 px-2.5 rounded-md border border-input text-xs font-medium shadow-xs hover:bg-accent ${aiOnly === on ? 'bg-accent' : 'bg-background'}`}>
+			{label}
+		</button>
+	);
 
 	return (
 		<div className="p-4 border-b border-border bg-card">
 			<h2 className="text-lg font-semibold">Saved Renders</h2>
 			{! loading && ! error && renderedImages.length > 0 && (
 				<p className="text-xs text-muted-foreground mt-1">
-					Showing {renderedImages.length} render{renderedImages.length !== 1 ? 's' : ''}
+					Showing {aiOnly ? withAI : renderedImages.length} render{( aiOnly ? withAI : renderedImages.length ) !== 1 ? 's' : ''}
 				</p>
+			)}
+			{withAI > 0 && (
+				<div className="flex gap-1.5 mt-2" aria-label="Show">
+					{toggle( false, 'All' )}
+					{toggle( true, `With AI (${withAI})` )}
+				</div>
 			)}
 		</div>
 	);
@@ -952,7 +970,7 @@ VirtualizedGallery.displayName = 'VirtualizedGallery';
 // Fallback component for smaller lists (< 50 items)
 const SimpleGallery = memo( () => {
 
-	const { renderedImages, selectedImageIndex, handleImageSelect, handleDeleteClick } = useResultsContext();
+	const { renderedImages, selectedImageIndex, handleImageSelect, handleDeleteClick, aiOnly } = useResultsContext();
 	const formatDate = useFormatDate();
 
 	const handleImageError = useCallback( ( e ) => {
@@ -966,6 +984,7 @@ const SimpleGallery = memo( () => {
 			<div className="grid grid-cols-2 gap-3 p-3">
 				{renderedImages.map( ( image, index ) => {
 
+					if ( aiOnly && ! image.aiVersions?.length ) return null;
 					const formattedDate = formatDate( image.timestamp );
 					return (
 						<RenderItem
@@ -992,10 +1011,10 @@ SimpleGallery.displayName = 'SimpleGallery';
 // Smart gallery component that chooses between virtual and simple rendering
 const RenderGallery = memo( () => {
 
-	const { renderedImages } = useResultsContext();
+	const { renderedImages, aiOnly } = useResultsContext();
 
 	// Use virtual scrolling only for very large collections to avoid issues
-	const shouldUseVirtualScrolling = renderedImages.length > 100;
+	const shouldUseVirtualScrolling = renderedImages.length > 100 && ! aiOnly;
 
 	return shouldUseVirtualScrolling ? <VirtualizedGallery /> : <SimpleGallery />;
 
@@ -1021,11 +1040,14 @@ const ResultsProvider = ( { children } ) => {
 		isMountedRef,
 		isResultsTabRef
 	);
+	const [ aiOnly, setAiOnly ] = useState( false );
 
 	const contextValue = useMemo( () => ( {
 		...resultsData,
-		...deleteHandler
-	} ), [ resultsData, deleteHandler ] );
+		...deleteHandler,
+		aiOnly,
+		setAiOnly,
+	} ), [ resultsData, deleteHandler, aiOnly ] );
 
 	return (
 		<ResultsContext.Provider value={contextValue}>
@@ -1056,7 +1078,9 @@ const ResultsContent = memo( () => {
 		deleteDialogOpen,
 		handleCancelDelete,
 		handleConfirmDelete,
-		isDeleting
+		isDeleting,
+		aiOnly,
+		setAiOnly,
 	} = useResultsContext();
 
 	return (
@@ -1069,7 +1093,7 @@ const ResultsContent = memo( () => {
 				isDeleting={isDeleting}
 			/>
 
-			<ResultsHeader loading={loading} error={error} renderedImages={renderedImages} />
+			<ResultsHeader loading={loading} error={error} renderedImages={renderedImages} aiOnly={aiOnly} setAiOnly={setAiOnly} />
 
 			{loading && <LoadingState />}
 			{error && <ErrorState error={error} />}
