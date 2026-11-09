@@ -237,6 +237,13 @@ subtree per element, and the whole thing rarely fits: Moana is 29 GB unpacked.
   zero-copy Blob. A `.zip` that is really a gzip (island-pbrtV4) is detected by magic. Archive
   URLs load through the download cache (`loadFile( url )`).
 
+- **Extending it.** Take each meaning and default from pbrt-v4's source, never from the scenes at hand: all eleven
+  bugs of the kroken pass (2026-10-04) were guessed meanings, and a default read off one file misleads (`textures.cpp`
+  calls a non-PNG image `linear`, but `Image::Read` decodes JPG and TGA as sRGB). Read every parameter through `param()`,
+  so what is not honoured is reported. Check a scene against pbrt-v4-scenes' reference for its camera, with the
+  reference's own post (kroken's `makepngs.sh`: OptiX denoise, 6200 K, ACES), per 16² block. Data the engine cannot take
+  becomes a placeholder and an issue, never a failed load.
+
 ## USD scenes (`addons/archives/usd/`)
 A folder or archive whose main model is a USD layer (`ArchiveImporter._mainModelPath`), and a loose `.usd`/`.usda`/`.usdc`
 (`AssetLoader.loadModelFromFile`), load through the USD importer in the archives add-on; a `.usdz` stays with three's

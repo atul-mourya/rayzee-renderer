@@ -4,22 +4,15 @@
 - remove all hacks on rectarealight parsing and treat all the incoming serailized data. getting difference between placeholder arealight vs arealight coming with usd files
 -  the Moana lava rocks render bright red. The scene file itself sets them to red, and their real colour comes from a texture format (Ptex) the pbrt loader doesn't read yet.
 -  dont reload the same model using query param. instead provide a save button with autosave option. on reload load the default. users can open using file menu
--   result page to show hrd when available
 -   Fast compilation on windows devices
--   pbrt camera all info parsing
--   pbrt folliage
--   make bvh an independent library
+-   make bvh an independent library — built as the `rayzee-bvh` package on the night of 2026-11-05 (branch
+    `night/bvh-package`), not committed
 
 ### MVP
-- [x] White balance control: `whiteBalance` (kelvin, pbrt-v4's film exactly), the app's White Balance (a switch with its temperature),
-  and a pbrt file's Film `whitebalance` applied (2026-11-08). Left: a tint (green–magenta), and a camera `sensor`'s own
-  response curves (its 6500 K balance is read). References are still finished after rendering — pbrt's own
-  (watercolor's makepngs.sh: white balance 8000 K, ×0.8, ACES) and artists'; set 8000 K to compare with pbrt's.
 - [ ] Coat darkening (OpenPBR `coat_darkening`), on its own and done properly: reverted (was 8f9e51f3, b119e0b1) — it
   darkened many scenes and brought artifacts. pbrt coateddiffuse's Lambertian base (no specular of its own) went with it.
-- [x] dynamic max stack in bvhtraversal: sized per tree (`bvh/TraversalStack.js`, 2026-11-08; 40 up, landscape 56)
-- [ ] https://github.com/DennisSmolek/Fsr3 - branch already created
-- [ ] tiled output for lower vram — Blender Cycles-style render-region tiling; VRAM-bounded 4K/8K final render + video. See docs/internal/specs/wavefront-tiled-output.md
+- [ ] https://github.com/DennisSmolek/Fsr3 (no FSR3 branch here any more)
+- [ ] tiled output for lower vram — Blender Cycles-style render-region tiling; VRAM-bounded 4K/8K final render + video. See docs/internal/specs/wavefront-tiled-output.md; unmerged branches `feat/tiled-output` and `feat/tiled-output-v2`
 
 ### pbrt: read but not used (audit of the 26 catalog scenes, 2026-11-01)
 - [ ] PixelFilter (triangle, radius 1; 25 scenes) — engine uses its own pixel reconstruction
@@ -44,7 +37,7 @@
   too (path matched or beat it, 60268c36).
 - [ ] **Light radius, what is left** (point and spot lights with a radius, and USD's sphere radius and sun angle, done
   2026-10-12; see Light radius in `CLAUDE.md`): the bidirectional and VCM integrators still treat them as points; glTF
-  has no field for a radius (`docs/SCENE_IMPORT.md` → Lights from Blender's glTF exporter); the app has no control for it. ⚠️ Blender
+  has no field for a radius (`docs/design/SCENE_IMPORT.md` → Lights from Blender's glTF exporter); the app has no control for it. ⚠️ Blender
   writes half its sun angle (10° → `angle` 5) though USD defines the full width, so its suns read half as soft.
 
 - [ ] `thickness` is inert, so every transmissive surface is treated as a volume boundary. glTF uses `thicknessFactor == 0` to mean **thin-walled** — no refraction, tint once, attenuation ignored. A hollow thin-walled shell therefore tints at every interface crossed (√ baseColor each since 11.16, as Cycles: 4 crossings on the Gelatinous Cube give blue 0.168² = 0.028; before, 0.168⁴ = 0.0008 and it rendered black). Fix = branch on thickness, and re-add the Thickness control with a scene-relative range (three.js specifies it in local space x model scale), not the old 0..1 slider. gap-plan Phase 4.4.
@@ -72,6 +65,9 @@
 
 ### Unconfirmed
 
+- [ ] **Fast Navigation flaps on heavy scenes at 1080p** (NRD, or no live denoiser): full-size frames take the GPU past 100 ms a frame, interaction mode times out between them, and the pending drop to half size does not take hold. 24155522.glb at 1920×1080 under NRD: half size reached only after 4.1 s of moving.
+  Could not reproduce 2026-11-07 (27977388): a 5 s drag (`controls.rotateLeft` every 8 ms) dropped to half size after
+  118 ms under NRD, 96 ms with none, 12 ms under OIDN, and held it to the end, one drop and one restore each.
 
 
 ---
@@ -85,7 +81,7 @@
 ### Regression bench (`bench/`)
 
 - [ ] PR CI workflow — there is no PR gate at all today, and CI never runs ESLint despite CONTRIBUTING requiring it
-- [ ] CPU-side vitest guards: shader-recompile contract, feature-combo compile smoke (BVH structural invariants done: `tests/unit/processor/bvhInvariants.test.js`; the memory-spill and BLAS-cache builds are not walked yet)
+- [ ] CPU-side vitest guards: shader-recompile contract, feature-combo compile smoke (BVH structural invariants done: `tests/unit/bvh/bvhInvariants.test.js`; the memory-spill and BLAS-cache builds are not walked yet)
 - [ ] corpus gap: skeletal/morph animation — needs a committed .glb, which the all-procedural rule cannot supply
 
 
@@ -170,55 +166,13 @@
 
 ## pbrt-v4 import
 
-### Learnings (kroken pass, 2026-10-04)
-Compared against pbrt-v4-scenes' `images/kroken/camera-1.png`: chaise cushions, blanket and rug were missing, every coated
-metal was grey, a hidden 90-unit sphere lit the room, and the glass jars were clear. Eleven loader bugs; none was hard
-once looked at. How it should have been built so they could not happen:
-- **Translate from pbrt's source, not from the scenes at hand.** Every bug was a guessed meaning: template shapes stored
-  "relative to the transform at ObjectBegin" (invented — pbrt keeps the whole transform), lights two-sided (pbrt: one-sided
-  unless `twosided`), `alpha` ignored, a `mix` clamping after mixing (pbrt clamps each albedo first). A default read off
-  one file misleads too: `textures.cpp` gives a non-PNG image the encoding `linear`, but `Image::Read` (`util/image.cpp`)
-  decodes JPG and TGA through stb_image as sRGB whatever it says, so reading every 8-bit image as sRGB matches pbrt.
-  An explicit `encoding` on a PNG colour map is honoured since 2026-11-07 (decoded and baked to sRGB). Keep one table
-  per directive — pbrt's parameter names, types, defaults, and the `file:line` in pbrt-v4 they came from — and derive
-  the translators and their tests from it.
-- **Account for every parameter.** pbrt itself calls `ReportUnused()` on each directive. A translator that marks what it
-  consumed, and a loader that reports every unconsumed or approximated parameter once with a count (as an engine issue,
-  not a console list cut off at 19), would have named seven of the silent gaps on the first load: `alpha`, `twosided`,
-  `uscale`/`vscale`/`udelta`/`vdelta`, an imagemap's `scale`/`invert`, `normalmap`, `MediumInterface`, and a texture
-  where a number was expected (`scale`, `amount`). `displacement` and `edgelength` still are. Done 2026-10-14
-  (`asset.parameters_ignored`).
-- **Gate against pbrt's own images.** pbrt-v4-scenes ships a reference for every camera. Render each at its own camera,
-  film size and `maxdepth`, apply the reference's post (kroken's `makepngs.sh`: OptiX denoise, white balance 6200 K, ACES
-  filmic) and compare per 16² block: a missing object or a grey metal is a block that fails outright.
-- **One generic texture strategy, not a special case per class.** pbrt evaluates a texture graph per hit; the engine
-  samples image × constant per slot. Bake any uv-mapped graph to an image (now done for `mix`, `scale` by a texture,
-  `scale` > 1, `invert`, a `mix` material's colours — `PBRTTextureBake.js`), and turn position-based mappings (planar,
-  spherical, cylindrical) into a generated uv set per shape so they bake too. Only direction-dependent (`directionmix`)
-  and 3D procedural textures need anything more. Position-based mappings done 2026-10-14.
-- **Validate at the loader → engine boundary.** A float EXR normal map failed the whole load (`IndexSizeError` in
-  `TextureCreator`). The engine should convert a texel format it cannot pack and record an issue for that texture,
-  never abort the scene. Done 2026-10-12: float and half-float maps pack as 8-bit (`rgba8Pixels`), and a layer that
-  cannot be converted takes a placeholder and an issue instead of failing its bucket.
-- **The engine ties emission side to surface side.** A one-sided pbrt light became `FrontSide`, which also made its back
-  see-through to camera rays; in pbrt it stays opaque (and black). Done 2026-11-04: a material's `emissiveSide`, an
-  emitting side in the triangle flags apart from culling.
-- **Never cache a failed load.** The archive scene cache stored a 3 GB graph from a load the engine then rejected; the next
-  load would have restored it. Store only once the engine has accepted the scene (done 2026-10-14), and derive the cache
-  revision from the loader's code instead of a hand-bumped `PBRT_BUILD_REVISION` (no build-tool-free way found; since
-  2026-11-07 `buildRevision.test.js` hashes the loader's and the graph codec's code against a recorded hash, so a change
-  fails until the bump is decided).
-- **Count non-finite samples.** kroken's NaN pixels (two-sided emitter seen edge-on, fixed 057cbc41) were found by eye
-  after OIDN drew them as black dots. A per-frame count in FinalWrite, recorded as an issue, makes the next one a number.
-  Partly since 2026-10-25: OIDN counts them in its input (`denoiser.non_finite_input`), but only while it runs.
-
 ### Missing today
 - [ ] **Displacement** (`texture displacement` + `edgelength`): dice to the edge length and displace along the normal at
   load, as pbrt does — kroken's rug pile, cushion tufting, bricks, rocks. Needs a per-shape triangle cap.
 - [ ] **Texture classes**: `dots` (needs pbrt's Perlin noise); `fbm`, `wrinkled`, `windy`, `marble` (3D procedural);
-  `directionmix` (by the normal). 2D `checkerboard` and `bilerp` are baked since 2026-10-05; `ptex` is read since
-  2026-10-06 (as a colour map; its mean anywhere else).
-- [ ] **Ptex past 1,024 files**: each .ptx is a texture of its own, and past 1,024 for one map type the engine renders
+  `directionmix` (by the normal). 2D `checkerboard` and `bilerp` are baked since 2026-10-05. `ptex` is not read on main:
+  the 2026-10-06 reader was lost, and its rebuild (pbrt and USD) is on branch `feat/island-geometry-and-ptex` (36806b04).
+- [ ] **Ptex past 1,024 files** (the rebuild on `feat/island-geometry-and-ptex` packs shared atlas pages): each .ptx is a texture of its own, and past 1,024 for one map type the engine renders
   the rest untextured — Moana's isCoral names 2,273, isDunesA 755. Pack small atlases onto shared pages (distinct
   Texture objects over one `source`: the extractor counts sources); the scene-graph codec would then have to store a
   page once, not once per texture.
@@ -248,7 +202,12 @@ once looked at. How it should have been built so they could not happen:
 - [ ] **Materials**: `hair`, `measured` load as diffuse.
 - [ ] **Texture filtering** — see Features → Rendering → Texture filtering (kroken's brick dirt read patchy where pbrt's
   MIP-filtered render is even).
-- [ ] `bench:pbrt` — the reference-image gate above, over a local copy of pbrt-v4-scenes (skip what is not downloaded).
+- [ ] **One table per directive**: pbrt-v4's parameter names, types, defaults and the `file:line` they come from, the
+  translators and their tests derived from it (`pbrt/defaults.test.js` checks the defaults by hand today).
+- [ ] **Count non-finite samples** each frame in FinalWrite and record them as an issue: only OIDN counts them
+  (`denoiser.non_finite_input`), and only while it runs. kroken's NaN pixels were found by eye.
+- [ ] `bench:pbrt` — each pbrt-v4-scenes camera against its reference image, with the reference's own post applied
+  (`docs/design/SCENE_IMPORT.md` → Extending it), over a local copy (skip what is not downloaded).
 
 ---
 
@@ -326,22 +285,7 @@ picture: in 0.5.0 one NaN pixel smeared over 60–110 pixels, and 1 % of pixels 
 
 ### Pipeline
 
-- [x] GPU-CPU sync for environment in solid color sky mode: a colour change rebuilt the sampling table (24 ms Node, 16 ms
-  Chrome); the table is now kept and only its integral changes (0.5 ms, 2026-11-08)
-- [ ] Zero-Day loaded as a single frame (`animation: false`) built in 77.6 s for 4.0M triangles, the 9-frame clip in 38.3 s for 2.2M (measured once, busy machine) — check with `bench:load`.
-  Re-measured 2026-11-07 with `bench:load` (Node on Dawn, quiet machine, 27977388, median of 3): the frame ready in
-  12.0 s (4.0M triangles), the clip in 11.5 s (2.2M, 6,177 meshes); `pbrtBuild` is 8.5 s of each. Chrome not timed.
-  2026-11-09: the texture baker was most of that — the clip now ready in 6.84 s in Node (`pbrtBuild` 3.99 s, zip
-  entries inflated natively) and 5.84 s in Chrome (9.84 before), every 8-bit baked texture identical; what is left of
-  `pbrtBuild` is 23 single-image float maps at ~22 ns a texel (the per-texel `combine` call) and the .ply parse.
-  Later the same night: float maps worked out once a value, one layer a file, roughness maps shared (23 → 13): ready in
-  4.53 s in Node (`pbrtBuild` 1.84 s) and 3.85 s in Chrome, GPU material textures 414 → 249 MB, renders identical. Left:
-  turning images into float layers (~0.19 s), the .ply parse, GC, and three's animation binding (`PropertyBinding.findNode`
-  walks the scene for each of 6,177 tracks, ~0.08 s).
 - [ ] **OIDN at 1920×1080 runs as 4 tiles**: a live refresh (oidn-web 0.5.0, Apple M-series, visible tab, 2026-10-11) takes 67 ms as 4 tiles (178 MB), 58 ms as 2 (280 MB), 50 ms as 1 (483 MB). oidn-webgpu 0.6.0 (M5 Pro on battery, 2026-10-25, not like for like with those): 80 ms as 4 tiles, 56–59 ms as 1 in the app; 57 / 42 ms in Node (0.5.0: 66 ms as 4 tiles). The tile cap is now an area, so wide frames that fit stay whole (1280×720: 33 → 22 ms); going past it is a memory trade. NRD (+15 ms a frame at 1080p) stays for large views until OIDN keeps up there. Tried and rejected (2026-10-11, `git stash` "half-size OIDN while moving"): denoising the half-size render while moving gave ~3× the pictures a second but boiled visibly more — blotch flicker on 24155522.glb at 1024², full 3.34, ¾ 4.22, ½ 5.06.
-- [ ] **Fast Navigation flaps on heavy scenes at 1080p** (NRD, or no live denoiser): full-size frames take the GPU past 100 ms a frame, interaction mode times out between them, and the pending drop to half size does not take hold. 24155522.glb at 1920×1080 under NRD: half size reached only after 4.1 s of moving.
-  Could not reproduce 2026-11-07 (27977388): a 5 s drag (`controls.rotateLeft` every 8 ms) dropped to half size after
-  118 ms under NRD, 96 ms with none, 12 ms under OIDN, and held it to the end, one drop and one restore each.
 
 ### Core and add-ons — make more of the core opt-in
 
@@ -368,7 +312,8 @@ minified + gzip of the three.js loader alone (three is external, so it lands in 
 ## Experiments
 
 - [x] explore OpenColorIO OCIO color management
-- [ ] Expirement with meshlet
+- [x] Experiment with meshlet — three r187's meshlet pipelines, measured 2026-10-31: not worth it (camera rays are
+  2.6–3.2 % of a frame)
 - [ ] Neural-texture-compression <https://syllogi-graphikon.vercel.app/posts/metal-neural-texture-compression/>
 - [ ] Offscreen canvas rendering - <https://threejs.org/manual/#en/offscreencanvas>
 - [ ] Ray-Guiding based on Octahedron Mapping CDF
@@ -394,10 +339,10 @@ minified + gzip of the three.js loader alone (three is external, so it lands in 
 - [ ] Mega Geometries - PTLAS - Partitioned TLAS
 - [ ] SHaRC - Spatial Hash Radiance Cache - observed issues: transparent objects blocky, glowing reflictive materials, color bleeding, baised. **Root cause measured**: single-scale hashing only covers 59% of first indirect hits from a 1/16 seed — see the ORCA probe below, where 6 levels take the same scene to 99.7%
 - [ ] ORCA multi-scale radiance cache (SIGGRAPH '26 Greenberg) — probed on both axes with `node bench/tools/orca-probe.mjs`. **Coverage GO**: 99.7% hit rate on 24155522.glb at the talk's 1/16 sparse rate (they report 98-99%); hierarchy depth is the whole effect, 1 level 59% → 6 levels 99.7%. **Quality: the price is a permanent +5-6% brightening of the indirect term (+4.7% of the frame) and ~23% median per-pixel error, bought against a 2.3x variance reduction.** Three things make that price fixed rather than tunable: 4x more seed paths does not move it (1/4 sparse +6.1% vs 1/64 +6.0%, so it is spatial aggregation error, not sampling error); voxel size barely moves it (2px +5.4% → 32px +6.7%, the hierarchy self-normalises onto a similar sample population whatever the base scale); and the one lever that does — fewer levels — trades it straight back for coverage (1 level = +4.1% bias but only 66% hit rate, and the perf case needs >98%). Unweighted indirect bias is ~0%, so the error is structured and correlates with throughput rather than being random. Verdict unchanged: preview-only, off past frame N, never in final render. Not yet tried from the talk and would soften the per-pixel error: dithered lookup (Binder2018), probability-weighted downrez, radiance clamp before store
-- [ ] ORCA Tier-3 budgeted sampling (SIGGRAPH '26 Greenberg) — built, measured, parked on branch `experiment/orca-tier3-budgeted-sampling`. Neutral quality + 23% slower on 24155522.glb; won −8..−12% at half the rays on glass-transmission only. Resume by restoring survivor-curve dispatch sizing under `budgetOn` — that is the entire 23%
+- [ ] ORCA Tier-3 budgeted sampling (SIGGRAPH '26 Greenberg) — built, measured, parked (its branch, `experiment/orca-tier3-budgeted-sampling`, is no longer here). Neutral quality + 23% slower on 24155522.glb; won −8..−12% at half the rays on glass-transmission only. Resume by restoring survivor-curve dispatch sizing under `budgetOn` — that is the entire 23%
 - [ ] Rerservoir sampling ( only per pixel, not neighboring )
 - [ ] emissive triangles as trianle lights -  do research
-- [ ] Chromatic adaptation transform (CAT)
+- [x] Chromatic adaptation transform (CAT) — white balance's Bradford (`color/WhiteBalance.js`, 2026-11-08)
 - [ ] Auto white balance
   
 ---
@@ -407,7 +352,7 @@ minified + gzip of the three.js loader alone (three is external, so it lands in 
 - [ ] Explore AI-driven denoising techniques beyond OIDN
 - [ ] <https://upscalerjs.com/models/>
 - [ ] <https://enhance.addy.ie/>
-- [x] NRD - Nvidia Realtime Denoiser (ReBLUR port, `Stages/NRD.js`; diffuse/specular signal split still open — see `docs/NRD_DENOISER.md`)
+- [x] NRD - Nvidia Realtime Denoiser (ReBLUR port, `rayzee/src/viewer/denoise/NRD.js`; diffuse/specular signal split still open — see `docs/design/NRD_DENOISER.md`)
 
 ## AI Upscaler
 
