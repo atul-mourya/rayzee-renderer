@@ -1541,6 +1541,7 @@ export class GeometryExtractor {
 		this._ensureCapacity( this.currentTriangleIndex + triangleCount );
 
 		const bm = bakeMatrix?.elements, bn = bakeNormal?.elements;
+		const readPosition = this._vertexReader( positions ), readNormal = this._vertexReader( normals ), readUV = uvs && this._vertexReader( uvs );
 
 		// Batch process triangles to avoid excessive function calls
 		for ( let i = 0; i < triangleCount; i ++ ) {
@@ -1551,19 +1552,19 @@ export class GeometryExtractor {
 			const idxB = indices ? indices[ i3 + b ] : i3 + b;
 			const idxC = indices ? indices[ i3 + c ] : i3 + c;
 
-			this.getVertex( positions, idxA, posA );
-			this.getVertex( positions, idxB, posB );
-			this.getVertex( positions, idxC, posC );
+			readPosition( idxA, posA );
+			readPosition( idxB, posB );
+			readPosition( idxC, posC );
 
-			this.getVertex( normals, idxA, normalA );
-			this.getVertex( normals, idxB, normalB );
-			this.getVertex( normals, idxC, normalC );
+			readNormal( idxA, normalA );
+			readNormal( idxB, normalB );
+			readNormal( idxC, normalC );
 
 			if ( uvs ) {
 
-				this.getVertex( uvs, idxA, uvA );
-				this.getVertex( uvs, idxB, uvB );
-				this.getVertex( uvs, idxC, uvC );
+				readUV( idxA, uvA );
+				readUV( idxB, uvB );
+				readUV( idxC, uvC );
 
 			} else {
 
@@ -1669,6 +1670,42 @@ export class GeometryExtractor {
 	}
 
 	// Optimized attribute access methods
+	/**
+	 * getVertex for one attribute, chosen once: a plain, unnormalised attribute is read straight from its array; a class
+	 * with its own getters (a half-float attribute decodes in getX) keeps them.
+	 * @private
+	 */
+	_vertexReader( attribute ) {
+
+		const P = BufferAttribute.prototype;
+		const plain = attribute.getX === P.getX && attribute.getY === P.getY && attribute.getZ === P.getZ;
+		if ( ! plain || ! attribute.isBufferAttribute || attribute.isInterleavedBufferAttribute || attribute.normalized || ! attribute.array ) {
+
+			return ( index, target ) => this.getVertex( attribute, index, target );
+
+		}
+
+		const { array, itemSize } = attribute;
+		if ( itemSize === 2 ) return ( index, target ) => {
+
+			target.x = array[ index * 2 ];
+			target.y = array[ index * 2 + 1 ];
+
+		};
+
+		if ( itemSize >= 3 ) return ( index, target ) => {
+
+			const at = index * itemSize;
+			target.x = array[ at ];
+			target.y = array[ at + 1 ];
+			target.z = array[ at + 2 ];
+
+		};
+
+		return () => {};
+
+	}
+
 	getVertex( attribute, index, target ) {
 
 		if ( attribute.itemSize === 2 ) {
