@@ -147,12 +147,64 @@ function colladaCameraShape( camera, { technique, parameters: p = {} } = {} ) {
 
 }
 
+// ColladaLoader throws on an <image> without <init_from>, an empty <effect> or a <float> <transparent>, and paints magenta
+// a material symbol its one binding names otherwise: each is read as the nearest valid file. Returns the undo.
+function repairCollada( { prototype: parser }, { prototype: composer } ) {
+
+	const { parseImage, parseEffect, parseEffectParameters } = parser;
+	const { resolveMaterialBinding } = composer;
+	parser.parseImage = function ( xml ) {
+
+		// Three reads a direct child only: one inside <create_2d> (COLLADA 1.5) is no file to it either.
+		if ( [ ...xml.childNodes ].some( ( child ) => child.nodeName === 'init_from' ) ) parseImage.call( this, xml );
+
+	};
+
+	parser.parseEffect = function ( xml ) {
+
+		parseEffect.call( this, xml );
+		const profile = this.library.effects[ xml.getAttribute( 'id' ) ].profile ??= { surfaces: {}, samplers: {} };
+		const technique = profile.technique ??= {};
+		if ( ! technique.parameters ) Object.assign( technique, { type: technique.type ?? 'lambert', parameters: {} } );
+
+	};
+
+	parser.parseEffectParameters = function ( xml ) {
+
+		const data = parseEffectParameters.call( this, xml );
+		const transparent = data.transparent?.data;
+		if ( transparent && ! transparent.color && ! transparent.texture ) transparent.color = new Array( 4 ).fill( Number.isFinite( transparent.float ) ? transparent.float : 1 );
+		return data;
+
+	};
+
+	composer.resolveMaterialBinding = function ( keys, instanceMaterials ) {
+
+		// One material, and one the file defines: a binding to a missing one keeps three's fallback.
+		const bound = [ ...new Set( Object.values( instanceMaterials ) ) ];
+		if ( bound.length !== 1 || ! this.library.materials?.[ bound[ 0 ] ] ) return resolveMaterialBinding.call( this, keys, instanceMaterials );
+		return resolveMaterialBinding.call( this, keys, { ...Object.fromEntries( keys.map( ( key ) => [ key, bound[ 0 ] ] ) ), ...instanceMaterials } );
+
+	};
+
+	return () => {
+
+		Object.assign( parser, { parseImage, parseEffect, parseEffectParameters } );
+		composer.resolveMaterialBinding = resolveMaterialBinding;
+
+	};
+
+}
+
 export const colladaFormat = {
 	name: 'Collada', label: 'Collada', type: 'model', extensions: [ 'dae' ],
 	async parse( file, { filename, cache } ) {
 
 		cache.collada ??= new ( await import( 'three/addons/loaders/ColladaLoader.js' ) ).ColladaLoader();
-		const { ColladaComposer } = await import( 'three/addons/loaders/collada/ColladaComposer.js' );
+		const [ { ColladaComposer }, { ColladaParser } ] = await Promise.all( [
+			import( 'three/addons/loaders/collada/ColladaComposer.js' ),
+			import( 'three/addons/loaders/collada/ColladaParser.js' ),
+		] );
 		const text = await file.text();
 
 		// The camera is built from the file's values, then cloned into the scene: what it carries, the clones do.
@@ -165,6 +217,7 @@ export const colladaFormat = {
 
 		};
 
+		const undoRepairs = repairCollada( ColladaParser, ColladaComposer );
 		let collada;
 		try {
 
@@ -173,6 +226,7 @@ export const colladaFormat = {
 		} finally {
 
 			ColladaComposer.prototype.buildCamera = buildCamera;
+			undoRepairs();
 
 		}
 

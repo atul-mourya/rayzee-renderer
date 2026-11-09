@@ -181,6 +181,78 @@ describe( 'file formats', () => {
 
 	} );
 
+	// Three things real files carry make ColladaLoader throw, one paints magenta: read as the nearest valid file.
+	it( 'reads a Collada image without a file, an empty effect, a float transparent and an odd material symbol', async () => {
+
+		const { ColladaParser } = await import( 'three/addons/loaders/collada/ColladaParser.js' );
+		const { ColladaComposer } = await import( 'three/addons/loaders/collada/ColladaComposer.js' );
+		const originals = [ 'parseImage', 'parseEffect', 'parseEffectParameters' ].map( k => ColladaParser.prototype[ k ] );
+		const resolve = ColladaComposer.prototype.resolveMaterialBinding;
+
+		// Just enough of a DOM element for the parser's own walks.
+		const el = ( nodeName, attrs = {}, childNodes = [], text = '' ) => ( {
+			nodeType: 1, nodeName, childNodes, textContent: text,
+			getAttribute: k => attrs[ k ] ?? null,
+			hasAttribute: k => k in attrs,
+			getElementsByTagName( tag ) {
+
+				return childNodes.flatMap( c => [ ...( c.nodeName === tag ? [ c ] : [] ), ...c.getElementsByTagName( tag ) ] );
+
+			},
+		} );
+
+		let library, parameters, half, blank, materials;
+		const cache = { collada: { parse: () => {
+
+			const parser = new ColladaParser();
+			parser.library = library = { images: {}, effects: {} };
+			// SketchUp: an image with no file, an empty effect.
+			parser.parseImage( el( 'image', { id: 'none' } ) );
+			parser.parseImage( el( 'image', { id: 'wood' }, [ el( 'init_from', {}, [], 'wood.png' ) ] ) );
+			parser.parseImage( el( 'image', { id: 'made' }, [ el( 'create_2d', {}, [ el( 'init_from', {}, [], 'x.png' ) ] ) ] ) );
+			parser.parseEffect( el( 'effect', { id: 'empty' } ) );
+			// three's old exporter: <transparent><float>1</float></transparent> beside <transparency> 0.15.
+			parameters = parser.parseEffectParameters( el( 'phong', {}, [
+				el( 'transparent', {}, [ el( 'float', {}, [], '1' ) ] ),
+				el( 'transparency', {}, [ el( 'float', {}, [], '0.15' ) ] ),
+			] ) );
+			half = parser.parseEffectParameters( el( 'phong', {}, [ el( 'transparent', { opaque: 'RGB_ZERO' }, [ el( 'float', {}, [], '0.5' ) ] ) ] ) );
+			blank = parser.parseEffectParameters( el( 'phong', {}, [ el( 'transparent', {}, [ el( 'float', {}, [], '' ) ] ) ] ) );
+
+			const composer = new ColladaComposer( { materials: { walnut: {}, one: {}, two: {} } }, null, null, null );
+			composer.getMaterial = id => `material ${id}`;
+			materials = [
+				composer.resolveMaterialBinding( [ 'default' ], { mat0: 'walnut' } ),
+				composer.resolveMaterialBinding( [ 'a', 'b' ], { a: 'one', b: 'two' } ),
+				composer.resolveMaterialBinding( [ 'c' ], { a: 'one', b: 'two' } ),
+				composer.resolveMaterialBinding( [ 'd' ], { a: 'one', b: 'one' } ),
+				// Bound to a material the file lacks: three's fallback, not a throw.
+				composer.resolveMaterialBinding( [ 'e' ], { a: 'missing' } ),
+			];
+			return { scene: new Group() };
+
+		} } };
+
+		await colladaFormat.parse( new File( [ '<COLLADA/>' ], 'r.dae' ), { filename: 'r.dae', cache } );
+
+		expect( library.images ).toEqual( { wood: { init_from: 'wood.png' } } );
+		expect( library.effects.empty.profile ).toEqual( { surfaces: {}, samplers: {}, technique: { type: 'lambert', parameters: {} } } );
+		expect( parameters.transparent ).toEqual( { opaque: 'A_ONE', data: { float: 1, color: [ 1, 1, 1, 1 ] } } );
+		expect( parameters.transparency ).toEqual( { float: 0.15 } );
+		expect( half.transparent.data.color ).toEqual( [ 0.5, 0.5, 0.5, 0.5 ] );
+		// One material bound takes a symbol it does not name; with more, a stray symbol keeps three's fallback.
+		expect( materials[ 0 ] ).toEqual( [ 'material walnut' ] );
+		expect( materials[ 1 ] ).toEqual( [ 'material one', 'material two' ] );
+		expect( materials[ 2 ][ 0 ].name ).toBe( '__DEFAULT' );
+		expect( materials[ 3 ] ).toEqual( [ 'material one' ] );
+		expect( materials[ 4 ][ 0 ].name ).toBe( '__DEFAULT' );
+		expect( blank.transparent.data.color ).toEqual( [ 1, 1, 1, 1 ] );
+
+		expect( [ 'parseImage', 'parseEffect', 'parseEffectParameters' ].map( k => ColladaParser.prototype[ k ] ) ).toEqual( originals );
+		expect( ColladaComposer.prototype.resolveMaterialBinding ).toBe( resolve );
+
+	} );
+
 	it( 'hands Collada its text and 3MF its bytes, keeping Collada\'s whole result', async () => {
 
 		const scene = new Group();

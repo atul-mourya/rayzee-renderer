@@ -34,6 +34,8 @@
 
 ### Known
 
+- [ ] Collada does not load in Node: three's ColladaParser needs a `DOMParser` (`DOMParser is not defined`), and
+  `configurePlatform` has no seam for one (found 2026-11-08; the browser loads all 12 local `.dae` files).
 - [ ] A scene whose file asks for bidirectional and has glass loses light through the glass: glass blocks the
   bidirectional shadow rays (see CLAUDE.md, Bidirectional integrator), and since 2026-11-07 the file's integrator is
   applied. Volumetric Caustic's glass ball renders dark where path tracing lights it; Glass of Water opens bidirectional

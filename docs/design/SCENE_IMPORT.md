@@ -26,6 +26,13 @@ folder itself (`SessionDialog` asks only when access lapsed); `.rayzee` projects
   `userData.aspect`. `colladaFormat` wraps `ColladaComposer.buildCamera` for its parse (clones carry `userData`):
   `aspect_ratio`, else `xfov` / `yfov` or `xmag` / `ymag`; with `xfov` and no `yfov` (Blender) it sets the view three
   leaves at 50°.
+- **Collada repairs** (`repairCollada`, for the parse only): ColladaLoader threw on an `<image>` with no `<init_from>`
+  and on an empty `<effect>` (SketchUp-style exports; `~/Downloads/Burj Khalifa.dae` is a Livspace room), and on a
+  `<transparent>` holding a `<float>` (three's own old ColladaExporter, beside `<transparency>` the opacity); and it
+  painted magenta (its fallback) a primitive whose material symbol the `<bind_material>` names otherwise ("default"
+  against "mat0"). Now: no image (a texture naming it is none), a plain Lambert, the colour (f, f, f, f) — three's
+  export comes back at its opacity — and the one material bound, when there is one (with more, the fallback stays).
+  4 of the 12 local `.dae` files failed; all load (2026-11-08). ⚠️ Collada needs a `DOMParser`: in Node it fails.
 
 ## Asset kits
 `findAndLoadModelFromZip` takes an archive with no main file whose shallowest models sit in two or more folders as a
