@@ -64,9 +64,6 @@ mismatched GPU fingerprint. Perf absolutes are a monitored trend, never a gate â
 comparison gates. Perf times the GPU **compute passes only**: render-pass timestamps overlap the compute on Apple GPUs and
 flipped small scenes between two speeds; on compute the A/B band is 3 %.
 
-### Release
-- `npm run release` - Create semantic release (requires environment variables)
-
 ### Commit & PR Conventions
 Use **conventional commits**. Every commit message and PR title **must** start with a type prefix:
 - `feat:` â€” A new feature
