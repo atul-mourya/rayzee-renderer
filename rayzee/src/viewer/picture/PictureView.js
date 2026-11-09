@@ -108,6 +108,7 @@ export class PictureView {
 		holdCanvasColorSpace( this.canvas, table.ocio.canvas );
 
 		compositor.setSaturation( details.settings?.saturation ?? 1 );
+		compositor.setWhiteBalance( details.settings?.whiteBalance ?? 0 );
 		compositor.setTransparentBackground( !! details.settings?.transparentBackground );
 		compositor.setBackdropExposure( display.backdropExposure ?? null );
 		const shaped = details.exposure?.local;

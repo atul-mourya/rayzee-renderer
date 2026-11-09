@@ -103,6 +103,7 @@ export class AIUpscaler extends EventDispatcher {
 		this.getToneMapping = options.getToneMapping || ( () => ACESFilmicToneMapping );
 		this.getColorSpace = options.getColorSpace || ( () => 'srgb' );
 		this.getSaturation = options.getSaturation || ( () => 1.0 );
+		this.getWhiteBalance = options.getWhiteBalance || ( () => null );
 		this.getDisplayGain = options.getDisplayGain || ( () => null );
 		this.getTransparentBackground = options.getTransparentBackground || ( () => false );
 
@@ -517,6 +518,7 @@ export class AIUpscaler extends EventDispatcher {
 			exposure: this.getExposure(),
 			toneMapping: this.getToneMapping() ?? ACESFilmicToneMapping,
 			saturation: this.getSaturation(),
+			whiteBalance: this.getWhiteBalance(),
 			gain: this.getDisplayGain(),
 		} );
 		this._toneMapper.release();

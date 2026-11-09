@@ -2,7 +2,7 @@
  * The engine's view transform in WGSL, and a pass that turns a packed rgba16float buffer into
  * display bytes on the card.
  *
- * A mirror of `ToneMapCPU.js` — same curves, same order (exposure, saturation, curve, transfer),
+ * A mirror of `ToneMapCPU.js` — same curves, same order (white balance, exposure, saturation, curve, transfer),
  * same rounding. It exists because reading half-floats back and converting them in JavaScript
  * costs more than the neural upscale itself at production sizes. `bench:upscale` compares the two
  * implementations on a real device and fails on any drift.
@@ -117,6 +117,10 @@ struct Params {
 	saturation: f32,
 	alpha: u32,
 	backdrop: f32,
+	// The white balance's rows; on while wbR.w is 1.
+	wbR: vec4<f32>,
+	wbG: vec4<f32>,
+	wbB: vec4<f32>,
 };
 
 @group(0) @binding(2) var<uniform> params: Params;
@@ -138,13 +142,15 @@ fn main( @builtin(global_invocation_id) gid: vec3<u32> ) {
 	var g = ${gainWGSL ? 'rayzee_gain( uv, linear.rgb, params.exposure )' : '1.0'};
 	// A solid backdrop is held at its own gain, blended by the coverage in alpha (ToneMapCPU's heldGain).
 	if ( params.backdrop > 0.0 ) { g = g + ( params.backdrop - g ) * ( 1.0 - clamp( linear.a, 0.0, 1.0 ) ); }
-	let rgb = linear.rgb * g;
+	var c = linear.rgb;
+	if ( params.wbR.w > 0.5 ) { c = vec3<f32>( dot( params.wbR.xyz, c ), dot( params.wbG.xyz, c ), dot( params.wbB.xyz, c ) ); }
+	let rgb = c * g;
 	rayzee_store( gid.y * params.width + gid.x, linear, rayzee_tone_map( rgb, params.mode, params.exposure, params.saturation ) );
 }
 `;
 
-/** Uniform blocks round up to 16 bytes; the struct above is 32. */
-const PARAMS_BYTES = 32;
+/** Uniform blocks round up to 16 bytes; the struct above is 80. */
+const PARAMS_BYTES = 80;
 
 /**
  * Tone-maps a tightly packed rgba16float buffer (two `u32` per pixel), or with `input: 'texture'` a
@@ -299,6 +305,7 @@ export class PackedToneMapper {
 	 * @param {number} tone.exposure raw `renderer.toneMappingExposure`
 	 * @param {number} tone.toneMapping Three.js ToneMapping constant
 	 * @param {number} [tone.saturation=1]
+	 * @param {?number[]} [tone.whiteBalance] - row-major 3×3 on the linear colour before anything else (`whiteBalanceMatrix`)
 	 * @param {boolean} [tone.flipY=false]
 	 * @param {boolean} [tone.preserveAlpha=false] - the source's alpha, rounded as the CPU rounds it; else 255
 	 * @param {{key?: string, wgsl?: string, entries?: GPUBindGroupEntry[], device?: GPUDevice, copyTo?: Function, backdrop?: number}} [tone.gain] - a
@@ -368,7 +375,7 @@ export class PackedToneMapper {
 
 	}
 
-	async _dispatch( src, { exposure = 1, toneMapping = 0, saturation = 1, flipY = false, preserveAlpha = false, gain = null } = {} ) {
+	async _dispatch( src, { exposure = 1, toneMapping = 0, saturation = 1, whiteBalance = null, flipY = false, preserveAlpha = false, gain = null } = {} ) {
 
 		if ( this.disposed ) throw new Error( 'PackedToneMapper: disposed' );
 		if ( ! this._storage ) throw new Error( 'PackedToneMapper: call ensureSize() first' );
@@ -389,6 +396,13 @@ export class PackedToneMapper {
 		this._paramF32[ 5 ] = saturation;
 		this._paramU32[ 6 ] = preserveAlpha ? 1 : 0;
 		this._paramF32[ 7 ] = gain?.backdrop > 0 ? gain.backdrop : 0;
+		for ( let r = 0; r < 3; r ++ ) {
+
+			for ( let c = 0; c < 3; c ++ ) this._paramF32[ 8 + r * 4 + c ] = whiteBalance ? whiteBalance[ r * 3 + c ] : 0;
+			this._paramF32[ 11 + r * 4 ] = whiteBalance ? 1 : 0;
+
+		}
+
 		this.device.queue.writeBuffer( this._params, 0, this._paramData );
 
 		const tableEntries = [ ...this._tables.entries() ]

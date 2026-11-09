@@ -362,9 +362,9 @@ const PBRT_PANORAMA = Object.freeze( { cameraProjection: 'equirectangular', pano
 
 // What the scene asks the renderer for, where it says: the Integrator, its maxdepth and `regularize`, sppm's `radius` as
 // vertex merging's (scene units), the Sampler's pixelsamples, the Film's resolution, as `exposure` pbrt's imaging
-// ratio, shutter time × ISO / 100, as `sampleClamp` the Film's maxcomponentvalue before that ratio (pbrt caps the
-// sensor's XYZ after it; its sppm writes the image itself and never caps), and a spherical camera's panorama — scene
-// metadata's `render`.
+// ratio, shutter time × ISO / 100, the film's `whiteBalance`, as `sampleClamp` the Film's maxcomponentvalue before that
+// ratio (pbrt caps the sensor's XYZ after it; its sppm writes the image itself and never caps), and a spherical camera's
+// panorama — scene metadata's `render`.
 function renderRequest( ir ) {
 
 	// Its `equalarea` square (pbrt's default) is the engine's equal-area projection, which has no framing of its own.
@@ -391,6 +391,11 @@ function renderRequest( ir ) {
 	if ( exposure > 0 && exposure !== 1 ) render.exposure = exposure;
 	const cap = ir.film?.maxcomponentvalue;
 	if ( cap > 0 && cap < Infinity && ir.integrator?.type !== 'sppm' ) render.sampleClamp = cap / ( exposure > 0 ? exposure : 1 );
+
+	// Under a camera's own sensor curves pbrt balances for 6500 K unless told otherwise (film.cpp, PixelSensor::Create).
+	const film = ir.film;
+	const whiteBalance = film?.whiteBalance > 0 ? film.whiteBalance : film?.sensor && film.sensor !== 'cie1931' ? 6500 : 0;
+	if ( whiteBalance > 0 ) render.whiteBalance = whiteBalance;
 
 	return Object.keys( render ).length ? render : null;
 

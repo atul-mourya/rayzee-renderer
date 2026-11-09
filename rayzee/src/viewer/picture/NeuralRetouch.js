@@ -374,7 +374,7 @@ export class NeuralRetouch {
 	 * ACES fit (`webgi_display` in the composition kernel), which is where the pass's ~10 %
 	 * desaturation came from and why it never answered the engine's tone-mapping setting.
 	 *
-	 * @param {{exposure: number, toneMapping: number, saturation: number}} tone
+	 * @param {{exposure: number, toneMapping: number, saturation: number, whiteBalance?: ?number[]}} tone
 	 * @returns {Promise<{rgba8: Uint8ClampedArray, width: number, height: number}>}
 	 */
 	async readOutputToned( tone ) {
@@ -389,6 +389,7 @@ export class NeuralRetouch {
 			exposure: tone.exposure ?? 1,
 			toneMapping: tone.toneMapping ?? 0,
 			saturation: tone.saturation ?? 1,
+			whiteBalance: tone.whiteBalance ?? null,
 			gain: tone.gain,
 		} );
 
@@ -478,7 +479,7 @@ const MAX_EXPOSURE = 20;
  * @param {object} opts
  * @param {{half: Uint16Array, width: number, height: number}} opts.source
  * @param {number} [opts.exposure=1] clamped to `MAX_EXPOSURE`
- * @param {{exposure: number, toneMapping: number, saturation: number}} [opts.tone] engine display state
+ * @param {{exposure: number, toneMapping: number, saturation: number, whiteBalance?: ?number[]}} [opts.tone] engine display state
  * @param {NeuralRetouch} [opts.instance] reuse a network already built for this size
  * @returns {Promise<object>} `{ instance, width, height, ms }` plus `rgba8` or `half`
  */

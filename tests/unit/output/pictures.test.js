@@ -4,6 +4,7 @@ import { RayzeeRenderer } from '@/core/RayzeeRenderer.js';
 import { IssueLog, EngineIssueError, ISSUE_CODES } from '@/core/EngineIssues.js';
 import { DISPLAY_CHROMATICITIES } from '@/core/output/ImageEncoders.js';
 import { VERSION } from '@/core/Version.js';
+import { whiteBalanceMatrix } from '@/core/color/WhiteBalance.js';
 
 const gpu = vi.hoisted( () => ( { mappers: [], depth: null } ) );
 const encoded = vi.hoisted( () => [] );
@@ -78,7 +79,7 @@ vi.mock( '@/core/output/ImageEncoders.js', async ( importOriginal ) => {
 
 const last = ( name ) => encoded.filter( e => e.name === name ).at( - 1 )?.args;
 
-function makeApp( { width = 2, height = 1, pixel = [ 0.5, 0.25, 0.125, 0.5 ], transparent = false, readback = Float32Array } = {} ) {
+function makeApp( { width = 2, height = 1, pixel = [ 0.5, 0.25, 0.125, 0.5 ], transparent = false, readback = Float32Array, whiteBalance = 0 } = {} ) {
 
 	const pixels = new readback( width * height * 4 );
 	for ( let i = 0; i < pixels.length; i += 4 ) pixels.set( pixel, i );
@@ -87,7 +88,7 @@ function makeApp( { width = 2, height = 1, pixel = [ 0.5, 0.25, 0.125, 0.5 ], tr
 	return Object.assign( Object.create( RayzeeRenderer.prototype ), {
 		_issues: new IssueLog(),
 		stages: { pathTracer: { width, height, storageTextures: { readTarget: { textures: [ {} ] } }, readAuxBuffers: vi.fn( async () => null ) } },
-		settings: { get: ( key ) => ( { saturation: 1, transparentBackground: transparent } )[ key ] },
+		settings: { get: ( key ) => ( { saturation: 1, transparentBackground: transparent, whiteBalance } )[ key ] },
 		renderer: {
 			domElement: canvas,
 			toneMappingExposure: 1,
@@ -242,6 +243,25 @@ describe( 'the readback tone map', () => {
 		} };
 
 		await expect( app.renderToBuffer() ).rejects.toBe( strict );
+
+	} );
+
+	it( 'hands both readbacks the white balance\'s matrix, off at 0', async () => {
+
+		const off = makeApp();
+		onGPU( off );
+		await off.renderToBuffer();
+		expect( gpu.mappers.at( - 1 ).reads.at( - 1 ).tone.whiteBalance ).toBeNull();
+
+		const warm = makeApp( { whiteBalance: 9000 } );
+		onGPU( warm );
+		await warm.renderToBuffer();
+		expect( gpu.mappers.at( - 1 ).reads.at( - 1 ).tone.whiteBalance ).toEqual( whiteBalanceMatrix( 9000 ) );
+
+		// On the CPU: a neutral pixel comes out warmer.
+		const cpu = makeApp( { pixel: [ 0.18, 0.18, 0.18, 1 ], whiteBalance: 9000 } );
+		const [ r, , b ] = ( await cpu.renderToBuffer() ).data;
+		expect( r ).toBeGreaterThan( b );
 
 	} );
 

@@ -11,10 +11,10 @@
 -   make bvh an independent library
 
 ### MVP
-- [ ] White balance control: reference pictures are finished after rendering — pbrt's own (watercolor's makepngs.sh:
-  white balance 8000 K, ×0.8, ACES) and artists' (watercolor's are another renderer's, graded in Photoshop). pbrt's raw
-  render is as blue as Rayzee's (mean xy 0.283, 0.302 both), so a render can only match them with a warmth control;
-  pbrt Film `whitebalance` is unread too.
+- [x] White balance control: `whiteBalance` (kelvin, pbrt-v4's film exactly), the app's White Balance (a switch with its temperature),
+  and a pbrt file's Film `whitebalance` applied (2026-11-08). Left: a tint (green–magenta), and a camera `sensor`'s own
+  response curves (its 6500 K balance is read). References are still finished after rendering — pbrt's own
+  (watercolor's makepngs.sh: white balance 8000 K, ×0.8, ACES) and artists'; set 8000 K to compare with pbrt's.
 - [ ] Coat darkening (OpenPBR `coat_darkening`), on its own and done properly: reverted (was 8f9e51f3, b119e0b1) — it
   darkened many scenes and brought artifacts. pbrt coateddiffuse's Lambertian base (no specular of its own) went with it.
 - [x] dynamic max stack in bvhtraversal: sized per tree (`bvh/TraversalStack.js`, 2026-11-08; 40 up, landscape 56)
@@ -23,7 +23,7 @@
 
 ### pbrt: read but not used (audit of the 26 catalog scenes, 2026-11-01)
 - [ ] PixelFilter (triangle, radius 1; 25 scenes) — engine uses its own pixel reconstruction
-- [ ] Not read, not in the catalog: realistic cameras, perspective `screenwindow`, `frameaspectratio`, shutter (motion blur), Film white balance / sensor / `cropwindow`, CameraMedium and space-filling media, non-homogeneous media, scattering inside media (σs folds into absorption)
+- [ ] Not read, not in the catalog: realistic cameras, perspective `screenwindow`, `frameaspectratio`, shutter (motion blur), Film sensor response curves (approximated: its white balance is read) / `cropwindow`, CameraMedium and space-filling media, non-homogeneous media, scattering inside media (σs folds into absorption)
 
 ### UX issue
 - The 360° panorama's longitude sliders run −180…180 with min below max: a pbrt spherical camera's framing (90 to −270,

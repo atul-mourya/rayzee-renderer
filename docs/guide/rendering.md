@@ -25,6 +25,7 @@ Key settings:
 | `renderTimeLimit` | `number` | 30 | Seconds of rendering before the time limit stops it, in `'time'` and `'timeOnly'`; `0` turns the limit off. Raising it after it stopped a render continues that render, unless another limit has been reached |
 | `exposure` | `number` | 1.0 | Exposure value |
 | `saturation` | `number` | 1.0 | Color saturation (1 = no grade) |
+| `whiteBalance` | `number` | 0 | The colour temperature, in kelvin, of the light shown as white, as a camera's white balance: higher warms the picture, lower cools it; `0` is off. pbrt-v4's film exactly (CIE daylight at that temperature, a blackbody below 4000 K, Bradford to the working space's white). On the screen and every saved picture, before exposure and the view; an EXR stays as rendered and records it |
 | `enableEnvironment` | `boolean` | true | Use environment lighting |
 | `environmentIntensity` | `number` | 1.0 | Environment light strength |
 | `environmentRotation` | `number` | 0 | Environment Y-rotation (degrees); 0 shows the HDRI as authored, as Blender's unmapped world does |

@@ -3183,6 +3183,7 @@ export class RayzeeRenderer extends EventDispatcher {
 		this._extraStages = this._createExtraStages();
 		this.stages.compositor = new Compositor( this.renderer, {
 			saturation: this.settings.get( 'saturation' ) ?? DEFAULT_STATE.saturation,
+			whiteBalance: this.settings.get( 'whiteBalance' ) ?? 0,
 			pathTracer: this.stages.pathTracer,
 			displaySources: this._displaySources(),
 			canvasTransform: this.color?.canvasTransform ?? null,

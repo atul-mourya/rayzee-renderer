@@ -81,6 +81,7 @@ const SETTING_ROUTES = {
 	backgroundColor: { handler: 'handleBackgroundColor', reset: true },
 	exposure: { handler: 'handleExposure' },
 	saturation: { handler: 'handleSaturation' },
+	whiteBalance: { handler: 'handleWhiteBalance' },
 	renderLimitMode: { handler: 'handleRenderLimitMode' },
 	renderTimeLimit: { handler: 'handleRenderTimeLimit', reset: false },
 	renderMode: { handler: 'handleRenderMode' },
@@ -282,6 +283,12 @@ export class RenderSettings extends EventDispatcher {
 			handleSaturation: ( value ) => {
 
 				stages.compositor?.setSaturation( value );
+
+			},
+
+			handleWhiteBalance: ( value ) => {
+
+				stages.compositor?.setWhiteBalance( value );
 
 			},
 

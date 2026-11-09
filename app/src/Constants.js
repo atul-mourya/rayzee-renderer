@@ -34,6 +34,8 @@ export const DEFAULT_STATE = {
 	fogThickness: 0.3,
 	fogAnisotropy: 0.4,
 	fogHeight: 'everywhere',
+	// White balance is the engine's `whiteBalance` (0 = off); the temperature its switch turns on at.
+	whiteBalanceTemperature: 6500,
 	// The app's names for engine values
 	bounces: ENGINE_DEFAULTS.maxBounces,
 	debugMode: ENGINE_DEFAULTS.visMode,

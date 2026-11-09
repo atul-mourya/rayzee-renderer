@@ -493,17 +493,17 @@ export const usePathTracerStore = create( ( set, get ) => ( {
 
 	},
 
-	// What the loaded scene's file set, each `{ value, previous }`: `integrator`, `exposure`, and `shape` (preset,
+	// What the loaded scene's file set, each `{ value, previous }`: `integrator`, `exposure`, `whiteBalance`, and `shape` (preset,
 	// orientation, scene ratio); `pathRegularization` while it asks for it; and `asks`, the bounces and samples it asks for.
 	_sceneRequest: null,
 
 	/**
-	 * Gives a just-loaded model the light transport, exposure and picture shape its file asks for
-	 * (`app.sceneMetadata.render`: `integrator`, `pathRegularization`, `exposure`, `aspect`). The next model gets back what
+	 * Gives a just-loaded model the light transport, exposure, white balance and picture shape its file asks for
+	 * (`app.sceneMetadata.render`: `integrator`, `pathRegularization`, `exposure`, `whiteBalance`, `aspect`). The next model gets back what
 	 * the scene replaced, unless the user changed it since. Path regularization has no control: it is on while the file
 	 * asks for it. pbrt's sppm `mergeRadius` is not applied: on the catalogue's two it helped Cornell Caustic and hurt
 	 * the Bathroom.
-	 * @param {?{ integrator?: string, pathRegularization?: boolean, exposure?: number, aspect?: number }} render
+	 * @param {?{ integrator?: string, pathRegularization?: boolean, exposure?: number, whiteBalance?: number, aspect?: number }} render
 	 */
 	applySceneRequest: render => {
 
@@ -517,6 +517,7 @@ export const usePathTracerStore = create( ( set, get ) => ( {
 			opened.view?.[ key ] && String( state[ key ] ) === String( opened.view[ key ].value ) ? opened.view[ key ].previous : state[ key ] ] ) );
 		let integrator = opened.integrator && state.integrator === opened.integrator.value ? opened.integrator.previous : state.integrator;
 		let exposure = opened.exposure && state.exposure === opened.exposure.value ? opened.exposure.previous : state.exposure;
+		let whiteBalance = opened.whiteBalance && state.whiteBalance === opened.whiteBalance.value ? opened.whiteBalance.previous : state.whiteBalance;
 		let shape = opened.shape && same( shapeOf( state ), opened.shape.value ) ? opened.shape.previous : shapeOf( state );
 
 		const request = {};
@@ -531,6 +532,13 @@ export const usePathTracerStore = create( ( set, get ) => ( {
 
 			request.exposure = { value: render.exposure, previous: exposure };
 			exposure = render.exposure;
+
+		}
+
+		if ( render?.whiteBalance > 0 ) {
+
+			request.whiteBalance = { value: render.whiteBalance, previous: whiteBalance };
+			whiteBalance = render.whiteBalance;
 
 		}
 
@@ -572,6 +580,7 @@ export const usePathTracerStore = create( ( set, get ) => ( {
 		set( { _sceneRequest: request } );
 		if ( integrator !== state.integrator ) state.handleIntegratorChange( integrator );
 		if ( exposure !== state.exposure ) state.handleExposureChange( exposure );
+		if ( whiteBalance !== state.whiteBalance ) state.handleWhiteBalanceChange( whiteBalance );
 		if ( ! same( shape, shapeOf( state ) ) ) state._applyCanvasDimensions( shape );
 		if ( String( view.panoramaLonRange ) !== String( state.panoramaLonRange ) ) state.handlePanoramaLonRangeChange( view.panoramaLonRange );
 		if ( String( view.panoramaLatRange ) !== String( state.panoramaLatRange ) ) state.handlePanoramaLatRangeChange( view.panoramaLatRange );
@@ -748,6 +757,17 @@ export const usePathTracerStore = create( ( set, get ) => ( {
 		getApp()?.settings.set( 'exposure', v );
 
 	},
+
+	// The kelvin of the light shown as white; 0 is off.
+	handleWhiteBalanceChange: val => {
+
+		const v = Array.isArray( val ) ? val[ 0 ] : val;
+		set( v > 0 ? { whiteBalance: v, whiteBalanceTemperature: v } : { whiteBalance: v } );
+		getApp()?.settings.set( 'whiteBalance', v );
+
+	},
+
+	handleWhiteBalanceEnabledChange: on => get().handleWhiteBalanceChange( on ? get().whiteBalanceTemperature : 0 ),
 
 	handleSaturationChange: handleChange(
 		val => set( { saturation: val } ),

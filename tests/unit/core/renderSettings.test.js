@@ -310,12 +310,25 @@ describe( 'RenderSettings', () => {
 		it( 'pushes all values to stages', () => {
 
 			const mockStage = { setUniform: vi.fn(), setInteractionModeEnabled: vi.fn(), updateCompletionThreshold: vi.fn(), environment: { setEnvironmentRotation: vi.fn() } };
-			const mockCompositor = { setSaturation: vi.fn(), setTransparentBackground: vi.fn(), setConvergenceOverlay: vi.fn() };
+			const mockCompositor = { setSaturation: vi.fn(), setWhiteBalance: vi.fn(), setTransparentBackground: vi.fn(), setConvergenceOverlay: vi.fn() };
 			settings.bind( { stages: { pathTracer: mockStage, compositor: mockCompositor }, applyExposure: vi.fn(), resetCallback: vi.fn(), reconcileCompletion: vi.fn() } );
 			settings.applyAll();
 
 			// Should have called setUniform for each uniform-routed key
 			expect( mockStage.setUniform ).toHaveBeenCalled();
+
+		} );
+
+		it( 'hands the white balance to the compositor, off by default', () => {
+
+			const pathTracer = { setUniform: vi.fn(), setInteractionModeEnabled: vi.fn(), updateCompletionThreshold: vi.fn(), environment: { setEnvironmentRotation: vi.fn() } };
+			const compositor = { setSaturation: vi.fn(), setWhiteBalance: vi.fn(), setTransparentBackground: vi.fn(), setConvergenceOverlay: vi.fn() };
+			settings.bind( { stages: { pathTracer, compositor }, applyExposure: vi.fn(), resetCallback: vi.fn(), reconcileCompletion: vi.fn() } );
+			settings.applyAll();
+			expect( compositor.setWhiteBalance ).toHaveBeenLastCalledWith( 0 );
+
+			settings.set( 'whiteBalance', 5500 );
+			expect( compositor.setWhiteBalance ).toHaveBeenLastCalledWith( 5500 );
 
 		} );
 
@@ -337,7 +350,7 @@ describe( 'RenderSettings', () => {
 			const apply = vi.fn();
 			const resetCallback = vi.fn();
 			const pathTracer = { setUniform: vi.fn(), setInteractionModeEnabled: vi.fn(), updateCompletionThreshold: vi.fn(), setIntegrator: vi.fn(), environment: { setEnvironmentRotation: vi.fn() } };
-			const compositor = { setSaturation: vi.fn(), setTransparentBackground: vi.fn(), setConvergenceOverlay: vi.fn() };
+			const compositor = { setSaturation: vi.fn(), setWhiteBalance: vi.fn(), setTransparentBackground: vi.fn(), setConvergenceOverlay: vi.fn() };
 			settings.bind( { stages: { pathTracer, compositor }, resetCallback } );
 			settings.define( 'interactionRenderScale', { default: 0.5, apply, reset: false } );
 

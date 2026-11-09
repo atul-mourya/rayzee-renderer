@@ -6,6 +6,7 @@ import { NRD } from './denoise/NRD.js';
 import { AutoExposure, AUTO_EXPOSURE_DEFAULTS } from './picture/AutoExposure.js';
 import { LocalExposure, LOCAL_EXPOSURE_DEFAULTS } from './picture/LocalExposure.js';
 import { backdropGain } from '../output/ToneMapCPU.js';
+import { whiteBalanceMatrix } from '../color/WhiteBalance.js';
 import { PRODUCTION_RENDER_CONFIG, INTERACTIVE_RENDER_CONFIG, modePresetSettings, CAMERA_PROJECTION_IDS, isPanoramaProjection } from '../EngineDefaults.js';
 import { createLogger } from '../Logger.js';
 import { EngineEvents } from '../EngineEvents.js';
@@ -1136,6 +1137,7 @@ export class PathTracerApp extends RayzeeRenderer {
 			pipeline: this.pipeline,
 			getExposure: () => this.settings.get( 'exposure' ) ?? 1.0,
 			getSaturation: () => this.settings.get( 'saturation' ) ?? 1.0,
+			getWhiteBalance: () => whiteBalanceMatrix( this.settings.get( 'whiteBalance' ) ),
 			getDisplayGain: () => this._displayGain(),
 			getPictureCanvas: () => this._pictureCanvas(),
 			getColorSpace: () => this.color?.canvasColorSpace ?? 'srgb',

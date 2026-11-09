@@ -127,7 +127,9 @@ subtree per element, and the whole thing rarely fits: Moana is 29 GB unpacked.
   bdpt → bidirectional, sppm → vcm), its maxdepth and `regularize` (`pathRegularization`; path, volpath, bdpt and mlt
   take it), sppm's `radius` (`mergeRadius`, scene units), the Film's `maxcomponentvalue` (`sampleClamp`, over the imaging
   ratio: pbrt caps sensor XYZ after it; none under sppm, which writes its image without the film's cap), `Sampler`
-  pixelsamples and the Film's resolution are
+  pixelsamples, the Film's resolution and its
+  `whitebalance` (`whiteBalance`; 6500 K under a camera `sensor` that sets none, as `PixelSensor::Create` does — the
+  sensor's own response curves are reported approximated) are
   `sceneMetadata.render` (glTF extras may carry it too), with `aspect` the picture's shape (`withSceneAspect`). A
   `spherical` camera asks for the engine's panorama (`cameraProjection`, `panoramaLonRange` [90, −270],
   `panoramaLevelHorizon` false): pbrt's image starts at camera +x and turns towards +z, row 0 up, in the camera's own
@@ -138,7 +140,8 @@ subtree per element, and the whole thing rarely fits: Moana is 29 GB unpacked.
   9,216 pixels differ, on the map's long curved edges). Posing the
   camera to face the image's middle would keep the full −180…180 range, but a pitched camera's tilt becomes a roll there,
   which the orbit controls drop. The engine applies none of it; the app opens the scene at that shape with that
-  integrator, path regularization and panorama, and shows the bounces and samples in Final Render. It leaves sppm's radius: see BIDIRECTIONAL.md, vertex merging's radius.
+  integrator, path regularization, sample clamp, exposure, white balance and panorama, and shows the bounces and
+  samples in Final Render. It leaves sppm's radius: see BIDIRECTIONAL.md, vertex merging's radius.
 - **Defaults are pbrt-v4's** (`pbrt/defaults.test.js`): each material, light, shape, camera and baked texture read bare
   must build as with every parameter written at the default its pbrt-v4 `Create()` gives (materials.cpp, lights.cpp,
   shapes.cpp, cameras.cpp, textures.cpp). Found 2026-11-08: a `constant` texture with no `value` was dropped (pbrt: 1 —

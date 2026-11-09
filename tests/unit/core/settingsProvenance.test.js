@@ -137,6 +137,23 @@ describe( 'toneMapToRGBA8', () => {
 
 	} );
 
+	// pbrt's film balances whatever the view: NoToneMapping too.
+	it( 'balances white before exposure and the curve', () => {
+
+		const whiteBalance = [ 2, 0, 0, 0, 1, 0, 0.1, 0, 0.5 ];
+		for ( const [ toneMapping, exposure ] of [[ NoToneMapping, 1 ], [ LinearToneMapping, 2 ]] ) {
+
+			const balanced = toneMapToRGBA8( px( 0.2, 0.3, 0.4 ), { exposure, toneMapping, whiteBalance } );
+			const by = toneMapToRGBA8( px( 0.4, 0.3, 0.22 ), { exposure, toneMapping } );
+			expect( Array.from( balanced ) ).toEqual( Array.from( by ) );
+
+		}
+
+		const off = toneMapToRGBA8( px( 0.2, 0.3, 0.4 ), { exposure: 1, toneMapping: LinearToneMapping, whiteBalance: null } );
+		expect( Array.from( off ) ).toEqual( Array.from( toneMapToRGBA8( px( 0.2, 0.3, 0.4 ), { exposure: 1, toneMapping: LinearToneMapping } ) ) );
+
+	} );
+
 	it( 'applies exposure when a curve is active', () => {
 
 		const dim = toneMapToRGBA8( px( 0.1, 0.1, 0.1 ), { exposure: 1, toneMapping: LinearToneMapping } );

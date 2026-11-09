@@ -30,6 +30,7 @@
 import { EngineEvents } from '../../EngineEvents.js';
 import { createLogger } from '../../Logger.js';
 import { PackedToneMapper } from '../../output/ToneMapGPU.js';
+import { whiteBalanceMatrix } from '../../color/WhiteBalance.js';
 import { getAssetConfig } from '../../AssetConfig.js';
 
 /** The network is a fixed 2x per axis. */
@@ -357,7 +358,7 @@ export class NeuralSuperRes {
 	 * Upscales one image and tone-maps it to display bytes without leaving the card.
 	 *
 	 * @param {{half: Uint16Array, width: number, height: number}} source
-	 * @param {{exposure: number, toneMapping: number, saturation: number}} tone engine display state
+	 * @param {{exposure: number, toneMapping: number, saturation: number, whiteBalance?: ?number[]}} tone engine display state
 	 * @returns {Promise<{rgba8: Uint8ClampedArray, width: number, height: number, ms: number, toneMs: number}>}
 	 */
 	async upscaleToRGBA8( source, tone = {} ) {
@@ -373,6 +374,7 @@ export class NeuralSuperRes {
 			exposure: tone.exposure ?? 1,
 			toneMapping: tone.toneMapping ?? 0,
 			saturation: tone.saturation ?? 1,
+			whiteBalance: tone.whiteBalance ?? null,
 			gain: tone.gain,
 			// The network emits its picture vertically flipped.
 			flipY: true,
@@ -532,6 +534,7 @@ export async function renderUpscaled( app, {
 			exposure: app.renderer.toneMappingExposure,
 			toneMapping: app.renderer.toneMapping,
 			saturation: app.settings.get( 'saturation' ) ?? 1,
+			whiteBalance: whiteBalanceMatrix( app.settings.get( 'whiteBalance' ) ),
 			gain: app._displayGain?.() ?? null,
 		};
 

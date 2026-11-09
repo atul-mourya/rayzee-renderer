@@ -638,15 +638,16 @@ async function upscaleRender( { outputWidth, outputHeight, samples } ) {
  * one runs it on the browser's.
  *
  * Runs on the renderer's own device over a fixed HDR spread (deep shadow, mid grey, clipped
- * highlight, single-channel, negative) across every curve and a few exposure/saturation
+ * highlight, single-channel, negative) across every curve and a few exposure/saturation/white balance
  * combinations.
  */
 async function toneMapParity() {
 
-	const [ { PackedToneMapper }, { toneMapToRGBA8 }, { listViewTransforms } ] = await Promise.all( [
+	const [ { PackedToneMapper }, { toneMapToRGBA8 }, { listViewTransforms }, { whiteBalanceMatrix } ] = await Promise.all( [
 		import( '@/core/output/ToneMapGPU.js' ),
 		import( '@/core/output/ToneMapCPU.js' ),
 		import( '@/core/color/ViewTransforms.js' ),
+		import( '@/core/color/WhiteBalance.js' ),
 	] );
 
 	// Bake one colour-managed view first, so the check covers the path that needs it most: a
@@ -734,7 +735,8 @@ async function toneMapParity() {
 	// checked too. That matters more than the built-ins: a table-backed transform samples a 3D
 	// texture in WGSL and interpolates it by hand.
 	const CURVES = listViewTransforms().map( t => [ t.name, t.id ] );
-	const GRADES = [[ 1, 1 ], [ 2, 1 ], [ 0.5, 1.2 ], [ 1.5, 0.6 ]];
+	// Exposure, saturation and the white balance's kelvin (0 off).
+	const GRADES = [[ 1, 1, 0 ], [ 2, 1, 0 ], [ 0.5, 1.2, 0 ], [ 1.5, 0.6, 0 ], [ 1, 1, 3200 ], [ 1.5, 0.6, 9000 ]];
 
 	const findings = [];
 
@@ -742,10 +744,11 @@ async function toneMapParity() {
 
 		for ( const [ name, toneMapping ] of CURVES ) {
 
-			for ( const [ exposure, saturation ] of GRADES ) {
+			for ( const [ exposure, saturation, kelvin ] of GRADES ) {
 
-				const gpu = await mapper.toRGBA8( src, { exposure, toneMapping, saturation } );
-				const cpu = toneMapToRGBA8( linear, { exposure, toneMapping, saturation } );
+				const tone = { exposure, toneMapping, saturation, whiteBalance: whiteBalanceMatrix( kelvin, null ) };
+				const gpu = await mapper.toRGBA8( src, tone );
+				const cpu = toneMapToRGBA8( linear, tone );
 
 				let worst = 0;
 				let worstAt = - 1;
@@ -762,7 +765,7 @@ async function toneMapParity() {
 				}
 
 				findings.push( {
-					curve: name, exposure, saturation, maxDelta: worst,
+					curve: name, exposure, saturation, whiteBalance: kelvin, maxDelta: worst,
 					pixel: worstAt >= 0 ? pixels[ Math.floor( worstAt / 4 ) ] : null,
 				} );
 

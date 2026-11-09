@@ -30,8 +30,9 @@ whatever size you give it. `aspect` is the picture's shape, width ÷ height: of 
 USD's RenderSettings, a glTF's `extras.render` width and height), else of the camera the scene opens on, where the file
 gives it one — glTF's `aspectRatio` (or `xmag / ymag`), USD's authored apertures, FBX's `AspectWidth / AspectHeight`,
 Collada's `aspect_ratio` (or `xfov` with `yfov`, `xmag / ymag`) — kept on that camera as
-`userData.aspect`. A pbrt scene also carries `integrator`, `maxBounces` and `samples`, and `exposure`, the Film's
-imaging ratio (the camera's shutter time × the Film's `iso` / 100, which pbrt scales every pixel by); where its file says,
+`userData.aspect`. A pbrt scene also carries `integrator`, `maxBounces` and `samples`, `exposure`, the Film's
+imaging ratio (the camera's shutter time × the Film's `iso` / 100, which pbrt scales every pixel by), and `whiteBalance`,
+the Film's `whitebalance` (6500 under a camera `sensor` that sets none, as pbrt has it); where its file says,
 `pathRegularization` (its `regularize`), `sampleClamp` (the Film's `maxcomponentvalue` over that imaging ratio; none under
 sppm, which pbrt never caps) and `mergeRadius` (sppm's `radius`, in scene units:
 `pathTracer.activeIntegrator.setMergeRadius( r, { units: 'scene' } )` under `'vcm'`); a spherical camera, as
@@ -44,6 +45,8 @@ const aspect = engine.sceneMetadata?.render?.aspect;
 if ( aspect ) engine.setCanvasSize( 1024, Math.round( 1024 / aspect ) );
 const exposure = engine.sceneMetadata?.render?.exposure;
 if ( exposure ) engine.settings.set( 'exposure', exposure );
+const whiteBalance = engine.sceneMetadata?.render?.whiteBalance;
+if ( whiteBalance ) engine.settings.set( 'whiteBalance', whiteBalance );
 ```
 
 Of USD's RenderSettings, the one the stage names (`renderSettingsPrimPath`) is read, else the only one: its camera opens

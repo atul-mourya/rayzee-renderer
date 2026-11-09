@@ -44,6 +44,7 @@ export const ENGINE_DEFAULTS = deepFreeze( {
 	// Output
 	exposure: 1,
 	saturation: 1.0, // no grade
+	whiteBalance: 0, // kelvin of the light shown as white, as pbrt's film; 0 = off
 	transparentBackground: false,
 	backgroundColor: '#000000', // what a camera miss shows when the backdrop is a solid colour
 

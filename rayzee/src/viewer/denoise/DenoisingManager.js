@@ -104,12 +104,13 @@ export class DenoisingManager extends EventDispatcher {
 	 * @param {import('../../pipeline/RenderPipeline.js').RenderPipeline} params.pipeline
 	 * @param {Function}                               params.getExposure       - () => current exposure value
 	 * @param {Function}                               params.getSaturation     - () => current saturation value
+	 * @param {Function}                               [params.getWhiteBalance] - () => the white balance's matrix, or null
 	 * @param {Function}                               [params.getDisplayGain]  - () => the shown picture's per-pixel gain (PackedToneMapper `gain`)
 	 * @param {Function}                               [params.getPictureCanvas] - () => a canvas holding the view as saved, not its HDR version
 	 * @param {Function}                               [params.getColorSpace]    - () => the colour space tone-mapped pixels are in
 	 * @param {import('../../EngineIssues.js').IssueLog}  [params.issues]
 	 */
-	constructor( { renderer, mainCanvas, stages, pipeline, getExposure, getSaturation, getDisplayGain = null, getPictureCanvas = null, getColorSpace = null, issues = null } ) {
+	constructor( { renderer, mainCanvas, stages, pipeline, getExposure, getSaturation, getWhiteBalance = null, getDisplayGain = null, getPictureCanvas = null, getColorSpace = null, issues = null } ) {
 
 		super();
 
@@ -126,6 +127,7 @@ export class DenoisingManager extends EventDispatcher {
 
 		this._getExposure = getExposure;
 		this._getSaturation = getSaturation;
+		this._getWhiteBalance = getWhiteBalance;
 		this._getDisplayGain = getDisplayGain;
 
 		this.denoiser = null;
@@ -455,6 +457,7 @@ export class DenoisingManager extends EventDispatcher {
 			getToneMapping: () => this._getToneMapping(),
 			getColorSpace: () => this._colorSpace(),
 			getSaturation: () => this._getSaturation(),
+			getWhiteBalance: () => this._getWhiteBalance?.() ?? null,
 			getDisplayGain: () => this._getDisplayGain?.() ?? null,
 			getTransparentBackground: () => !! this._settings?.get( 'transparentBackground' ),
 		} );
@@ -1245,6 +1248,7 @@ export class DenoisingManager extends EventDispatcher {
 				exposure: this._getEffectiveExposure(),
 				toneMapping: this._getToneMapping(),
 				saturation: this._getSaturation?.() ?? 1,
+				whiteBalance: this._getWhiteBalance?.() ?? null,
 				gain: this._getDisplayGain?.() ?? null,
 			};
 
@@ -1628,6 +1632,7 @@ export class DenoisingManager extends EventDispatcher {
 		this._onDisplayRefresh = null;
 		this._getExposure = null;
 		this._getSaturation = null;
+		this._getWhiteBalance = null;
 		this._getDisplayGain = null;
 		this._getPictureCanvas = null;
 		this._getColorSpace = null;

@@ -45,6 +45,19 @@ saying the environment was left converted.
   paints the canvas, the WGSL readback (`ToneMapGPU`), the JavaScript readback (`ToneMapCPU`) and
   the host's menu are all derived from it. Adding a view at runtime therefore reaches all four —
   `getRegistryVersion()` moves and the shaders rebuild.
+- **White balance** (`whiteBalance`, kelvin, 0 off; `color/WhiteBalance.js`): one 3×3 on linear working-space RGB before
+  the display gain, exposure and the view, in the same three places — the compositor's TSL (a `Matrix3` uniform and an
+  on flag, refreshed when the setting or the working matrix changes), `ToneMapGPU`'s WGSL (three rows in its params) and
+  `ToneMapCPU`; `tests/gpu/toneMapParity.test.js` holds them together. It is pbrt-v4's film: the source white is
+  `Spectra::D` at a CCT of T · 1.4388 / 1.4380 (S0 + M1·S1 + M2·S2, through nine XYZ constants), a blackbody below 4000 K
+  (its xy tabulated every 25 mired, Catmull-Rom), scaled in Bradford's LMS to linear Rec.709's white as pbrt integrates
+  D65 (0.3127269, 0.3290232); within 4e-6 of pbrt's own matrices from 2500 to 30000 K (5e-5 at 1500 K), measured
+  against renders of the local pbrt-v4 build with `savefp16 false` (its half output had been the 5e-4). In another
+  working space it is that matrix carried across by the working matrix (W · M · W⁻¹). The display gain (local exposure)
+  and auto exposure's metering read the light before it, in every implementation: a far setting moves the picture's
+  brightness too (2000 K: about +0.7 stops on grey), which auto exposure does not take back. A held solid backdrop is
+  balanced like the scene — a manual control, as the manual exposure it is held at. EXR stays as rendered; the Results
+  page reapplies it from the saved settings. Each change resets the accumulation, as exposure and saturation do.
 - ⚠️ **An OCIO view returns display-encoded colour; the built-in seven return linear.** That is what
   `outputEncoded` records. `ColorManagement` sets `renderer.outputColorSpace` to linear while an
   OCIO view is active and the readback skips its sRGB step. Get it wrong and every image is encoded
@@ -203,7 +216,9 @@ saying the environment was left converted.
 
 Its own group in the Path Tracer tab, modelled on Blender — the OCIO client that does most for
 artists. The view settings come first, with artist names, in the order they are reached for:
-**Tone Mapping** (OCIO view), **Style** (look; "None" reads "Default"), **Screen** (display), Exposure.
+**Tone Mapping** (OCIO view), **Style** (look; "None" reads "Default"), **Screen** (display), Exposure, and **White
+Balance** (a switch, on at 6500 K — the light almost as it is — with its **Temperature**, 2000–15000 K, behind ⋮; a pbrt
+file's white balance switches it on, and the next model gets back what it replaced).
 Saving an EXR, and its colour space, is the Export window's. The project settings — **Color System** (the config) and **Render In**, set once,
 rebuild the scene — sit folded under **Advanced**, whose header shows them (`Blender · Rec.709`) and
 whose open state is remembered in localStorage. One Tone Mapping menu, no separate curve control.

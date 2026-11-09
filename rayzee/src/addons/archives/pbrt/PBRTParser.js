@@ -735,8 +735,12 @@ export class PBRTParser {
 						resolutionGiven: Boolean( params.xresolution || params.yresolution ),
 						filename: this._str( param( params, 'filename' ), null ),
 						iso: this._num( param( params, 'iso' ), 100 ),
+						whiteBalance: this._num( param( params, 'whitebalance' ), 0 ),
+						sensor: this._str( param( params, 'sensor' ), 'cie1931' ),
 						maxcomponentvalue: this._num( param( params, 'maxcomponentvalue' ), Infinity ),
 					};
+					// A camera's response curves are not modelled; its white balance is (PBRTSceneBuilder renderRequest).
+					if ( this.ir.film.sensor !== 'cie1931' ) approximated( params, 'sensor' );
 
 				} );
 				break;

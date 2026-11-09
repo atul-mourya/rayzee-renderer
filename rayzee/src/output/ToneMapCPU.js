@@ -129,7 +129,7 @@ export function applySaturation( out, saturation ) {
 }
 
 /**
- * Linear float RGBA → display bytes, in the output pass's order: exposure, saturation, curve,
+ * Linear float RGBA → display bytes, in the output pass's order: white balance, exposure, saturation, curve,
  * transfer function. Not interchangeable — moving any step shifts every mid-tone.
  *
  * @param {Float32Array} linear - RGBA, 4 floats per pixel
@@ -137,6 +137,7 @@ export function applySaturation( out, saturation ) {
  * @param {number} options.exposure - renderer.toneMappingExposure, raw
  * @param {number} options.toneMapping - a registered view transform id
  * @param {number} [options.saturation=1]
+ * @param {?number[]} [options.whiteBalance] - row-major 3×3 on the linear colour before anything else (`whiteBalanceMatrix`)
  * @param {boolean} [options.preserveAlpha=false]
  * @param {{fn?: function(number, number, number, number): number, width: number, height: number, backdrop?: number}} [options.pixelGain] -
  *   the twin of the GPU pass's `gain`: `fn( u, v, luminance, log2 exposure )` per pixel, before the curve, and
@@ -166,7 +167,7 @@ export function toneMapToDisplayLinear( linear, options ) {
 const clamp01 = v => ( v > 0 ? ( v < 1 ? v : 1 ) : 0 );
 const decodeSRGB = v => ( v <= 0.04045 ? v / 12.92 : Math.pow( ( v + 0.055 ) / 1.055, 2.4 ) );
 
-function toneMapInto( out, linear, { exposure, toneMapping, saturation = 1, preserveAlpha = false, pixelGain = null } ) {
+function toneMapInto( out, linear, { exposure, toneMapping, saturation = 1, whiteBalance = null, preserveAlpha = false, pixelGain = null } ) {
 
 	const curve = TONE_MAP_FNS.get( toneMapping ) ?? TONE_MAP_FNS.get( NoToneMapping );
 	const gain = effectiveExposure( exposure, toneMapping );
@@ -197,9 +198,11 @@ function toneMapInto( out, linear, { exposure, toneMapping, saturation = 1, pres
 
 		}
 
-		scratch[ 0 ] = linear[ i ] * g;
-		scratch[ 1 ] = linear[ i + 1 ] * g;
-		scratch[ 2 ] = linear[ i + 2 ] * g;
+		const r = linear[ i ], gr = linear[ i + 1 ], b = linear[ i + 2 ];
+		const m = whiteBalance;
+		scratch[ 0 ] = ( m ? m[ 0 ] * r + m[ 1 ] * gr + m[ 2 ] * b : r ) * g;
+		scratch[ 1 ] = ( m ? m[ 3 ] * r + m[ 4 ] * gr + m[ 5 ] * b : gr ) * g;
+		scratch[ 2 ] = ( m ? m[ 6 ] * r + m[ 7 ] * gr + m[ 8 ] * b : b ) * g;
 
 		applySaturation( scratch, saturation );
 		curve( scratch[ 0 ], scratch[ 1 ], scratch[ 2 ], 1.0, scratch );

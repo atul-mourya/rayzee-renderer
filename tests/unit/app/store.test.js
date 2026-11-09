@@ -789,6 +789,37 @@ describe( 'what a scene\'s file asks for', () => {
 
 	} );
 
+	it( 'opens at the white balance it asks for and gives the next model back what it replaced', async () => {
+
+		const app = await withApp();
+		expect( pt().whiteBalance ).toBe( 0 );
+		pt().applySceneRequest( { whiteBalance: 9000 } );
+		expect( [ pt().whiteBalance, app.settings.set.mock.lastCall ] ).toEqual( [ 9000, [ 'whiteBalance', 9000 ]] );
+		pt().applySceneRequest( { exposure: 2 } );
+		expect( [ pt().whiteBalance, app.settings.set.mock.lastCall ] ).toEqual( [ 0, [ 'whiteBalance', 0 ]] );
+
+		pt().applySceneRequest( { whiteBalance: 5500 } );
+		pt().handleWhiteBalanceChange( [ 4000 ] );
+		pt().applySceneRequest( null );
+		expect( pt().whiteBalance ).toBe( 4000 );
+
+	} );
+
+	it( 'turns white balance off and back on at the temperature it had', async () => {
+
+		const app = await withApp();
+		pt().handleWhiteBalanceChange( [ 6500 ] );
+		pt().handleWhiteBalanceEnabledChange( false );
+		pt().handleWhiteBalanceEnabledChange( true );
+		expect( [ pt().whiteBalance, app.settings.set.mock.lastCall ] ).toEqual( [ 6500, [ 'whiteBalance', 6500 ]] );
+		pt().handleWhiteBalanceChange( [ 3200 ] );
+		pt().handleWhiteBalanceEnabledChange( false );
+		expect( [ pt().whiteBalance, pt().whiteBalanceTemperature, app.settings.set.mock.lastCall ] ).toEqual( [ 0, 3200, [ 'whiteBalance', 0 ]] );
+		pt().handleWhiteBalanceEnabledChange( true );
+		expect( [ pt().whiteBalance, app.settings.set.mock.lastCall ] ).toEqual( [ 3200, [ 'whiteBalance', 3200 ]] );
+
+	} );
+
 	it( 'opens in the panorama a pbrt spherical camera asks for, framed as it says, and gives the view back after', async () => {
 
 		const app = await withApp();

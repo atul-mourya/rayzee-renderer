@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { X, Loader2, ChevronDown } from 'lucide-react';
+import { X, Loader2, ChevronDown, Thermometer } from 'lucide-react';
 import { Row } from '@/components/ui/row';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue, SelectGroup, SelectLabel, SelectSeparator } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { Slider } from '@/components/ui/slider';
+import { SliderToggle } from '@/components/ui/slider-toggle';
 import { Separator } from '@/components/ui/separator';
 import { Input } from '@/components/ui/input';
 import { Exposure } from '@/assets/icons';
@@ -67,9 +68,10 @@ const ColorManagementSection = () => {
 	const status = useColorStatus();
 	const transforms = useViewTransforms();
 	const {
-		toneMapping, exposure, autoExposure, autoExposureStrength, localExposure, localExposureHighlightContrast,
-		handleToneMappingChange, handleExposureChange, handleAutoExposureChange, handleAutoExposureStrengthChange,
-		handleLocalExposureChange, handleLocalExposureAmountChange,
+		toneMapping, exposure, autoExposure, autoExposureStrength, localExposure, localExposureHighlightContrast, whiteBalance,
+		whiteBalanceTemperature, handleToneMappingChange, handleExposureChange, handleAutoExposureChange,
+		handleAutoExposureStrengthChange, handleLocalExposureChange, handleLocalExposureAmountChange, handleWhiteBalanceChange,
+		handleWhiteBalanceEnabledChange,
 	} = usePathTracerStore();
 
 	const [ builtins, setBuiltins ] = useState( [] );
@@ -442,6 +444,11 @@ const ColorManagementSection = () => {
 			{/* With Auto Exposure on, the same value is a push on top of what Auto picks, not the exposure itself. */}
 			<Row>
 				<Slider icon={Exposure} label={autoExposure ? 'Adjust' : 'Exposure'} tip={autoExposure ? 'Brighter or darker than Auto Exposure picks. 0 shows Auto\'s choice.' : 'Brighter or darker: +1 doubles the brightness, −1 halves it.'} min={EV_MIN} max={EV_MAX} step={0.05} value={[ toEV( exposure ) ]} snapPoints={[ 0 ]} onValueChange={onExposure} />
+			</Row>
+
+			{/* 6500 K shows the light almost as it is; a file's own white balance switches it on. */}
+			<Row>
+				<SliderToggle label="White Balance" tip="The colour of light to show as white, as a camera's white balance does: lower makes the picture cooler, higher warmer. Applies to the screen and saved pictures." enabled={whiteBalance > 0} icon={Thermometer} min={2000} max={15000} step={100} precision={0} unit="K" snapPoints={[ 6500 ]} value={[ whiteBalance > 0 ? whiteBalance : whiteBalanceTemperature ]} onValueChange={v => handleWhiteBalanceChange( v[ 0 ] )} onToggleChange={handleWhiteBalanceEnabledChange} />
 			</Row>
 
 			<Row more={localExposure ? (

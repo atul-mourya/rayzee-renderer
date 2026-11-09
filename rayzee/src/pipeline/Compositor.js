@@ -1,17 +1,19 @@
 import { vec4, vec3, uv, screenUV, uniform, select, dot, mix, step, float, int, uint, storage, Fn, If, toneMappingExposure, sign } from 'three/tsl';
 import { MeshBasicNodeMaterial, QuadMesh, TextureNode } from 'three/webgpu';
-import { NoBlending, NoToneMapping, ColorManagement as ThreeColorManagement } from 'three';
+import { Matrix3, NoBlending, NoToneMapping, ColorManagement as ThreeColorManagement } from 'three';
 import { RenderStage, StageExecutionMode } from './RenderStage.js';
 import { REC709_LUMINANCE_COEFFICIENTS } from '../shaders/Common.js';
 import { backdropGain } from '../output/ToneMapCPU.js';
 import { getViewTransform } from '../color/ViewTransforms.js';
+import { whiteBalanceMatrix } from '../color/WhiteBalance.js';
+import { getWorkingMatrix } from '../color/WorkingMatrix.js';
 
 
 /**
  * Compositor — Terminal pipeline stage.
  *
  * Selects the latest upstream texture via a priority fallback chain, applies
- * a saturation grade, sets alpha, and hands the linear HDR result to the
+ * the white balance and a saturation grade, sets alpha, and hands the linear HDR result to the
  * renderer's output pass (tone mapping + sRGB gamma happen there) — except a
  * table view, which it draws itself (`_viewQuadFor`).
  *
@@ -45,6 +47,12 @@ export class Compositor extends RenderStage {
 
 		// 1.0 = neutral; >1 boosts to compensate for ACES/AgX desaturation.
 		this.saturation = uniform( options.saturation ?? 1.0 );
+
+		// The white balance's kelvin; the matrix follows it and the working space when drawn (_syncWhiteBalance).
+		this._whiteBalanceKelvin = options.whiteBalance ?? 0;
+		this._whiteBalance = uniform( new Matrix3() );
+		this._whiteBalanceOn = uniform( 0, 'int' );
+		this._whiteBalanceFor = null;
 
 		this._transparentBackground = uniform( 0, 'int' );
 
@@ -97,7 +105,9 @@ export class Compositor extends RenderStage {
 
 		}
 
-		const color = gain ? texSample.xyz.mul( gain ) : texSample.xyz;
+		// The gain reads the light before the white balance, as a readback's does.
+		const balanced = select( this._whiteBalanceOn.greaterThan( int( 0 ) ), this._whiteBalance.mul( texSample.xyz ), texSample.xyz );
+		const color = gain ? balanced.mul( gain ) : balanced;
 
 		const luma = dot( color, REC709_LUMINANCE_COEFFICIENTS );
 		const gradedColor = mix( vec3( luma ), color, this.saturation );
@@ -399,7 +409,21 @@ export class Compositor extends RenderStage {
 		}
 
 		this._sourceTexNode.value = sourceTexture;
+		this._syncWhiteBalance();
 		return true;
+
+	}
+
+	_syncWhiteBalance() {
+
+		const working = getWorkingMatrix();
+		const at = this._whiteBalanceFor;
+		if ( at && at.kelvin === this._whiteBalanceKelvin && at.working === working ) return;
+
+		this._whiteBalanceFor = { kelvin: this._whiteBalanceKelvin, working };
+		const m = whiteBalanceMatrix( this._whiteBalanceKelvin, working );
+		this._whiteBalanceOn.value = m ? 1 : 0;
+		if ( m ) this._whiteBalance.value.set( ...m );
 
 	}
 
@@ -463,6 +487,13 @@ export class Compositor extends RenderStage {
 	setSaturation( value ) {
 
 		this.saturation.value = value;
+
+	}
+
+	/** The kelvin of the light shown as white (`whiteBalanceMatrix`); 0 is off. */
+	setWhiteBalance( kelvin ) {
+
+		this._whiteBalanceKelvin = kelvin;
 
 	}
 

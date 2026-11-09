@@ -1,6 +1,7 @@
 import { HalfFloatType, RenderTarget, FloatType, RGBAFormat, NearestFilter, DataUtils } from 'three';
 import { readPixels, TextureReadback } from './TextureReadback.js';
 import { toneMapToRGBA8, toneMapToRGBA16, toneMapToDisplayLinear } from './ToneMapCPU.js';
+import { whiteBalanceMatrix } from '../color/WhiteBalance.js';
 import { PackedToneMapper } from './ToneMapGPU.js';
 import { EngineIssueError, ISSUE_CODES } from '../EngineIssues.js';
 import { VERSION } from '../Version.js';
@@ -88,6 +89,7 @@ export async function readPicture( app, target, width, height, { source, preserv
 		exposure: app.renderer.toneMappingExposure,
 		toneMapping: app.renderer.toneMapping,
 		saturation: app.settings.get( 'saturation' ) ?? 1,
+		whiteBalance: whiteBalanceMatrix( app.settings.get( 'whiteBalance' ) ),
 		preserveAlpha,
 		gain: app._displayGain(),
 	};

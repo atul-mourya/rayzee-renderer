@@ -5,8 +5,8 @@
  */
 
 import { afterAll, beforeAll, expect, it } from 'vitest';
-import { DataUtils } from 'three';
-import { vec4, float } from 'three/tsl';
+import { DataUtils, Matrix3 } from 'three';
+import { vec4, float, uniform, select, int } from 'three/tsl';
 import { describeGPU, createRenderer, gpuAvailable, evaluate } from './gpu.js';
 import { PackedToneMapper } from '@/core/output/ToneMapGPU.js';
 import { toneMapToRGBA8, toneMapToRGBA16, toneMapToDisplayLinear, TONE_MAP_FNS, SRGB_GAMMA, applySaturation, effectiveExposure, isOutputEncoded } from '@/core/output/ToneMapCPU.js';
@@ -15,6 +15,7 @@ import { buildBakedView, DEFAULT_MIN_EV, DEFAULT_MAX_EV } from '@/core/addons/co
 import { packHalf, unshape, curveSlices, encodeExtended } from '@/core/addons/color/LutBake.js';
 import { ColorManagement } from '@/core/addons/color/ColorManagement.js';
 import { configureAssets } from '@/core/AssetConfig.js';
+import { whiteBalanceMatrix } from '@/core/color/WhiteBalance.js';
 import { UPSCALE_GATES } from '../../bench/runner/config.js';
 
 let ocio = true;
@@ -92,7 +93,8 @@ const PIXELS = VALUES.flatMap( v => [
 	[ v, v, v ], [ v, v * 0.25, 0 ], [ 0, v * 0.5, v ], [ v, - v * 0.1, v * 0.7 ],
 ] );
 
-const GRADES = [[ 1, 1 ], [ 2, 1 ], [ 0.5, 1.2 ], [ 1.5, 0.6 ]];
+// Exposure, saturation and the white balance's kelvin (0 off).
+const GRADES = [[ 1, 1, 0 ], [ 2, 1, 0 ], [ 0.5, 1.2, 0 ], [ 1.5, 0.6, 0 ], [ 1, 1, 3200 ], [ 1.5, 0.6, 9000 ], [ 0.5, 1.2, 1500 ]];
 
 const MAX_DIFFERING = 0.02;
 
@@ -155,10 +157,11 @@ describeGPU( 'GPU tone map against ToneMapCPU', () => {
 
 	it.each( CURVES )( '%s', async ( name, toneMapping ) => {
 
-		for ( const [ exposure, saturation ] of GRADES ) {
+		for ( const [ exposure, saturation, kelvin ] of GRADES ) {
 
-			const gpu = await mapper.toRGBA8( src, { exposure, toneMapping, saturation } );
-			const cpu = toneMapToRGBA8( linear, { exposure, toneMapping, saturation } );
+			const tone = { exposure, toneMapping, saturation, whiteBalance: whiteBalanceMatrix( kelvin, null ) };
+			const gpu = await mapper.toRGBA8( src, tone );
+			const cpu = toneMapToRGBA8( linear, tone );
 
 			let worst = 0, at = 0, differing = 0;
 			for ( let i = 0; i < gpu.length; i ++ ) {
@@ -169,7 +172,7 @@ describeGPU( 'GPU tone map against ToneMapCPU', () => {
 
 			}
 
-			const grade = `exposure ${exposure}, saturation ${saturation}`;
+			const grade = `exposure ${exposure}, saturation ${saturation}, white balance ${kelvin}`;
 			expect( worst, `${grade}, pixel ${PIXELS[ at >> 2 ]}` ).toBeLessThanOrEqual( UPSCALE_GATES.maxToneMapDelta );
 
 			// Float noise flips the odd byte (1 in 252 measured); a rounding shift moves most of them,
@@ -218,9 +221,9 @@ describeGPU( 'GPU tone map from a float texture against ToneMapCPU', () => {
 
 	it.each( CURVES )( '%s, alpha kept', async ( name, toneMapping ) => {
 
-		for ( const [ exposure, saturation ] of GRADES ) {
+		for ( const [ exposure, saturation, kelvin ] of GRADES ) {
 
-			const tone = { exposure, toneMapping, saturation, preserveAlpha: true };
+			const tone = { exposure, toneMapping, saturation, whiteBalance: whiteBalanceMatrix( kelvin, null ), preserveAlpha: true };
 			const gpu = await mapper.toRGBA8( texture, tone );
 			const cpu = toneMapToRGBA8( linear, tone );
 
@@ -233,7 +236,7 @@ describeGPU( 'GPU tone map from a float texture against ToneMapCPU', () => {
 
 			}
 
-			expect( worst, `exposure ${exposure}, saturation ${saturation}` ).toBeLessThanOrEqual( UPSCALE_GATES.maxToneMapDelta );
+			expect( worst, `exposure ${exposure}, saturation ${saturation}, white balance ${kelvin}` ).toBeLessThanOrEqual( UPSCALE_GATES.maxToneMapDelta );
 			expect( differing / gpu.length ).toBeLessThanOrEqual( MAX_DIFFERING );
 			for ( let i = 3; i < gpu.length; i += 4 ) expect( gpu[ i ] ).toBe( cpu[ i ] );
 
@@ -283,9 +286,9 @@ describeGPU( '16-bit GPU tone map against ToneMapCPU', () => {
 
 	it.each( CURVES )( '%s', async ( name, toneMapping ) => {
 
-		for ( const [ exposure, saturation ] of GRADES ) {
+		for ( const [ exposure, saturation, kelvin ] of GRADES ) {
 
-			const tone = { exposure, toneMapping, saturation, preserveAlpha: true };
+			const tone = { exposure, toneMapping, saturation, whiteBalance: whiteBalanceMatrix( kelvin, null ), preserveAlpha: true };
 			const gpu = await mapper.toRGBA16( texture, tone );
 			const cpu = toneMapToRGBA16( linear, tone );
 			const bytes = await mapper8.toRGBA8( texture, tone );
@@ -298,7 +301,7 @@ describeGPU( '16-bit GPU tone map against ToneMapCPU', () => {
 
 			}
 
-			const grade = `exposure ${exposure}, saturation ${saturation}`;
+			const grade = `exposure ${exposure}, saturation ${saturation}, white balance ${kelvin}`;
 			expect( worst, grade ).toBeLessThanOrEqual( MAX_DELTA_16 );
 			expect( coarse, grade ).toBeLessThanOrEqual( 1 );
 
@@ -310,9 +313,9 @@ describeGPU( '16-bit GPU tone map against ToneMapCPU', () => {
 	it.each( CURVES )( '%s, as display light', async ( name, toneMapping ) => {
 
 		const encode = v => ( v <= 0.0031308 ? 12.92 * v : 1.055 * Math.pow( v, 1 / 2.4 ) - 0.055 );
-		for ( const [ exposure, saturation ] of GRADES ) {
+		for ( const [ exposure, saturation, kelvin ] of GRADES ) {
 
-			const tone = { exposure, toneMapping, saturation, preserveAlpha: true };
+			const tone = { exposure, toneMapping, saturation, whiteBalance: whiteBalanceMatrix( kelvin, null ), preserveAlpha: true };
 			const gpu = await mapperLight.toDisplayLinear( texture, tone );
 			const cpu = toneMapToDisplayLinear( linear, tone );
 			const words = await mapper.toRGBA16( texture, tone );
@@ -325,7 +328,7 @@ describeGPU( '16-bit GPU tone map against ToneMapCPU', () => {
 
 			}
 
-			const grade = `exposure ${exposure}, saturation ${saturation}`;
+			const grade = `exposure ${exposure}, saturation ${saturation}, white balance ${kelvin}`;
 			expect( worst * 65535, grade ).toBeLessThanOrEqual( MAX_DELTA_16 );
 			expect( encoded, grade ).toBeLessThanOrEqual( 1 );
 
@@ -337,7 +340,7 @@ describeGPU( '16-bit GPU tone map against ToneMapCPU', () => {
 
 // The AI upscaler's network input, as AIUpscaler computed it in JavaScript before the planes moved
 // to the card: a 2.2 power, not the sRGB curve, and no 8-bit step.
-function upscalerInput( linear, { exposure, toneMapping, saturation } ) {
+function upscalerInput( linear, { exposure, toneMapping, saturation, whiteBalance: m } ) {
 
 	const curve = TONE_MAP_FNS.get( toneMapping );
 	const gain = effectiveExposure( exposure, toneMapping );
@@ -346,7 +349,9 @@ function upscalerInput( linear, { exposure, toneMapping, saturation } ) {
 
 	for ( let i = 0; i < n; i ++ ) {
 
-		rgb[ 0 ] = linear[ i * 4 ] * gain; rgb[ 1 ] = linear[ i * 4 + 1 ] * gain; rgb[ 2 ] = linear[ i * 4 + 2 ] * gain;
+		let [ r, g, b ] = linear.subarray( i * 4, i * 4 + 3 );
+		if ( m ) [ r, g, b ] = [ m[ 0 ] * r + m[ 1 ] * g + m[ 2 ] * b, m[ 3 ] * r + m[ 4 ] * g + m[ 5 ] * b, m[ 6 ] * r + m[ 7 ] * g + m[ 8 ] * b ];
+		rgb[ 0 ] = r * gain; rgb[ 1 ] = g * gain; rgb[ 2 ] = b * gain;
 		applySaturation( rgb, saturation );
 		curve( rgb[ 0 ], rgb[ 1 ], rgb[ 2 ], 1.0, rgb );
 		for ( let c = 0; c < 3; c ++ ) out[ c * n + i ] = encode( rgb[ c ] );
@@ -391,15 +396,15 @@ describeGPU( 'GPU planar tone map against the upscaler\'s old JavaScript', () =>
 
 	it.each( CURVES )( '%s', async ( name, toneMapping ) => {
 
-		for ( const [ exposure, saturation ] of GRADES ) {
+		for ( const [ exposure, saturation, kelvin ] of GRADES ) {
 
-			const tone = { exposure, toneMapping, saturation };
+			const tone = { exposure, toneMapping, saturation, whiteBalance: whiteBalanceMatrix( kelvin, null ) };
 			const gpu = await mapper.toPlanar( texture, tone );
 			const cpu = upscalerInput( linear, tone );
 
 			let worst = 0;
 			for ( let i = 0; i < gpu.length; i ++ ) worst = Math.max( worst, Math.abs( gpu[ i ] - cpu[ i ] ) );
-			expect( worst, `exposure ${exposure}, saturation ${saturation}` ).toBeLessThan( MAX_PLANAR_DELTA );
+			expect( worst, `exposure ${exposure}, saturation ${saturation}, white balance ${kelvin}` ).toBeLessThan( MAX_PLANAR_DELTA );
 
 		}
 
@@ -444,6 +449,39 @@ describeGPU( 'the canvas lookup against the CPU sampler', () => {
 		} );
 		// A tenth of an 8-bit level.
 		expect( worst, `${colours[ at ]}` ).toBeLessThan( 0.1 / 255 );
+
+	} );
+
+} );
+
+// The compositor's white balance: a Matrix3 uniform set row-major, multiplied as a column vector, gated by an int.
+describeGPU( 'the compositor\'s white balance against the CPU\'s', () => {
+
+	let renderer;
+	beforeAll( async () => {
+
+		renderer = await createRenderer();
+
+	} );
+
+	afterAll( () => renderer?.dispose() );
+
+	it.each( [ 0, 3200, 9000 ] )( 'at %s K', async kelvin => {
+
+		const m = whiteBalanceMatrix( kelvin, null );
+		const matrix = uniform( new Matrix3() ), on = uniform( m ? 1 : 0, 'int' );
+		if ( m ) matrix.value.set( ...m );
+		const colours = PIXELS.slice( 0, 40 );
+		const data = new Float32Array( colours.flatMap( c => [ ...c, 1 ] ) );
+		const out = new Float32Array( await evaluate( renderer, colours.length, { c: [ data, 'vec4' ] }, 'vec4',
+			( { c } ) => vec4( select( on.greaterThan( int( 0 ) ), matrix.mul( c.xyz ), c.xyz ), 1 ) ) );
+
+		colours.forEach( ( [ r, g, b ], i ) => {
+
+			const want = m ? [ m[ 0 ] * r + m[ 1 ] * g + m[ 2 ] * b, m[ 3 ] * r + m[ 4 ] * g + m[ 5 ] * b, m[ 6 ] * r + m[ 7 ] * g + m[ 8 ] * b ] : [ r, g, b ];
+			for ( let k = 0; k < 3; k ++ ) expect( Math.abs( out[ i * 4 + k ] - want[ k ] ) ).toBeLessThanOrEqual( 1e-6 * Math.max( 1, Math.abs( want[ k ] ) ) );
+
+		} );
 
 	} );
 

@@ -254,6 +254,25 @@ describe( 'PBRT scene builder', () => {
 
 	} );
 
+	it( 'reports the film\'s white balance, 6500 K under a camera\'s own sensor as pbrt has it, and the sensor approximated', async () => {
+
+		const load = async ( film ) => loadPBRTScene( buildArgs( { vfs: { 'scene.pbrt': enc.encode( SCENE.replace( 'Film "rgb"', film ) ) } } ) );
+		const film = ( { parameters } ) => [ ...Object.keys( parameters.unused ), ...Object.keys( parameters.approximated ) ].filter( ( key ) => key.startsWith( 'Film' ) );
+
+		// The landscape's and Zero-Day's.
+		const landscape = await load( 'Film "rgb" "float whitebalance" 9000' );
+		expect( landscape.render.whiteBalance ).toBe( 9000 );
+		expect( film( landscape ) ).toEqual( [] );
+		const zeroDay = await load( 'Film "rgb" "string sensor" "canon_eos_100d" "float whitebalance" 5500' );
+		expect( zeroDay.render.whiteBalance ).toBe( 5500 );
+		expect( film( zeroDay ) ).toEqual( [ 'Film rgb: sensor' ] );
+		// The Crown's: a sensor alone balances for 6500 K.
+		expect( ( await load( 'Film "rgb" "string sensor" "canon_eos_5d_mkiv"' ) ).render.whiteBalance ).toBe( 6500 );
+		expect( ( await load( 'Film "rgb" "string sensor" "cie1931"' ) ).render?.whiteBalance ).toBeUndefined();
+		expect( ( await load( 'Film "rgb"' ) ).render?.whiteBalance ).toBeUndefined();
+
+	} );
+
 	it( 'gives a thin-lens camera its own depth of field: the same aperture radius in both DOF modes', async () => {
 
 		const scene = SCENE.replace( 'Camera "perspective" "float fov" 40', 'Camera "perspective" "float fov" 40 "float lensradius" 0.05 "float focaldistance" 4' );
