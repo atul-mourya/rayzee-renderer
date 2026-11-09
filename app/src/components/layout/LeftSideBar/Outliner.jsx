@@ -517,6 +517,51 @@ const OutlinerHeader = memo( ( { searchTerm, onSearchChange, filters, onFilterCh
 
 OutlinerHeader.displayName = 'OutlinerHeader';
 
+const createLayerItem = ( object ) => ( {
+	name: object.userData?.__rayzeeName || object.name || `${object.type} ${object.id}`,
+	type: object.type,
+	uuid: object.uuid,
+	geometry: object.geometry?.constructor?.name,
+	visible: object.visible ?? true,
+	// Top-level loaded models are tagged and can be removed from the scene.
+	removable: !! object.userData?.__rayzeeSceneObject,
+	children: object.children.map( createLayerItem ),
+} );
+
+const isVisibleByType = ( layer, filters ) => {
+
+	if ( layer.type === 'Scene' ) return true;
+	if ( layer.type === 'Mesh' ) return filters.Meshes;
+	if ( layer.type.includes( 'Light' ) ) return filters.Lights;
+	if ( layer.type.includes( 'Camera' ) ) return filters.Cameras;
+	if ( layer.type === 'Group' || layer.type === 'Object3D' ) return filters.Groups;
+	return true;
+
+};
+
+const filterLayers = ( layers, term, filters ) => layers.reduce( ( acc, layer ) => {
+
+	if ( ! isVisibleByType( layer, filters ) ) return acc;
+
+	const matchesSearch = ! term ||
+		layer.name.toLowerCase().includes( term.toLowerCase() ) ||
+		layer.type.toLowerCase().includes( term.toLowerCase() );
+
+	const filteredChildren = filterLayers( layer.children, term, filters );
+
+	if ( matchesSearch || filteredChildren.length > 0 ) {
+
+		acc.push( {
+			...layer,
+			children: filteredChildren,
+		} );
+
+	}
+
+	return acc;
+
+}, [] );
+
 const Outliner = () => {
 
 	const [ searchTerm, setSearchTerm ] = useState( '' );
@@ -531,21 +576,6 @@ const Outliner = () => {
 	const selectedObject = useStore( ( state ) => state.selectedObject );
 
 	useLayoutEffect( () => rowSelection.select( selectedObject?.uuid ?? null ), [ selectedObject ] );
-
-	const createLayerItem = useCallback( ( object ) => {
-
-		return {
-			name: object.userData?.__rayzeeName || object.name || `${object.type} ${object.id}`,
-			type: object.type,
-			uuid: object.uuid,
-			geometry: object.geometry?.constructor?.name,
-			visible: object.visible ?? true,
-			// Top-level loaded models are tagged and can be removed from the scene.
-			removable: !! object.userData?.__rayzeeSceneObject,
-			children: object.children.map( child => createLayerItem( child ) ),
-		};
-
-	}, [] );
 
 	const getSceneElements = useCallback( () => {
 
@@ -562,7 +592,7 @@ const Outliner = () => {
 
 		return sceneGraph;
 
-	}, [ createLayerItem ] );
+	}, [] );
 
 	const updateLayers = useCallback( () => {
 
@@ -612,47 +642,9 @@ const Outliner = () => {
 
 	}, [ selectedObject, layers ] );
 
-	const renderFilteredLayers = useCallback( ( layers, term, filters ) => {
-
-		const isVisibleByType = ( layer ) => {
-
-			if ( layer.type === 'Scene' ) return true;
-			if ( layer.type === 'Mesh' ) return filters.Meshes;
-			if ( layer.type.includes( 'Light' ) ) return filters.Lights;
-			if ( layer.type.includes( 'Camera' ) ) return filters.Cameras;
-			if ( layer.type === 'Group' || layer.type === 'Object3D' ) return filters.Groups;
-			return true;
-
-		};
-
-		return layers.reduce( ( acc, layer ) => {
-
-			if ( ! isVisibleByType( layer ) ) return acc;
-
-			const matchesSearch = ! term ||
-          layer.name.toLowerCase().includes( term.toLowerCase() ) ||
-          layer.type.toLowerCase().includes( term.toLowerCase() );
-
-			const filteredChildren = renderFilteredLayers( layer.children, term, filters );
-
-			if ( matchesSearch || filteredChildren.length > 0 ) {
-
-				acc.push( {
-					...layer,
-					children: filteredChildren,
-				} );
-
-			}
-
-			return acc;
-
-		}, [] );
-
-	}, [] );
-
 	const filteredLayers = useMemo( () =>
-		renderFilteredLayers( layers, searchTerm, filters )
-	, [ layers, searchTerm, filters, renderFilteredLayers ] );
+		filterLayers( layers, searchTerm, filters )
+	, [ layers, searchTerm, filters ] );
 
 	const handleSearchChange = useCallback( ( e ) => {
 

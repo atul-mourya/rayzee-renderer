@@ -36,17 +36,6 @@ const DraggableInput = React.forwardRef( ( {
 	// Internal refs for tracking
 	const internalValueRef = React.useRef( currentValue );
 
-	// Sync with external value changes
-	React.useEffect( () => {
-
-		const newValue = Array.isArray( value ) ? value[ 0 ] : value;
-		const parsedValue = Number( newValue ) || 0;
-		setCurrentValue( parsedValue );
-		internalValueRef.current = parsedValue;
-		updateValueDisplay( parsedValue );
-
-	}, [ value ] );
-
 	// Helper to update display without re-rendering
 	const updateValueDisplay = ( val ) => {
 
@@ -59,6 +48,17 @@ const DraggableInput = React.forwardRef( ( {
 		}
 
 	};
+
+	// Sync with external value changes
+	React.useEffect( () => {
+
+		const newValue = Array.isArray( value ) ? value[ 0 ] : value;
+		const parsedValue = Number( newValue ) || 0;
+		setCurrentValue( parsedValue );
+		internalValueRef.current = parsedValue;
+		updateValueDisplay( parsedValue );
+
+	}, [ value ] );
 
 	// Clamp value
 	const clampValue = ( val ) => {

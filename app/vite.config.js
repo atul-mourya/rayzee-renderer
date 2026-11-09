@@ -1,5 +1,6 @@
 import path from "path";
-import react from "@vitejs/plugin-react";
+import react, { reactCompilerPreset } from "@vitejs/plugin-react";
+import babel from "@rolldown/plugin-babel";
 import tailwindcss from "@tailwindcss/vite";
 import { defineConfig } from "vite";
 // import basicSsl from '@vitejs/plugin-basic-ssl';
@@ -8,8 +9,6 @@ import process from 'process';
 import { readFileSync } from 'fs';
 const __dirname = path.resolve();
 const enginePkg = JSON.parse( readFileSync( path.resolve( __dirname, '../rayzee/package.json' ), 'utf-8' ) );
-
-const ReactCompilerConfig = {}; // Define ReactCompilerConfig
 
 export default defineConfig( {
 	envDir: path.resolve( __dirname, '..' ),
@@ -51,13 +50,8 @@ export default defineConfig( {
 		},
 		// HTTPS so WebGPU works on remote devices (requires secure context)
 		// basicSsl(),
-		react( {
-			babel: {
-			  plugins: [
-					[ "babel-plugin-react-compiler", ReactCompilerConfig ],
-			  ],
-			},
-		  } ),
+		react(),
+		babel( { include: /\/app\/src\/.*\.jsx?$/, presets: [ reactCompilerPreset() ] } ),
 		tailwindcss()
 	],
 	resolve: {

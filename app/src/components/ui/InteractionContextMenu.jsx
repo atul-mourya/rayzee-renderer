@@ -304,7 +304,7 @@ const InteractionContextMenu = () => {
 		const pt = app.stages.pathTracer;
 
 		// Apply material properties
-		/* eslint-disable react-compiler/react-compiler -- intentional Three.js object mutation, not React state */
+		/* eslint-disable react-hooks/immutability -- intentional Three.js object mutation, not React state */
 		if ( copiedMaterial.color !== undefined && material.color ) material.color.setHex( copiedMaterial.color );
 		if ( copiedMaterial.metalness !== undefined ) material.metalness = copiedMaterial.metalness;
 		if ( copiedMaterial.roughness !== undefined ) material.roughness = copiedMaterial.roughness;
@@ -336,7 +336,7 @@ const InteractionContextMenu = () => {
 		if ( copiedMaterial.emissiveMap !== undefined ) material.emissiveMap = copiedMaterial.emissiveMap;
 		if ( copiedMaterial.bumpMap !== undefined ) material.bumpMap = copiedMaterial.bumpMap;
 		if ( copiedMaterial.displacementMap !== undefined ) material.displacementMap = copiedMaterial.displacementMap;
-		/* eslint-enable react-compiler/react-compiler */
+		/* eslint-enable react-hooks/immutability */
 
 		material.needsUpdate = true;
 

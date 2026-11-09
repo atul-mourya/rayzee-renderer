@@ -4,7 +4,6 @@ import globals from 'globals';
 import react from 'eslint-plugin-react';
 import reactHooks from 'eslint-plugin-react-hooks';
 import reactRefresh from 'eslint-plugin-react-refresh';
-import reactCompiler from 'eslint-plugin-react-compiler';
 
 // console.log(mdcs)
 export default [
@@ -28,7 +27,6 @@ export default [
 			react,
 			'react-hooks': reactHooks,
 			'react-refresh': reactRefresh,
-			'react-compiler': reactCompiler,
 		},
 		rules: {
 			...js.configs.recommended.rules,
@@ -36,6 +34,10 @@ export default [
 			...react.configs.recommended.rules,
 			...react.configs[ 'jsx-runtime' ].rules,
 			...reactHooks.configs.recommended.rules,
+			// The app does not meet these yet: warn until each site is fixed.
+			'react-hooks/set-state-in-effect': 'warn',
+			'react-hooks/refs': 'warn',
+			'react-hooks/static-components': 'warn',
 			indent: [ "error", "tab", { "SwitchCase": 1 } ],
 			"react/prop-types": 0,
 			'react/jsx-no-target-blank': 'off',
@@ -43,7 +45,6 @@ export default [
 				'warn',
 				{ allowConstantExport: true },
 			],
-			'react-compiler/react-compiler': 'error',
 			// `_` marks a deliberately unused name, e.g. a positional TSL input or a forwardRef ref.
 			'no-unused-vars': [ 'warn', {
 				ignoreRestSiblings: true,
