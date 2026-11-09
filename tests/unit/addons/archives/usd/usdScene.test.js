@@ -379,6 +379,22 @@ ${extra}` ), 'wood.png': '', 'rough.png': '', 'normal.png': '', 'leather.png': '
 
 	};
 
+	it( 'tints OpenPBR and Standard Surface glass at the surface by its transmission colour, clear by default', async () => {
+
+		const glass = async ( id, inputs ) => ( await materialOf( scene( `    token outputs:mtlx:surface.connect = </mat/s.outputs:surface>
+    def Shader "s"
+    {
+        uniform token info:id = "${id}"
+        ${inputs}
+    }` ) ) ).material.color.toArray();
+
+		expect( await glass( 'ND_open_pbr_surface_surfaceshader', 'float inputs:transmission_weight = 0.5\n        color3f inputs:base_color = (1, 1, 1)\n        color3f inputs:transmission_color = (1, 0, 0)' ) ).toEqual( [ 1, 0.5, 0.5 ] );
+		expect( await glass( 'ND_standard_surface_surfaceshader', 'float inputs:transmission = 1\n        color3f inputs:base_color = (0, 0, 1)\n        color3f inputs:transmission_color = (0, 1, 0)' ) ).toEqual( [ 0, 1, 0 ] );
+		// No transmission colour: clear, whatever the base.
+		expect( await glass( 'ND_open_pbr_surface_surfaceshader', 'float inputs:transmission_weight = 1\n        color3f inputs:base_color = (0, 0, 1)' ) ).toEqual( [ 1, 1, 1 ] );
+
+	} );
+
 	it( 'reads OpenPBR, which Blender writes for its Principled BSDF, ahead of the preview surface beside it', async () => {
 
 		const { material } = await materialOf( scene( `    token outputs:mtlx:surface.connect = </mat/pbr.outputs:surface>
@@ -414,7 +430,8 @@ ${extra}` ), 'wood.png': '', 'rough.png': '', 'normal.png': '', 'leather.png': '
         color3f inputs:subsurface_radius_scale = (1, 0.2, 0.1)
     }` ) );
 
-		expect( material.color.toArray() ).toEqual( [ 0.4, 0.2, 0.1 ] );
+		// Fully transmissive with a depth: the depth's colour tints inside, and the base colour (the opaque substrate's) not at all.
+		expect( material.color.toArray() ).toEqual( [ 1, 1, 1 ] );
 		expect( [ material.metalness, material.roughness, material.ior, material.diffuseRoughness ] ).toEqual( [ 0.25, 0.35, 1.45, 0.6 ] );
 		expect( [ material.clearcoat, material.clearcoatRoughness ] ).toEqual( [ 0.5, 0.1 ] );
 		expect( [ material.sheen, ...material.sheenColor.toArray() ] ).toEqual( [ 1, 1, 0, 0 ] );
@@ -1079,6 +1096,66 @@ ${body}
 		expect( environment.texture.name ).toBe( 'sky.exr' );
 		expect( environment.intensity ).toBeCloseTo( 2 );
 		expect( environment.rotation ).toBeCloseTo( 65 );
+
+	} );
+
+	it( 'builds a _1 shape whole from odd sizes: no spine, a pointed end, a radius only the old schemas have', async () => {
+
+		// [ prim, expected box ( min, max ) about its origin ]
+		const box = async ( prim ) => {
+
+			const [ mesh ] = meshes( ( await load( { 'root.usda': usda( prim ) } ) ).group );
+			const position = mesh.geometry.getAttribute( 'position' );
+			expect( Array.from( position.array ).every( Number.isFinite ), prim ).toBe( true );
+			mesh.geometry.computeBoundingBox();
+			const b = mesh.geometry.boundingBox.clone().applyMatrix4( mesh.matrixWorld );
+			return [ ...b.min.toArray(), ...b.max.toArray() ].map( v => Math.round( v * 1e4 ) / 1e4 + 0 );
+
+		};
+
+		// No spine: the larger sphere.
+		expect( await box( 'def Capsule_1 "C" { double radiusBottom = 1\n double radiusTop = 0.5\n double height = 0 }' ) ).toEqual( [ - 1, - 1, - 1, 1, 1, 1 ] );
+		// A pointed top: its sphere is a point at the spine's end, z = 1; the bottom one R = 1 / cos( atan( 1 / 2 ) ) at −1 − 0.5.
+		const pointed = await box( 'def Capsule_1 "C" { double radiusBottom = 1\n double radiusTop = 0\n double height = 2 }' );
+		expect( pointed[ 5 ] ).toBeCloseTo( 1, 3 );
+		expect( pointed[ 2 ] ).toBeCloseTo( - 1.5 - Math.hypot( 1, 0.5 ), 3 );
+		// `radius` is Cylinder's and Capsule's; the _1 schemas fall back to their own radii.
+		expect( await box( 'def Cylinder_1 "C" { double radius = 3 }' ) ).toEqual( [ - 1, - 1, - 1, 1, 1, 1 ] );
+		expect( await box( 'def Capsule_1 "C" { double radius = 3 }' ) ).toEqual( [ - 0.5, - 0.5, - 1, 0.5, 0.5, 1 ] );
+
+	} );
+
+	it( 'stands a DomeLight_1 on its pole axis: the stage\'s up axis by default, else the one it names', async () => {
+
+		// [ stage up axis, poleAxis, rotation ]: the dome turned 25° about the up axis, or tilted.
+		const dome = async ( up, pole, rotate ) => {
+
+			const result = await load( { 'root.usda': usda( `(
+    upAxis = "${up}"
+)
+def DomeLight_1 "sky"
+{
+    asset inputs:texture:file = @./sky.exr@
+${pole ? `    uniform token poleAxis = "${pole}"\n` : ''}    float3 xformOp:rotateXYZ = ${rotate}
+    uniform token[] xformOpOrder = ["xformOp:rotateXYZ"]
+}` ), 'sky.exr': '' } );
+			return { rotation: result.environment.rotation, tilted: result.warnings.some( w => /dome light is tilted/.test( w ) ) };
+
+		};
+
+		// As the DomeLight above (Y up, 25° about Y): 65.
+		for ( const [ up, pole, rotate ] of [[ 'Z', null, '(0, 0, 25)' ], [ 'Y', null, '(0, 25, 0)' ], [ 'Z', 'scene', '(0, 0, 25)' ], [ 'Y', 'Y', '(0, 25, 0)' ], [ 'Z', 'Z', '(0, 0, 25)' ]] ) {
+
+			const { rotation, tilted } = await dome( up, pole, rotate );
+			expect( [ rotation, tilted ], `${up} up, poleAxis ${pole}` ).toEqual( [ expect.closeTo( 65, 6 ), false ] );
+
+		}
+
+		// Z: +Y goes onto +Z and +Z onto −Y, so a quarter turn back about X stands it up on a Y-up stage.
+		expect( await dome( 'Y', 'Z', '(-90, 0, 0)' ) ).toEqual( { rotation: expect.closeTo( 90, 6 ), tilted: false } );
+		expect( ( await dome( 'Y', 'Z', '(0, 0, 0)' ) ).tilted ).toBe( true );
+		// DomeLight is always +Y: on a Z-up stage, unturned, it lies on its side, as does a Y pole there.
+		expect( ( await dome( 'Z', 'Y', '(0, 0, 0)' ) ).tilted ).toBe( true );
 
 	} );
 

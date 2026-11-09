@@ -1,0 +1,72 @@
+#usda 1.0
+def Cylinder_1 "Cylinder1X" {
+        uniform token axis = "X"
+        double radiusBottom = 1
+        double radiusTop = 0.25
+        double height = 2
+        double3 xformOp:translate = (10, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+def Cylinder_1 "Cylinder1Y" {
+        uniform token axis = "Y"
+        double radiusBottom = 1
+        double radiusTop = 0.25
+        double height = 2
+        double3 xformOp:translate = (20, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+def Cylinder_1 "Cylinder1Z" {
+        uniform token axis = "Z"
+        double radiusBottom = 1
+        double radiusTop = 0.25
+        double height = 2
+        double3 xformOp:translate = (30, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+def Cylinder_1 "Cylinder1Bare" {
+        double3 xformOp:translate = (40, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+def Capsule_1 "Capsule1Bare" {
+        double3 xformOp:translate = (50, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+def Capsule_1 "Capsule1X" {
+        uniform token axis = "X"
+        double radiusBottom = 1
+        double radiusTop = 0.25
+        double height = 1
+        double3 xformOp:translate = (60, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+def Capsule_1 "Capsule1Y" {
+        uniform token axis = "Y"
+        double radiusBottom = 1
+        double radiusTop = 0.25
+        double height = 1
+        double3 xformOp:translate = (70, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+def Capsule_1 "Capsule1Z" {
+        uniform token axis = "Z"
+        double radiusBottom = 1
+        double radiusTop = 0.25
+        double height = 1
+        double3 xformOp:translate = (80, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+def Capsule_1 "Capsule1Up" {
+        double radiusBottom = 0.25
+        double radiusTop = 1
+        double height = 1
+        double3 xformOp:translate = (90, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+def Capsule_1 "Capsule1Steep" {
+        uniform token axis = "Y"
+        double radiusBottom = 2
+        double radiusTop = 0.5
+        double height = 1
+        double3 xformOp:translate = (100, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }

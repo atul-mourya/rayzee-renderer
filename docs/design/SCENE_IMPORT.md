@@ -242,7 +242,8 @@ USDLoader. Each layer is read only when composition reaches it (`USDFiles` over 
 - **Translation** (`USDScene.js`) writes the pbrt builder's IR, so USD gets its instancing, budgets, merging and curves:
   meshes (fan triangulation, `leftHanded` reversed, faceVarying primvars per corner, GeomSubset materials), BasisCurves
   (`curves` shape → `tessellateCurves`, per-vertex widths, ribbons oriented by normals), gprims (a Plane's `axis` is its
-  normal), instanceable prims and point instancers as templates (nested ones multiplied out; placements stop at the
+  normal; OpenUSD 24.05's `Cylinder_1` is a frustum, `Capsule_1` with unequal radii GeomUtil's shape: the side runs the
+  spine from one radius to the other and each end is a sphere tangent to it, so it reaches past the end radius), instanceable prims and point instancers as templates (nested ones multiplied out; placements stop at the
   budget). Material bindings resolve as UsdShade's for the full purpose: a `material:binding:full` above beats a
   `material:binding` below, `bindMaterialAs = "strongerThanDescendants"` keeps a binding below it, and a point
   instancer's prototype takes its own parents' bindings, not the instancer's (collection bindings are not read; a
@@ -272,7 +273,8 @@ USDLoader. Each layer is read only when composition reaches it (`USDFiles` over 
   `aspectRatioConformPolicy`; renderer namespaces such as `ri:` are not read), an authored `clippingRange` as the clip start
   (camera rays begin that far in front, as in Cycles), Rect/Disk/Sphere/Distant lights in the engine's
   units, and the first dome light that lights the scene as the environment: USD's lat-long centre faces +Z (OpenEXR), the
-  engine's +X, so `environmentRotation` = 90° − the dome's yaw. Light linking is ignored. Light units follow UsdLux: the
+  engine's +X, so `environmentRotation` = 90° − the dome's yaw. A `DomeLight_1` stands on its `poleAxis` (by default the
+  stage's up axis; `Z` turns DomeLight's +Y onto +Z). Light linking is ignored. Light units follow UsdLux: the
   radiance is intensity × 2^exposure, divided by the light's size when `normalize` is on (surface area; a distant light's
   π·sin²(angle / 2)), so a normalized distant light's intensity is the irradiance on a surface facing it. No 683: USD's
   nits are render units. Spots and distant lights aim down their prim's −Z. A sphere light's `radius` becomes the point
@@ -281,6 +283,21 @@ USDLoader. Each layer is read only when composition reaches it (`USDFiles` over 
   engine's light temperature (`userData.temperature`, editable apart from the colour), UsdLux's blackbody of luminance 1
   times the colour: the engine's curve is within 0.005 of OpenUSD's `BlackbodyTemperatureAsRgb` from 2300 to 10000 K.
   Not on a dome light (its hue is not applied either).
+- **Fallbacks are OpenUSD's** (`usdFallbacks.test.js`): every UsdLux light, the camera, each gprim, UsdPreviewSurface,
+  UsdUVTexture and the MaterialX OpenPBR, Standard Surface and glTF PBR surfaces read bare must translate as with every
+  input written at OpenUSD 25.08's fallback (UsdLux / UsdGeom schemas, the Sdr registry with MaterialX's library), also
+  with each zero-fallback weight turned on (glass, subsurface, coat, sheen, thin film, the specular workflow). Found
+  2026-11-08: a bare Capsule took a Cylinder's radius 1 and height 2 (OpenUSD: 0.5 and 1); UsdPreviewSurface's
+  clearcoatRoughness was 0 (0.01) and, under useSpecularWorkflow, its specularColor three's white (0: no specular head
+  on; Blender reads it so too); OpenPBR and Standard Surface glass with no transmission_color took the base colour's tint
+  (their fallback is white, clear), a subsurface with no colour the base colour (0.8 / 1 of their own), and OpenPBR's
+  subsurface_radius_scale was (1, 1, 1) (1, 0.5, 0.25). Glass tinted through its depth no longer also takes the base
+  colour at its surface: under OpenPBR the base colour is the opaque substrate's (`mtlxTransmissionColor`). Kept on
+  purpose: an unauthored clippingRange or aperture is no clip start or picture shape (the file asked for none); a
+  texture whose file is missing leaves the surface its own input (0.18 grey) where OpenUSD would use the texture node's
+  fallback (black); `wrapS`/`wrapT` `useMetadata` reads as repeat (Storm: black past the edge without file metadata);
+  an authored specularColor is a tint on the IOR's reflectance, as Blender and three read it (the spec: the reflectance
+  itself).
 - **Parts** (`listUSDParts`): past `USD_ELEMENT_PROMPT_BYTES` (1 GB of layers) the importer throws `ARCHIVE_NEEDS_ELEMENT` with
   the prims under the root's top prims that bring in sibling directories (Moana's 20 `elements/<name>`). `elementFilter`
   leaves out only the unchosen siblings, so `usd/materials/` comes along; references into them are counted, not warned.

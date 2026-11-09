@@ -9,17 +9,46 @@ import {
 	Matrix4, Quaternion, Vector3, Euler, Color, MeshPhysicalMaterial, DoubleSide, PerspectiveCamera, OrthographicCamera,
 	RectAreaLight, DirectionalLight, PointLight, SpotLight, SRGBColorSpace, NoColorSpace, RepeatWrapping,
 	ClampToEdgeWrapping, MirroredRepeatWrapping, BoxGeometry, SphereGeometry, CylinderGeometry, ConeGeometry,
-	CapsuleGeometry, PlaneGeometry,
+	CapsuleGeometry, PlaneGeometry, LatheGeometry, Vector2,
 } from 'three';
 import { cloneMaterial } from '../pbrt/PBRTSceneBuilder.js';
 
 const DEG = Math.PI / 180;
 const GRID = 1 / 255;
-const LIGHT_TYPES = new Set( [ 'RectLight', 'DiskLight', 'SphereLight', 'DistantLight', 'DomeLight', 'CylinderLight' ] );
-const GPRIMS = new Set( [ 'Sphere', 'Cube', 'Cylinder', 'Cone', 'Capsule', 'Plane' ] );
+const LIGHT_TYPES = new Set( [ 'RectLight', 'DiskLight', 'SphereLight', 'DistantLight', 'DomeLight', 'DomeLight_1', 'CylinderLight' ] );
+// The _1 versions (OpenUSD 24.05) give a cylinder or capsule a radius at each end.
+const GPRIMS = new Set( [ 'Sphere', 'Cube', 'Cylinder', 'Cone', 'Capsule', 'Plane', 'Cylinder_1', 'Capsule_1' ] );
 const SKIPPED = new Set( [ 'Material', 'Shader', 'NodeGraph', 'GeomSubset', 'Volume', 'OpenVDBAsset', 'Field3DAsset', 'SkelAnimation', 'BlendShape' ] );
 const PTEX = /\.(ptx|ptex)$/i;
 const WRAP = { repeat: RepeatWrapping, mirror: MirroredRepeatWrapping, clamp: ClampToEdgeWrapping, black: ClampToEdgeWrapping };
+
+/**
+ * UsdGeomCapsule_1 with different end radii, as OpenUSD's GeomUtil builds it: end spheres tangent to the side, round the
+ * y axis as three's capsule.
+ */
+function capsuleHull( bottom, top, height ) {
+
+	// No spine: the side has no slope to be tangent to, and the larger sphere holds the smaller.
+	if ( ! ( height > 0 ) ) return new SphereGeometry( Math.max( bottom, top ), 48, 24 );
+	const slope = ( bottom - top ) / height, cos = 1 / Math.hypot( 1, slope ), tangent = Math.atan( slope );
+	const points = [];
+	const arc = ( r, centre, from, to ) => {
+
+		const steps = r > 0 ? Math.max( 2, Math.round( ( to - from ) / Math.PI * 32 ) ) : 0;
+		for ( let i = 0; i <= steps; i ++ ) {
+
+			const a = steps ? from + ( to - from ) * i / steps : from;
+			points.push( new Vector2( Math.max( r * Math.cos( a ), 0 ), centre + r * Math.sin( a ) ) );
+
+		}
+
+	};
+
+	arc( bottom / cos, - height / 2 - bottom * slope, - Math.PI / 2, tangent );
+	arc( top / cos, height / 2 - top * slope, tangent, Math.PI / 2 );
+	return new LatheGeometry( points, 32 );
+
+}
 
 // MaterialX nodes are `ND_<node>_<types>`; the node is what a reader dispatches on.
 const MTLX_TYPES = /_(?:float|integer|boolean|string|filename|color3|color4|vector2|vector3|vector4|matrix33|matrix44|surfaceshader|BSDF|EDF)(?:FA|I|B)?(?=_|$)/;
@@ -1078,9 +1107,12 @@ export class USDSceneReader {
 
 	async gprim( prim, matrix, out, binding ) {
 
+		// UsdGeom's fallbacks: a Capsule is half a Cylinder's or Cone's size.
+		const capsule = prim.typeName.startsWith( 'Capsule' );
 		const axis = prim.value( 'axis' ) ?? 'Z';
-		const radius = prim.value( 'radius' ) ?? 1;
-		const height = prim.value( 'height' ) ?? 2;
+		const radius = prim.value( 'radius' ) ?? ( capsule ? 0.5 : 1 );
+		const height = prim.value( 'height' ) ?? ( capsule ? 1 : 2 );
+		const top = prim.value( 'radiusTop' ) ?? ( capsule ? 0.5 : 1 ), bottom = prim.value( 'radiusBottom' ) ?? ( capsule ? 0.5 : 1 );
 		let geometry;
 		switch ( prim.typeName ) {
 
@@ -1096,6 +1128,8 @@ export class USDSceneReader {
 			case 'Cylinder': geometry = new CylinderGeometry( radius, radius, height, 48 ); break;
 			case 'Cone': geometry = new ConeGeometry( radius, height, 48 ); break;
 			case 'Capsule': geometry = new CapsuleGeometry( radius, height, 8, 32 ); break;
+			case 'Cylinder_1': geometry = new CylinderGeometry( top, bottom, height, 48 ); break;
+			case 'Capsule_1': geometry = top === bottom ? new CapsuleGeometry( top, height, 8, 32 ) : capsuleHull( bottom, top, height ); break;
 			default: {
 
 				// A plane's axis is its normal: width along x (z on an x axis), length along y (z on a y axis).
@@ -1571,10 +1605,40 @@ export class USDSceneReader {
 
 	}
 
+	/** A term's value, or `dflt` when the input is not authored; a texture or primvar term stays as it is. */
+	mtlxFallback( term, dflt ) {
+
+		return term ? term.value : dflt;
+
+	}
+
+	/**
+	 * Glass's colour from OpenPBR's / Standard Surface's transmission_color and depth: at depth 0 a surface tint, deeper
+	 * the colour reached inside. The base colour belongs to the opaque substrate.
+	 */
+	mtlxTransmissionColor( mat, transmission, term, depth ) {
+
+		const color = this.mtlxFallback( term, [ 1, 1, 1 ] );
+		if ( ! Array.isArray( color ) ) return;
+		if ( depth > 0 ) {
+
+			mat.attenuationColor.setRGB( color[ 0 ], color[ 1 ], color[ 2 ] );
+			mat.attenuationDistance = depth;
+			mat.color.lerp( new Color( 1, 1, 1 ), transmission );
+
+		} else {
+
+			mat.color.lerp( new Color().setRGB( color[ 0 ], color[ 1 ], color[ 2 ] ), transmission );
+
+		}
+
+	}
+
 	async previewSurface( shader ) {
 
 		const t = name => this.term( shader, name );
-		const mat = new MeshPhysicalMaterial( { side: DoubleSide, roughness: 0.5, metalness: 0 } );
+		// UsdPreviewSurface's fallbacks where three's differ.
+		const mat = new MeshPhysicalMaterial( { side: DoubleSide, roughness: 0.5, metalness: 0, clearcoatRoughness: 0.01 } );
 		const surface = { material: mat, perMesh: null, uvSet: 'st' };
 		mat.color.setRGB( 0.18, 0.18, 0.18 );
 		await this.applyColor( mat, 'color', await t( 'diffuseColor' ), surface, 'map' );
@@ -1588,7 +1652,9 @@ export class USDSceneReader {
 		if ( ( await t( 'useSpecularWorkflow' ) )?.value === 1 ) {
 
 			mat.metalness = 0;
-			const specular = ( await t( 'specularColor' ) )?.value;
+			// Unauthored, specularColor is UsdPreviewSurface's (0, 0, 0), as Blender reads it too.
+			const term = await t( 'specularColor' );
+			const specular = term ? term.value : [ 0, 0, 0 ];
 			if ( Array.isArray( specular ) ) mat.specularColor.setRGB( specular[ 0 ], specular[ 1 ], specular[ 2 ] );
 
 		} else {
@@ -2032,19 +2098,7 @@ export class USDSceneReader {
 		if ( transmission > 0 ) {
 
 			mat.transmission = transmission;
-			const color = ( await t( 'transmission_color' ) )?.value;
-			const depth = await num( 'transmission_depth', 0 );
-			if ( Array.isArray( color ) && depth > 0 ) {
-
-				mat.attenuationColor.setRGB( color[ 0 ], color[ 1 ], color[ 2 ] );
-				mat.attenuationDistance = depth;
-
-			} else if ( Array.isArray( color ) ) {
-
-				// Without a depth the colour tints at the surface, which the engine takes from the base colour.
-				mat.color.lerp( new Color().setRGB( color[ 0 ], color[ 1 ], color[ 2 ] ), transmission );
-
-			}
+			await this.mtlxTransmissionColor( mat, transmission, await t( 'transmission_color' ), await num( 'transmission_depth', 0 ) );
 
 			const abbe = await num( 'transmission_dispersion_abbe_number', 20 );
 			const scale = await num( 'transmission_dispersion_scale', 0 );
@@ -2055,9 +2109,10 @@ export class USDSceneReader {
 		const subsurface = await num( 'subsurface_weight', 0 );
 		if ( subsurface > 0 ) {
 
-			const color = ( await t( 'subsurface_color' ) )?.value;
+			// OpenPBR's fallbacks: a colour of its own (0.8), not the base's; a radius scale of (1, 0.5, 0.25).
+			const color = this.mtlxFallback( await t( 'subsurface_color' ), [ 0.8, 0.8, 0.8 ] );
 			const radius = await num( 'subsurface_radius', 1 );
-			const scale = ( await t( 'subsurface_radius_scale' ) )?.value;
+			const scale = this.mtlxFallback( await t( 'subsurface_radius_scale' ), [ 1, 0.5, 0.25 ] );
 			mat.subsurface = subsurface;
 			mat.subsurfaceColor = Array.isArray( color ) ? new Color().setRGB( color[ 0 ], color[ 1 ], color[ 2 ] ) : mat.color.clone();
 			mat.subsurfaceRadius = Array.isArray( scale ) ? [ ...scale ] : [ 1, 1, 1 ];
@@ -2138,18 +2193,7 @@ export class USDSceneReader {
 		if ( transmission > 0 ) {
 
 			mat.transmission = transmission;
-			const color = ( await t( 'transmission_color' ) )?.value;
-			const depth = await num( 'transmission_depth', 0 );
-			if ( Array.isArray( color ) && depth > 0 ) {
-
-				mat.attenuationColor.setRGB( color[ 0 ], color[ 1 ], color[ 2 ] );
-				mat.attenuationDistance = depth;
-
-			} else if ( Array.isArray( color ) ) {
-
-				mat.color.lerp( new Color().setRGB( color[ 0 ], color[ 1 ], color[ 2 ] ), transmission );
-
-			}
+			await this.mtlxTransmissionColor( mat, transmission, await t( 'transmission_color' ), await num( 'transmission_depth', 0 ) );
 
 			const abbe = await num( 'transmission_dispersion', 0 );
 			if ( abbe > 0 ) mat.dispersion = 20 / abbe;
@@ -2159,7 +2203,7 @@ export class USDSceneReader {
 		const subsurface = await num( 'subsurface', 0 );
 		if ( subsurface > 0 ) {
 
-			const color = ( await t( 'subsurface_color' ) )?.value;
+			const color = this.mtlxFallback( await t( 'subsurface_color' ), [ 1, 1, 1 ] );
 			const radius = ( await t( 'subsurface_radius' ) )?.value;
 			mat.subsurface = subsurface;
 			mat.subsurfaceColor = Array.isArray( color ) ? new Color().setRGB( color[ 0 ], color[ 1 ], color[ 2 ] ) : mat.color.clone();
@@ -2639,14 +2683,17 @@ export class USDSceneReader {
 		const radiance = read( 'intensity', type === 'DistantLight' ? 50000 : 1 ) * 2 ** read( 'exposure', 0 );
 		// UsdLux: the colour times a blackbody's of luminance 1, 1000–10000 K.
 		const temperature = read( 'enableColorTemperature', false ) ? Math.min( Math.max( read( 'colorTemperature', 6500 ), 1000 ), 10000 ) : null;
-		if ( prim.propertyNames().some( name => name.startsWith( 'collection:lightLink' ) || name.startsWith( 'collection:shadowLink' ) ) && type !== 'DomeLight' ) {
+		if ( prim.propertyNames().some( name => name.startsWith( 'collection:lightLink' ) || name.startsWith( 'collection:shadowLink' ) ) && ! type.startsWith( 'DomeLight' ) ) {
 
 			this.warnOnce( 'linking', 'USD light linking is not supported — every light lights everything' );
 
 		}
 
-		if ( type === 'DomeLight' ) {
+		if ( type === 'DomeLight' || type === 'DomeLight_1' ) {
 
+			// DomeLight's pole is its +Y; DomeLight_1's is poleAxis, the stage's up axis by default: Z turns +Y onto +Z.
+			const pole = type === 'DomeLight_1' ? prim.value( 'poleAxis' ) ?? 'scene' : 'Y';
+			if ( ( pole === 'scene' ? this.stage.upAxis : pole ) === 'Z' ) matrix = matrix.clone().multiply( new Matrix4().makeRotationX( Math.PI / 2 ) );
 			if ( temperature !== null ) this.warnOnce( 'temperature', 'USD dome light colour temperature is not applied' );
 			const file = prim.assetPath( 'inputs:texture:file' ) ?? prim.assetPath( 'texture:file' );
 			const excludes = prim.targets( 'collection:lightLink:excludes' );
