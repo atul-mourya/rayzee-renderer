@@ -40,6 +40,7 @@ import { readPixels } from '../output/TextureReadback.js';
 import { ISSUE_CODES } from '../EngineIssues.js';
 import { createLogger, fmt } from '../Logger.js';
 import { deviceMemoryGB } from '../memory/HostMemory.js';
+import { MIN_TRAVERSAL_STACK } from '../bvh/TraversalStack.js';
 
 const log = createLogger( 'wavefront' );
 
@@ -461,6 +462,13 @@ export class PathTracer extends PathTracerStage {
 
 	}
 
+	/** The stack the traversal is built with for the uploaded tree (PathTracerStage.setBVHData). */
+	_stackNeeded() {
+
+		return this.bvhStorageAttr?.traversalStack ?? MIN_TRAVERSAL_STACK;
+
+	}
+
 	/** Whether the fog is compiled in: it has a density, under the path integrator. */
 	_fogNeeded() {
 
@@ -514,6 +522,8 @@ export class PathTracer extends PathTracerStage {
 		if ( PICKED_SHADOW_RAYS.includes( this._shadowRays ) && this._pickedShadowRays() !== this._compiledPick ) this._outputsChanged = true;
 		if ( this._lightRadiusNeeded() !== this._compiledLightRadius ) this._outputsChanged = true;
 		if ( this._fogNeeded() !== this._compiledFog ) this._outputsChanged = true;
+		// A tree deeper than the stack compiled (an added object, a rebuilt BLAS) grows it; a shallower one waits.
+		if ( this._stackNeeded() > this._compiledStack ) this._outputsChanged = true;
 
 		if ( this._lightBufferRealloc || this._outputsChanged ) {
 
@@ -1965,6 +1975,7 @@ export class PathTracer extends PathTracerStage {
 			} : null,
 		};
 		this._compiledFog = resources.fog !== null;
+		this._compiledStack = this._stackNeeded();
 		const own = ( call ) => withSceneResources( call, resources );
 		const freshEnvTex = _env.environmentTexture ? texture( _env.environmentTexture ) : texNodes.envTex;
 

@@ -464,7 +464,14 @@ The STBN blue-noise atlases were removed in 9.2.0; no live code path read them.
 ## BVH Traversal (`BVHTraversal.js`)
 
 Highlights:
-- Iterative explicit stack (`MAX_STACK_DEPTH`, 32); two-level dispatch (TLAS → BLAS).
+- Iterative explicit stack, sized for the tree (`bvh/TraversalStack.js`): a push past its end is dropped, and with it
+  the nearer child's geometry. `setBVHData` records the deepest the stack can get on any ray (`traversalStackNeed`: an
+  inner node max(2, 1 + each child's), a BLAS-pointer leaf its root's, a cluster of k copies k − 1 + its deepest
+  root's; children follow parents, so one sweep from the end), rounded up to 8 within [40, 128] (64 for a tree with
+  chunks on disk); the kernels build with it, and grow it when a later tree needs more. Scenes within 40 keep the
+  kernels they had. Measured 2026-11-08: 24155522 38, San Miguel 40, bistro-night 44, kroken 42, zero-day 43, landscape
+  53 — a worst case: bistro-night and landscape rendered identically at 40 and at their size (no pixel differed, 384²,
+  16–32 spp), at the same speed. Sweep 6–10 ns a node. Two-level dispatch (TLAS → BLAS).
 - Inner nodes store both child AABBs + child indices (4 reads, no separate child fetches).
 - Early pruning: compare child-bound min distance against the current closest hit; the far child is pushed first.
 - Per-mesh visibility: at a BLAS-pointer leaf the visibility flag (slot `[2]`) is checked before pushing the BLAS root — an entire hidden mesh's BLAS is skipped. There is no separate visibility buffer.

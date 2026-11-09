@@ -22,6 +22,7 @@ import { LightSerializer } from '../lights/LightSerializer';
 // Constants
 import { ENGINE_DEFAULTS as DEFAULT_STATE } from '../EngineDefaults.js';
 import { TRIANGLE_DATA_LAYOUT, CLUSTER_COPY_HIDDEN, bvhIndexView } from '../scene/BufferLayout.js';
+import { traversalStackSize } from '../bvh/TraversalStack.js';
 import { TRI_GEO_ROWS, TRI_SHADE_ROWS, splitStorage } from '../shaders/Common.js';
 import { createLogger, fmt } from '../Logger.js';
 
@@ -985,6 +986,7 @@ export class PathTracerStage extends RenderStage {
 		this.bvhStorageAttr = attrs[ 0 ];
 		this.bvhStorageAttr.foldedLeaves = bvhImageData.foldedLeaves === true;
 		this.bvhStorageAttr.copyRecordBase = bvhImageData.copyRecordBase;
+		this.remeasureTraversalStack( bvhImageData );
 		this._bvhParts = parts;
 		this._bvhRecords = chunked;
 		if ( chunked ) this._uploadChunked( parts, chunked );
@@ -1292,6 +1294,13 @@ export class PathTracerStage extends RenderStage {
 	 * @param {Object} [bvhData]
 	 * @param {Array<{offset:number,count:number}>} [ranges] - only these, in floats; every node when omitted
 	 */
+	/** The stack the traversal needs for the tree as it now stands; the kernels grow theirs at the next frame. */
+	remeasureTraversalStack( bvhData ) {
+
+		if ( this.bvhStorageAttr ) this.bvhStorageAttr.traversalStack = traversalStackSize( bvhData );
+
+	}
+
 	updateBVHData( bvhData, ranges ) {
 
 		if ( this._bvhRecords ) {

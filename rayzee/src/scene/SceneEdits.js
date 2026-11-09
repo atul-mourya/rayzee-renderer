@@ -33,6 +33,8 @@ export function refitBLASes( app, affectedMeshIndices, newPositions, newNormals 
 		// re-upload here is gigabytes on a large scene, for one mesh's worth of change.
 		const dirty = app._sdf.computeBLASDirtyRanges( [ meshIndex ] );
 		app.stages.pathTracer.updateBufferRanges( dirty.triRanges, dirty.bvhRanges );
+		// The rebuilt tree may be deeper than the one it replaced.
+		app.stages.pathTracer.remeasureTraversalStack( app._sdf.bvh );
 		app.reset( false, { motion: true } );
 
 	} );

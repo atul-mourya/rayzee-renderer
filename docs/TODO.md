@@ -17,7 +17,7 @@
   pbrt Film `whitebalance` is unread too.
 - [ ] Coat darkening (OpenPBR `coat_darkening`), on its own and done properly: reverted (was 8f9e51f3, b119e0b1) — it
   darkened many scenes and brought artifacts. pbrt coateddiffuse's Lambertian base (no specular of its own) went with it.
-- [ ] dynamic max stack in bvhtraversal
+- [x] dynamic max stack in bvhtraversal: sized per tree (`bvh/TraversalStack.js`, 2026-11-08; 40 up, landscape 56)
 - [ ] https://github.com/DennisSmolek/Fsr3 - branch already created
 - [ ] tiled output for lower vram — Blender Cycles-style render-region tiling; VRAM-bounded 4K/8K final render + video. See docs/internal/specs/wavefront-tiled-output.md
 

@@ -21,6 +21,7 @@ function makeApp( { sdf = {}, pathTracer = {} } = {} ) {
 				updateTriangleData: log( 'triangles' ),
 				updateBVHData: log( 'bvh' ),
 				updateBufferRanges: log( 'ranges' ),
+				remeasureTraversalStack: log( 'stack' ),
 				setEmissiveTriangleData: log( 'emissive' ),
 				setLightBVHData: log( 'lightBVH' ),
 				updateMeshVisibility: log( 'meshVisibility' ),
@@ -106,8 +107,10 @@ describe( 'refitting geometry', () => {
 
 		app.calls.length = 0;
 		onSwap( 5 );
+		// The rebuilt tree may need a deeper traversal stack than the one it replaced.
 		expect( app.calls ).toEqual( [
 			[ 'ranges', [[ 'tri', 5 ]], [[ 'node', 5 ]]],
+			[ 'stack', 'bvh store' ],
 			[ 'reset', false, { motion: true } ],
 		] );
 

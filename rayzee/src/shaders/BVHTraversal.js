@@ -34,8 +34,8 @@ import { HitInfo } from './Struct.js';
 import {
 	getDatafromStorageBuffer, storageRows, instanceRows, instanceNormalToWorld, unpackTriangleNormal, triangleRow, shadowFlagsSettle
 } from './Common.js';
+import { MIN_TRAVERSAL_STACK } from '../bvh/TraversalStack.js';
 
-const MAX_STACK_DEPTH = 40;
 // Hang guard only — tripping it reports a MISS, which the shade kernel pays out as
 // full-intensity environment. San Miguel needs ~1024; cost is flat from 1024 up.
 const MAX_BVH_ITERATIONS = 4096;
@@ -49,7 +49,9 @@ const HUGE_VAL = 1e8;
 // STACK HELPERS (Native WGSL array via TSL ArrayNode)
 // ================================================================================
 
-const createStack = () => array( 'int', MAX_STACK_DEPTH ).toVar();
+// Sized for the tree it walks (bvh/TraversalStack.js): a push past the end drops the nearer child.
+const stackDepthOf = ( bvhBuffer ) => bvhBuffer.value?.traversalStack ?? MIN_TRAVERSAL_STACK;
+const createStack = ( depth ) => array( 'int', depth ).toVar();
 
 // Row k of BVH node `nodeIndex`. One buffer reads each row where it is used; over parts, `rows` are read in one branch.
 const nodeRows = ( bvhBuffer, nodeIndex, rows = [ 0, 1, 2, 3 ] ) => {
@@ -100,7 +102,7 @@ const toObjectDir = ( rows, d ) => vec3(
 // Compare-swaps sorting up to four ascending.
 const SORT_NETWORKS = [[], [], [[ 0, 1 ]], [[ 0, 1 ], [ 1, 2 ], [ 0, 1 ]], [[ 0, 1 ], [ 2, 3 ], [ 0, 2 ], [ 1, 3 ], [ 1, 2 ]]];
 
-const pushHitCopies = ( node, nodeIndex, nodeData0, origin, invDir, stack, stackPtr, limit ) => {
+const pushHitCopies = ( node, nodeIndex, nodeData0, origin, invDir, stack, stackPtr, limit, stackDepth ) => {
 
 	const d1 = node( 1 );
 	const d2 = node( 2 );
@@ -138,7 +140,7 @@ const pushHitCopies = ( node, nodeIndex, nodeData0, origin, invDir, stack, stack
 
 	for ( let k = CLUSTER_SIZE - 1; k >= 0; k -- ) {
 
-		If( dist[ k ].lessThan( limit ).and( stackPtr.lessThan( int( MAX_STACK_DEPTH ) ) ), () => {
+		If( dist[ k ].lessThan( limit ).and( stackPtr.lessThan( int( stackDepth ) ) ), () => {
 
 			stack.element( stackPtr ).assign( int( uint( COPY_ENTRY ).bitOr( uint( nodeIndex ).shiftLeft( uint( 2 ) ) ).bitOr( uint( slot[ k ] ) ) ) );
 			stackPtr.addAssign( 1 );
@@ -348,7 +350,8 @@ const makeTraverseBVH = ( trackStats ) => Fn( ( [
 	const closestV = float( 0.0 ).toVar();
 
 	// Stack (native WGSL array — O(1) read/write)
-	const stack = createStack();
+	const stackDepth = stackDepthOf( bvhBuffer );
+	const stack = createStack( stackDepth );
 	const stackPtr = int( 1 ).toVar();
 	stack.element( int( 0 ) ).assign( int( 0 ) ); // Root node
 
@@ -518,14 +521,14 @@ const makeTraverseBVH = ( trackStats ) => Fn( ( [
 
 				} ).Else( clustered ? () => {
 
-					pushHitCopies( node, nodeIndex, nodeData0, worldOrigin, worldInvDir, stack, stackPtr, closestHit.dst );
+					pushHitCopies( node, nodeIndex, nodeData0, worldOrigin, worldInvDir, stack, stackPtr, closestHit.dst, stackDepth );
 
 				} : () => {
 
 					// BLAS-pointer leaf — enter the instance if the mesh is visible.
 					// nodeData0: [blasRootNodeIndex, meshIndex, visibility, -2]; slots 4..15 hold
 					// the world-to-object matrix. Visibility is free-fetched with the leaf.
-					If( nodeData0.z.greaterThan( 0.5 ).and( stackPtr.lessThan( int( MAX_STACK_DEPTH ) ) ), () => {
+					If( nodeData0.z.greaterThan( 0.5 ).and( stackPtr.lessThan( int( stackDepth ) ) ), () => {
 
 						// A baked placement already sits in world space; only a transformed one moves the ray.
 						If( floatBitsToUint( nodeData0.y ).bitAnd( uint( TLAS_LEAF_IDENTITY ) ).equal( uint( 0 ) ), () => {
@@ -582,7 +585,7 @@ const makeTraverseBVH = ( trackStats ) => Fn( ( [
 					const aCloser = dstA.lessThan( dstB );
 
 					// Push far child first (processed last)
-					If( select( aCloser, dstB, dstA ).lessThan( closestHit.dst ).and( stackPtr.lessThan( int( MAX_STACK_DEPTH ) ) ), () => {
+					If( select( aCloser, dstB, dstA ).lessThan( closestHit.dst ).and( stackPtr.lessThan( int( stackDepth ) ) ), () => {
 
 						stack.element( stackPtr ).assign( select( aCloser, rightChild, leftChild ) );
 						stackPtr.addAssign( 1 );
@@ -590,7 +593,7 @@ const makeTraverseBVH = ( trackStats ) => Fn( ( [
 					} );
 
 					// Push near child second (processed first)
-					If( stackPtr.lessThan( int( MAX_STACK_DEPTH ) ), () => {
+					If( stackPtr.lessThan( int( stackDepth ) ), () => {
 
 						stack.element( stackPtr ).assign( select( aCloser, leftChild, rightChild ) );
 						stackPtr.addAssign( 1 );
@@ -694,7 +697,8 @@ const makeTraverseBVHShadow = ( cameraCulled ) => Fn( ( [
 		triTests: int( 0 ),
 	} ).toVar();
 
-	const stack = createStack();
+	const stackDepth = stackDepthOf( bvhBuffer );
+	const stack = createStack( stackDepth );
 	const stackPtr = int( 1 ).toVar();
 	stack.element( int( 0 ) ).assign( int( 0 ) );
 
@@ -849,12 +853,12 @@ const makeTraverseBVHShadow = ( cameraCulled ) => Fn( ( [
 
 				} ).Else( clustered ? () => {
 
-					pushHitCopies( node, nodeIndex, nodeData0, worldOrigin, worldInvDir, stack, stackPtr, closestHit.dst );
+					pushHitCopies( node, nodeIndex, nodeData0, worldOrigin, worldInvDir, stack, stackPtr, closestHit.dst, stackDepth );
 
 				} : () => {
 
 					// BLAS-pointer leaf — enter the instance if the mesh is visible.
-					If( nodeData0.z.greaterThan( 0.5 ).and( stackPtr.lessThan( int( MAX_STACK_DEPTH ) ) ), () => {
+					If( nodeData0.z.greaterThan( 0.5 ).and( stackPtr.lessThan( int( stackDepth ) ) ), () => {
 
 						// A baked placement already sits in world space; only a transformed one moves the ray.
 						If( floatBitsToUint( nodeData0.y ).bitAnd( uint( TLAS_LEAF_IDENTITY ) ).equal( uint( 0 ) ), () => {
@@ -912,7 +916,7 @@ const makeTraverseBVHShadow = ( cameraCulled ) => Fn( ( [
 					const aCloser = dstA.lessThan( dstB );
 
 					// Push far child first (processed last)
-					If( select( aCloser, dstB, dstA ).lessThan( closestHit.dst ).and( stackPtr.lessThan( int( MAX_STACK_DEPTH ) ) ), () => {
+					If( select( aCloser, dstB, dstA ).lessThan( closestHit.dst ).and( stackPtr.lessThan( int( stackDepth ) ) ), () => {
 
 						stack.element( stackPtr ).assign( select( aCloser, rightChild, leftChild ) );
 						stackPtr.addAssign( 1 );
@@ -920,7 +924,7 @@ const makeTraverseBVHShadow = ( cameraCulled ) => Fn( ( [
 					} );
 
 					// Push near child second (processed first)
-					If( stackPtr.lessThan( int( MAX_STACK_DEPTH ) ), () => {
+					If( stackPtr.lessThan( int( stackDepth ) ), () => {
 
 						stack.element( stackPtr ).assign( select( aCloser, leftChild, rightChild ) );
 						stackPtr.addAssign( 1 );
