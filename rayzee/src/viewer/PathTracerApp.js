@@ -6,7 +6,7 @@ import { NRD } from './denoise/NRD.js';
 import { AutoExposure, AUTO_EXPOSURE_DEFAULTS } from './picture/AutoExposure.js';
 import { LocalExposure, LOCAL_EXPOSURE_DEFAULTS } from './picture/LocalExposure.js';
 import { backdropGain } from '../output/ToneMapCPU.js';
-import { PRODUCTION_RENDER_CONFIG, INTERACTIVE_RENDER_CONFIG, modePresetSettings } from '../EngineDefaults.js';
+import { PRODUCTION_RENDER_CONFIG, INTERACTIVE_RENDER_CONFIG, modePresetSettings, CAMERA_PROJECTION_IDS, isPanoramaProjection } from '../EngineDefaults.js';
 import { createLogger } from '../Logger.js';
 import { EngineEvents } from '../EngineEvents.js';
 import { ISSUE_CODES } from '../EngineIssues.js';
@@ -332,7 +332,7 @@ export class PathTracerApp extends RayzeeRenderer {
 				this.cameraManager.applyProjection( value );
 				// MotionVector unprojects through projectionMatrixInverse, which is meaningless once every pixel is its
 				// own direction: hand the view to OIDN, which needs none, rather than leaving no denoiser.
-				if ( value === 'equirectangular' && this.denoisingManager?.requiresMotionVectors ) this.denoisingManager.setDenoiserStrategy( 'oidn' );
+				if ( isPanoramaProjection( CAMERA_PROJECTION_IDS[ value ] ) && this.denoisingManager?.requiresMotionVectors ) this.denoisingManager.setDenoiserStrategy( 'oidn' );
 				// OIDN's motion history is off in a panorama and back on outside one.
 				else this.denoisingManager?._syncGBufferStages?.();
 

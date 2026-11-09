@@ -1,7 +1,7 @@
 import { EventDispatcher, MathUtils, Matrix4, OrthographicCamera, PerspectiveCamera, Quaternion, Vector3 } from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { EngineEvents, } from '../../EngineEvents.js';
-import { CAMERA_PROJECTION_IDS } from '../../EngineDefaults.js';
+import { isPanoramaProjection } from '../../EngineDefaults.js';
 import { viewDepth } from './InteractionManager.js';
 import { ViewCamera, mirrorSign } from '../../scene/ViewCamera.js';
 import { WalkControls } from './WalkControls.js';
@@ -448,7 +448,7 @@ export class CameraManager extends EventDispatcher {
 	/**
 	 * The camera's side of the `cameraProjection` setting: set that, not this. Turning orthographic
 	 * keeps what the view shows at the orbit target, and turning back moves the camera to keep it.
-	 * @param {'perspective' | 'orthographic' | 'equirectangular'} projection
+	 * @param {'perspective' | 'orthographic' | 'equirectangular' | 'equalArea'} projection
 	 */
 	applyProjection( projection ) {
 
@@ -875,7 +875,7 @@ export class CameraManager extends EventDispatcher {
 		// A panorama pauses it too: Raycaster.setFromCamera only knows a frustum.
 		// Re-snap on the frame it resumes so focus is correct immediately
 		// rather than racking from a stale smoothed value.
-		if ( ! pathTracer?.enableDOF?.value || pathTracer.cameraProjection?.value === CAMERA_PROJECTION_IDS.equirectangular ) {
+		if ( ! pathTracer?.enableDOF?.value || isPanoramaProjection( pathTracer.cameraProjection?.value ) ) {
 
 			this._afSuspended = true;
 			return;

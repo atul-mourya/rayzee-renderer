@@ -185,7 +185,11 @@ describe( 'DenoisingManager — NRD strategy', () => {
 
 	} );
 
-	it( 'runs OIDN when NRD is asked for in a panorama', () => {
+	it( 'runs OIDN when NRD is asked for in a panorama, lat-long or equal-area', () => {
+
+		stages.pathTracer.uniforms = { get: ( k ) => ( k === 'cameraProjection' ? { value: CAMERA_PROJECTION_IDS.equalArea } : undefined ) };
+		manager.setDenoiserStrategy( 'nrd', 'medium' );
+		expect( manager.denoiserStrategy ).toBe( 'oidn' );
 
 		stages.pathTracer.uniforms = { get: ( k ) => ( k === 'cameraProjection' ? { value: CAMERA_PROJECTION_IDS.equirectangular } : undefined ) };
 

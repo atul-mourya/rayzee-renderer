@@ -3,12 +3,11 @@ import { StorageBufferAttribute } from 'three/webgpu';
 import { Matrix4 } from 'three';
 import { Ray, HitInfo, RayTracingMaterial, UVCache } from '../Struct.js';
 import { traverseBVH } from '../BVHTraversal.js';
-import { cameraRayOf, cameraRayUniforms, cameraClipDistance } from '../CameraRay.js';
+import { cameraRayOf, cameraRayUniforms, cameraClipDistance, isPanorama } from '../CameraRay.js';
 import { getMaterial, offsetRayOrigin } from '../Common.js';
 import { KernelManager } from '../../pathtracer/KernelManager.js';
 import { computeUVCache, processAlbedo, buildBucketTextureNodes } from '../TextureSampling.js';
 import { withSceneResources } from '../SceneResources.js';
-import { CAMERA_PROJECTION_IDS } from '../../EngineDefaults.js';
 
 /** Where nothing was hit, as Cycles writes its depth pass. */
 const DEPTH_BACKGROUND = 1e10;
@@ -83,7 +82,7 @@ export class DepthPass {
 	_kernel( { bvh, triangles }, materials, out ) {
 
 		const { width, height, cameraRay } = this;
-		const panorama = cameraRay.cameraProjection.equal( int( CAMERA_PROJECTION_IDS.equirectangular ) );
+		const panorama = isPanorama( cameraRay.cameraProjection );
 
 		// mat4 uniforms as Fn parameters, so TSL indexes them.
 		return Fn( ( [ camWorld, camProjInv ] ) => {

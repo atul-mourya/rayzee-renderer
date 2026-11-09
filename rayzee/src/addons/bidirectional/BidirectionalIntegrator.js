@@ -527,6 +527,8 @@ export class BidirectionalIntegrator {
 		let slope = 0, constant = 0;
 		if ( projection === CAMERA_PROJECTION_IDS.orthographic ) constant = pixels * 2 / ( p[ 5 ] * h );
 		else if ( projection === CAMERA_PROJECTION_IDS.equirectangular ) slope = pixels * 2 * Math.PI / w;
+		// An equal-area pixel subtends 4π / ( w h ) whatever its place.
+		else if ( projection === CAMERA_PROJECTION_IDS.equalArea ) slope = pixels * Math.sqrt( 4 * Math.PI / ( w * h ) );
 		else slope = pixels * Math.sqrt( bd.pixelArea.value );
 		bd.mergeSlope.value = Math.min( slope, 0.1 );
 		bd.mergeConst.value = constant;

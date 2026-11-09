@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import { useCameraStore, usePathTracerStore } from '@/store';
-import { isPanorama } from '@/Constants';
+import { seesAllAround } from '@/Constants';
 
 const AutoFocusOverlay = ( { containerRef } ) => {
 
@@ -8,7 +8,7 @@ const AutoFocusOverlay = ( { containerRef } ) => {
 	const enableDOF = useCameraStore( state => state.enableDOF );
 	const afScreenPoint = useCameraStore( state => state.afScreenPoint );
 	const handleAFScreenPointChange = useCameraStore( state => state.handleAFScreenPointChange );
-	const panorama = usePathTracerStore( state => isPanorama( state.cameraProjection ) );
+	const panorama = usePathTracerStore( state => seesAllAround( state.cameraProjection ) );
 
 	const [ isDragging, setIsDragging ] = useState( false );
 	const dragContainerRef = useRef( null );

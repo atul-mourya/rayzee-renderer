@@ -131,7 +131,9 @@ subtree per element, and the whole thing rarely fits: Moana is 29 GB unpacked.
   `panoramaLevelHorizon` false): pbrt's image starts at camera +x and turns towards +z, row 0 up, in the camera's own
   frame; against pbrt-v4's own render of a box of six coloured lights (level, tilted, mirrored by `Scale -1 1 1`) 41–55
   of 8,192 pixels see another face, all on edges, where a 3° turn gives 187 (`tests/gpu/panoramaFraming.test.js` holds
-  the mapping to pbrt's formula). Its default `equalarea` square is drawn as that lat-long and reported. Posing the
+  the mapping to pbrt's formula). Its default `equalarea` square asks for the engine's equal-area projection
+  (`cameraProjection: 'equalArea'`, `tests/gpu/equalAreaPanorama.test.js`; against pbrt's render of the same box 90 of
+  9,216 pixels differ, on the map's long curved edges). Posing the
   camera to face the image's middle would keep the full −180…180 range, but a pitched camera's tilt becomes a roll there,
   which the orbit controls drop. The engine applies none of it; the app opens the scene at that shape with that
   integrator, path regularization and panorama, and shows the bounces and samples in Final Render. It leaves sppm's radius: see BIDIRECTIONAL.md, vertex merging's radius.

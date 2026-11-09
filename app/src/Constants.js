@@ -401,6 +401,8 @@ export function computeCanvasDimensions( resolution, aspectPreset, orientation, 
 }
 
 export const isPanorama = projection => projection === 'equirectangular';
+/** Every way at once: the lat-long panorama (locked to 2:1) or pbrt's equal-area square (a scene's request only). */
+export const seesAllAround = projection => isPanorama( projection ) || projection === 'equalArea';
 export const isOrthographic = projection => projection === 'orthographic';
 
 /**

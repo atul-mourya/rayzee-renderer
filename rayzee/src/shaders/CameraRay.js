@@ -14,7 +14,7 @@
 
 import {
 	Fn, vec3, vec4, float, int, uniform,
-	If, normalize, mat3, mix, sin, cos, cross, dot, select, max,
+	If, normalize, mat3, mix, sin, cos, cross, dot, select, max, abs, sqrt,
 } from 'three/tsl';
 import { Vector2 } from 'three';
 
@@ -24,9 +24,12 @@ import { RandomPointInCircle } from './Random.js';
 import { CAMERA_PROJECTION_IDS } from '../EngineDefaults.js';
 
 const PANORAMA = int( CAMERA_PROJECTION_IDS.equirectangular );
+const EQUAL_AREA = int( CAMERA_PROJECTION_IDS.equalArea );
 const ORTHOGRAPHIC = int( CAMERA_PROJECTION_IDS.orthographic );
 
 export const isOrthographic = cameraProjection => cameraProjection.equal( ORTHOGRAPHIC );
+/** Every pixel its own direction: the lat-long or the equal-area panorama. */
+export const isPanorama = cameraProjection => cameraProjection.equal( PANORAMA ).or( cameraProjection.equal( EQUAL_AREA ) );
 
 /**
  * The projection uniforms a stage re-tracing the path tracer's primary rays needs. `sync` copies the path
@@ -77,7 +80,7 @@ export const cameraRayPoint = ( uv01, distance, cameraWorldMatrix, cameraProject
  * sphere for a panorama). Camera rays start there, so a camera can see through a wall behind it.
  */
 export const cameraClipDistance = ( direction, clipStart, cameraWorldMatrix, cameraProjection ) => select(
-	cameraProjection.equal( PANORAMA ), clipStart,
+	isPanorama( cameraProjection ), clipStart,
 	clipStart.div( max( dot( direction, normalize( vec3( cameraWorldMatrix[ 2 ] ) ) ).negate(), 1e-4 ) )
 );
 
@@ -148,6 +151,24 @@ const cameraRayDirection = Fn( ( [
 				.sub( back.mul( cos( lon ).mul( cosLat ) ) )
 		) );
 
+	} ).ElseIf( cameraProjection.equal( EQUAL_AREA ), () => {
+
+		// pbrt-v4's spherical camera, `equalarea`: EqualAreaSquareToSphere, its z the camera's up (pbrt swaps y and z),
+		// in the camera's own frame — right, up and forward as the image shows them.
+		const u = uv01.x.mul( 2.0 ).sub( 1.0 ), v = uv01.y.mul( 2.0 ).sub( 1.0 );
+		const signedDistance = float( 1.0 ).sub( abs( u ).add( abs( v ) ) );
+		const r = float( 1.0 ).sub( abs( signedDistance ) );
+		const phi = select( r.equal( 0.0 ), float( 1.0 ), abs( v ).sub( abs( u ) ).div( r ).add( 1.0 ) ).mul( Math.PI / 4 );
+		const up = select( signedDistance.lessThan( 0.0 ), r.mul( r ).sub( 1.0 ), float( 1.0 ).sub( r.mul( r ) ) );
+		const ring = r.mul( sqrt( max( float( 2.0 ).sub( r.mul( r ) ), 0.0 ) ) );
+		const x = select( u.lessThan( 0.0 ), cos( phi ).negate(), cos( phi ) ).mul( ring );
+		const forward = select( v.lessThan( 0.0 ), sin( phi ).negate(), sin( phi ) ).mul( ring );
+		direction.assign( normalize(
+			normalize( vec3( cameraWorldMatrix[ 0 ] ) ).mul( x )
+				.add( normalize( vec3( cameraWorldMatrix[ 1 ] ) ).mul( up ) )
+				.sub( normalize( vec3( cameraWorldMatrix[ 2 ] ) ).mul( forward ) )
+		) );
+
 	} ).ElseIf( isOrthographic( cameraProjection ), () => {
 
 		direction.assign( normalize( vec3( cameraWorldMatrix[ 2 ] ) ).negate() );
@@ -193,7 +214,8 @@ export const generateRayFromCamera = Fn( ( [
 
 		// Orthographic 1: the blur then does not change with where the camera stands.
 		const halfViewHeight = select( cameraProjection.equal( PANORAMA ), panoLatRange.y.sub( panoLatRange.x ).mul( 0.5 ),
-			select( isOrthographic( cameraProjection ), float( 1.0 ), cameraProjectionMatrixInverse[ 1 ].y ) );
+			select( cameraProjection.equal( EQUAL_AREA ), float( Math.PI / 2 ),
+				select( isOrthographic( cameraProjection ), float( 1.0 ), cameraProjectionMatrixInverse[ 1 ].y ) ) );
 		const apertureRadius = select( lookMode,
 			// A far background blurs by dofBlur of the image height, whatever the scene's scale.
 			dofBlur.mul( focusDistance ).mul( halfViewHeight ),
@@ -209,7 +231,7 @@ export const generateRayFromCamera = Fn( ( [
 		const lensOffset = vec3( 0.0 ).toVar();
 		const focusAlongRay = focusDistance.toVar();
 
-		If( cameraProjection.equal( PANORAMA ), () => {
+		If( isPanorama( cameraProjection ), () => {
 
 			// Every pixel points a different way, so the lens plane is built around the ray. The
 			// camera's right/up would skew bokeh into a slit away from the image centre.

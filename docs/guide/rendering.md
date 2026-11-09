@@ -59,7 +59,7 @@ Key settings:
 | `renderMode` | `number` | 0 | Internal preview(0)/production(1) flag driving accumulation & denoiser history — normally set via `configureForMode()`, not written directly |
 | `visMode` | `number` | 0 | Debug visualization mode (0 = off) |
 | `environmentMode` | `string` | 'hdri' | Sky mode: `'hdri'` \| `'procedural'` \| `'color'` — not routed through `engine.settings`; use `engine.environmentManager.setMode()` instead |
-| `cameraProjection` | `string` | 'perspective' | `'perspective'` \| `'orthographic'` \| `'equirectangular'` — see [Camera Projection](scenes.md#camera-projection-orthographic-360-panorama) |
+| `cameraProjection` | `string` | 'perspective' | `'perspective'` \| `'orthographic'` \| `'equirectangular'` \| `'equalArea'` (pbrt's square) — see [Camera Projection](scenes.md#camera-projection-orthographic-360-panorama) |
 | `panoramaLonRange` | `[number, number]` | `[-180, 180]` | Panorama longitude sweep, degrees, left→right |
 | `panoramaLatRange` | `[number, number]` | `[-90, 90]` | Panorama latitude sweep, degrees, bottom→top |
 | `panoramaLevelHorizon` | `boolean` | true | Yaw-only panorama basis, so orbit pitch/roll can't tilt the horizon |

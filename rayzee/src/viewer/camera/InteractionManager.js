@@ -7,7 +7,7 @@ import {
 	Vector3
 } from 'three';
 import { EngineEvents } from '../../EngineEvents.js';
-import { CAMERA_PROJECTION_IDS } from '../../EngineDefaults.js';
+import { isPanoramaProjection } from '../../EngineDefaults.js';
 
 const _viewAxis = new Vector3();
 const _toPoint = new Vector3();
@@ -241,7 +241,7 @@ export class InteractionManager extends EventDispatcher {
 		if ( intersects.length > 0 ) {
 
 			const intersection = intersects[ 0 ];
-			const panorama = this.pathTracer?.cameraProjection?.value === CAMERA_PROJECTION_IDS.equirectangular;
+			const panorama = isPanoramaProjection( this.pathTracer?.cameraProjection?.value );
 			const distance = focusDistanceOfHit( intersection, this.camera, panorama );
 
 			// Show visual indicator at focus point

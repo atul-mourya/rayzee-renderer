@@ -9,7 +9,7 @@ import { createLogger } from '../../Logger.js';
 // The neural passes live in `../picture/` but report through the manager that drives them, so they
 // share one namespace: `rayzee.log.only( 'neural' )` shows the whole chain.
 const neuralLog = createLogger( 'neural' );
-import { CAMERA_PROJECTION_IDS } from '../../EngineDefaults.js';
+import { CAMERA_PROJECTION_IDS, isPanoramaProjection } from '../../EngineDefaults.js';
 import {
 	DENOISER_DEFAULTS, DENOISER_STRATEGIES, NRD_DEFAULTS, NRD_QUALITY_PRESETS, NRD_PRESET_KEYS,
 } from './DenoiserSettings.js';
@@ -897,7 +897,7 @@ export class DenoisingManager extends EventDispatcher {
 
 	_isPanorama() {
 
-		return this._stages.pathTracer?.uniforms?.get( 'cameraProjection' )?.value === CAMERA_PROJECTION_IDS.equirectangular;
+		return isPanoramaProjection( this._stages.pathTracer?.uniforms?.get( 'cameraProjection' )?.value );
 
 	}
 

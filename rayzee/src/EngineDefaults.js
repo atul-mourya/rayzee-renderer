@@ -70,7 +70,7 @@ export const ENGINE_DEFAULTS = deepFreeze( {
 	fogFloor: null, // the height the falloff starts from, full density below it; null is the loaded models' floor
 
 	// Camera
-	cameraProjection: 'perspective', // 'perspective' | 'orthographic' | 'equirectangular'
+	cameraProjection: 'perspective', // 'perspective' | 'orthographic' | 'equirectangular' | 'equalArea' (pbrt's square)
 	panoramaLonRange: [ - 180, 180 ], // degrees
 	panoramaLatRange: [ - 90, 90 ],
 	panoramaLevelHorizon: true,
@@ -95,7 +95,10 @@ export const ENGINE_DEFAULTS = deepFreeze( {
 } );
 
 /** The `cameraProjection` uniform's value for each setting value. */
-export const CAMERA_PROJECTION_IDS = Object.freeze( { perspective: 0, equirectangular: 1, orthographic: 2 } );
+export const CAMERA_PROJECTION_IDS = Object.freeze( { perspective: 0, equirectangular: 1, orthographic: 2, equalArea: 3 } );
+
+/** Whether a `cameraProjection` uniform value sees every way at once: a lat-long or an equal-area panorama. */
+export const isPanoramaProjection = ( id ) => id === CAMERA_PROJECTION_IDS.equirectangular || id === CAMERA_PROJECTION_IDS.equalArea;
 
 
 // The only fallback for a property a three.js material doesn't carry: MeshPhysicalMaterial's own

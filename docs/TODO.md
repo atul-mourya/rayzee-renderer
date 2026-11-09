@@ -23,7 +23,7 @@
 
 ### pbrt: read but not used (audit of the 26 catalog scenes, 2026-11-01)
 - [ ] PixelFilter (triangle, radius 1; 25 scenes) — engine uses its own pixel reconstruction
-- [ ] Not read, not in the catalog: realistic cameras, the spherical camera's equal-area mapping (drawn as a lat-long), perspective `screenwindow`, `frameaspectratio`, shutter (motion blur), Film white balance / sensor / `cropwindow` / `maxcomponentvalue`, CameraMedium and space-filling media, non-homogeneous media, scattering inside media (σs folds into absorption)
+- [ ] Not read, not in the catalog: realistic cameras, perspective `screenwindow`, `frameaspectratio`, shutter (motion blur), Film white balance / sensor / `cropwindow` / `maxcomponentvalue`, CameraMedium and space-filling media, non-homogeneous media, scattering inside media (σs folds into absorption)
 
 ### UX issue
 - The 360° panorama's longitude sliders run −180…180 with min below max: a pbrt spherical camera's framing (90 to −270,
@@ -243,10 +243,8 @@ once looked at. How it should have been built so they could not happen:
   `PortalImageInfiniteLight::Le` is 0 outside it), and one environment with the portal ignored lights both windows
   alike. Two different infinite lights (an image and a constant, say) would need summing into one.
 - [ ] **Lights**: area light `filename` (an emitting image); `goniometric` → IES; `projection` → gobos; infinite `portal`.
-- [ ] **Cameras**: `realistic` (lens files); `spherical`'s default `equalarea` image (opens as the engine's lat-long
-  panorama since 2026-11-08, framed as pbrt's `equirectangular`, and is reported): an equal-area projection is one more
-  mapping in `cameraRayDirection` (every camera-ray site goes through it; light tracing is off in a panorama) and the
-  merge slope.
+- [ ] **Cameras**: `realistic` (lens files). (`spherical` opens as the engine's panorama: lat-long for `equirectangular`,
+  the equal-area projection for pbrt's default `equalarea`, 2026-11-09.)
 - [ ] **Materials**: `hair`, `measured` load as diffuse.
 - [ ] **Texture filtering** — see Features → Rendering → Texture filtering (kroken's brick dirt read patchy where pbrt's
   MIP-filtered render is even).

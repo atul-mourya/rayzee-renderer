@@ -181,7 +181,7 @@ describe( 'PBRT scene builder', () => {
 
 	} );
 
-	it( 'asks for the panorama a spherical camera is, turned as pbrt\'s image runs; its equal-area square reported', async () => {
+	it( 'asks for the panorama a spherical camera is, turned as pbrt\'s image runs, or its equal-area square', async () => {
 
 		const load = async ( camera ) => loadPBRTScene( buildArgs( { vfs: { 'scene.pbrt': enc.encode( SCENE.replace( /Camera "perspective"[^\n]*/, camera ) ) } } ) );
 		const PANORAMA = { cameraProjection: 'equirectangular', panoramaLonRange: [ 90, - 270 ], panoramaLatRange: [ - 90, 90 ], panoramaLevelHorizon: false };
@@ -191,13 +191,14 @@ describe( 'PBRT scene builder', () => {
 		expect( Object.keys( lat.parameters.unused ).filter( ( key ) => key.startsWith( 'Camera' ) ) ).toEqual( [] );
 		expect( lat.warnings.some( ( w ) => /spherical camera/.test( w ) ) ).toBe( false );
 
-		// pbrt's default is the equal-area square: drawn as a lat-long, said so (and counted where the file names it).
-		for ( const [ camera, approximated ] of [[ 'Camera "spherical"', {} ], [ 'Camera "spherical" "string mapping" "equalarea"', { 'Camera spherical: mapping': 1 } ]] ) {
+		// pbrt's default is the equal-area square: the engine's equal-area projection, which has no framing of its own.
+		for ( const camera of [ 'Camera "spherical"', 'Camera "spherical" "string mapping" "equalarea"' ] ) {
 
 			const square = await load( camera );
-			expect( square.render ).toMatchObject( PANORAMA );
-			expect( square.parameters.approximated ).toEqual( approximated );
-			expect( square.warnings.some( ( w ) => /spherical camera: its equal-area image/.test( w ) ) ).toBe( true );
+			expect( square.render ).toMatchObject( { cameraProjection: 'equalArea' } );
+			expect( square.render.panoramaLonRange ).toBeUndefined();
+			expect( square.parameters.approximated ).toEqual( {} );
+			expect( Object.keys( square.parameters.unused ).filter( ( key ) => key.startsWith( 'Camera' ) ) ).toEqual( [] );
 
 		}
 

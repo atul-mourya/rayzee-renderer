@@ -365,7 +365,12 @@ const PBRT_PANORAMA = Object.freeze( { cameraProjection: 'equirectangular', pano
 // ratio, shutter time × ISO / 100, and a spherical camera's panorama — scene metadata's `render`.
 function renderRequest( ir ) {
 
-	const render = ir.camera?.type === 'spherical' ? { ...PBRT_PANORAMA, panoramaLonRange: [ ...PBRT_PANORAMA.panoramaLonRange ], panoramaLatRange: [ ...PBRT_PANORAMA.panoramaLatRange ] } : {};
+	// Its `equalarea` square (pbrt's default) is the engine's equal-area projection, which has no framing of its own.
+	const spherical = ir.camera?.type === 'spherical';
+	const lat = spherical && pString( ir.camera.params, 'mapping', 'equalarea' ) === 'equirectangular';
+	const render = ! spherical ? {} : lat
+		? { ...PBRT_PANORAMA, panoramaLonRange: [ ...PBRT_PANORAMA.panoramaLonRange ], panoramaLatRange: [ ...PBRT_PANORAMA.panoramaLatRange ] }
+		: { cameraProjection: 'equalArea' };
 	const integrator = PBRT_INTEGRATORS.get( ir.integrator?.type );
 	if ( integrator ) render.integrator = integrator;
 	if ( ir.integrator?.maxdepth > 0 ) render.maxBounces = Math.round( ir.integrator.maxdepth );
@@ -2808,14 +2813,8 @@ export class PBRTSceneBuilder {
 
 		}
 
-		// A panorama the renderer is asked for (renderRequest); its lat-long is pbrt's `equirectangular`, not the equal-area
-		// square pbrt draws by default.
-		if ( cam.type === 'spherical' && pString( cam.params, 'mapping', 'equalarea' ) !== 'equirectangular' ) {
-
-			approximated( cam.params, 'mapping' );
-			this.warn( 'pbrt spherical camera: its equal-area image is rendered as a lat-long panorama' );
-
-		}
+		// A spherical camera's panorama is asked of the renderer (renderRequest), its mapping read there.
+		if ( cam.type === 'spherical' ) pString( cam.params, 'mapping', 'equalarea' );
 
 		camera.name = 'PBRT Camera';
 		camera.userData.aspect = aspect;

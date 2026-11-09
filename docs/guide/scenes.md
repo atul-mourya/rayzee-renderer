@@ -199,6 +199,11 @@ The mapping puts camera-forward at the image centre, the zenith at the top row, 
 
 Depth of field still works: the lens plane is built from each ray's own frame, not the camera's, so bokeh stays round across the whole sweep.
 
+`'equalArea'` is the other panorama: pbrt-v4's equal-area square (its spherical camera's default `mapping`), the whole
+sphere in a square image — the camera's up at the centre, its down at the corners — in the camera's own frame, with no
+range or horizon settings. A pbrt file with such a camera asks for it (`sceneMetadata.render.cameraProjection`); size
+the canvas square. Everything below applies to both.
+
 Two features are incompatible with a non-frustum camera and the engine switches them off for you when panorama is enabled:
 
 - **NRD** hands the view to OIDN — NRD's motion vectors unproject through the projection matrix, which is meaningless when every pixel is its own direction. OIDN keeps working (without its motion history). Asking for `'nrd'` while in a panorama runs `'oidn'` and records `denoiser.unavailable`.
