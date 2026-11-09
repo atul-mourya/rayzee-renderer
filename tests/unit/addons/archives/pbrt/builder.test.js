@@ -139,6 +139,34 @@ describe( 'PBRT scene builder', () => {
 
 	} );
 
+	it( 'reports an attribute\'s parameter unused only where it is the directive\'s own (pbrt\'s mayBeUnused)', async () => {
+
+		// The directive's own bogus is its own; the attribute's, read by no shape, is the Attribute's (once); radius is read.
+		const scene = SCENE.replace( 'WorldBegin', 'WorldBegin\n\tAttribute "shape" "float bogus" 1 "float radius" 0.5\n\tShape "sphere"\n\tShape "sphere" "float bogus" 2' );
+		const { parameters } = await loadPBRTScene( buildArgs( { vfs: { 'scene.pbrt': enc.encode( scene ) } } ) );
+		expect( parameters.unused[ 'Shape sphere: bogus' ] ).toBe( 1 );
+		expect( Object.keys( parameters.unused ).filter( ( key ) => key.startsWith( 'Attribute' ) ) ).toEqual( [ 'Attribute shape: bogus' ] );
+
+	} );
+
+	it( 'gives each shape its own copy of an attribute\'s array, which the build frees after merging it', async () => {
+
+		const mesh = ( x ) => `Shape "trianglemesh" "point3 P" [ ${x} 0 0  ${x + 1} 0 0  ${x + 1} 1 0  ${x} 1 0  ${x} 2 0  ${x + 1} 2 0 ] "integer indices" [ 0 1 2  0 2 3  3 2 5  3 5 4 ]`;
+		const uv = '0 0  1 0  1 0.5  0 0.5  0 1  1 1';
+		const scene = SCENE.replace( 'WorldBegin', `WorldBegin\n\tAttribute "shape" "point2 uv" [ ${uv} ]\n\t${mesh( 5 )}\n\t${mesh( 8 )}` );
+		const { group } = await loadPBRTScene( buildArgs( { vfs: { 'scene.pbrt': enc.encode( scene ) } } ) );
+		const uvs = [];
+		group.traverse( ( o ) => {
+
+			const a = o.isMesh && o.geometry.getAttribute( 'uv' );
+			if ( a ) for ( let i = 0; i < a.count; i ++ ) uvs.push( a.getY( i ) );
+
+		} );
+		// Both meshes keep their v up to 1 (a freed array reads as nothing, or zeros).
+		expect( uvs.filter( ( v ) => v === 1 ).length ).toBeGreaterThanOrEqual( 2 * 2 );
+
+	} );
+
 	it( 'reports regularize as path regularization, and sppm\'s radius as the merge radius, in scene units', async () => {
 
 		const load = async ( integrator ) => loadPBRTScene( buildArgs( { vfs: { 'scene.pbrt': enc.encode( `Integrator ${integrator}\n` + SCENE ) } } ) );

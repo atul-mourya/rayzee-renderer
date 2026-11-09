@@ -49,8 +49,11 @@ const REGULARIZING_INTEGRATORS = new Set( [ 'path', 'volpath', 'bdpt', 'mlt' ] )
 const INCLUDE_SIDE_EFFECTS = new Set( [
 	'Identity', 'Transform', 'CoordinateSystem', 'CoordSysTransform', 'ActiveTransform', 'TransformTimes',
 	'Camera', 'Film', 'WorldBegin', 'MakeNamedMaterial', 'Texture', 'MakeNamedMedium',
-	'LightSource', 'AreaLightSource', 'ObjectBegin', 'ObjectEnd', 'ObjectInstance'
+	'LightSource', 'AreaLightSource', 'ObjectBegin', 'ObjectEnd', 'ObjectInstance', 'Attribute'
 ] );
+
+// pbrt-v4's `Attribute` targets: each sets defaults for the directives it names (scene.cpp BasicSceneBuilder::Attribute).
+const ATTRIBUTE_TARGETS = new Set( [ 'shape', 'light', 'material', 'medium', 'texture' ] );
 
 function sameMatrix( a, b ) {
 
@@ -105,6 +108,15 @@ export class ParamUsage {
 
 		this.unused = new Map();
 		this.approximated = new Map();
+		// Attribute parameters: each `{ label, name, read }`, reported once if no directive read it.
+		this._attributes = [];
+
+	}
+
+	/** An Attribute parameter, read through the directives it defaults: reported under its Attribute if none does. */
+	attribute( record ) {
+
+		this._attributes.push( record );
 
 	}
 
@@ -124,7 +136,7 @@ export class ParamUsage {
 		} finally {
 
 			current = outer;
-			for ( const name in params ) this._count( scope, name, ! scope.read.includes( name ) );
+			for ( const name in params ) this._account( scope, params, name );
 
 		}
 
@@ -144,13 +156,25 @@ export class ParamUsage {
 
 			if ( scope.usage !== this ) continue;
 			scopes.delete( params );
-			for ( const name in params ) this._count( scope, name, ! scope.read.includes( name ) );
+			for ( const name in params ) this._account( scope, params, name );
 
 		}
+
+		for ( const record of this._attributes ) if ( ! record.read ) this._count( record, record.name, true );
+		this._attributes = [];
 
 		const flat = ( counts ) => [ ...counts ].flatMap( ( [ label, byName ] ) => [ ...byName ].map( ( [ name, n ] ) => [ `${label}: ${name}`, n ] ) );
 		const sorted = ( counts ) => Object.fromEntries( flat( counts ).sort( ( a, b ) => ( a[ 0 ] < b[ 0 ] ? - 1 : 1 ) ) );
 		return { unused: sorted( this.unused ), approximated: sorted( this.approximated ) };
+
+	}
+
+	// pbrt's mayBeUnused: an attribute's parameter is not the directive's to read; it counts as read for its Attribute.
+	_account( scope, params, name ) {
+
+		const read = scope.read.includes( name ), attribute = params[ name ]?.fromAttribute;
+		if ( attribute && read ) attribute.read = true;
+		this._count( scope, name, ! read && ! attribute );
 
 	}
 
@@ -222,7 +246,7 @@ export class PBRTParser {
 		this.activeTransform = BOTH;
 		this._ctmSource = null;
 		this._ctmValue = null;
-		this.state = { material: null, areaLight: null, reverseOrientation: false, interior: null, exterior: null };
+		this.state = { material: null, areaLight: null, reverseOrientation: false, interior: null, exterior: null, attributes: null };
 		this.attributeStack = [];
 		this.coordSystems = new Map();
 
@@ -375,7 +399,8 @@ export class PBRTParser {
 			areaLight: this.state.areaLight,
 			reverseOrientation: this.state.reverseOrientation,
 			interior: this.state.interior,
-			exterior: this.state.exterior
+			exterior: this.state.exterior,
+			attributes: this.state.attributes
 		} );
 
 	}
@@ -387,7 +412,7 @@ export class PBRTParser {
 		this.ctm = s.ctm;
 		this.ctmEnd = s.ctmEnd;
 		this.activeTransform = s.activeTransform;
-		this.state = { material: s.material, areaLight: s.areaLight, reverseOrientation: s.reverseOrientation, interior: s.interior, exterior: s.exterior };
+		this.state = { material: s.material, areaLight: s.areaLight, reverseOrientation: s.reverseOrientation, interior: s.interior, exterior: s.exterior, attributes: s.attributes };
 
 	}
 
@@ -775,7 +800,8 @@ export class PBRTParser {
 				this.ctmEnd = null;
 				this.coordSystems.set( 'world', { ctm: this.ctm, ctmEnd: null } );
 				this.activeTransform = BOTH;
-				this.state = { material: null, areaLight: null, reverseOrientation: false, interior: null, exterior: null };
+				// pbrt's WorldBegin resets the transform only: attributes set before it carry in.
+				this.state = { material: null, areaLight: null, reverseOrientation: false, interior: null, exterior: null, attributes: this.state.attributes };
 				break;
 			case 'WorldEnd': break; // legacy v3
 
@@ -788,11 +814,28 @@ export class PBRTParser {
 
 			case 'ReverseOrientation': this.state.reverseOrientation = ! this.state.reverseOrientation; break;
 
-			// `Attribute "target" params` — v4 default-setting; ignored for MVP.
+			// Defaults for what follows in this attribute block: a directive's own parameters win, then the latest Attribute.
 			case 'Attribute': {
 
 				const target = this._expectString( 'Attribute target' );
-				this._translate( this._parseParams(), `${name} ${target}` );
+				const params = this._parseParams();
+				if ( ! ATTRIBUTE_TARGETS.has( target ) ) {
+
+					this._warn( `Attribute "${target}" is not a target pbrt knows (shape, light, material, medium, texture) — ignored` );
+					break;
+
+				}
+
+				const set = new Map( this.state.attributes?.[ target ] );
+				for ( const key in params ) {
+
+					const record = { label: `${name} ${target}`, name: key, read: false };
+					this.usage?.attribute( record );
+					set.set( key, { ...params[ key ], fromAttribute: record } );
+
+				}
+
+				this.state.attributes = { ...this.state.attributes, [ target ]: set };
 				break;
 
 			}
@@ -831,7 +874,7 @@ export class PBRTParser {
 			case 'MakeNamedMedium': {
 
 				const mediumName = this._expectString( 'MakeNamedMedium name' );
-				this.ir.media.set( mediumName, this._parseParams() );
+				this.ir.media.set( mediumName, this._withAttributes( 'medium', this._parseParams() ) );
 				break;
 
 			}
@@ -840,7 +883,7 @@ export class PBRTParser {
 			case 'Material': {
 
 				const type = this._expectString( 'Material type' );
-				const params = this._parseParams();
+				const params = this._withAttributes( 'material', this._parseParams() );
 				this.state.material = { type, params };
 				break;
 
@@ -849,7 +892,7 @@ export class PBRTParser {
 			case 'MakeNamedMaterial': {
 
 				const matName = this._expectString( 'MakeNamedMaterial name' );
-				const params = this._parseParams();
+				const params = this._withAttributes( 'material', this._parseParams() );
 				const type = this._str( params.type, 'diffuse' );
 				this.ir.namedMaterials.set( matName, { type, params } );
 				break;
@@ -871,7 +914,7 @@ export class PBRTParser {
 				const texName = this._expectString( 'Texture name' );
 				const dataType = this._expectString( 'Texture data type' ); // float | spectrum
 				const texClass = this._expectString( 'Texture class' ); // imagemap | scale | ...
-				const params = this._parseParams();
+				const params = this._withAttributes( 'texture', this._parseParams() );
 				const def = { dataType, class: texClass, params };
 				if ( this._str( params.mapping, 'uv' ) !== 'uv' ) def.ctm = this._ctmSnapshot();
 				this.ir.namedTextures.set( texName, def );
@@ -883,7 +926,7 @@ export class PBRTParser {
 			case 'AreaLightSource': {
 
 				const type = this._expectString( 'AreaLightSource type' );
-				const params = this._parseParams();
+				const params = this._withAttributes( 'light', this._parseParams() );
 				this.state.areaLight = { type, params };
 				break;
 
@@ -892,7 +935,7 @@ export class PBRTParser {
 			case 'LightSource': {
 
 				const type = this._expectString( 'LightSource type' );
-				const params = this._parseParams();
+				const params = this._withAttributes( 'light', this._parseParams() );
 				if ( this.ctmEnd !== null && ! sameMatrix( this.ctmEnd, this.ctm ) ) this._warnOnce( 'animated-light', 'animated LightSource transforms are not supported — using the start transform' );
 				this.ir.lights.push( { type, params, ctm: this._ctmSnapshot() } );
 				break;
@@ -903,7 +946,7 @@ export class PBRTParser {
 			case 'Shape': {
 
 				const type = this._expectString( 'Shape type' );
-				const params = this._parseParams();
+				const params = this._withAttributes( 'shape', this._parseParams() );
 				// pbrt: a shape of alpha 0 is never hit, and an area light on it emits nothing.
 				const alpha = params.alpha;
 				if ( alpha?.type === 'float' && alpha.value[ 0 ] <= 0 ) break;
@@ -1039,7 +1082,7 @@ export class PBRTParser {
 
 		if ( ! this.instanceIncludes || this.currentObject !== null ) return null;
 		if ( this.ctmEnd !== null || this.activeTransform !== BOTH || this.state.areaLight ) return null;
-		return `${dir}\0${path}\0${this._stateId( this.state.material )}\0${this.state.reverseOrientation}\0${this.state.interior}\0${this.state.exterior}`;
+		return `${dir}\0${path}\0${this._stateId( this.state.material )}\0${this.state.reverseOrientation}\0${this.state.interior}\0${this.state.exterior}\0${this._stateId( this.state.attributes )}`;
 
 	}
 
@@ -1120,6 +1163,23 @@ export class PBRTParser {
 
 		this._addInstance( record.template );
 		return true;
+
+	}
+
+	/**
+	 * A directive's parameters with the attribute block's defaults for `target` it does not set itself. Each directive
+	 * gets its own copy of an array: the builder frees a shape's arrays once it has merged them.
+	 */
+	_withAttributes( target, params ) {
+
+		const defaults = this.state.attributes?.[ target ];
+		if ( defaults ) for ( const [ key, value ] of defaults ) {
+
+			if ( ! ( key in params ) ) params[ key ] = ArrayBuffer.isView( value.value ) ? { ...value, value: value.value.slice() } : value;
+
+		}
+
+		return params;
 
 	}
 

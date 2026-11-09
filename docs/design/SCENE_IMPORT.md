@@ -132,8 +132,16 @@ subtree per element, and the whole thing rarely fits: Moana is 29 GB unpacked.
   local scene with them, parses the same), `CoordinateSystem` names the CTM (both ends), and pbrt's own "camera" (world
   from camera, at `Camera`) and "world" (at `WorldBegin`) are named too; an unknown `CoordSysTransform` warns once and
   leaves the CTM (both were silently ignored before 2026-11-08). `Import` reads as `Include` (pbrt keeps an imported
-  file's named systems and transform to itself). `Attribute` defaults are not applied: their parameters are reported
-  unused.
+  file's named systems and transform to itself).
+- **Attribute** is pbrt-v4's: `Attribute "shape"` (or `light`, `material`, `medium`, `texture`) sets defaults for the
+  directives of that kind that follow in its attribute block (`AttributeEnd` takes them away); a directive's own
+  parameter wins, then the latest `Attribute`, as pbrt's ParameterDictionary orders them; attributes set before
+  `WorldBegin` carry in, as pbrt's do. A directive that leaves one unread is not faulted (pbrt's `mayBeUnused`); one no
+  directive reads is reported once, as `Attribute <target>: name`. Each directive gets its own copy of an array (the
+  builder frees a merged shape's arrays), and an include read under other attributes is read again, not reused
+  (2026-11-09; attributes were dropped and reported unused before). Known gap: parameters are keyed by name, so an
+  attribute of one type is shadowed by a directive's parameter of another (`texture alpha` by `float alpha`), where
+  pbrt's typed lookups would take the attribute.
 - **Templates.** A shape inside `ObjectBegin` keeps its whole transform and a placement's goes on top, as pbrt does —
   never relative to the transform at ObjectBegin. kroken defines its cushions, blanket and rug under a `Transform` and
   places them at `Identity`; the relative reading put all of them at the world origin.

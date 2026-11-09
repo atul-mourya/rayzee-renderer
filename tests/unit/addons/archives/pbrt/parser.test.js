@@ -191,6 +191,96 @@ describe( 'PBRT parser', () => {
 
 	} );
 
+	// pbrt-v4's Attribute: defaults for the directives a target names, within the attribute block; a directive's own
+	// parameter wins, then the latest Attribute (paramdict.cpp: own parameters first, attributes newest first).
+	it( 'gives later directives the attribute block\'s defaults, their own parameters first', async () => {
+
+		const ir = await parsePBRT( `
+			WorldBegin
+			AttributeBegin
+				Attribute "shape" "float radius" 0.5
+				Attribute "shape" "float radius" 0.25 "float zmax" 0.1
+				Attribute "light" "float scale" 3
+				Attribute "material" "float roughness" 0.2
+				Attribute "texture" "float scale" 4
+				Attribute "medium" "float scale" 5
+				Shape "sphere"
+				Shape "sphere" "float radius" 2
+				LightSource "point" "rgb I" [ 1 1 1 ]
+				AreaLightSource "diffuse" "rgb L" [ 1 1 1 ]
+				Material "conductor"
+				MakeNamedMaterial "m" "string type" "diffuse" "float roughness" 0.9
+				Texture "t" "float" "constant" "float value" 1
+				MakeNamedMedium "fog" "string type" "homogeneous"
+				Shape "disk"
+			AttributeEnd
+			Shape "sphere"
+			Attribute "volume" "float scale" 1
+		` );
+		const v = ( params, name ) => params[ name ]?.value?.[ 0 ];
+		expect( [ v( ir.shapes[ 0 ].params, 'radius' ), v( ir.shapes[ 0 ].params, 'zmax' ) ] ).toEqual( [ 0.25, 0.1 ] );
+		expect( v( ir.shapes[ 1 ].params, 'radius' ) ).toBe( 2 );
+		expect( v( ir.lights[ 0 ].params, 'scale' ) ).toBe( 3 );
+		expect( v( ir.shapes[ 2 ].areaLight.params, 'scale' ) ).toBe( 3 );
+		expect( v( ir.shapes[ 2 ].material.params, 'roughness' ) ).toBe( 0.2 );
+		expect( v( ir.namedMaterials.get( 'm' ).params, 'roughness' ) ).toBe( 0.9 );
+		expect( v( ir.namedTextures.get( 't' ).params, 'scale' ) ).toBe( 4 );
+		expect( v( ir.media.get( 'fog' ), 'scale' ) ).toBe( 5 );
+		// AttributeEnd took them away.
+		expect( ir.shapes[ 3 ].params.radius ).toBeUndefined();
+		expect( ir.warnings.some( w => /Attribute "volume" is not a target/.test( w ) ) ).toBe( true );
+
+	} );
+
+	it( 'gives each directive its own copy of an attribute\'s array (the build frees a merged shape\'s arrays)', async () => {
+
+		const ir = await parsePBRT( `
+			WorldBegin
+			Attribute "shape" "point2 uv" [ 0 0  1 0  1 0.5  0 0.5  0 1  1 1 ]
+			Shape "trianglemesh" "point3 P" [ 0 0 0  1 0 0  1 1 0 ] "integer indices" [ 0 1 2 ]
+			Shape "trianglemesh" "point3 P" [ 0 0 0  1 0 0  1 1 0 ] "integer indices" [ 0 1 2 ]
+		` );
+		const [ a, b ] = ir.shapes.map( ( shape ) => shape.params.uv.value );
+		expect( ArrayBuffer.isView( a ) && a !== b ).toBe( true );
+		expect( Array.from( b ) ).toEqual( Array.from( a ) );
+
+	} );
+
+	it( 'carries attributes into the world, and keeps an object\'s to the object', async () => {
+
+		const ir = await parsePBRT( `
+			Attribute "medium" "float scale" 2
+			WorldBegin
+			MakeNamedMedium "smoke" "string type" "homogeneous"
+			ObjectBegin "o"
+				Attribute "shape" "float radius" 0.3
+				Shape "sphere"
+			ObjectEnd
+			Shape "sphere"
+		` );
+		expect( ir.media.get( 'smoke' ).scale.value[ 0 ] ).toBe( 2 );
+		expect( ir.objects.get( 'o' )[ 0 ].params.radius.value[ 0 ] ).toBe( 0.3 );
+		expect( ir.shapes.at( - 1 ).params.radius ).toBeUndefined();
+
+	} );
+
+	it( 'does not reuse an include read under other attributes', async () => {
+
+		const files = { 'ball.pbrt': 'Shape "sphere"' };
+		const parser = new PBRTParser( { resolveInclude: ( p ) => files[ p ] ?? null } );
+		const ir = await parser.parse( `
+			WorldBegin
+			Include "ball.pbrt"
+			AttributeBegin
+				Attribute "shape" "float radius" 3
+				Include "ball.pbrt"
+			AttributeEnd
+		` );
+		const radii = ir.shapes.map( s => s.params.radius?.value?.[ 0 ] ?? 1 );
+		expect( radii ).toEqual( [ 1, 3 ] );
+
+	} );
+
 	it( 'parses Transform matrices column-major', async () => {
 
 		const ir = await parsePBRT( `
