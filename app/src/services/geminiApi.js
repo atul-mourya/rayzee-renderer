@@ -1,30 +1,19 @@
-import { GoogleGenAI } from '@google/genai';
+const GEMINI_MODELS_URL = 'https://generativelanguage.googleapis.com/v1beta/models';
 
 class AIImageGenerator {
 
 	constructor() {
 
-		this.genAI = null;
+		this.apiKey = null;
 		this.initialized = false;
 
 	}
 
 	async initialize( apiKey ) {
 
-		try {
-
-			this.genAI = new GoogleGenAI( {
-				apiKey: apiKey,
-			} );
-			this.initialized = true;
-			return true;
-
-		} catch ( error ) {
-
-			console.error( 'Failed to initialize Gemini API:', error );
-			return false;
-
-		}
+		this.apiKey = apiKey;
+		this.initialized = true;
+		return true;
 
 	}
 
@@ -38,9 +27,6 @@ class AIImageGenerator {
 
 		try {
 
-			const config = {
-				responseModalities: [ 'IMAGE', 'TEXT' ],
-			};
 			const model = 'gemini-nano-banana-2.1';
 
 			let parts = [];
@@ -75,11 +61,15 @@ class AIImageGenerator {
 				},
 			];
 
-			const response = await this.genAI.models.generateContent( {
-				model,
-				config,
-				contents,
+			const reply = await fetch( `${GEMINI_MODELS_URL}/${model}:generateContent`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json', 'x-goog-api-key': this.apiKey },
+				body: JSON.stringify( { contents, generationConfig: { responseModalities: [ 'IMAGE', 'TEXT' ] } } ),
 			} );
+
+			// The quota check below reads the status and retry delay from this message.
+			if ( ! reply.ok ) throw new Error( `${reply.status} ${await reply.text()}` );
+			const response = await reply.json();
 
 			let generatedImageData = null;
 			let textResponse = '';
