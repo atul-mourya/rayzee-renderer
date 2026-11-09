@@ -182,6 +182,12 @@ await engine.init();
 
 All keys are optional — only what you pass is overridden. Call `getAssetConfig()` to read the current values.
 
+The upscaler's runtime is onnxruntime-web 1.31.1. Left at its defaults, a browser with JSPI (WebAssembly's promise
+integration: Chrome 137 and later) loads the package's `dist/ort.jspi.bundle.min.mjs` instead of
+`dist/ort.webgpu.bundle.min.mjs`: as fast, 1.8 MB less to download, and the engine falls back to the other if it
+fails. Set `ortRuntimeUrl` or `ortWasmPaths` and it loads exactly what you name; serve the bundle's `.wasm` beside it
+(`ort-wasm-simd-threaded.asyncify.wasm` for the webgpu bundle, `.jspi.wasm` for the JSPI one).
+
 ## PathTracerApp
 
 The main engine class. Extends `RayzeeRenderer`, the [renderer core](#renderer-core-rayzeecore), which extends three.js's `EventDispatcher`. Related functionality is grouped into **namespaced managers** accessed via `engine.cameraManager`, `engine.lightManager`, etc., or as direct methods on the engine instance.

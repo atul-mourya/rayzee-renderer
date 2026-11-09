@@ -1,6 +1,6 @@
 import { EventDispatcher, ACESFilmicToneMapping } from 'three';
 import { PackedToneMapper } from '../../output/ToneMapGPU.js';
-import { getAssetConfig } from '../../AssetConfig.js';
+import { getAssetConfig, isAssetConfigured, ORT_JSPI_RUNTIME_URL } from '../../AssetConfig.js';
 import AIUpscalerWorker from './AIUpscalerWorker.js?worker&inline';
 
 // ─── Model Configuration ───────────────────────────────────────────────────────
@@ -200,12 +200,14 @@ export class AIUpscaler extends EventDispatcher {
 				};
 
 				const { ortRuntimeUrl, ortWasmPaths, cacheNamespace, storage } = getAssetConfig();
+				const ownRuntime = isAssetConfigured( 'ortRuntimeUrl' ) || isAssetConfigured( 'ortWasmPaths' );
 				this._worker.addEventListener( 'message', handler );
 				this._worker.postMessage( {
 					type: 'load',
 					url,
 					sessionOptions: MODEL_CONFIG.SESSION_OPTIONS,
 					ortRuntimeUrl,
+					ortJspiRuntimeUrl: ownRuntime ? null : ORT_JSPI_RUNTIME_URL,
 					ortWasmPaths,
 					cacheNamespace,
 					storage,

@@ -12,10 +12,16 @@
  * Call before constructing PathTracerApp. Per-key partial overrides are supported.
  */
 
+const ORT_DIST = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.31.1/dist/';
+
+// onnxruntime-web's JSPI build: as fast, 1.8 MB less to download. Loaded in place of the default
+// ortRuntimeUrl where the browser has JSPI and the host set neither ort key.
+export const ORT_JSPI_RUNTIME_URL = ORT_DIST + 'ort.jspi.bundle.min.mjs';
+
 const config = {
 	// onnxruntime-web (loaded lazily by AI upscaler worker via dynamic import).
-	ortRuntimeUrl: 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.24.3/dist/ort.webgpu.bundle.min.mjs',
-	ortWasmPaths: 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.24.3/dist/',
+	ortRuntimeUrl: ORT_DIST + 'ort.webgpu.bundle.min.mjs',
+	ortWasmPaths: ORT_DIST,
 
 	// Draco / KTX2 decoder paths for GLTFLoader.
 	dracoDecoderPath: 'https://www.gstatic.com/draco/v1/decoders/',

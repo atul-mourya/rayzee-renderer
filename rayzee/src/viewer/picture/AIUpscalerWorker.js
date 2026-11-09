@@ -16,29 +16,50 @@
 
 import { openInlineStorage } from '../../addons/storage/StorageManager.js';
 import { DownloadCache } from '../../storage/DownloadCache.js';
+import { getAssetConfig } from '../../AssetConfig.js';
 
-// Asset config supplied via 'load' message from the main thread.
-// Defaults match the upstream Rayzee deployment; override via configureAssets().
-let _assetConfig = {
-	ortRuntimeUrl: 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.24.3/dist/ort.webgpu.bundle.min.mjs',
-	ortWasmPaths: 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.24.3/dist/',
-	cacheNamespace: 'rayzee',
-	storage: 'auto',
-};
+// The defaults; each 'load' message brings the main thread's values.
+const _assetConfig = { ...getAssetConfig(), ortJspiRuntimeUrl: null };
 
 let ort = null;
+let ortUrl = null;
 
-async function getOrt() {
+async function importOrt( url ) {
 
-	if ( ort ) return ort;
-
-	ort = await import( /* @vite-ignore */ _assetConfig.ortRuntimeUrl );
+	const lib = await import( /* @vite-ignore */ url );
 
 	// WASM paths for CDN delivery — WebGPU EP still uses WASM for lightweight shape ops
-	ort.env.wasm.wasmPaths = _assetConfig.ortWasmPaths;
-	ort.env.logLevel = 'error';
+	lib.env.wasm.wasmPaths = _assetConfig.ortWasmPaths;
+	lib.env.logLevel = 'error';
+	return lib;
 
-	return ort;
+}
+
+// The first session picks the runtime: the JSPI build where offered and the browser has JSPI, ortRuntimeUrl otherwise
+// or if that fails.
+async function createFirstSession( model, sessionOptions ) {
+
+	const { ortJspiRuntimeUrl, ortRuntimeUrl } = _assetConfig;
+	const urls = ortJspiRuntimeUrl && typeof WebAssembly.Suspending === 'function' ? [ ortJspiRuntimeUrl, ortRuntimeUrl ] : [ ortRuntimeUrl ];
+
+	for ( let i = 0; ; i ++ ) {
+
+		try {
+
+			const [ lib, buffer ] = await Promise.all( [ importOrt( urls[ i ] ), model ] );
+			const created = await lib.InferenceSession.create( buffer, sessionOptions );
+			ort = lib;
+			ortUrl = urls[ i ];
+			return created;
+
+		} catch ( error ) {
+
+			if ( i === urls.length - 1 ) throw error;
+			console.warn( `AI Upscaler Worker: ${urls[ i ]} failed, loading ${urls[ i + 1 ]}:`, error );
+
+		}
+
+	}
 
 }
 
@@ -177,9 +198,8 @@ async function loadModel( url, sessionOptions ) {
 
 	}
 
-	const [ modelBuffer, ortLib ] = await Promise.all( [ fetchModel( url ), getOrt() ] );
-
-	session = await ortLib.InferenceSession.create( modelBuffer, sessionOptions );
+	const model = fetchModel( url );
+	session = ort ? await ort.InferenceSession.create( await model, sessionOptions ) : await createFirstSession( model, sessionOptions );
 	currentModelUrl = url;
 
 	// Detect GPU and recommend tile size based on device type
@@ -211,8 +231,8 @@ async function loadModel( url, sessionOptions ) {
 
 	} catch { /* fallback to default */ }
 
-	const sizeMB = ( modelBuffer.byteLength / 1024 / 1024 ).toFixed( 1 );
-	console.log( `AI Upscaler Worker: model loaded (${sizeMB}MB), backend: webgpu` );
+	const sizeMB = ( ( await model ).byteLength / 1024 / 1024 ).toFixed( 1 );
+	console.log( `AI Upscaler Worker: model loaded (${sizeMB}MB), backend: webgpu, runtime: ${ortUrl.split( '/' ).pop()}` );
 
 	self.postMessage( { type: 'loaded', backend: 'webgpu', tileSize } );
 
@@ -220,10 +240,9 @@ async function loadModel( url, sessionOptions ) {
 
 async function inferTile( tileData, width, height, id ) {
 
-	const ortLib = await getOrt();
 	const inputName = session.inputNames[ 0 ];
 	const outputName = session.outputNames[ 0 ];
-	const inputTensor = new ortLib.Tensor( 'float32', tileData, [ 1, 3, height, width ] );
+	const inputTensor = new ort.Tensor( 'float32', tileData, [ 1, 3, height, width ] );
 
 	const results = await session.run( { [ inputName ]: inputTensor } );
 	const outputData = results[ outputName ].data;
@@ -244,6 +263,7 @@ self.onmessage = async ( e ) => {
 			// Apply asset overrides from main thread before any network or cache access
 			if ( e.data.ortRuntimeUrl ) _assetConfig.ortRuntimeUrl = e.data.ortRuntimeUrl;
 			if ( e.data.ortWasmPaths ) _assetConfig.ortWasmPaths = e.data.ortWasmPaths;
+			_assetConfig.ortJspiRuntimeUrl = e.data.ortJspiRuntimeUrl ?? null;
 			if ( e.data.cacheNamespace ) _assetConfig.cacheNamespace = e.data.cacheNamespace;
 			if ( e.data.storage !== undefined ) _assetConfig.storage = e.data.storage;
 			await loadModel( e.data.url, e.data.sessionOptions );
