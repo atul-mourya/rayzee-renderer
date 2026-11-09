@@ -138,6 +138,59 @@ describe( 'PBRT parser', () => {
 
 	} );
 
+	// pbrt-v4's BasicSceneBuilder: ConcatTransform post-multiplies a column-major matrix; TransformBegin/End are
+	// AttributeBegin/End (the parser's reading of them); CoordinateSystem names the CTM, and "camera" (world from camera,
+	// at Camera) and "world" (at WorldBegin) are named by pbrt itself; an unknown name warns once and leaves the CTM.
+	it( 'concatenates, keeps and names transforms as pbrt does', async () => {
+
+		const at = ( shape, p = [ 0, 0, 0 ] ) => [ 0, 1, 2 ].map( r => Math.round( ( shape.ctm[ r ] * p[ 0 ] + shape.ctm[ 4 + r ] * p[ 1 ] + shape.ctm[ 8 + r ] * p[ 2 ] + shape.ctm[ 12 + r ] ) * 1e9 ) / 1e9 + 0 );
+		const ir = await parsePBRT( `
+			LookAt 3 0 0  0 0 0  0 1 0
+			Camera "perspective"
+			WorldBegin
+			Translate 1 0 0
+			ConcatTransform [ 2 0 0 0  0 2 0 0  0 0 2 0  0 0 0 1 ]
+			Shape "sphere"
+			CoordinateSystem "doubled"
+			Material "conductor"
+			TransformBegin
+				ActiveTransform EndTime
+				Material "dielectric"
+				Translate 0 9 0
+			TransformEnd
+			Shape "sphere"
+			CoordSysTransform "camera"
+			Translate 0 0 1
+			Shape "sphere"
+			CoordSysTransform "world"
+			Shape "sphere"
+			CoordSysTransform "doubled"
+			Shape "sphere"
+			Translate 0 7 0
+			CoordSysTransform "nowhere"
+			Shape "sphere"
+			CoordSysTransform "nowhere"
+			Identity
+			ConcatTransform [ 1 0 0 0  0 1 0 0  0 0 1 0  4 5 6 1 ]
+			ConcatTransform [ 1 0 0 0  3 1 0 0  0 0 1 0  0 0 0 1 ]
+			Shape "sphere"
+		` );
+		const s = ir.shapes;
+		// Translate then scale: ( 1, 0, 0 ) goes to 2 × 1 + 1 = 3 (pre-multiplied it would be 4).
+		expect( at( s[ 0 ], [ 1, 0, 0 ] ) ).toEqual( [ 3, 0, 0 ] );
+		// TransformEnd gave back the CTM, ActiveTransform (no end matrix, no 9) and the material.
+		expect( [ at( s[ 1 ], [ 1, 0, 0 ] ), s[ 1 ].ctmEnd, s[ 1 ].material?.type ] ).toEqual( [[ 3, 0, 0 ], undefined, 'conductor' ] );
+		// One unit in front of a camera at x = 3 looking down −x (the CTM itself, not its inverse, would put it at 1, 0, 3).
+		expect( at( s[ 2 ] ) ).toEqual( [ 2, 0, 0 ] );
+		expect( at( s[ 3 ], [ 1, 1, 1 ] ) ).toEqual( [ 1, 1, 1 ] );
+		expect( at( s[ 4 ], [ 1, 0, 0 ] ) ).toEqual( [ 3, 0, 0 ] );
+		expect( at( s[ 5 ] ) ).toEqual( [ 1, 14, 0 ] );
+		expect( ir.warnings.filter( w => /no coordinate system named "nowhere"/.test( w ) ) ).toHaveLength( 1 );
+		// Column-major: the second matrix's 3 is x's share of y (a shear), its fourth column the translation.
+		expect( at( s[ 6 ], [ 0, 1, 0 ] ) ).toEqual( [ 7, 6, 6 ] );
+
+	} );
+
 	it( 'parses Transform matrices column-major', async () => {
 
 		const ir = await parsePBRT( `

@@ -14,7 +14,7 @@ import { PBRT_BUILD_REVISION } from '@/core/addons/archives/pbrt/index.js';
 import { SCENE_GRAPH_FORMAT } from '@/core/addons/archives/SceneGraphCodec.js';
 
 // Updated together: the two numbers in the stored graph's key, and the code that builds and stores it.
-const RECORDED = { revision: 34, format: 3, code: '61d7eaceecd896b5' };
+const RECORDED = { revision: 34, format: 3, code: '980a39c8e1445a49' };
 
 const ARCHIVES = resolve( dirname( fileURLToPath( import.meta.url ) ), '../../../../../rayzee/src/addons/archives' );
 const SOURCES = [ 'pbrt', 'SceneGraphCodec.js' ];

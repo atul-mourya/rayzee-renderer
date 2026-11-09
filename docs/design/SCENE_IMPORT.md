@@ -127,6 +127,13 @@ subtree per element, and the whole thing rarely fits: Moana is 29 GB unpacked.
   shapes.cpp, cameras.cpp, textures.cpp). Found 2026-11-08: a `constant` texture with no `value` was dropped (pbrt: 1 —
   a bare constant roughness rendered a mirror), and one given as a named, sampled or blackbody spectrum read as NaN.
   The coat `eta` of coateddiffuse / coatedconductor is approximated, so it cannot show there.
+- **Named transforms** are pbrt-v4's: `ConcatTransform` post-multiplies, `TransformBegin`/`TransformEnd` are read as
+  `AttributeBegin`/`AttributeEnd` (pbrt-v4's parser does; the transform alone was pbrt-v3's — the classroom, the one
+  local scene with them, parses the same), `CoordinateSystem` names the CTM (both ends), and pbrt's own "camera" (world
+  from camera, at `Camera`) and "world" (at `WorldBegin`) are named too; an unknown `CoordSysTransform` warns once and
+  leaves the CTM (both were silently ignored before 2026-11-08). `Import` reads as `Include` (pbrt keeps an imported
+  file's named systems and transform to itself). `Attribute` defaults are not applied: their parameters are reported
+  unused.
 - **Templates.** A shape inside `ObjectBegin` keeps its whole transform and a placement's goes on top, as pbrt does —
   never relative to the transform at ObjectBegin. kroken defines its cushions, blanket and rug under a `Transform` and
   places them at `Identity`; the relative reading put all of them at the world origin.

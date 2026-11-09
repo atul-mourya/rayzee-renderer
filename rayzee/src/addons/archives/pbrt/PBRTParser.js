@@ -224,7 +224,6 @@ export class PBRTParser {
 		this._ctmValue = null;
 		this.state = { material: null, areaLight: null, reverseOrientation: false, interior: null, exterior: null };
 		this.attributeStack = [];
-		this.transformStack = [];
 		this.coordSystems = new Map();
 
 		// Object capture (ObjectBegin/End)
@@ -671,13 +670,14 @@ export class PBRTParser {
 			case 'CoordinateSystem': this.coordSystems.set( this._expectString( 'CoordinateSystem' ), { ctm: this.ctm, ctmEnd: this.ctmEnd } ); break;
 			case 'CoordSysTransform': {
 
-				const cs = this.coordSystems.get( this._expectString( 'CoordSysTransform' ) );
+				const csName = this._expectString( 'CoordSysTransform' );
+				const cs = this.coordSystems.get( csName );
 				if ( cs ) {
 
 					this.ctm = cs.ctm;
 					this.ctmEnd = cs.ctmEnd;
 
-				}
+				} else this._warnOnce( `coordsys:${csName}`, `CoordSysTransform: no coordinate system named "${csName}"` );
 
 				break;
 
@@ -692,6 +692,8 @@ export class PBRTParser {
 				this.ir.camera = { type, params, cameraToWorld: M.invert( this.ctm ) };
 				const end = this._ctmEndSnapshot();
 				if ( end ) this.ir.camera.cameraToWorldEnd = M.invert( end );
+				// pbrt names it: `CoordSysTransform "camera"` places what follows in camera space.
+				this.coordSystems.set( 'camera', { ctm: this.ir.camera.cameraToWorld, ctmEnd: this.ctmEnd ? M.invert( this.ctmEnd ) : null } );
 				break;
 
 			}
@@ -771,6 +773,7 @@ export class PBRTParser {
 			case 'WorldBegin':
 				this.ctm = M.identity();
 				this.ctmEnd = null;
+				this.coordSystems.set( 'world', { ctm: this.ctm, ctmEnd: null } );
 				this.activeTransform = BOTH;
 				this.state = { material: null, areaLight: null, reverseOrientation: false, interior: null, exterior: null };
 				break;
@@ -779,21 +782,9 @@ export class PBRTParser {
 			case 'AttributeBegin': this._pushGraphicsState(); break;
 			case 'AttributeEnd': this._popGraphicsState(); break;
 
-			case 'TransformBegin': this.transformStack.push( { ctm: this.ctm, ctmEnd: this.ctmEnd, activeTransform: this.activeTransform } ); break;
-			case 'TransformEnd': {
-
-				const t = this.transformStack.pop();
-				if ( t ) {
-
-					this.ctm = t.ctm;
-					this.ctmEnd = t.ctmEnd;
-					this.activeTransform = t.activeTransform;
-
-				}
-
-				break;
-
-			}
+			// pbrt-v4 reads the deprecated pair as AttributeBegin/End: the whole graphics state, not only the transform (v3).
+			case 'TransformBegin': this._pushGraphicsState(); break;
+			case 'TransformEnd': this._popGraphicsState(); break;
 
 			case 'ReverseOrientation': this.state.reverseOrientation = ! this.state.reverseOrientation; break;
 
@@ -1068,7 +1059,6 @@ export class PBRTParser {
 			effects: this._effects,
 			ctm: this.ctm,
 			attributes: this.attributeStack.length,
-			transforms: this.transformStack.length,
 			material: this.state.material,
 			reverseOrientation: this.state.reverseOrientation,
 			interior: this.state.interior,
@@ -1081,7 +1071,7 @@ export class PBRTParser {
 
 		return this._effects === before.effects && this.ctmEnd === null && this.activeTransform === BOTH &&
 			sameMatrix( this.ctm, before.ctm ) && this.attributeStack.length === before.attributes &&
-			this.transformStack.length === before.transforms && this.state.material === before.material &&
+			this.state.material === before.material &&
 			this.state.areaLight === null && this.state.reverseOrientation === before.reverseOrientation &&
 			this.state.interior === before.interior && this.state.exterior === before.exterior;
 
