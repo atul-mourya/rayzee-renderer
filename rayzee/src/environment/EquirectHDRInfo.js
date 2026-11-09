@@ -178,20 +178,23 @@ export class EquirectHDRInfo {
 	/**
 	 * The build offloaded to a Web Worker. Float extraction (HalfFloat → Float32) runs on the main thread
 	 * (it needs three's DataUtils); the table's math runs off it.
-	 * @returns {Promise<void>}
+	 * @param {Object} hdr
+	 * @param {() => boolean} [isCurrent] asked when the table arrives: false leaves this one as it was
+	 * @returns {Promise<boolean>} whether the table was adopted
 	 */
-	async updateFromAsync( hdr ) {
+	async updateFromAsync( hdr, isCurrent = () => true ) {
 
 		const { floatData, width, height } = extractFloatData( hdr );
 
-		// Fresh worker per call — terminated in finally to avoid ~30 MB residency.
-		this._worker = createWorker( CDFWorker );
+		// Fresh worker per call — terminated in finally to avoid ~30 MB residency. Its own: a second build in flight
+		// replaces this._worker, and ending that one left the second's promise unsettled.
+		const worker = this._worker = createWorker( CDFWorker );
 
 		try {
 
 			const result = await new Promise( ( resolve, reject ) => {
 
-				this._worker.onmessage = ( e ) => {
+				worker.onmessage = ( e ) => {
 
 					if ( e.data.error ) {
 
@@ -205,27 +208,25 @@ export class EquirectHDRInfo {
 
 				};
 
-				this._worker.onerror = reject;
+				worker.onerror = reject;
 
 				// Transfer floatData to worker (zero-copy)
-				this._worker.postMessage(
+				worker.postMessage(
 					{ floatData, width, height },
 					[ floatData.buffer ]
 				);
 
 			} );
 
+			if ( ! isCurrent() ) return false;
 			const { width: w, height: h, ...table } = result;
 			this._adopt( table, w, h );
+			return true;
 
 		} finally {
 
-			if ( this._worker ) {
-
-				this._worker.terminate();
-				this._worker = null;
-
-			}
+			worker.terminate();
+			if ( this._worker === worker ) this._worker = null;
 
 		}
 

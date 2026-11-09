@@ -11,7 +11,7 @@ import {
 	RGBAFormat, FloatType, LinearFilter, Vector2, Vector3, Color, Matrix4, DataTexture,
 } from 'three';
 import { EquirectHDRInfo } from './EquirectHDRInfo.js';
-import { packExactTable } from './EnvironmentExactTable.js';
+import { packExactTable, environmentRadianceIntegral } from './EnvironmentExactTable.js';
 import { SimpleSky } from './SimpleSky.js';
 import { convertLinearTriple } from '../color/WorkingMatrix.js';
 import { createLogger, fmt } from '../Logger.js';
@@ -64,6 +64,10 @@ export class EnvironmentManager {
 
 		// CDF computation engine
 		this.equirectHdrInfo = new EquirectHDRInfo();
+		// Each table build or change takes the next number; a build that lands after a newer one is dropped.
+		this._cdfGeneration = 0;
+		// The solid sky's last table, while it is the one bound: { cdf, size }.
+		this._solidTable = null;
 
 		// Sky renderers (lazy init). The physical sky is a capability: setProceduralSky() installs its class.
 		this.ProceduralSky = null;
@@ -395,6 +399,7 @@ export class EnvironmentManager {
 		if ( ! this.scene.environment ) {
 
 			this._cdfSignature = null;
+			++ this._cdfGeneration;
 			this._updateCDFTexture();
 			this.uniforms.set( 'envTotalSum', 0.0 );
 			return;
@@ -412,6 +417,7 @@ export class EnvironmentManager {
 			if ( ! textureForCDF.image ) {
 
 				this._cdfSignature = null;
+				++ this._cdfGeneration;
 				this._updateCDFTexture();
 				this.uniforms.set( 'envTotalSum', 0.0 );
 				return;
@@ -421,15 +427,19 @@ export class EnvironmentManager {
 			// The same pixels as last time: the tables and uniforms already describe them.
 			const signature = `${textureForCDF.uuid}:${textureForCDF.version}`;
 			if ( signature === this._cdfSignature ) return;
+			if ( this._reuseSolidTable( textureForCDF, signature ) ) return;
 
+			const generation = ++ this._cdfGeneration;
+			const current = () => generation === this._cdfGeneration;
 			const cached = await loadCDF( textureForCDF ).catch( () => null );
+			if ( ! current() ) return;
 			if ( cached ) {
 
 				Object.assign( this.equirectHdrInfo, cached );
 
 			} else if ( useWorker ) {
 
-				await this.equirectHdrInfo.updateFromAsync( textureForCDF );
+				if ( ! await this.equirectHdrInfo.updateFromAsync( textureForCDF, current ) ) return;
 
 			} else {
 
@@ -441,7 +451,12 @@ export class EnvironmentManager {
 			this._cdfSignature = signature;
 			this.cdfBuildTime = performance.now() - startTime;
 
+			const bound = this.envCDFTexture;
 			this._updateCDFTexture();
+			// A solid colour's table serves its next colours (_reuseSolidTable).
+			const { width: w, height: h } = textureForCDF.image;
+			this._solidTable = textureForCDF === this.simpleSkyRenderer?._texture && this.envCDFTexture !== bound && this.equirectHdrInfo.totalSum > 0
+				? { cdf: this.envCDFTexture, size: `${w}x${h}` } : null;
 			this.uniforms.set( 'envTotalSum', this.equirectHdrInfo.totalSum );
 
 			const { width, height } = this.equirectHdrInfo;
@@ -463,6 +478,31 @@ export class EnvironmentManager {
 			this.uniforms.set( 'envTotalSum', 0.0 );
 
 		}
+
+	}
+
+	/**
+	 * A solid colour's table is the same at any brightness: a new colour keeps the table of an earlier one while it is
+	 * still bound, at the same size, and only the integral changes. Supersedes a build in flight, which would land here.
+	 * @returns {boolean} whether the table was kept
+	 * @private
+	 */
+	_reuseSolidTable( texture, signature ) {
+
+		const kept = this._solidTable;
+		const { width, height, data } = texture.image;
+		if ( texture !== this.simpleSkyRenderer?._texture || kept?.cdf !== this.envCDFTexture || kept.size !== `${width}x${height}` ) return false;
+
+		const integral = environmentRadianceIntegral( data, width, height );
+		if ( ! ( integral > 0 ) ) return false;
+
+		++ this._cdfGeneration;
+		const info = this.equirectHdrInfo;
+		info.totalSum = info.radianceIntegral = integral;
+		this._exactTable = { radianceIntegral: integral };
+		this._cdfSignature = signature;
+		this.uniforms.set( 'envTotalSum', integral );
+		return true;
 
 	}
 
@@ -520,6 +560,7 @@ export class EnvironmentManager {
 		} else {
 
 			this._cdfSignature = null;
+			++ this._cdfGeneration;
 			this._updateCDFTexture();
 			this.uniforms.set( 'envTotalSum', 0.0 );
 
@@ -769,8 +810,9 @@ export class EnvironmentManager {
 
 		}
 
-		// So an HDRI coming back rebuilds its own table.
+		// So an HDRI coming back rebuilds its own table, and a build in flight never lands on the sky's.
 		this._cdfSignature = null;
+		++ this._cdfGeneration;
 		if ( ! this._exactTable?.sky ) this._exactTable = { radianceIntegral: 0, sky: true };
 		texture._isGeneratedProcedural = true;
 		this.scene.environment = texture;

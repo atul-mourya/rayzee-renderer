@@ -48,20 +48,7 @@ export function buildExactEnvironmentTable( floatData, width, height, { filtered
 
 	const { k, width: w, height: h } = exactTableSize( width, height );
 	const lum = new Float32Array( width * height );
-	let raw = 0;
-	for ( let y = 0; y < height; y ++ ) {
-
-		const sinTheta = Math.sin( Math.PI * ( y + 0.5 ) / height );
-		for ( let x = 0; x < width; x ++ ) {
-
-			const i = 4 * ( y * width + x );
-			const l = 0.2126 * floatData[ i ] + 0.7152 * floatData[ i + 1 ] + 0.0722 * floatData[ i + 2 ];
-			lum[ y * width + x ] = Number.isFinite( l ) && l > 0 ? l : 0;
-			raw += lum[ y * width + x ] * sinTheta;
-
-		}
-
-	}
+	const raw = luminanceSum( floatData, width, height, lum );
 
 	// Each texel weighs as the bilinear filter's mean over it — 1/8, 6/8, 1/8 of its neighbours along each axis — so
 	// a cell has weight wherever the filtered map has light, and a sharp texel's neighbours only their share of it.
@@ -149,8 +136,44 @@ export function buildExactEnvironmentTable( floatData, width, height, { filtered
 
 	return {
 		exactWidth: w, exactHeight: h, exactConditional, exactMarginal, exactRowGuide, exactMarginalGuide,
-		radianceIntegral: 2 * Math.PI * Math.PI * raw / ( width * height ),
+		radianceIntegral: radianceIntegralOf( raw, width, height ),
 	};
+
+}
+
+// Σ luminance · sin θ over the texels, each texel's luminance written to `lum` when given.
+function luminanceSum( floatData, width, height, lum = null ) {
+
+	let raw = 0;
+	for ( let y = 0; y < height; y ++ ) {
+
+		const sinTheta = Math.sin( Math.PI * ( y + 0.5 ) / height );
+		for ( let x = 0; x < width; x ++ ) {
+
+			const i = 4 * ( y * width + x );
+			let l = 0.2126 * floatData[ i ] + 0.7152 * floatData[ i + 1 ] + 0.0722 * floatData[ i + 2 ];
+			l = Math.fround( Number.isFinite( l ) && l > 0 ? l : 0 );
+			if ( lum ) lum[ y * width + x ] = l;
+			raw += l * sinTheta;
+
+		}
+
+	}
+
+	return raw;
+
+}
+
+const radianceIntegralOf = ( raw, width, height ) => 2 * Math.PI * Math.PI * raw / ( width * height );
+
+/**
+ * ∫ luminance dω of a map, as {@link buildExactEnvironmentTable} computes it, without the table: for a map whose table
+ * is known to be another's (a uniform colour's is the same at any brightness).
+ * @returns {number}
+ */
+export function environmentRadianceIntegral( floatData, width, height ) {
+
+	return radianceIntegralOf( luminanceSum( floatData, width, height ), width, height );
 
 }
 

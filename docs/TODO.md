@@ -323,7 +323,8 @@ picture: in 0.5.0 one NaN pixel smeared over 60–110 pixels, and 1 % of pixels 
 
 ### Pipeline
 
-- [ ] GPU-CPU sync for environment in solid color sky mode
+- [x] GPU-CPU sync for environment in solid color sky mode: a colour change rebuilt the sampling table (24 ms Node, 16 ms
+  Chrome); the table is now kept and only its integral changes (0.5 ms, 2026-11-08)
 - [ ] Zero-Day loaded as a single frame (`animation: false`) built in 77.6 s for 4.0M triangles, the 9-frame clip in 38.3 s for 2.2M (measured once, busy machine) — check with `bench:load`.
   Re-measured 2026-11-07 with `bench:load` (Node on Dawn, quiet machine, 27977388, median of 3): the frame ready in
   12.0 s (4.0M triangles), the clip in 11.5 s (2.2M, 6,177 meshes); `pbrtBuild` is 8.5 s of each. Chrome not timed.

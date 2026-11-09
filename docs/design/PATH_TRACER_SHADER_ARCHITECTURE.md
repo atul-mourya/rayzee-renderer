@@ -510,6 +510,15 @@ Turns the `generateSampledDirection` draw into the bounce: throughput `f · NoL 
 ### Table-Based Sampling
 `sampleEnvironmentExact` inverts the piecewise-constant table in `envCDFTexture` (`environment/EnvironmentExactTable.js`): the row is found from the rows' running sums, then the cell within it. A step's guide names the entry at once in most draws; otherwise a binary search runs between the guides. The draw lands exactly at the density `environmentPdfExact` reads back from the same sums. The table is MIS-compensated (each texel weighs what it has above the mean) and keeps a floor on every cell.
 
+A solid colour's table is the same at any brightness (each weight, the mean subtracted from it and the floor all scale
+together), so a new colour of the solid sky keeps the table and only `envTotalSum` changes
+(`EnvironmentManager._reuseSolidTable`, `environmentRadianceIntegral` — the full build's own arithmetic) while that
+table is still the one bound; from or to black, or once another table was bound (the physical sky's is freed when its
+mode is left), it is built again. A colour change took 24 ms in Node and 16 ms in Chrome (36 at worst), now 0.5 ms;
+renders after one matched a fresh build bit for bit (a marginal entry may differ in its last bit). Builds are numbered
+(`_cdfGeneration`): one that lands after a newer build, a kept table or a sky is dropped, and each async build ends only
+its own worker (`EquirectHDRInfo.updateFromAsync`) — ending the shared one left a second build in flight unsettled.
+
 ### Direction Conversion
 `equirectDirectionToUv` / `equirectUvToDirection` map between spherical and UV space applying `environmentMatrix` (HDRI rotation).
 
