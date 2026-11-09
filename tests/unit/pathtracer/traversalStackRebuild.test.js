@@ -20,6 +20,8 @@ function makeStage( compiled, needed ) {
 		_compiledLightRadius: false,
 		fogDensity: { value: 0 },
 		_compiledFog: false,
+		sampleClamp: { value: 0 },
+		_compiledSampleClamp: false,
 		_compiledStack: compiled,
 		bvhStorageAttr: { traversalStack: needed },
 		_kernelManager: { dispose: vi.fn() },

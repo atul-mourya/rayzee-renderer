@@ -19,6 +19,7 @@ export const ENGINE_DEFAULTS = deepFreeze( {
 	emissiveBoost: 1.0,
 	enableAlphaShadows: false,
 	fireflyThreshold: 3.0,
+	sampleClamp: 0, // a camera sample's largest CIE XYZ component, before exposure (pbrt's maxcomponentvalue); 0 is none, and compiles it out
 	shadowTerminatorOffset: 0.1, // Cycles' Geometry Offset at Blender's default; 0 turns it off
 	globalIlluminationIntensity: 1,
 	wavefrontSortMaterials: true, // sort rays by material before Shade (above 8 materials); read when kernels build

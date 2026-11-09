@@ -64,6 +64,7 @@ exports[`defaults that shape pixels — a change here says how renders change in
   "renderLimitMode": "frames",
   "renderMode": 0,
   "renderTimeLimit": 30,
+  "sampleClamp": 0,
   "samplingTechnique": 2,
   "saturation": 1,
   "shadowRays": "two",

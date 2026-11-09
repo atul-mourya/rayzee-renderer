@@ -556,6 +556,11 @@ export const usePathTracerStore = create( ( set, get ) => ( {
 		// Shown in Final Render, not applied: pbrt's counts assume no denoiser and no early stop.
 		if ( render?.maxBounces || render?.samples ) request.asks = { maxBounces: render.maxBounces, samples: render.samples };
 
+		// Engine-only, as the file asks: none for the next model.
+		const clamp = render?.sampleClamp > 0 ? render.sampleClamp : 0;
+		if ( clamp ) request.sampleClamp = clamp;
+		if ( clamp !== ( opened.sampleClamp ?? 0 ) ) getApp()?.settings.set( 'sampleClamp', clamp, { source: SETTING_SOURCE.SCENE_METADATA } );
+
 		const regularize = render?.pathRegularization === true;
 		if ( regularize ) request.pathRegularization = true;
 		if ( regularize !== ( opened.pathRegularization ?? false ) ) {

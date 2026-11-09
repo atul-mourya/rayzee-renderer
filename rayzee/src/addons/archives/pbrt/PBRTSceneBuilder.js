@@ -362,7 +362,9 @@ const PBRT_PANORAMA = Object.freeze( { cameraProjection: 'equirectangular', pano
 
 // What the scene asks the renderer for, where it says: the Integrator, its maxdepth and `regularize`, sppm's `radius` as
 // vertex merging's (scene units), the Sampler's pixelsamples, the Film's resolution, as `exposure` pbrt's imaging
-// ratio, shutter time × ISO / 100, and a spherical camera's panorama — scene metadata's `render`.
+// ratio, shutter time × ISO / 100, as `sampleClamp` the Film's maxcomponentvalue before that ratio (pbrt caps the
+// sensor's XYZ after it; its sppm writes the image itself and never caps), and a spherical camera's panorama — scene
+// metadata's `render`.
 function renderRequest( ir ) {
 
 	// Its `equalarea` square (pbrt's default) is the engine's equal-area projection, which has no framing of its own.
@@ -387,6 +389,8 @@ function renderRequest( ir ) {
 	const shutter = ir.camera ? pFloat( ir.camera.params, 'shutterclose', 1 ) - pFloat( ir.camera.params, 'shutteropen', 0 ) : 1;
 	const exposure = ( shutter > 0 ? shutter : 1 ) * ( ir.film?.iso ?? 100 ) / 100;
 	if ( exposure > 0 && exposure !== 1 ) render.exposure = exposure;
+	const cap = ir.film?.maxcomponentvalue;
+	if ( cap > 0 && cap < Infinity && ir.integrator?.type !== 'sppm' ) render.sampleClamp = cap / ( exposure > 0 ? exposure : 1 );
 
 	return Object.keys( render ).length ? render : null;
 

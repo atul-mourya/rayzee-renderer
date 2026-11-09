@@ -267,6 +267,14 @@ the shadow terminator, shadow-ray picking, sized lights and fog. CLAUDE.md keeps
   2048 spp with it: relMSE 0.0120 → 0.0072, pixels over 4× the reference 0.015 → 0.001 %; against 2048 spp without it
   0.0115 → 0.0082; the two references 0.0012 apart; +1 % a sample. `tests/gpu/pathRegularization.test.js` holds the formula
   to pbrt's and the samplers' word.
+- **Sample clamp** (`sampleClamp`, pbrt-v4's Film `maxcomponentvalue`; path integrator only, else `setting.ignored`) —
+  FinalWrite scales a camera sample whose largest CIE XYZ component passes the limit down to it (`sampleClampScale`;
+  the working space's matrix to XYZ follows the working space), the directly seen emission kept apart for NRD by the
+  same factor. pbrt caps its sensor's XYZ after the imaging ratio, so the importer divides by that ratio. Compiled in
+  only while on; off, every kernel is as before (`bench:quality` 53 of 54 bit-identical, the 54th VCM noise). Against
+  pbrt-v4's own render of lit tiles: one below the cap untouched in both, an orange one scaled 0.234 here and 0.225
+  there, at ISO 100 and 400 alike; a saturated blue loses more in pbrt, which caps each sample per wavelength.
+  `tests/gpu/sampleClamp.test.js`.
 - **Light radius** — a point or spot light with `userData.radius` (USD `SphereLight` radius unless `treatAsPoint`) is lit
   as Cycles' Soft Falloff: NEE samples a disc of that radius facing the shaded point and scales the emission by the disc's
   cosine, so on its axis it gives I / (d² + r²); a spot's cone, gobo and IES are read from the centre. Packed as the

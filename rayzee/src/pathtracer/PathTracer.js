@@ -5,6 +5,7 @@
  */
 
 import { uniform, texture, storage, uint } from 'three/tsl';
+import { Matrix3 } from 'three';
 import { IndirectStorageBufferAttribute } from 'three/webgpu';
 import { gpuOnlyStorageAttribute } from '../shaders/ThreePatches.js';
 import { PathTracerStage } from './PathTracerStage.js';
@@ -38,11 +39,15 @@ import { LIGHT_FLOATS } from './UniformManager.js';
 import { MAX_STORAGE_TEXTURE_SIZE } from './StorageTexturePool.js';
 import { readPixels } from '../output/TextureReadback.js';
 import { ISSUE_CODES } from '../EngineIssues.js';
+import { getWorkingMatrix } from '../color/WorkingMatrix.js';
 import { createLogger, fmt } from '../Logger.js';
 import { deviceMemoryGB } from '../memory/HostMemory.js';
 import { MIN_TRAVERSAL_STACK } from '../bvh/TraversalStack.js';
 
 const log = createLogger( 'wavefront' );
+
+// Linear Rec.709 (D65) to CIE XYZ, row-major.
+const XYZ_FROM_REC709 = [ 0.4124564, 0.3575761, 0.1804375, 0.2126729, 0.7151522, 0.0721750, 0.0193339, 0.1191920, 0.9503041 ];
 
 const PICKED_SHADOW_RAYS = [ 'two', 'one' ];
 const SHADOW_RAY_MODES = [ 'all', ...PICKED_SHADOW_RAYS ];
@@ -485,6 +490,34 @@ export class PathTracer extends PathTracerStage {
 
 	}
 
+	/** Whether the per-sample cap is compiled in: it has a limit, under the path integrator. */
+	_sampleClampNeeded() {
+
+		if ( ! ( this.sampleClamp.value > 0 ) ) return false;
+		if ( ! this._integrator ) return true;
+		if ( this._sampleClampIgnoredBy !== this._integrator.name ) {
+
+			this._sampleClampIgnoredBy = this._integrator.name;
+			this.issues?.warn( ISSUE_CODES.SETTING_IGNORED, `the sample clamp is the path integrator's only: "${this._integrator.name}" renders without it`, { setting: 'sampleClamp', integrator: this._integrator.name } );
+
+		}
+
+		return false;
+
+	}
+
+	/** The cap measures CIE XYZ (pbrt's sensor): the working space's matrix to it, kept with the working space. */
+	_syncSampleClampXYZ() {
+
+		const working = getWorkingMatrix();
+		if ( this._sampleClampWorking === working ) return;
+		this._sampleClampWorking = working;
+		const toXYZ = new Matrix3().set( ...XYZ_FROM_REC709 );
+		if ( working ) toXYZ.multiply( new Matrix3().set( ...working ).invert() );
+		this._sampleClampXYZ.value.copy( toXYZ );
+
+	}
+
 	get integrator() {
 
 		return this._integrator?.name ?? 'path';
@@ -524,6 +557,7 @@ export class PathTracer extends PathTracerStage {
 		if ( this._fogNeeded() !== this._compiledFog ) this._outputsChanged = true;
 		// A tree deeper than the stack compiled (an added object, a rebuilt BLAS) grows it; a shallower one waits.
 		if ( this._stackNeeded() > this._compiledStack ) this._outputsChanged = true;
+		if ( this._sampleClampNeeded() !== this._compiledSampleClamp ) this._outputsChanged = true;
 
 		if ( this._lightBufferRealloc || this._outputsChanged ) {
 
@@ -533,6 +567,8 @@ export class PathTracer extends PathTracerStage {
 			if ( ! this._wavefrontReady ) return;
 
 		}
+
+		if ( this._compiledSampleClamp ) this._syncSampleClampXYZ();
 
 		const lockstepRead = this._lockstepRead;
 		if ( lockstepRead && this.frameCount >= lockstepRead.due ) {
@@ -2179,6 +2215,7 @@ export class PathTracer extends PathTracerStage {
 			freshLight, freshTri, freshBvh, freshMat, freshEnvTex, freshEnvCDF, materialLayers: this._compiledLayers,
 		} );
 
+		this._compiledSampleClamp = this._sampleClampNeeded();
 		const fwFn = buildFinalWriteKernel( {
 			rayBufferRO: pb.rayBuffer.ro,
 			gBufferRO,
@@ -2216,6 +2253,7 @@ export class PathTracer extends PathTracerStage {
 			convergenceOverlay: this.convergenceOverlay,
 			emissionRW: this._emissionCompiled ? this._emissionNode : null,
 			emissionOutput: this._emissionUniform,
+			sampleClamp: this._compiledSampleClamp ? { limit: this.sampleClamp, toXYZ: this._sampleClampXYZ ??= uniform( new Matrix3() ) } : null,
 			chunkRowBase: this._wfChunkRowBase,
 			chunkRows: this._wfChunkRows,
 		} );

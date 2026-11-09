@@ -125,7 +125,9 @@ subtree per element, and the whole thing rarely fits: Moana is 29 GB unpacked.
   dropped. A camera's `lensradius`/`focaldistance` become its own effects (`userData.__rayzeeEffects`, applied when it is
   chosen): the same aperture radius in both DOF modes, focused by hand. The `Integrator` (as the engine's `integrator`:
   bdpt → bidirectional, sppm → vcm), its maxdepth and `regularize` (`pathRegularization`; path, volpath, bdpt and mlt
-  take it), sppm's `radius` (`mergeRadius`, scene units), `Sampler` pixelsamples and the Film's resolution are
+  take it), sppm's `radius` (`mergeRadius`, scene units), the Film's `maxcomponentvalue` (`sampleClamp`, over the imaging
+  ratio: pbrt caps sensor XYZ after it; none under sppm, which writes its image without the film's cap), `Sampler`
+  pixelsamples and the Film's resolution are
   `sceneMetadata.render` (glTF extras may carry it too), with `aspect` the picture's shape (`withSceneAspect`). A
   `spherical` camera asks for the engine's panorama (`cameraProjection`, `panoramaLonRange` [90, −270],
   `panoramaLevelHorizon` false): pbrt's image starts at camera +x and turns towards +z, row 0 up, in the camera's own

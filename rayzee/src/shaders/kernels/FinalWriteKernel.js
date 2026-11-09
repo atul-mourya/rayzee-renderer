@@ -12,7 +12,7 @@
 
 import {
 	Fn, wgslFn, float, vec2, vec4, int, uint, uvec2, bool as tslBool,
-	If, mix, select, texture, textureStore, length,
+	If, mix, select, texture, textureStore, length, max,
 	localId, workgroupId, instanceIndex, atomicAdd,
 } from 'three/tsl';
 
@@ -51,6 +51,18 @@ export const guideWeights = ( unlikely, prevCount, auxSamples, auxAccumulationAl
 	count: select( unlikely, prevCount, prevCount.add( uint( 1 ) ) ),
 } );
 
+/**
+ * pbrt's Film `maxcomponentvalue`: a sample whose largest CIE XYZ component passes `limit` is scaled down to it, colour
+ * kept. The factor to multiply the sample by; `toXYZ` takes the working space to XYZ.
+ */
+export const sampleClampScale = /*@__PURE__*/ Fn( ( [ color, limit, toXYZ ] ) => {
+
+	const xyz = toXYZ.mul( color );
+	const m = max( max( xyz.x, xyz.y ), xyz.z );
+	return select( m.greaterThan( limit ), limit.div( m ), float( 1.0 ) );
+
+} );
+
 export function buildFinalWriteKernel( params ) {
 
 	const {
@@ -86,6 +98,8 @@ export function buildFinalWriteKernel( params ) {
 		convergenceOverlay,
 		// The emission the camera saw directly, averaged like the colour while the uniform is on (requestOutput( 'emission' )).
 		emissionRW = null, emissionOutput = null,
+		// The per-sample cap, compiled in only while it has a limit under the path integrator ({ limit, toXYZ } uniforms).
+		sampleClamp = null,
 	} = params;
 
 	const auxOn = auxGBufferEnabled.greaterThan( uint( 0 ) );
@@ -108,7 +122,9 @@ export function buildFinalWriteKernel( params ) {
 			const rayID = uint( localGy.mul( renderWidth ).add( gx ) ); // LOCAL path/gBuffer slot
 			const pixelId = uint( gy.mul( renderWidth ).add( gx ) ); // GLOBAL pixel (persistent buffers + texture)
 
-			const sampleColor = readRayRadiance( rayBufferRO, rayID );
+			const read = readRayRadiance( rayBufferRO, rayID );
+			const capScale = sampleClamp ? sampleClampScale( read.xyz, sampleClamp.limit, sampleClamp.toXYZ ).toVar() : null;
+			const sampleColor = capScale ? vec4( read.xyz.mul( capScale ), read.w ).toVar() : read;
 			const finalColor = sampleColor.xyz.toVar();
 			// Coverage, whatever the backdrop: 0 where the camera saw past everything opaque. What shows or reads the
 			// image makes it opaque unless the background is transparent; auto exposure leaves a solid colour out by it.
@@ -303,7 +319,8 @@ export function buildFinalWriteKernel( params ) {
 
 			if ( emissionRW ) If( emissionOutput.greaterThan( uint( 0 ) ), () => {
 
-				const emission = readPathEmission( gBufferRO, rayID ).toVar();
+				// Its share of the sample, capped with it.
+				const emission = ( capScale ? readPathEmission( gBufferRO, rayID ).mul( capScale ) : readPathEmission( gBufferRO, rayID ) ).toVar();
 				const prev = emissionRW.element( pixelId ).xyz;
 				If( enableAccumulation.and( cameraIsMoving.not() ).and( frame.greaterThan( uint( 0 ) ) ).and( hasPreviousAccumulated ), () => {
 

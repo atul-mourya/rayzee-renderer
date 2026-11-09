@@ -832,6 +832,17 @@ describe( 'what a scene\'s file asks for', () => {
 
 	} );
 
+	it( 'clamps samples while the file asks for it, and not for the next model', async () => {
+
+		const app = await withApp();
+		const calls = () => app.settings.set.mock.calls.filter( ( [ key ] ) => key === 'sampleClamp' ).map( ( [ , v, { source } ] ) => [ v, source ] );
+		pt().applySceneRequest( { sampleClamp: 2.5 } );
+		pt().applySceneRequest( { sampleClamp: 2.5 } );
+		pt().applySceneRequest( { integrator: 'path' } );
+		expect( calls() ).toEqual( [[ 2.5, 'scene-metadata' ], [ 0, 'scene-metadata' ]] );
+
+	} );
+
 	it( 'keeps the bounces and samples it asks for to show, applying neither', async () => {
 
 		await withApp();

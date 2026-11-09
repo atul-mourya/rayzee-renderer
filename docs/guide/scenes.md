@@ -32,7 +32,8 @@ gives it one — glTF's `aspectRatio` (or `xmag / ymag`), USD's authored apertur
 Collada's `aspect_ratio` (or `xfov` with `yfov`, `xmag / ymag`) — kept on that camera as
 `userData.aspect`. A pbrt scene also carries `integrator`, `maxBounces` and `samples`, and `exposure`, the Film's
 imaging ratio (the camera's shutter time × the Film's `iso` / 100, which pbrt scales every pixel by); where its file says,
-`pathRegularization` (its `regularize`) and `mergeRadius` (sppm's `radius`, in scene units:
+`pathRegularization` (its `regularize`), `sampleClamp` (the Film's `maxcomponentvalue` over that imaging ratio; none under
+sppm, which pbrt never caps) and `mergeRadius` (sppm's `radius`, in scene units:
 `pathTracer.activeIntegrator.setMergeRadius( r, { units: 'scene' } )` under `'vcm'`); a spherical camera, as
 `cameraProjection`, `panoramaLonRange`, `panoramaLatRange` and `panoramaLevelHorizon` (settings of those names, framed
 as pbrt frames it; a panorama renders 2:1, whatever the Film's `aspect`). USD's RenderSettings carry `width`

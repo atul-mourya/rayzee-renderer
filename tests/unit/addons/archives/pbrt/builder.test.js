@@ -206,6 +206,19 @@ describe( 'PBRT scene builder', () => {
 
 	} );
 
+	it( 'reports the Film\'s maxcomponentvalue as the sample clamp before exposure, and none where pbrt\'s sppm ignores it', async () => {
+
+		const load = async ( head ) => loadPBRTScene( buildArgs( { vfs: { 'scene.pbrt': enc.encode( head + SCENE.replace( /Film "rgb"/, 'Film "rgb" "float maxcomponentvalue" 10' ).replace( /Film[^\n]*\n/, ( film ) => film.replace( '\n', ' "float iso" 400\n' ) ) ) } } ) );
+		const path = await load( 'Integrator "volpath"\n' );
+		expect( path.render.sampleClamp ).toBeCloseTo( 10 / 4, 9 );
+		expect( path.render.exposure ).toBe( 4 );
+		expect( Object.keys( path.parameters.unused ).filter( ( key ) => key.startsWith( 'Film' ) ) ).toEqual( [] );
+		expect( ( await load( 'Integrator "bdpt"\n' ) ).render.sampleClamp ).toBeCloseTo( 2.5, 9 );
+		expect( ( await load( 'Integrator "sppm"\n' ) ).render.sampleClamp ).toBeUndefined();
+		expect( ( await loadPBRTScene( buildArgs( { vfs: { 'scene.pbrt': enc.encode( SCENE ) } } ) ) ).render?.sampleClamp ).toBeUndefined();
+
+	} );
+
 	it( 'reports regularize as path regularization, and sppm\'s radius as the merge radius, in scene units', async () => {
 
 		const load = async ( integrator ) => loadPBRTScene( buildArgs( { vfs: { 'scene.pbrt': enc.encode( `Integrator ${integrator}\n` + SCENE ) } } ) );

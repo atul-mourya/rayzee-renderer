@@ -23,7 +23,7 @@
 
 ### pbrt: read but not used (audit of the 26 catalog scenes, 2026-11-01)
 - [ ] PixelFilter (triangle, radius 1; 25 scenes) — engine uses its own pixel reconstruction
-- [ ] Not read, not in the catalog: realistic cameras, perspective `screenwindow`, `frameaspectratio`, shutter (motion blur), Film white balance / sensor / `cropwindow` / `maxcomponentvalue`, CameraMedium and space-filling media, non-homogeneous media, scattering inside media (σs folds into absorption)
+- [ ] Not read, not in the catalog: realistic cameras, perspective `screenwindow`, `frameaspectratio`, shutter (motion blur), Film white balance / sensor / `cropwindow`, CameraMedium and space-filling media, non-homogeneous media, scattering inside media (σs folds into absorption)
 
 ### UX issue
 - The 360° panorama's longitude sliders run −180…180 with min below max: a pbrt spherical camera's framing (90 to −270,
