@@ -355,12 +355,17 @@ function lensEffects( camera, radius, focusDistance ) {
 // pbrt's integrators as the engine's `integrator` setting; sppm's photon gathering is closest to vertex merging.
 const PBRT_INTEGRATORS = new Map( [[ 'path', 'path' ], [ 'volpath', 'path' ], [ 'bdpt', 'bidirectional' ], [ 'sppm', 'vcm' ]] );
 
+// pbrt's spherical camera as the engine's panorama: pbrt starts the image at camera +x and turns towards +z (forward),
+// row 0 at +y, in the camera's own frame. The engine centres longitude 0 forward and turns right, so the image runs from
+// 90° to −270°, the horizon not levelled (posed to face the middle, a pitched camera's tilt would become a roll).
+const PBRT_PANORAMA = Object.freeze( { cameraProjection: 'equirectangular', panoramaLonRange: [ 90, - 270 ], panoramaLatRange: [ - 90, 90 ], panoramaLevelHorizon: false } );
+
 // What the scene asks the renderer for, where it says: the Integrator, its maxdepth and `regularize`, sppm's `radius` as
-// vertex merging's (scene units), the Sampler's pixelsamples, the Film's resolution, and as `exposure` pbrt's imaging
-// ratio, shutter time × ISO / 100 — scene metadata's `render`.
+// vertex merging's (scene units), the Sampler's pixelsamples, the Film's resolution, as `exposure` pbrt's imaging
+// ratio, shutter time × ISO / 100, and a spherical camera's panorama — scene metadata's `render`.
 function renderRequest( ir ) {
 
-	const render = {};
+	const render = ir.camera?.type === 'spherical' ? { ...PBRT_PANORAMA, panoramaLonRange: [ ...PBRT_PANORAMA.panoramaLonRange ], panoramaLatRange: [ ...PBRT_PANORAMA.panoramaLatRange ] } : {};
 	const integrator = PBRT_INTEGRATORS.get( ir.integrator?.type );
 	if ( integrator ) render.integrator = integrator;
 	if ( ir.integrator?.maxdepth > 0 ) render.maxBounces = Math.round( ir.integrator.maxdepth );
@@ -2800,6 +2805,15 @@ export class PBRTSceneBuilder {
 		} else {
 
 			camera = new PerspectiveCamera( this._verticalFov( cam.params, aspect ), aspect, 0.01, 10000 );
+
+		}
+
+		// A panorama the renderer is asked for (renderRequest); its lat-long is pbrt's `equirectangular`, not the equal-area
+		// square pbrt draws by default.
+		if ( cam.type === 'spherical' && pString( cam.params, 'mapping', 'equalarea' ) !== 'equirectangular' ) {
+
+			approximated( cam.params, 'mapping' );
+			this.warn( 'pbrt spherical camera: its equal-area image is rendered as a lat-long panorama' );
 
 		}
 

@@ -705,11 +705,15 @@ describe( 'what a scene\'s file asks for', () => {
 
 	const withApp = async () => {
 
-		const app = { settings: { set: vi.fn() }, setReservedRenderResolution: vi.fn(), setCanvasSize: vi.fn(), reset: vi.fn() };
+		const app = {
+			settings: { set: vi.fn() }, setReservedRenderResolution: vi.fn(), setCanvasSize: vi.fn(), reset: vi.fn(),
+			denoisingManager: { denoiserStrategy: 'oidn' }, cameraManager: { autoFocusMode: 'manual' },
+		};
 		( await import( '@/lib/appProxy.js' ) ).__setMockApp( app );
 		store.usePathTracerStore.setState( {
 			integrator: 'path', aspectRatioPreset: '1:1', orientation: 'landscape', sceneAspect: null, resolution: 1000,
-			cameraProjection: 'perspective', _sceneRequest: null,
+			cameraProjection: 'perspective', panoramaLonRange: [ - 180, 180 ], panoramaLatRange: [ - 90, 90 ], panoramaLevelHorizon: true,
+			_sceneRequest: null,
 		} );
 		return app;
 
@@ -782,6 +786,36 @@ describe( 'what a scene\'s file asks for', () => {
 		pt().handleExposureChange( 3 );
 		pt().applySceneRequest( null );
 		expect( pt().exposure ).toBe( 3 );
+
+	} );
+
+	it( 'opens in the panorama a pbrt spherical camera asks for, framed as it says, and gives the view back after', async () => {
+
+		const app = await withApp();
+		const view = () => [ pt().cameraProjection, pt().panoramaLonRange, pt().panoramaLatRange, pt().panoramaLevelHorizon ];
+		const PANORAMA = { cameraProjection: 'equirectangular', panoramaLonRange: [ 90, - 270 ], panoramaLatRange: [ - 90, 90 ], panoramaLevelHorizon: false };
+		pt().applySceneRequest( { ...PANORAMA, aspect: 2 } );
+		expect( view() ).toEqual( [ 'equirectangular', [ 90, - 270 ], [ - 90, 90 ], false ] );
+		const sent = Object.fromEntries( app.settings.set.mock.calls.filter( ( [ key ] ) => key in PANORAMA ) );
+		// What it already had (the full latitude range) is not sent again.
+		expect( sent ).toEqual( { cameraProjection: 'equirectangular', panoramaLonRange: [ 90, - 270 ], panoramaLevelHorizon: false } );
+		expect( app.setCanvasSize.mock.lastCall ).toEqual( [ 1000, 500 ] );
+
+		pt().applySceneRequest( null );
+		expect( view() ).toEqual( [ 'perspective', [ - 180, 180 ], [ - 90, 90 ], true ] );
+		expect( app.settings.set.mock.lastCall ).toEqual( [ 'cameraProjection', 'perspective' ] );
+
+		// Changed after the scene opened: that one is the user's, the rest given back.
+		pt().applySceneRequest( PANORAMA );
+		pt().handlePanoramaLevelHorizonChange( true );
+		pt().applySceneRequest( null );
+		expect( view() ).toEqual( [ 'perspective', [ - 180, 180 ], [ - 90, 90 ], true ] );
+		pt().applySceneRequest( PANORAMA );
+		pt().handleCameraProjectionChange( 'perspective' );
+		pt().applySceneRequest( null );
+		expect( view() ).toEqual( [ 'perspective', [ - 180, 180 ], [ - 90, 90 ], true ] );
+		pt().handleCameraProjectionChange( 'equirectangular' );
+		expect( pt().panoramaLevelHorizon ).toBe( true );
 
 	} );
 

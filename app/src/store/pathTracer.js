@@ -511,6 +511,10 @@ export const usePathTracerStore = create( ( set, get ) => ( {
 		const opened = state._sceneRequest ?? {};
 		const shapeOf = ( { aspectRatioPreset, orientation, sceneAspect } ) => ( { aspectRatioPreset, orientation, sceneAspect } );
 		const same = ( a, b ) => a.aspectRatioPreset === b.aspectRatioPreset && a.orientation === b.orientation && a.sceneAspect === b.sceneAspect;
+		// pbrt's spherical camera asks for the projection and the panorama's framing; each is given back on its own.
+		const VIEW = [ 'cameraProjection', 'panoramaLonRange', 'panoramaLatRange', 'panoramaLevelHorizon' ];
+		const view = Object.fromEntries( VIEW.map( key => [ key,
+			opened.view?.[ key ] && String( state[ key ] ) === String( opened.view[ key ].value ) ? opened.view[ key ].previous : state[ key ] ] ) );
 		let integrator = opened.integrator && state.integrator === opened.integrator.value ? opened.integrator.previous : state.integrator;
 		let exposure = opened.exposure && state.exposure === opened.exposure.value ? opened.exposure.previous : state.exposure;
 		let shape = opened.shape && same( shapeOf( state ), opened.shape.value ) ? opened.shape.previous : shapeOf( state );
@@ -537,6 +541,18 @@ export const usePathTracerStore = create( ( set, get ) => ( {
 
 		}
 
+		if ( render?.cameraProjection ) {
+
+			request.view = {};
+			for ( const key of VIEW ) if ( render[ key ] !== undefined ) {
+
+				request.view[ key ] = { value: render[ key ], previous: view[ key ] };
+				view[ key ] = render[ key ];
+
+			}
+
+		}
+
 		// Shown in Final Render, not applied: pbrt's counts assume no denoiser and no early stop.
 		if ( render?.maxBounces || render?.samples ) request.asks = { maxBounces: render.maxBounces, samples: render.samples };
 
@@ -552,6 +568,10 @@ export const usePathTracerStore = create( ( set, get ) => ( {
 		if ( integrator !== state.integrator ) state.handleIntegratorChange( integrator );
 		if ( exposure !== state.exposure ) state.handleExposureChange( exposure );
 		if ( ! same( shape, shapeOf( state ) ) ) state._applyCanvasDimensions( shape );
+		if ( String( view.panoramaLonRange ) !== String( state.panoramaLonRange ) ) state.handlePanoramaLonRangeChange( view.panoramaLonRange );
+		if ( String( view.panoramaLatRange ) !== String( state.panoramaLatRange ) ) state.handlePanoramaLatRangeChange( view.panoramaLatRange );
+		if ( view.panoramaLevelHorizon !== state.panoramaLevelHorizon ) state.handlePanoramaLevelHorizonChange( view.panoramaLevelHorizon );
+		if ( view.cameraProjection !== state.cameraProjection ) state.handleCameraProjectionChange( view.cameraProjection );
 
 	},
 

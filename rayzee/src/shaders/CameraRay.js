@@ -130,7 +130,9 @@ const cameraRayDirection = Fn( ( [
 
 			back.assign( normalize( flat ) );
 			up.assign( vec3( 0.0, 1.0, 0.0 ) );
-			right.assign( cross( up, back ) );
+			// A mirrored camera (a negative scale: pbrt's handedness) keeps its mirror, as the unlevelled frame does.
+			const mirrored = dot( cross( vec3( cameraWorldMatrix[ 0 ] ), vec3( cameraWorldMatrix[ 1 ] ) ), vec3( cameraWorldMatrix[ 2 ] ) ).lessThan( 0.0 );
+			right.assign( cross( up, back ).mul( select( mirrored, float( - 1.0 ), float( 1.0 ) ) ) );
 
 		} ).Else( () => {
 
