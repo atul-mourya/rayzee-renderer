@@ -83,6 +83,7 @@ export class CameraManager extends EventDispatcher {
 		this._lastValidFocusDistance = null;
 		this._smoothedFocusDistance = null;
 		this._afPointDirty = false;
+		this._afForced = false;
 		this._afSuspended = false;
 		this._afPick = null;
 
@@ -409,9 +410,17 @@ export class CameraManager extends EventDispatcher {
 
 		} else {
 
-			// An imported camera orbits what it looks at: the focus distance is the default 0.8 right after a load.
+			// An imported camera orbits what it looks at once the pick lands; until then, a point at the focus distance
+			// (the default 0.8 right after a load).
 			const forward = new Vector3( 0, 0, - 1 ).applyQuaternion( source.quaternion );
-			this.controls.target.copy( this.camera.position ).addScaledVector( forward, this._viewedDepth() ?? ( focusDistance || 5.0 ) );
+			this.controls.target.copy( this.camera.position ).addScaledVector( forward, focusDistance || 5.0 );
+			this._orbitViewedSurface( ( hit ) => {
+
+				const depth = viewDepth( hit.point, this.camera );
+				if ( ! ( depth > 0 ) ) return false;
+				this.controls.target.copy( this.camera.position ).addScaledVector( forward, depth );
+
+			} );
 
 		}
 
@@ -419,12 +428,23 @@ export class CameraManager extends EventDispatcher {
 
 	}
 
-	/** Depth of the surface at the centre of the view; null when nothing is there. @private */
-	_viewedDepth() {
+	/**
+	 * Hands `place( hit )` the surface at the centre of the view once its pick lands, then updates the controls — unless
+	 * nothing is there, the camera has moved meanwhile, or `place` returns false. @private
+	 */
+	_orbitViewedSurface( place ) {
 
-		const hit = this.interactionManager?.pickSurface( 0, 0 );
-		const depth = hit ? viewDepth( hit.point, this.camera ) : 0;
-		return depth > 0 ? depth : null;
+		const picking = this.interactionManager?.pickSurfaceAsync( 0, 0 );
+		if ( ! picking ) return;
+		const position = this.camera.position.clone(), quaternion = this.camera.quaternion.clone();
+		picking.then( ( hit ) => {
+
+			const camera = this.camera;
+			if ( ! hit || ! this.controls || camera.position.distanceTo( position ) > 1e-6 * Math.max( 1, position.length() )
+				|| camera.quaternion.angleTo( quaternion ) > 1e-6 ) return;
+			if ( place( hit ) !== false ) this.controls.update();
+
+		}, () => {} );
 
 	}
 
@@ -554,12 +574,12 @@ export class CameraManager extends EventDispatcher {
 		if ( walk ) return;
 
 		this.walkControls.release();
-		const hit = this.interactionManager?.pickSurface( 0, 0 );
-		if ( ! hit ) return;
+		this._orbitViewedSurface( ( hit ) => {
 
-		const distance = MathUtils.clamp( hit.distance, controls.minDistance, controls.maxDistance );
-		controls.target.copy( this.camera.position ).addScaledVector( this.camera.getWorldDirection( new Vector3() ), distance );
-		controls.update();
+			const distance = MathUtils.clamp( hit.distance, controls.minDistance, controls.maxDistance );
+			controls.target.copy( this.camera.position ).addScaledVector( this.camera.getWorldDirection( new Vector3() ), distance );
+
+		} );
 
 	}
 
@@ -897,6 +917,7 @@ export class CameraManager extends EventDispatcher {
 			&& ! stage.isComplete ) return;
 
 		const hitPoint = this._pickFocusPoint( stage.resetCount );
+		if ( hitPoint === undefined ) return;
 
 		let rawDistance;
 		if ( hitPoint ) {
@@ -921,8 +942,8 @@ export class CameraManager extends EventDispatcher {
 
 		}
 
-		const forceReset = this._afPointDirty;
-		this._afPointDirty = false;
+		const forceReset = this._afForced;
+		this._afForced = false;
 
 		// Temporal smoothing
 		if ( forceReset || this._smoothedFocusDistance === null || this._smoothedFocusDistance === 0 ) {
@@ -972,29 +993,77 @@ export class CameraManager extends EventDispatcher {
 
 	}
 
-	/** Picks again only on a new view or AF point, or a render reset, which every scene change makes. @private */
+	/**
+	 * Picks again only on a new view or AF point, or a render reset, which every scene change makes. A pick lands a frame
+	 * or so later and the last point serves meanwhile; undefined until the first lands, and until a fresh start's does
+	 * (a new model, mode or AF point), which then resets the render. @private
+	 */
 	_pickFocusPoint( resetCount ) {
 
 		const camera = this.camera;
 		const { x, y } = this.afScreenPoint;
-		const last = this._afPick ??= { point: new Vector3(), hit: false, resetCount: NaN, x: NaN, y: NaN, view: new Matrix4(), projection: new Matrix4() };
+		const last = this._afPick ??= {
+			point: new Vector3(), hit: false, resetCount: NaN, x: NaN, y: NaN, view: new Matrix4(), projection: new Matrix4(),
+			awaiting: true, pending: false, again: false, againForced: false,
+		};
 
 		if ( this._afPointDirty || resetCount !== last.resetCount || x !== last.x || y !== last.y
 			|| ! last.view.equals( camera.matrixWorld ) || ! last.projection.equals( camera.projectionMatrix ) ) {
 
-			// AF screen point (0 to 1, y down) to NDC.
-			const hit = this.interactionManager.pickSurface( x * 2 - 1, 1 - y * 2 );
-			last.hit = !! hit;
-			if ( hit ) last.point.copy( hit.point );
+			const forced = this._afPointDirty;
+			this._afPointDirty = false;
+			if ( forced ) last.awaiting = true;
 			last.resetCount = resetCount;
 			last.x = x;
 			last.y = y;
 			last.view.copy( camera.matrixWorld );
 			last.projection.copy( camera.projectionMatrix );
+			this._requestFocusPick( forced );
 
 		}
 
+		if ( last.awaiting ) return undefined;
 		return last.hit ? last.point : null;
+
+	}
+
+	/** One focus pick in flight at most: the next waits for it and takes the newest AF point and view. @private */
+	_requestFocusPick( forced ) {
+
+		const last = this._afPick;
+		if ( last.pending ) {
+
+			last.again = true;
+			last.againForced ||= forced;
+			return;
+
+		}
+
+		last.pending = true;
+		last.again = false;
+		last.againForced = false;
+		const awaited = last.awaiting;
+		const land = ( hit ) => {
+
+			last.hit = !! hit;
+			if ( hit ) last.point.copy( hit.point );
+			if ( awaited ) {
+
+				last.awaiting = false;
+				if ( forced ) this._afForced = true;
+
+			}
+
+		};
+
+		const { x, y } = this.afScreenPoint;
+		// AF screen point (0 to 1, y down) to NDC.
+		Promise.resolve( this.interactionManager?.pickSurfaceAsync( x * 2 - 1, 1 - y * 2 ) ).then( land, () => land( null ) ).finally( () => {
+
+			last.pending = false;
+			if ( last.again && this.interactionManager ) this._requestFocusPick( last.againForced );
+
+		} );
 
 	}
 

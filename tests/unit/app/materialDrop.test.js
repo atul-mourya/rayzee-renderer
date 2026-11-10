@@ -4,7 +4,7 @@ import { InteractionManager } from '@/core/viewer/camera/InteractionManager.js';
 let app;
 vi.mock( '@/lib/appProxy', () => ( { getApp: () => app } ) );
 
-const { startMaterialDrag, endMaterialDrag, isMaterialDrag, meshAt, highlightMesh, dropMaterial } = await import( '@/lib/materialDrop' );
+const { startMaterialDrag, endMaterialDrag, isMaterialDrag, meshAt, highlightMesh, dropMaterialAt } = await import( '@/lib/materialDrop' );
 
 const dragEvent = () => {
 
@@ -23,7 +23,7 @@ describe( 'dropping a catalogue material on the view', () => {
 
 		app = {
 			canvas: { getBoundingClientRect: () => ( { left: 100, top: 50, width: 400, height: 200 } ) },
-			interactionManager: { pickSurface: vi.fn( () => ( { object: { name: 'cup' } } ) ), highlight: vi.fn() },
+			interactionManager: { pickSurfaceAsync: vi.fn( async () => ( { object: { name: 'cup' } } ) ), highlight: vi.fn() },
 			refreshFrame: vi.fn(),
 		};
 		endMaterialDrag();
@@ -32,12 +32,14 @@ describe( 'dropping a catalogue material on the view', () => {
 
 	} );
 
-	it( 'picks the mesh under a client point through the view\'s picking, in its device coordinates', () => {
+	it( 'picks the mesh under a client point through the view\'s picking, in its device coordinates', async () => {
 
-		expect( meshAt( 300, 150 ) ).toEqual( { name: 'cup' } );
-		expect( app.interactionManager.pickSurface ).toHaveBeenLastCalledWith( 0, 0 );
-		meshAt( 100, 50 );
-		expect( app.interactionManager.pickSurface ).toHaveBeenLastCalledWith( - 1, 1 );
+		expect( await meshAt( 300, 150 ) ).toEqual( { name: 'cup' } );
+		expect( app.interactionManager.pickSurfaceAsync ).toHaveBeenLastCalledWith( 0, 0 );
+		await meshAt( 100, 50 );
+		expect( app.interactionManager.pickSurfaceAsync ).toHaveBeenLastCalledWith( - 1, 1 );
+		app.interactionManager.pickSurfaceAsync.mockResolvedValueOnce( null );
+		expect( await meshAt( 300, 150 ) ).toBe( null );
 
 	} );
 
@@ -49,13 +51,20 @@ describe( 'dropping a catalogue material on the view', () => {
 		expect( isMaterialDrag( event ) ).toBe( true );
 		expect( event.dataTransfer.effectAllowed ).toBe( 'copy' );
 
-		const mesh = { name: 'cup' };
-		highlightMesh( mesh );
-		expect( await dropMaterial( mesh ) ).toBe( true );
-		expect( apply ).toHaveBeenCalledWith( { name: 'Gold' }, mesh );
+		highlightMesh( { name: 'cup' } );
+		// The item's dragend lands before the pick does: the drop still applies.
+		const dropping = dropMaterialAt( 300, 150 );
+		endMaterialDrag();
+		expect( await dropping ).toBe( true );
+		expect( apply ).toHaveBeenCalledWith( { name: 'Gold' }, { name: 'cup' } );
 		expect( app.interactionManager.highlight ).toHaveBeenLastCalledWith( null );
 		expect( isMaterialDrag( event ) ).toBe( false );
-		expect( await dropMaterial( mesh ) ).toBe( false );
+		expect( await dropMaterialAt( 300, 150 ) ).toBe( false );
+		expect( apply ).toHaveBeenCalledTimes( 1 );
+
+		startMaterialDrag( dragEvent(), { name: 'Gold' }, apply );
+		app.interactionManager.pickSurfaceAsync.mockResolvedValueOnce( null );
+		expect( await dropMaterialAt( 300, 150 ) ).toBe( false );
 		expect( apply ).toHaveBeenCalledTimes( 1 );
 
 	} );

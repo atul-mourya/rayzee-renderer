@@ -391,6 +391,7 @@ engine.interactionManager.deselect()           // Deselect the current object
 engine.interactionManager.toggleSelectMode()   // Toggle object selection mode
 engine.interactionManager.disableMode()        // Disable selection mode and detach gizmo
 engine.interactionManager.toggleFocusMode()    // Toggle click-to-focus DOF
+await engine.interactionManager.pickSurfaceAsync(x, y) // Surface under an NDC point, traced on the GPU: { point, distance, object, instanceId }
 engine.interactionManager.on(type, handler)    // Subscribe (returns unsubscribe function)
 ```
 

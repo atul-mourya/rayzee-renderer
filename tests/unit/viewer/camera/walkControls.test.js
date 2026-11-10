@@ -231,13 +231,13 @@ describe( 'CameraManager navigation mode', () => {
 
 	} );
 
-	it( 'orbits around the surface in view once back', () => {
+	it( 'orbits around the surface in view once back', async () => {
 
 		const cm = manager();
 		cm.setNavigationMode( 'walk' );
 		cm.setNavigationMode( 'orbit' );
 
-		expect( cm.controls.target.z ).toBeCloseTo( 3.5, 6 );
+		await vi.waitFor( () => expect( cm.controls.target.z ).toBeCloseTo( 3.5, 6 ) );
 		expect( cm.controls.enableRotate ).toBe( true );
 		expect( cm.walkControls.release ).toHaveBeenCalled();
 

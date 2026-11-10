@@ -8,6 +8,7 @@ import {
 } from 'three';
 import { EngineEvents } from '../../EngineEvents.js';
 import { isPanoramaProjection } from '../../EngineDefaults.js';
+import { GPUPick, pickedObject } from './GPUPick.js';
 
 const _viewAxis = new Vector3();
 const _toPoint = new Vector3();
@@ -38,11 +39,14 @@ export function focusDistanceOfHit( hit, camera, panorama = false ) {
  */
 export class InteractionManager extends EventDispatcher {
 
-	constructor( { scene, camera, canvas, assetLoader, pathTracer, floorPlane, isGeometryOnDisk = null } ) {
+	constructor( { scene, camera, canvas, assetLoader, pathTracer, floorPlane, isGeometryOnDisk = null, renderer = null, sceneProcessor = null } ) {
 
 		super();
 
 		// Core dependencies
+		this.renderer = renderer;
+		this.sceneProcessor = sceneProcessor;
+		this._gpuPick = null;
 		this.scene = scene;
 		this.isGeometryOnDisk = isGeometryOnDisk;
 		this.camera = camera;
@@ -231,16 +235,13 @@ export class InteractionManager extends EventDispatcher {
 	 * Handle click when in focus mode
 	 * @private
 	 */
-	handleFocusClick( event ) {
+	async handleFocusClick( event ) {
 
-		const mouseCoords = this.getMouseCoordinates( event );
-		this.raycaster.setFromCamera( mouseCoords, this.camera );
+		const { x, y } = this.getMouseCoordinates( event );
+		const intersection = await this.pickSurfaceAsync( x, y, { anySurface: true } );
 
-		const intersects = this._intersectScene();
+		if ( intersection ) {
 
-		if ( intersects.length > 0 ) {
-
-			const intersection = intersects[ 0 ];
 			const panorama = isPanoramaProjection( this.pathTracer?.cameraProjection?.value );
 			const distance = focusDistanceOfHit( intersection, this.camera, panorama );
 
@@ -497,27 +498,24 @@ export class InteractionManager extends EventDispatcher {
 		}
 
 		// Debounce to distinguish single from double click
-		this.clickTimeout = setTimeout( () => {
+		this.clickTimeout = setTimeout( async () => {
 
 			this.clickTimeout = null;
 
-			// Perform raycast
 			const mouseCoords = this.getMouseCoordinates( event );
 			this.raycaster.setFromCamera( mouseCoords, this.camera );
-
-			const intersects = this._intersectScene();
-			const validIntersects = this.filterValidIntersects( intersects );
 			const lightHit = this._pickLightHelper();
+			const surface = await this.pickSurfaceAsync( mouseCoords.x, mouseCoords.y );
 
 			let object = null;
 
-			if ( validIntersects.length > 0 && lightHit ) {
+			if ( surface && lightHit ) {
 
-				object = validIntersects[ 0 ].distance <= lightHit.distance ? validIntersects[ 0 ].object : lightHit.light;
+				object = surface.distance <= lightHit.distance ? surface.object : lightHit.light;
 
-			} else if ( validIntersects.length > 0 ) {
+			} else if ( surface ) {
 
-				object = validIntersects[ 0 ].object;
+				object = surface.object;
 
 			} else if ( lightHit ) {
 
@@ -567,7 +565,7 @@ export class InteractionManager extends EventDispatcher {
 	 * Handle double-click for opening material editor
 	 * @private
 	 */
-	handleSelectDoubleClick( event ) {
+	async handleSelectDoubleClick( event ) {
 
 		// Ignore double-clicks that are actually drags
 		if ( this.wasMouseDragged( event ) ) {
@@ -587,16 +585,10 @@ export class InteractionManager extends EventDispatcher {
 
 		}
 
-		// Perform raycast
 		const mouseCoords = this.getMouseCoordinates( event );
-		this.raycaster.setFromCamera( mouseCoords, this.camera );
+		const object = ( await this.pickSurfaceAsync( mouseCoords.x, mouseCoords.y ) )?.object;
 
-		const intersects = this._intersectScene();
-		const validIntersects = this.filterValidIntersects( intersects );
-
-		if ( validIntersects.length > 0 ) {
-
-			const object = validIntersects[ 0 ].object;
+		if ( object ) {
 
 			// Dispatch double-click event
 			this.dispatchEvent( {
@@ -717,13 +709,23 @@ export class InteractionManager extends EventDispatcher {
 	 */
 	_intersectScene() {
 
-		// Nothing in front of an imported camera's clip plane is rendered, so nothing there is picked. An orthographic
-		// ray already starts on the near plane, which a switch to such a camera set to its clip start.
+		this.raycaster.near = this._clipNear();
+		return this.isGeometryOnDisk?.() ? [] : this.raycaster.intersectObjects( this.scene.children, true );
+
+	}
+
+	/**
+	 * How far along the raycaster's ray rendering starts. Nothing in front of an imported camera's clip plane is rendered,
+	 * so nothing there is picked; an orthographic ray already starts on the near plane, which a switch to such a camera
+	 * set to its clip start.
+	 * @private
+	 */
+	_clipNear() {
+
 		const clipStart = this.camera.userData?.clipStart ?? 0;
-		this.raycaster.near = clipStart > 0 && ! this.camera.isOrthographicCamera
+		return clipStart > 0 && ! this.camera.isOrthographicCamera
 			? clipStart / Math.max( this.raycaster.ray.direction.dot( this.camera.getWorldDirection( _viewAxis ) ), 1e-4 )
 			: 0;
-		return this.isGeometryOnDisk?.() ? [] : this.raycaster.intersectObjects( this.scene.children, true );
 
 	}
 
@@ -732,6 +734,35 @@ export class InteractionManager extends EventDispatcher {
 
 		this.raycaster.setFromCamera( { x: ndcX, y: ndcY }, this.camera );
 		return this.filterValidIntersects( this._intersectScene() )[ 0 ] ?? null;
+
+	}
+
+	/**
+	 * pickSurface traced through the path tracer's BVH on the GPU, a frame later: what renders is what is hit, so hidden
+	 * meshes and culled faces are passed through. Past the floor, and with `object` null where `pickSurface` would not
+	 * return it (helpers, not a plain Mesh, a copy cluster), unless `anySurface`. Without a scene on the GPU it is
+	 * `pickSurface`.
+	 * @returns {Promise<?{ point: Vector3, distance: number, object: ?import('three').Object3D, instanceId?: number, normal?: Vector3 }>}
+	 */
+	async pickSurfaceAsync( ndcX, ndcY, { anySurface = false } = {} ) {
+
+		if ( ! this.renderer || ! this.pathTracer ) return this.pickSurface( ndcX, ndcY );
+
+		this.raycaster.setFromCamera( { x: ndcX, y: ndcY }, this.camera );
+		const start = this.raycaster.ray.origin.clone();
+		const direction = this.raycaster.ray.direction.clone();
+		const origin = start.clone().addScaledVector( direction, this._clipNear() );
+
+		this._gpuPick ??= new GPUPick( this.renderer );
+		const skip = anySurface ? - 1 : this.floorPlane?.userData?.meshIndex ?? - 1;
+		const hit = await this._gpuPick.pick( this.pathTracer, origin, direction, skip );
+		if ( ! this.camera ) return null;
+		if ( hit === undefined ) return this.pickSurface( ndcX, ndcY );
+		if ( hit === null ) return null;
+
+		const { object, instanceId } = pickedObject( this.sceneProcessor?.(), hit );
+		const valid = object && ( anySurface || this.filterValidIntersects( [ { object } ] ).length > 0 );
+		return { point: hit.point, distance: hit.point.distanceTo( start ), object: valid ? object : null, instanceId, normal: hit.normal };
 
 	}
 
@@ -900,6 +931,10 @@ export class InteractionManager extends EventDispatcher {
 		this.pathTracer = null;
 		this.floorPlane = null;
 		this.raycaster = null;
+		this._gpuPick?.dispose();
+		this._gpuPick = null;
+		this.renderer = null;
+		this.sceneProcessor = null;
 
 	}
 

@@ -28,14 +28,14 @@ export function endMaterialDrag() {
 export const isMaterialDrag = ( event ) => !! dragged && !! event.dataTransfer?.types?.includes( MATERIAL_DRAG_TYPE );
 
 /** The mesh under a client point, or null: the nearest surface the view's picking takes, floor and helpers aside. */
-export function meshAt( clientX, clientY ) {
+export async function meshAt( clientX, clientY ) {
 
 	const app = getApp();
 	const rect = app?.canvas?.getBoundingClientRect();
 	if ( ! rect?.width || ! rect.height ) return null;
 	const x = ( clientX - rect.left ) / rect.width * 2 - 1;
 	const y = - ( clientY - rect.top ) / rect.height * 2 + 1;
-	return app.interactionManager?.pickSurface( x, y )?.object ?? null;
+	return ( await app.interactionManager?.pickSurfaceAsync( x, y ) )?.object ?? null;
 
 }
 
@@ -52,12 +52,17 @@ export function highlightMesh( mesh ) {
 
 }
 
-/** Applies the dragged material to `mesh`; false when nothing is being dragged. */
-export async function dropMaterial( mesh ) {
+/**
+ * Applies the dragged material to the mesh under a client point; false when nothing is being dragged or hit. The drag is
+ * taken at once: the item's dragend can end it before the pick lands.
+ */
+export async function dropMaterialAt( clientX, clientY ) {
 
 	const drag = dragged;
 	endMaterialDrag();
 	if ( ! drag ) return false;
+	const mesh = await meshAt( clientX, clientY );
+	if ( ! mesh ) return false;
 	await drag.apply( drag.item, mesh );
 	return true;
 

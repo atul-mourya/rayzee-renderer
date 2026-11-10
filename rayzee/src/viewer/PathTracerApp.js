@@ -183,9 +183,11 @@ export class PathTracerApp extends RayzeeRenderer {
 			camera: this.camera,
 			canvas: this.canvas,
 			assetLoader: this.assetLoader,
-			pathTracer: null,
+			pathTracer: this.stages.pathTracer,
 			floorPlane: this.assetLoader.floorPlane,
 			isGeometryOnDisk: () => this.geometryOnDisk,
+			renderer: this.renderer,
+			sceneProcessor: () => this._sdf,
 		} );
 
 		this.interactionManager.wireAppEvents( this );

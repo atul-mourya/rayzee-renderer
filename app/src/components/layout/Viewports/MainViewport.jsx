@@ -9,14 +9,17 @@ import { Toaster } from "@/components/ui/toaster";
 import { useStore, useAssetsStore, usePathTracerStore } from '@/store';
 import { getApp } from '@/lib/appProxy';
 import { readDrop, loadFolder } from '@/lib/folders';
-import { isMaterialDrag, meshAt, highlightMesh, dropMaterial, endMaterialDrag } from '@/lib/materialDrop';
+import { isMaterialDrag, meshAt, highlightMesh, dropMaterialAt } from '@/lib/materialDrop';
+
+// No material drag over the view: a pick landing after this is dropped.
+const idlePick = ( seq ) => ( { x: NaN, y: NaN, time: 0, mesh: null, seq, shown: seq } );
 
 const MainViewport = ( { mode = "preview" } ) => {
 
 	const [ isDragging, setIsDragging ] = useState( false );
 	const dragCounter = useRef( 0 );
 	// Where a dragged material's target was last picked: picking is a raycast, and dragover repeats while the cursor rests.
-	const materialPick = useRef( { x: NaN, y: NaN, time: 0, mesh: null } );
+	const materialPick = useRef( idlePick( 0 ) );
 	const setEnvironment = useAssetsStore( state => state.setEnvironment );
 	const setLoading = useStore( state => state.setLoading );
 	const environmentMode = usePathTracerStore( state => state.environmentMode );
@@ -147,8 +150,17 @@ const MainViewport = ( { mode = "preview" } ) => {
 		const now = performance.now();
 		if ( Math.hypot( e.clientX - last.x, e.clientY - last.y ) > 2 || now - last.time > 250 ) {
 
-			materialPick.current = { x: e.clientX, y: e.clientY, time: now, mesh: meshAt( e.clientX, e.clientY ) };
-			highlightMesh( materialPick.current.mesh );
+			// The pick lands a frame later: the last mesh stands meanwhile, and an older pick never replaces a newer.
+			const pick = materialPick.current = { x: e.clientX, y: e.clientY, time: now, mesh: last.mesh, seq: last.seq + 1, shown: last.shown };
+			meshAt( e.clientX, e.clientY ).then( mesh => {
+
+				const current = materialPick.current;
+				if ( pick.seq <= current.shown || Number.isNaN( current.x ) ) return;
+				current.mesh = mesh;
+				current.shown = pick.seq;
+				highlightMesh( mesh );
+
+			} );
 
 		}
 
@@ -161,7 +173,13 @@ const MainViewport = ( { mode = "preview" } ) => {
 		e.preventDefault();
 		if ( isMaterialDrag( e ) ) {
 
-			if ( ! e.currentTarget.contains( e.relatedTarget ) ) highlightMesh( null );
+			if ( ! e.currentTarget.contains( e.relatedTarget ) ) {
+
+				materialPick.current = idlePick( materialPick.current.seq );
+				highlightMesh( null );
+
+			}
+
 			return;
 
 		}
@@ -178,10 +196,8 @@ const MainViewport = ( { mode = "preview" } ) => {
 
 		if ( isMaterialDrag( e ) ) {
 
-			const mesh = meshAt( e.clientX, e.clientY );
-			materialPick.current = { x: NaN, y: NaN, time: 0, mesh: null };
-			if ( mesh ) dropMaterial( mesh ).catch( error => toast( { title: "Could not apply the material", description: error?.message || String( error ), variant: "destructive" } ) );
-			else endMaterialDrag();
+			materialPick.current = idlePick( materialPick.current.seq );
+			dropMaterialAt( e.clientX, e.clientY ).catch( error => toast( { title: "Could not apply the material", description: error?.message || String( error ), variant: "destructive" } ) );
 			return;
 
 		}

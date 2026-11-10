@@ -26,14 +26,18 @@ function manager( { target = new Vector3() } = {} ) {
 
 }
 
-const frame = ( cm, meshScene, focus = 0, projection = 0, resetCount = 0 ) => {
+// A frame asks for a pick, which lands before the next frame takes it.
+const frame = async ( cm, meshScene, focus = 0, projection = 0, resetCount = 0 ) => {
 
 	const setFocusDistance = vi.fn();
 	cm.interactionManager.scene = meshScene;
-	cm.updateAutoFocus( {
+	const context = {
 		assetLoader: { getSceneScale: () => 2 }, currentFocusDistance: focus,
 		pathTracer: { enableDOF: { value: 1 }, cameraProjection: { value: projection }, resetCount }, setFocusDistance, softReset: vi.fn(), hardReset: vi.fn(),
-	} );
+	};
+	cm.updateAutoFocus( context );
+	await new Promise( resolve => setTimeout( resolve, 0 ) );
+	cm.updateAutoFocus( context );
 	return setFocusDistance.mock.calls.at( - 1 )?.[ 0 ];
 
 };
@@ -49,62 +53,62 @@ function sceneWithBoxAt( z ) {
 
 }
 
-describe( 'auto-focus', () => {
+describe( 'auto-focus', async () => {
 
-	it( 'focuses on the orbit target, not ten model sizes away', () => {
+	it( 'focuses on the orbit target, not ten model sizes away', async () => {
 
-		expect( frame( manager(), new Scene() ) ).toBeCloseTo( 6, 6 );
+		expect( await frame( manager(), new Scene() ) ).toBeCloseTo( 6, 6 );
 
 	} );
 
-	it( 'forgets the last model once the camera list is replaced', () => {
+	it( 'forgets the last model once the camera list is replaced', async () => {
 
 		const cm = manager();
-		expect( frame( cm, sceneWithBoxAt( 3 ) ) ).toBeCloseTo( 2.5, 6 );
+		expect( await frame( cm, sceneWithBoxAt( 3 ) ) ).toBeCloseTo( 2.5, 6 );
 
 		cm.setCameras( [ cm.camera ] );
-		expect( frame( cm, new Scene(), 2.5 ) ).toBeCloseTo( 6, 6 );
+		expect( await frame( cm, new Scene(), 2.5 ) ).toBeCloseTo( 6, 6 );
 
 	} );
 
-	it( 'pauses in a panorama, keeping its mode, and measures again once back', () => {
+	it( 'pauses in a panorama, keeping its mode, and measures again once back', async () => {
 
 		const cm = manager();
-		expect( frame( cm, sceneWithBoxAt( 3 ), 0, 1 ) ).toBeUndefined();
+		expect( await frame( cm, sceneWithBoxAt( 3 ), 0, 1 ) ).toBeUndefined();
 		expect( cm.autoFocusMode ).toBe( 'auto' );
-		expect( frame( cm, sceneWithBoxAt( 3 ) ) ).toBeCloseTo( 2.5, 6 );
+		expect( await frame( cm, sceneWithBoxAt( 3 ) ) ).toBeCloseTo( 2.5, 6 );
 
 	} );
 
-	it( 'reports the distance in scene units as well as divided by the model size', () => {
+	it( 'reports the distance in scene units as well as divided by the model size', async () => {
 
 		const cm = manager();
-		frame( cm, sceneWithBoxAt( 3 ) );
+		await frame( cm, sceneWithBoxAt( 3 ) );
 
 		expect( cm.dispatchEvent ).toHaveBeenCalledWith( expect.objectContaining( { worldDistance: 2.5, distance: 1.25 } ) );
 
 	} );
 
-	it( 'picks again only when the view, the AF point or the render changed', () => {
+	it( 'picks again only when the view, the AF point or the render changed', async () => {
 
 		const cm = manager();
 		const scene = sceneWithBoxAt( 3 );
 		const pick = vi.spyOn( cm.interactionManager, 'pickSurface' );
 
-		frame( cm, scene );
-		frame( cm, scene );
+		await frame( cm, scene );
+		await frame( cm, scene );
 		expect( pick ).toHaveBeenCalledTimes( 1 );
 
-		frame( cm, scene, 2.5, 0, 1 );
+		await frame( cm, scene, 2.5, 0, 1 );
 		expect( pick ).toHaveBeenCalledTimes( 2 );
 
 		cm.camera.position.z = 7;
 		cm.camera.updateMatrixWorld();
-		frame( cm, scene, 2.5, 0, 1 );
+		await frame( cm, scene, 2.5, 0, 1 );
 		expect( pick ).toHaveBeenCalledTimes( 3 );
 
 		cm.setAFScreenPoint( 0.9, 0.5 );
-		frame( cm, scene, 3.5, 0, 1 );
+		await frame( cm, scene, 3.5, 0, 1 );
 		expect( pick ).toHaveBeenCalledTimes( 4 );
 
 	} );

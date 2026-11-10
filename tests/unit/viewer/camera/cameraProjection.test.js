@@ -264,11 +264,11 @@ describe( 'CameraManager reset view', () => {
 
 	} );
 
-	it( 'orbits an imported camera around the surface at the centre of its view', () => {
+	it( 'orbits an imported camera around the surface at the centre of its view, once the pick lands', async () => {
 
 		const { cm } = manager();
-		const pickSurface = vi.fn( () => ( { point: new Vector3( 0.5, 2, - 3 ) } ) );
-		cm.setInteractionManager( { pickSurface } );
+		const pickSurfaceAsync = vi.fn( async () => ( { point: new Vector3( 0.5, 2, - 3 ) } ) );
+		cm.setInteractionManager( { pickSurfaceAsync } );
 		const lens = new PerspectiveCamera( 40, 1, 0.1, 100 );
 		lens.position.set( 0, 2, 9 );
 		lens.lookAt( 0, 2, 0 );
@@ -276,15 +276,27 @@ describe( 'CameraManager reset view', () => {
 		cm.setCameras( [ cm.camera, lens ] );
 		cm.switchCamera( 1 );
 
-		expect( pickSurface ).toHaveBeenCalledWith( 0, 0 );
-		// 12 deep along the view, whatever the hit's offset across it.
-		expect( cm.controls.target.distanceTo( new Vector3( 0, 2, - 3 ) ) ).toBeLessThan( 1e-9 );
+		expect( pickSurfaceAsync ).toHaveBeenCalledWith( 0, 0 );
+		// Until then, the focus distance; then 12 deep along the view, whatever the hit's offset across it.
+		expect( cm.controls.target.distanceTo( new Vector3( 0, 2, 4 ) ) ).toBeLessThan( 1e-9 );
+		await vi.waitFor( () => expect( cm.controls.target.distanceTo( new Vector3( 0, 2, - 3 ) ) ).toBeLessThan( 1e-9 ) );
 		expect( cm.camera.position.distanceTo( lens.position ) ).toBeLessThan( 1e-9 );
 
 		// Nothing there (open sky): the focus distance, as before.
-		pickSurface.mockReturnValue( null );
+		pickSurfaceAsync.mockResolvedValue( null );
 		cm.resetView();
+		await Promise.resolve();
 		expect( cm.controls.target.distanceTo( new Vector3( 0, 2, 4 ) ) ).toBeLessThan( 1e-9 );
+
+		// A pick that lands after the camera moved is left out.
+		let land;
+		pickSurfaceAsync.mockReturnValue( new Promise( resolve => ( land = resolve ) ) );
+		cm.resetView();
+		cm.camera.position.x += 1;
+		land( { point: new Vector3( 0, 2, - 3 ) } );
+		await Promise.resolve();
+		await Promise.resolve();
+		expect( cm.controls.target.z ).toBeCloseTo( 4, 9 );
 
 	} );
 
@@ -550,7 +562,7 @@ describe( 'CameraManager navigation', () => {
 
 	} );
 
-	it( 'walks with the orbit gestures off, and orbits again round the surface ahead, if there is one', () => {
+	it( 'walks with the orbit gestures off, and orbits again round the surface ahead, if there is one', async () => {
 
 		const { cm } = manager();
 		expect( cm.navigationMode ).toBe( 'orbit' );
@@ -565,12 +577,12 @@ describe( 'CameraManager navigation', () => {
 		expect( cm.controls.enableRotate ).toBe( true );
 		expect( cm.controls.target.length() ).toBeLessThan( 1e-9 );
 
-		cm.setInteractionManager( { pickSurface: vi.fn( () => ( { distance: 4 } ) ) } );
+		cm.setInteractionManager( { pickSurfaceAsync: vi.fn( async () => ( { distance: 4 } ) ) } );
 		cm.setNavigationMode( 'walk' );
 		cm.setNavigationMode( 'orbit' );
 		const ahead = cm.camera.position.clone().addScaledVector( cm.camera.getWorldDirection( new Vector3() ), 4 );
-		expect( cm.controls.target.distanceTo( ahead ) ).toBeLessThan( 1e-9 );
-		expect( cm.interactionManager.pickSurface ).toHaveBeenCalledWith( 0, 0 );
+		await vi.waitFor( () => expect( cm.controls.target.distanceTo( ahead ) ).toBeLessThan( 1e-9 ) );
+		expect( cm.interactionManager.pickSurfaceAsync ).toHaveBeenCalledWith( 0, 0 );
 
 	} );
 
@@ -638,14 +650,17 @@ describe( 'CameraManager auto-focus each frame', () => {
 		const pathTracer = { enableDOF: { value: true }, cameraProjection: { value: 0 }, resetCount: 0, ...stage };
 		let depth = 10;
 		const point = () => cm.camera.position.clone().addScaledVector( cm.camera.getWorldDirection( new Vector3() ), depth );
-		cm.setInteractionManager( { pickSurface: vi.fn( () => ( { point: point() } ) ) } );
+		cm.setInteractionManager( { pickSurfaceAsync: vi.fn( async () => ( { point: point() } ) ) } );
 		const softReset = vi.fn();
 		const hardReset = vi.fn();
 		cm.initAutoFocus( { assetLoader: { getSceneScale: () => 2 }, pathTracer, settings, softReset, hardReset } );
-		const frame = d => {
+		// The frame asks for a pick, which lands before the next frame takes it.
+		const frame = async d => {
 
 			depth = d;
 			pathTracer.resetCount ++;
+			cm.updateAutoFocus();
+			await new Promise( resolve => setTimeout( resolve, 0 ) );
 			cm.updateAutoFocus();
 
 		};
@@ -654,72 +669,72 @@ describe( 'CameraManager auto-focus each frame', () => {
 
 	}
 
-	it( 'writes the focus silently into the settings, eases small changes and snaps large ones', () => {
+	it( 'writes the focus silently into the settings, eases small changes and snaps large ones', async () => {
 
 		const { cm, values, settings, softReset, frame } = wired();
 		const reported = vi.fn();
 		cm.addEventListener( EngineEvents.AUTO_FOCUS_UPDATED, reported );
 
-		frame( 10 );
+		await frame( 10 );
 		expect( settings.set ).toHaveBeenLastCalledWith( 'focusDistance', expect.closeTo( 10, 9 ), { silent: true } );
 		expect( reported.mock.lastCall[ 0 ] ).toMatchObject( { distance: expect.closeTo( 5, 9 ), worldDistance: expect.closeTo( 10, 9 ) } );
 		expect( softReset ).toHaveBeenCalledOnce();
 
-		frame( 12 );
+		await frame( 12 );
 		expect( values.focusDistance ).toBeCloseTo( 10.3, 9 );
 		expect( softReset ).toHaveBeenCalledOnce();
 
-		frame( 30 );
+		await frame( 30 );
 		expect( values.focusDistance ).toBeCloseTo( 30, 9 );
 		expect( softReset ).toHaveBeenCalledTimes( 2 );
 
 	} );
 
-	it( 'starts over on a moved AF point, with a hard reset', () => {
+	it( 'starts over on a moved AF point, with a hard reset', async () => {
 
 		const { cm, values, hardReset, frame } = wired();
-		frame( 10 );
+		await frame( 10 );
 		cm.setAFScreenPoint( 0.5, 0.5 );
 
-		frame( 12 );
+		await frame( 12 );
 
 		expect( values.focusDistance ).toBeCloseTo( 12, 9 );
 		expect( hardReset ).toHaveBeenCalledOnce();
 
 	} );
 
-	it( 'leaves the focus alone in manual mode, while a final render is being traced, or with nothing to pick with', () => {
+	it( 'leaves the focus alone in manual mode, while a final render is being traced, or with nothing to pick with', async () => {
 
 		const manual = wired();
 		manual.cm.setAutoFocusMode( 'manual' );
-		manual.frame( 10 );
+		await manual.frame( 10 );
 		expect( manual.settings.set ).not.toHaveBeenCalled();
 
 		const tracing = wired( { stage: { isReady: true, renderMode: { value: 1 }, frameCount: 3, isComplete: false } } );
-		tracing.frame( 10 );
+		await tracing.frame( 10 );
 		expect( tracing.settings.set ).not.toHaveBeenCalled();
-		expect( tracing.cm.interactionManager.pickSurface ).not.toHaveBeenCalled();
+		expect( tracing.cm.interactionManager.pickSurfaceAsync ).not.toHaveBeenCalled();
 
 		const done = wired( { stage: { isReady: true, renderMode: { value: 1 }, frameCount: 3, isComplete: true } } );
-		done.frame( 10 );
+		await done.frame( 10 );
 		expect( done.settings.set ).toHaveBeenCalled();
 
 		const blind = wired();
 		blind.cm.setInteractionManager( null );
-		blind.frame( 10 );
+		await blind.frame( 10 );
 		expect( blind.settings.set ).not.toHaveBeenCalled();
 
 		expect( () => new CameraManager( canvas() ).updateAutoFocus() ).not.toThrow();
 
 	} );
 
-	it( 'focuses ten scene sizes away when nothing is under the point and the orbit target is behind the camera', () => {
+	it( 'focuses ten scene sizes away when nothing is under the point and the orbit target is behind the camera', async () => {
 
 		const { cm, values, frame } = wired();
-		cm.interactionManager.pickSurface = () => null;
+		cm.interactionManager.pickSurfaceAsync = async () => null;
 		cm.controls.target.copy( cm.camera.position ).addScaledVector( cm.camera.getWorldDirection( new Vector3() ), - 3 );
 
-		frame( 0 );
+		await frame( 0 );
 
 		expect( values.focusDistance ).toBe( 20 );
 
