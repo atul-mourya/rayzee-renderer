@@ -1086,7 +1086,7 @@ export class ArchiveImporter {
 		this.loader._throwDeferred();
 
 		const { group, environment, render, warnings, triangleCount, placementCount, skippedForBudget, meshCount, parseMs, buildMs, fitNote } = built;
-		this.lastUSDStats = { parseMs, buildMs, loaderMs: performance.now() - start, triangleCount, placementCount, skippedForBudget, meshCount, fitNote };
+		this.lastUSDStats = { parseMs, ...built.readTimings, buildMs, loaderMs: performance.now() - start, triangleCount, placementCount, skippedForBudget, meshCount, fitNote };
 		if ( fitNote || skippedForBudget > 0 ) this.loader._issues?.record(
 			ISSUE_CODES.SCENE_MEMORY_BUDGET,
 			fitNote ?? `${skippedForBudget.toLocaleString()} placements past the scene budgets left out`,

@@ -468,10 +468,14 @@ export class USDSceneReader {
 
 	async read() {
 
+		const start = performance.now();
 		if ( Number.isFinite( this.maxTriangles ) || Number.isFinite( this.maxPlacements ) ) await this.fit();
+		const counted = performance.now();
 		await this.walk();
+		const walked = performance.now();
 		this.shareGeometry();
 		const render = this.renderRequest();
+		this.timings = { countMs: counted - start, walkMs: walked - counted, shareMs: performance.now() - walked };
 		return { ir: this.ir, cameras: this.cameras, lights: this.lights, dome: this.pickDome(), render, cost: this.cost };
 
 	}

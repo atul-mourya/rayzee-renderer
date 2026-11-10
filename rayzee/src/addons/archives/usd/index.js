@@ -102,6 +102,7 @@ export async function loadUSDScene( args ) {
 	const parseStart = performance.now();
 	const stage = new USDStage( args.files, { warn } );
 	await stage.open( args.entryPath );
+	const openMs = performance.now() - parseStart;
 	const reader = new USDSceneReader( stage, {
 		maxTriangles: builder.maxTriangles, maxPlacements: builder.maxPlacements, curveSteps: builder.curveSteps,
 		resolveImage: args.resolveImage, warn, pause: args.pauseRead,
@@ -133,6 +134,7 @@ export async function loadUSDScene( args ) {
 		fitNote: reader.fitNote,
 		warnings: [ ...warnings, ...built.warnings ],
 		parseMs,
+		readTimings: { openMs, ...reader.timings },
 		buildMs: performance.now() - buildStart,
 	};
 

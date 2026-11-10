@@ -486,8 +486,7 @@ export async function tessellateCurves( spec, pause = null ) {
 			else if ( widthMode === 'uniform' ) width = widths[ c ] ?? widths[ 0 ];
 			else if ( widthMode === 'varying' ) {
 
-				const spans = type === 'linear' ? n - 1 : basis === 'bezier' ? ( n - 1 ) / 3 : n - 3;
-				const k = Math.max( 1, Math.round( spans ) + 1 );
+				const k = varyingWidths( n, type, basis );
 				const values = Array.from( { length: k }, ( _, i ) => widths[ varying + i ] ?? widths[ widths.length - 1 ] );
 				varying += k;
 				curveWidths = Float64Array.from( { length: n }, ( _, i ) => values[ Math.min( k - 1, Math.round( i / Math.max( 1, n - 1 ) * ( k - 1 ) ) ) ] );
@@ -528,6 +527,13 @@ export async function tessellateCurves( spec, pause = null ) {
 	}
 
 	if ( pieces.length === 0 ) return null;
+	return { ...await joinCurvePieces( pieces, vertices, indexCount, pause ), skipped };
+
+}
+
+/** Pieces of strip mesh, in order, as one: each piece's indices moved past the vertices before it. */
+async function joinCurvePieces( pieces, vertices, indexCount, pause ) {
+
 	const positions = new Float32Array( vertices * 3 );
 	const indices = new Uint32Array( indexCount );
 	let v = 0, i = 0;
@@ -542,6 +548,91 @@ export async function tessellateCurves( spec, pause = null ) {
 
 	}
 
-	return { positions, indices, skipped };
+	return { positions, indices };
+
+}
+
+// Width values a curve of n points carries in USD's 'varying' mode: one a span end.
+function varyingWidths( n, type, basis ) {
+
+	const spans = type === 'linear' ? n - 1 : basis === 'bezier' ? ( n - 1 ) / 3 : n - 3;
+	return Math.max( 1, Math.round( spans ) + 1 );
+
+}
+
+/**
+ * The curves of a `tessellateCurves` spec cut into about `parts` runs of whole curves, even by points: each a spec of
+ * its own whose arrays hold only its curves' values, every fallback for a short array resolved as the whole spec's.
+ */
+export function splitCurveSpec( spec, parts ) {
+
+	const { P, counts, widths = null, widthMode = 'constant', N = null, normalMode = 'vertex', type = 'cubic', basis = 'bspline' } = spec;
+	const total = counts.reduce( ( s, n ) => s + n, 0 );
+	const target = Math.max( 1, Math.ceil( total / parts ) );
+	const runs = [];
+	for ( let c = 0, start = 0, varying = 0; c < counts.length; ) {
+
+		const first = c, pointStart = start, varyingStart = varying;
+		let points = 0, varyingCount = 0;
+		do {
+
+			points += counts[ c ];
+			if ( widthMode === 'varying' ) varyingCount += varyingWidths( counts[ c ], type, basis );
+			c ++;
+
+		} while ( c < counts.length && points < target );
+
+		const last = widths?.length ? widths[ widths.length - 1 ] : 0;
+		let runWidths = widths;
+		if ( widths?.length ) {
+
+			if ( widthMode === 'vertex' ) runWidths = widths.slice( pointStart, pointStart + points );
+			else if ( widthMode === 'uniform' ) runWidths = Float64Array.from( { length: c - first }, ( _, i ) => widths[ first + i ] ?? widths[ 0 ] );
+			else if ( widthMode === 'varying' ) runWidths = Float64Array.from( { length: varyingCount }, ( _, i ) => widths[ varyingStart + i ] ?? last );
+			else runWidths = widths.slice( 0, 1 );
+
+		}
+
+		let runN = N;
+		if ( N?.length ) runN = normalMode === 'uniform' ? N.slice( first * 3, c * 3 ) : normalMode === 'constant' ? N.slice( 0, 3 ) : N.slice( pointStart * 3, ( pointStart + points ) * 3 );
+		runs.push( { ...spec, P: P.slice( pointStart * 3, ( pointStart + points ) * 3 ), counts: counts.slice( first, c ), widths: runWidths, N: runN } );
+		start += points;
+		varying += varyingCount;
+
+	}
+
+	return runs;
+
+}
+
+/**
+ * `tessellateCurves` across workers: the spec split into runs (splitCurveSpec), each tessellated by `run( spec )` (a
+ * Promise of what tessellateCurves returns; `spec` comes along, its arrays not the run's own), then joined in order. The
+ * same arrays as one call, bit for bit.
+ */
+export async function tessellateCurvesAcross( spec, run, parts, pause = null ) {
+
+	const runs = splitCurveSpec( spec, parts );
+	const built = await Promise.all( runs.map( ( r ) => run( r, spec ) ) );
+	const pieces = [];
+	let vertices = 0, indexCount = 0, skipped = 0;
+	built.forEach( ( b, k ) => {
+
+		if ( ! b ) {
+
+			skipped += runs[ k ].counts.length;
+			return;
+
+		}
+
+		pieces.push( b );
+		vertices += b.positions.length / 3;
+		indexCount += b.indices.length;
+		skipped += b.skipped;
+
+	} );
+
+	if ( pieces.length === 0 ) return null;
+	return { ...await joinCurvePieces( pieces, vertices, indexCount, pause ), skipped };
 
 }

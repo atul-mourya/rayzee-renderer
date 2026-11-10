@@ -28,7 +28,9 @@ import { makeLayer, layerMean, bake, mixOf, srgbToLinear, linearToSRGB, hasAlpha
 import { loopSubdivide } from './LoopSubdivision.js';
 import { approximated, param } from './PBRTParser.js';
 import { octahedralToEquirect } from './EqualAreaOctahedral.js';
-import { tessellateCurve, tessellateCurves } from './PBRTCurves.js';
+import { tessellateCurve, tessellateCurves, tessellateCurvesAcross } from './PBRTCurves.js';
+import CurveWorker from './CurveWorker.js?worker&inline';
+import { createWorker, hardwareThreads, hasWorkers } from '../../../Platform.js';
 import * as M from './PBRTMath.js';
 import { packUnitAttribute, computeInstanceBoundingBoxes } from '../../../scene/GeometryExtractor.js';
 import { holdImages, releaseImages } from '../../../materials/TextureCreator.js';
@@ -120,6 +122,8 @@ const DEFAULT_CURVE_SIDES = { flat: 1, ribbon: 1, cylinder: 2 };
 // A strip segment may stray 5 % of the half-width from the curve: 37 % of Moana's curve
 // triangles go, at 3 % frame time in a view full of them. 0.1 took 48 % for 6 %.
 const DEFAULT_CURVE_TOLERANCE = 0.05;
+// A curve set at least this large is tessellated across workers.
+const CURVE_SPLIT_CURVES = 20000;
 
 /** Bumped whenever the same scene files build a different graph, so a stored graph is not reused. */
 export const PBRT_BUILD_REVISION = 35;
@@ -734,6 +738,22 @@ export class PBRTSceneBuilder {
 	 * @returns {Promise<{group:Group, camera:PerspectiveCamera|OrthographicCamera|null, environment:object|null, warnings:string[]}>}
 	 */
 	async build( ir ) {
+
+		try {
+
+			return await this._build( ir );
+
+		} finally {
+
+			this._curvePool?.close();
+			this._curvePool = undefined;
+
+		}
+
+	}
+
+	/** @private */
+	async _build( ir ) {
 
 		this.ir = ir;
 		// Built again for their moving placements, so freed and accounted for only at the end.
@@ -1693,7 +1713,7 @@ export class PBRTSceneBuilder {
 	/** Many curves on one point array, as USD writes them. */
 	async _curves( params ) {
 
-		const built = await tessellateCurves( {
+		const spec = {
 			P: param( params, 'P' ).value,
 			counts: param( params, 'counts' ).value,
 			widths: param( params, 'widths' )?.value ?? null,
@@ -1706,7 +1726,8 @@ export class PBRTSceneBuilder {
 			steps: this.curveSteps,
 			sides: this.curveSides ?? 1,
 			tolerance: this.curveTolerance,
-		}, () => this._tick() );
+		};
+		const built = await this._tessellateCurves( spec );
 
 		if ( ! built ) {
 
@@ -1722,6 +1743,97 @@ export class PBRTSceneBuilder {
 		geo.computeVertexNormals();
 		packUnitAttribute( geo, 'normal' );
 		return geo;
+
+	}
+
+	/**
+	 * A curve set of CURVE_SPLIT_CURVES or more split across workers (PBRTCurves tessellateCurvesAcross), the same
+	 * arrays as one call; a smaller one, or one where workers fail, here. @private
+	 */
+	async _tessellateCurves( spec ) {
+
+		const pool = spec.counts.length >= CURVE_SPLIT_CURVES ? this._curveWorkers() : null;
+		if ( pool ) {
+
+			try {
+
+				return await tessellateCurvesAcross( spec, pool.run, pool.size * 3, () => this._tick() );
+
+			} catch ( error ) {
+
+				this.warn( `curves tessellated on one thread: ${error.message}` );
+				pool.close();
+				this._curvePool = null;
+
+			}
+
+		}
+
+		return tessellateCurves( spec, () => this._tick() );
+
+	}
+
+	/** Workers for runs of a curve set (CurveWorker), started the first time one is large enough; null without. @private */
+	_curveWorkers() {
+
+		if ( this._curvePool !== undefined ) return this._curvePool;
+		this._curvePool = null;
+		if ( ! hasWorkers() ) return null;
+
+		const size = Math.max( 1, hardwareThreads() - 1 );
+		const workers = [], idle = [], waiting = [];
+		let next = 0;
+		const send = ( worker, job ) => {
+
+			worker.job = job;
+			// A run's arrays are its own copies (splitCurveSpec), so they move rather than copy.
+			const transfer = [ job.spec.P, job.spec.widths, job.spec.N ].filter( ( a ) => ArrayBuffer.isView( a ) && ! [ job.source.P, job.source.widths, job.source.N ].includes( a ) ).map( ( a ) => a.buffer );
+			worker.postMessage( { id: job.id, spec: job.spec }, transfer );
+
+		};
+
+		try {
+
+			for ( let i = 0; i < size; i ++ ) {
+
+				const worker = createWorker( CurveWorker );
+				worker.onmessage = ( e ) => {
+
+					const { built, error } = e.data;
+					const job = worker.job;
+					worker.job = null;
+					if ( error ) job.reject( new Error( error ) );
+					else job.resolve( built );
+					const queued = waiting.shift();
+					if ( queued ) send( worker, queued );
+					else idle.push( worker );
+
+				};
+
+				worker.onerror = ( e ) => worker.job?.reject( new Error( e.message ?? 'curve worker failed' ) );
+				workers.push( worker );
+				idle.push( worker );
+
+			}
+
+		} catch {
+
+			workers.forEach( ( w ) => w.terminate() );
+			return null;
+
+		}
+
+		const run = ( spec, source ) => new Promise( ( resolve, reject ) => {
+
+			const job = { id: next ++, spec, source, resolve, reject };
+			const worker = idle.pop();
+			if ( worker ) send( worker, job );
+			else waiting.push( job );
+
+		} );
+
+		this._curvePool = { size, run, close: () => workers.forEach( ( w ) => w.terminate() ) };
+		return this._curvePool;
 
 	}
 

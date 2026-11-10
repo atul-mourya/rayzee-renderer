@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { tessellateCurve, tessellateCurves, curveTriangleCount } from '@/core/addons/archives/pbrt/PBRTCurves.js';
+import { tessellateCurve, tessellateCurves, tessellateCurvesAcross, splitCurveSpec, curveTriangleCount } from '@/core/addons/archives/pbrt/PBRTCurves.js';
 
 /** A straight run along +x, as four evenly spaced control points. */
 const STRAIGHT = [ 0, 0, 0, 1, 0, 0, 2, 0, 0, 3, 0, 0 ];
@@ -23,6 +23,40 @@ const bounds = positions => {
 };
 
 describe( 'curve tessellation', () => {
+
+	it( 'tessellates a curve set split into runs exactly as in one call, in every width, normal and basis mode', async () => {
+
+		let seed = 5;
+		const rand = () => ( seed = ( seed * 16807 ) % 2147483647 ) / 2147483647;
+		const cases = [];
+		for ( const [ type, basis ] of [[ 'linear', 'bspline' ], [ 'cubic', 'bspline' ], [ 'cubic', 'bezier' ], [ 'cubic', 'catmullRom' ]] ) {
+
+			for ( const widthMode of [ 'constant', 'uniform', 'varying', 'vertex' ] ) for ( const normalMode of [ 'vertex', 'uniform', 'constant' ] ) cases.push( { type, basis, widthMode, normalMode } );
+
+		}
+
+		for ( const c of cases ) {
+
+			// Curves of varying length; a few too short to keep, and the widths a little short in two modes.
+			const counts = Array.from( { length: 300 }, ( _, i ) => ( c.basis === 'bezier' ? [ 1, 4, 7, 10 ] : [ 2, 4, 5, 9 ] )[ i % 4 ] );
+			const points = counts.reduce( ( a, n ) => a + n, 0 );
+			const P = Float32Array.from( { length: points * 3 }, () => rand() * 10 );
+			const N = Float32Array.from( { length: points * 3 }, () => rand() - 0.5 );
+			const widthCount = { constant: 1, uniform: counts.length - 7, varying: points, vertex: points }[ c.widthMode ];
+			const widths = Float32Array.from( { length: widthCount }, () => 0.01 + rand() * 0.05 );
+			const spec = { P, counts, widths, widthMode: c.widthMode, N, normalMode: c.normalMode, type: c.type, basis: c.basis, steps: 2 };
+
+			const whole = await tessellateCurves( spec );
+			const runs = splitCurveSpec( spec, 7 );
+			expect( runs.length ).toBeGreaterThan( 3 );
+			expect( runs.reduce( ( a, r ) => a + r.counts.length, 0 ) ).toBe( counts.length );
+			const split = await tessellateCurvesAcross( spec, ( run ) => tessellateCurves( run ), 7 );
+			for ( const key of [ 'positions', 'indices' ] ) expect( split[ key ], `${JSON.stringify( c )} ${key}` ).toEqual( whole[ key ] );
+			expect( split.skipped ).toBe( whole.skipped );
+
+		}
+
+	} );
 
 	it( 'tessellates a curve set the same with pauses every 1024 curves, and as they are joined', async () => {
 
