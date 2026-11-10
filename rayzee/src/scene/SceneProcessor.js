@@ -655,7 +655,7 @@ export class SceneProcessor {
 
 		try {
 
-			this._adoptExtraction( this.geometryExtractor.extract( object ) );
+			this._adoptExtraction( await this.geometryExtractor.extractSliced( object, timeSlicer( 40 ) ) );
 			const duration = performance.now() - startTime;
 			this._log( `Geometry extraction complete (${duration.toFixed( 2 )}ms)`, {
 				triangleCount: this.triangleCount,

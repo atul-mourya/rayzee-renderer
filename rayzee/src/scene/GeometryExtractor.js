@@ -375,6 +375,36 @@ export class GeometryExtractor {
 
 	extract( object ) {
 
+		this._beginExtract( object );
+		this.traverseObject( object );
+		return this._finishExtract( object );
+
+	}
+
+	/** `extract()`, awaiting `pause()` between objects whenever it returns a promise: a time slicer's turn. */
+	async extractSliced( object, pause ) {
+
+		this._beginExtract( object );
+
+		// Depth-first pre-order, as traverseObject: mesh indices follow the same walk.
+		const stack = [ object ];
+		while ( stack.length ) {
+
+			const node = stack.pop();
+			this._visit( node );
+			if ( node.children ) for ( let i = node.children.length - 1; i >= 0; i -- ) stack.push( node.children[ i ] );
+			const turn = pause();
+			if ( turn ) await turn;
+
+		}
+
+		return this._finishExtract( object );
+
+	}
+
+	/** @private */
+	_beginExtract( object ) {
+
 		this.resetArrays();
 
 		// Pre-count the exact triangle total so the buffer is allocated once.
@@ -391,10 +421,12 @@ export class GeometryExtractor {
 		this._geometryUses = this._countGeometryUses( object );
 		this.bakeInverse = new Map();
 
-		// Single traversal: extract geometry, materials, lights, and cameras
-		this.traverseObject( object );
-		this._compressAttributes( object );
+	}
 
+	/** @private */
+	_finishExtract( object ) {
+
+		this._compressAttributes( object );
 		this.logStats();
 		return this.getExtractedData();
 

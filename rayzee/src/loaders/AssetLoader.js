@@ -12,7 +12,7 @@ import { fileIdentity, identityKey } from '../storage/FileIdentity.js';
 import { updateLoading } from '../EngineEvents.js';
 import { BuildTimer } from '../scene/BuildTimer.js';
 import { computeInstanceBoundingBoxes } from '../scene/GeometryExtractor.js';
-import { getPlatform, hasImageDecoder, withHostWorker } from '../Platform.js';
+import { getPlatform, hasImageDecoder, timeSlicer, withHostWorker } from '../Platform.js';
 import { loadPlatformImage, platformImagesPlugin, missingImageDecoderPlugin, browserImagesPlugin } from './PlatformImageLoader.js';
 import { diffuseTransmissionPlugin } from './GLTFDiffuseTransmission.js';
 import { decodersOnDemand } from './GLTFDecoders.js';
@@ -153,6 +153,36 @@ function standInForSplit( source ) {
 	if ( source.index ) geometry.setIndex( source.index );
 	for ( const group of source.groups ) geometry.addGroup( group.start, group.count, group.materialIndex );
 	return geometry;
+
+}
+
+/**
+ * three builds a glTF as one chain of promise steps, which never gives the page a turn: past 40 ms, the next dependency
+ * waits for one. Every step waiting meanwhile shares that turn.
+ */
+export function slicedParsePlugin( parser ) {
+
+	const slice = timeSlicer( 40 );
+	const getDependency = parser.getDependency.bind( parser );
+	let turn = null;
+	parser.getDependency = ( type, index ) => {
+
+		if ( ! turn ) {
+
+			turn = slice();
+			turn?.then( () => {
+
+				turn = null;
+
+			} );
+
+		}
+
+		return turn ? turn.then( () => getDependency( type, index ) ) : getDependency( type, index );
+
+	};
+
+	return { name: 'RAYZEE_sliced_parse' };
 
 }
 
@@ -904,6 +934,7 @@ export class AssetLoader extends EventDispatcher {
 		else if ( ! hasImageDecoder() ) loader.register( ( parser ) => missingImageDecoderPlugin( parser, onImageFailure ) );
 		loader.register( ( parser ) => diffuseTransmissionPlugin( parser ) );
 		loader.register( () => cameraClipPlugin );
+		loader.register( slicedParsePlugin );
 
 		return loader;
 

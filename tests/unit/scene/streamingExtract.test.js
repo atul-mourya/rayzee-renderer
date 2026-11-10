@@ -130,3 +130,29 @@ describe( 'GeometryExtractor.extractStreaming', () => {
 	} );
 
 } );
+
+describe( 'GeometryExtractor.extractSliced', () => {
+
+	it( 'stores exactly what extract() stores, giving a turn whenever the slicer asks', async () => {
+
+		const plain = new GeometryExtractor().extract( scene() );
+
+		let asked = 0, turns = 0;
+		const sliced = await new GeometryExtractor().extractSliced( scene(), () => {
+
+			asked ++;
+			return asked % 3 ? null : Promise.resolve().then( () => void turns ++ );
+
+		} );
+
+		expect( Array.from( sliced.triangleData.copyOf( 0, sliced.triangleCount ) ) )
+			.toEqual( Array.from( plain.triangleData.copyOf( 0, plain.triangleCount ) ) );
+		expect( sliced.meshTriangleRanges ).toEqual( plain.meshTriangleRanges );
+		expect( Array.from( sliced.instanceSource ) ).toEqual( Array.from( plain.instanceSource ) );
+		expect( sliced.materials.length ).toBe( plain.materials.length );
+		expect( asked ).toBeGreaterThan( 5 );
+		expect( turns ).toBe( Math.floor( asked / 3 ) );
+
+	} );
+
+} );
