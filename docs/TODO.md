@@ -8,10 +8,12 @@
 -   make bvh an independent library — built as the `rayzee-bvh` package on the night of 2026-11-05 (branch
     `night/bvh-package`), not committed
 - claude design: redesign all ui component used in the application to create a custom design system
-- scrolling and panning behaviour on final render page needs to be have exactly like how its behaving on results tab
-- explore which aspects of the engine can be moved to rust based webassembly to maximise the performance gain and minimize the browser related bottlenecks
+- Rust/WebAssembly: only the BLAS build gains clearly (2.9–4× measured on its core, of which a JS-only layout change
+  gives 1.3–1.8×). Study, ranking and pilot plan in docs/internal/specs/wasm-candidates.md; nothing ported
 - can headless render in hdr?
-- scroll and pan performance in on in results tab is too slow. If limited by dom manipulator, can we do HTLM-in-canvas api recently introduced as a new browser feature?
+- a final render keeps ~4 frames queued on the GPU (410–480 ms to drain at 1638×2048): the page draws at 8 fps
+  behind it, and a pan starts ~0.4 s late (tracing pauses while the view pans or zooms). Cap frames in flight at 2,
+  then `bench:ab` the cost
 - moana island scene usd version takes 5 mins to load and crashes in the end
 
 ### MVP
