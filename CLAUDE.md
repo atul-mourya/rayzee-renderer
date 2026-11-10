@@ -377,7 +377,10 @@ On `RayzeeRenderer`, so the core has them too, except `runFinalDenoise()` (the v
   `PathTracerApp` asks for it; the bare core does on the first `setAuxGBufferEnabled( true )`.
 - **Kernels compile in the background**: `_buildWavefrontKernels` ends in `_compileKernels()` (`compileComputeAsync`).
   Until it resolves `render()` traces nothing and `readbackWait()` returns the promise; `EngineEvents.SHADERS_COMPILING`
-  brackets it; a newer build supersedes (`_kernelGeneration`); the debug kernel is `eager: false`. ⚠️ Time a first frame
+  brackets it; a newer build supersedes (`_kernelGeneration`); the debug kernel is `eager: false`. A stage with a
+  compute of its own compiles it the same way and skips its frames meanwhile (`stage.compiling`, NormalDepth); driver
+  loops also await `pipeline.compileWait()`. ⚠️ A BVH walk compiled at its first dispatch held Chrome's GPU process
+  until Chrome killed it on the Moana island (device lost). ⚠️ Time a first frame
   to `queue.onSubmittedWorkDone()`, not to `frameCount`: the old synchronous compile submitted after 0.2 s and the GPU
   finished it after 4 s.
 - **`enableGPUTiming( bool )` / `getGPUTimings()`** — real GPU milliseconds; `pipeline.getStats()` times CPU encoding

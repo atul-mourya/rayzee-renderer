@@ -1848,7 +1848,7 @@ export class RayzeeRenderer extends EventDispatcher {
 			if ( this._deviceLost ) throw new Error( 'renderFrames: WebGPU device lost' );
 			if ( ! stage.isReady ) throw new Error( 'renderFrames: path tracer stage is not ready' );
 
-			const wait = stage.readbackWait();
+			const wait = stage.readbackWait() ?? this.pipeline.compileWait();
 			if ( wait ) {
 
 				await this._awaitReadback( wait );
@@ -1946,7 +1946,7 @@ export class RayzeeRenderer extends EventDispatcher {
 				if ( this._deviceLost ) throw new Error( 'renderUntilComplete: WebGPU device lost' );
 				if ( ! stage.isReady ) throw new Error( 'renderUntilComplete: path tracer stage is not ready' );
 
-				const wait = stage.readbackWait();
+				const wait = stage.readbackWait() ?? this.pipeline.compileWait();
 				if ( wait ) {
 
 					await this._awaitReadback( wait );

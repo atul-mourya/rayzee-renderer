@@ -11,6 +11,9 @@ import { getMaterial, triangleRow } from '../../shaders/Common.js';
 import { windingNormal } from '../../shaders/HitFacet.js';
 import { computeUVCache, processNormal, processBump, processMetalnessRoughness, triangleUVTangent, triangleUVAxes, NO_UV_AXES, buildBucketTextureNodes, refreshBucketTextureNodes } from '../../shaders/TextureSampling.js';
 import { withSceneResources } from '../../shaders/SceneResources.js';
+import { KernelManager } from '../../pathtracer/KernelManager.js';
+
+const PUBLISHED = [ 'pathtracer:normalDepth', 'pathtracer:prevNormalDepth', 'pathtracer:shadingNormal', 'pathtracer:instanceLeaf' ];
 
 /**
  * NormalDepth — primary-ray G-buffer for the denoisers' edge tests (NRD, the OIDN motion history).
@@ -113,7 +116,6 @@ export class NormalDepth extends RenderStage {
 		this._lastMatAttr = null;
 		this._computeNode = null;
 		this._computeBuilt = false;
-
 		// Independent linear-pool bucket nodes for this pipeline (normal + bump live in the
 		// linear pool). Built lazily in _buildCompute from the path tracer's materialData;
 		// value-swapped on model load. processNormal/processBump runtime-guard on map indices.
@@ -336,6 +338,17 @@ export class NormalDepth extends RenderStage {
 
 		this._computeBuilt = true;
 
+		// In the background, as the path tracer's kernels: compiled at its first dispatch, a large scene's BVH walk
+		// held the GPU process long enough for Chrome to kill it.
+		const node = this._computeNode;
+		const done = () => {
+
+			if ( this._computeNode === node ) this.compiling = null;
+
+		};
+
+		this.compiling = KernelManager.canCompileInBackground ? this.renderer.compileComputeAsync( node ).then( done, done ) : null;
+
 	}
 
 	render( context ) {
@@ -346,6 +359,13 @@ export class NormalDepth extends RenderStage {
 		if ( ! buffersReady ) return;
 
 		if ( ! this._computeBuilt ) this._buildCompute();
+		if ( this.compiling ) {
+
+			// What is published may describe the scene before; its readers run without it meanwhile.
+			for ( const key of PUBLISHED ) if ( context.getTexture( key ) ) context.removeTexture( key );
+			return;
+
+		}
 
 		const pt = this.pathTracer;
 		if ( pt ) {

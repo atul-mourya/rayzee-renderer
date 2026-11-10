@@ -70,6 +70,7 @@ function createMockApp( { clipDuration = 2.0, framesTillComplete = 3 } = {} ) {
 		},
 		pipeline: {
 			context: {},
+			compileWait: () => null,
 			render: vi.fn( () => {
 
 				frameCount ++;

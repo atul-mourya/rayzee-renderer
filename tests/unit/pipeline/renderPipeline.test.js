@@ -52,6 +52,26 @@ describe( 'RenderPipeline', () => {
 
 	} );
 
+	describe( 'compileWait', () => {
+
+		it( 'hands back an enabled stage\'s compile, so a loop driving frames can wait for it', () => {
+
+			const a = createMockStage( 'a' ), b = createMockStage( 'b' );
+			pipeline.addStage( a );
+			pipeline.addStage( b );
+			expect( pipeline.compileWait() ).toBe( null );
+
+			const compile = Promise.resolve();
+			b.compiling = compile;
+			expect( pipeline.compileWait() ).toBe( compile );
+
+			b.enabled = false;
+			expect( pipeline.compileWait() ).toBe( null );
+
+		} );
+
+	} );
+
 	// ── addStage ───────────────────────────────────────────────
 
 	describe( 'addStage', () => {

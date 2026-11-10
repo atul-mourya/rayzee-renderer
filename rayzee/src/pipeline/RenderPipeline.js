@@ -118,6 +118,17 @@ export class RenderPipeline {
 	}
 
 	/**
+	 * A promise while an enabled stage compiles in the background and skips its frames, so a loop driving frames
+	 * itself can wait for it; null otherwise.
+	 * @returns {?Promise<void>}
+	 */
+	compileWait() {
+
+		return this.stages.find( stage => stage.enabled && stage.compiling )?.compiling ?? null;
+
+	}
+
+	/**
 	 * Get a stage by name
 	 * @param {string} name - Stage name
 	 * @returns {RenderStage|undefined} Stage or undefined if not found

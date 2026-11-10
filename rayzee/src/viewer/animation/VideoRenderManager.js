@@ -250,7 +250,7 @@ export class VideoRenderManager {
 
 		while ( ! pathTracer.isComplete && ! this._cancelled ) {
 
-			const wait = pathTracer.readbackWait();
+			const wait = pathTracer.readbackWait() ?? app.pipeline.compileWait();
 			if ( wait ) {
 
 				await wait;

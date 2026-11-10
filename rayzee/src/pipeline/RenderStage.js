@@ -89,6 +89,8 @@ export class RenderStage {
 		this.name = name;
 		this.enabled = options.enabled !== false;
 		this.executionMode = options.executionMode || StageExecutionMode.ALWAYS;
+		/** While its compute compiles in the background, the promise of it: the stage skips its frames meanwhile. */
+		this.compiling = null;
 
 		// Set by initialize()
 		this.context = null;

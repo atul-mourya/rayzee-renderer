@@ -28,6 +28,7 @@ function makeApp( { ceiling = 6, waitAtFrame = null, finalDenoise = false, setti
 	const app = {
 		stages: { pathTracer: stage },
 		pipeline: {
+			compileWait: () => null,
 			render: () => {
 
 				if ( stage.frameCount >= stage.completionThreshold ) {

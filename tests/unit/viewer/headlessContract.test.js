@@ -66,6 +66,7 @@ function makeApp( { advanceBy = 1, retireAfter = Infinity } = {} ) {
 		stopAnimation: () => {},
 		camera: { updateMatrixWorld: () => {} },
 		pipeline: {
+			compileWait: () => null,
 			render: () => {
 
 				if ( stage.isComplete ) return;
