@@ -59,6 +59,33 @@ describe( 'generateImage', () => {
 
 	} );
 
+	it( 'decodes every byte value, with or without Uint8Array.fromBase64', async () => {
+
+		const bytes = Uint8Array.from( { length: 256 }, ( _, i ) => i );
+		const data = btoa( String.fromCharCode( ...bytes ) );
+		const native = Object.getOwnPropertyDescriptor( Uint8Array, 'fromBase64' );
+
+		try {
+
+			for ( const fromBase64 of [ undefined, vi.fn( ( text ) => Uint8Array.from( atob( text ), c => c.charCodeAt( 0 ) ) ) ] ) {
+
+				Object.defineProperty( Uint8Array, 'fromBase64', { value: fromBase64, configurable: true, writable: true } );
+				fetchMock.mockResolvedValue( reply( { candidates: [ { finishReason: 'STOP', content: { parts: [ { inlineData: { mimeType: 'image/png', data } } ] } } ] } ) );
+				const { blob } = await generateImage( { key: 'K', image, prompt: 'x' } );
+				expect( new Uint8Array( await blob.arrayBuffer() ) ).toEqual( bytes );
+				if ( fromBase64 ) expect( fromBase64 ).toHaveBeenCalledWith( data );
+
+			}
+
+		} finally {
+
+			if ( native ) Object.defineProperty( Uint8Array, 'fromBase64', native );
+			else delete Uint8Array.fromBase64;
+
+		}
+
+	} );
+
 	it( 'names each failure so the panel can say it plainly', async () => {
 
 		const run = () => failureOf( generateImage( { key: 'K', image, prompt: 'x' } ) );
