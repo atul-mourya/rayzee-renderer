@@ -471,12 +471,12 @@ export class InteractionManager extends EventDispatcher {
 	}
 
 	/**
-	 * Handle single click for object selection
-	 * Includes debouncing to prevent firing on double-click
+	 * Handle single click for object selection, at once. Only a click on the selection, which deselects it, waits to
+	 * see that no second click makes it a double click (which selects and opens the material editor).
 	 * Only triggers if mouse wasn't dragged (camera movement)
 	 * @private
 	 */
-	handleSelectClick( event ) {
+	async handleSelectClick( event ) {
 
 		// Ignore clicks that are actually drags (camera movement)
 		if ( this.wasMouseDragged( event ) ) {
@@ -488,8 +488,8 @@ export class InteractionManager extends EventDispatcher {
 
 		this.mouseDownPosition = null;
 
-		// Clear existing timeout to prevent single-click on double-click
-		if ( this.clickTimeout ) {
+		// The second click of a double click belongs to the double click.
+		if ( event.detail > 1 ) {
 
 			clearTimeout( this.clickTimeout );
 			this.clickTimeout = null;
@@ -497,67 +497,49 @@ export class InteractionManager extends EventDispatcher {
 
 		}
 
-		// Debounce to distinguish single from double click
-		this.clickTimeout = setTimeout( async () => {
+		const mouseCoords = this.getMouseCoordinates( event );
+		this.raycaster.setFromCamera( mouseCoords, this.camera );
+		const lightHit = this._pickLightHelper();
+		const surface = await this.pickSurfaceAsync( mouseCoords.x, mouseCoords.y );
+		if ( ! this.camera ) return;
+
+		let object = null;
+
+		if ( surface && lightHit ) {
+
+			object = surface.distance <= lightHit.distance ? surface.object : lightHit.light;
+
+		} else if ( surface ) {
+
+			object = surface.object;
+
+		} else if ( lightHit ) {
+
+			object = lightHit.light;
+
+		}
+
+		if ( ! object ) {
+
+			this.dispatchEvent( { type: 'objectDeselected' } );
+			return;
+
+		}
+
+		if ( this.selectedObject?.uuid !== object.uuid ) {
+
+			this.dispatchEvent( { type: 'objectSelected', object, uuid: object.uuid } );
+			return;
+
+		}
+
+		clearTimeout( this.clickTimeout );
+		this.clickTimeout = setTimeout( () => {
 
 			this.clickTimeout = null;
+			this.dispatchEvent( { type: 'objectDeselected', object, uuid: object.uuid } );
 
-			const mouseCoords = this.getMouseCoordinates( event );
-			this.raycaster.setFromCamera( mouseCoords, this.camera );
-			const lightHit = this._pickLightHelper();
-			const surface = await this.pickSurfaceAsync( mouseCoords.x, mouseCoords.y );
-
-			let object = null;
-
-			if ( surface && lightHit ) {
-
-				object = surface.distance <= lightHit.distance ? surface.object : lightHit.light;
-
-			} else if ( surface ) {
-
-				object = surface.object;
-
-			} else if ( lightHit ) {
-
-				object = lightHit.light;
-
-			}
-
-			if ( object ) {
-
-				const currentlySelectedObject = this.selectedObject;
-				const isAlreadySelected = currentlySelectedObject && currentlySelectedObject.uuid === object.uuid;
-
-				if ( isAlreadySelected ) {
-
-					// Deselect (toggle behavior)
-					this.dispatchEvent( {
-						type: 'objectDeselected',
-						object: object,
-						uuid: object.uuid
-					} );
-
-				} else {
-
-					// Select new object
-					this.dispatchEvent( {
-						type: 'objectSelected',
-						object: object,
-						uuid: object.uuid
-					} );
-
-				}
-
-			} else {
-
-				// No valid object clicked - deselect
-				this.dispatchEvent( {
-					type: 'objectDeselected'
-				} );
-
-			}
-
-		}, 250 ); // 250ms delay for double-click detection
+		}, 250 );
 
 	}
 
