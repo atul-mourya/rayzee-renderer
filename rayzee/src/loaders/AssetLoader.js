@@ -164,7 +164,7 @@ function standInForSplit( source ) {
  */
 export function slicedParsePlugin( parser ) {
 
-	const slice = timeSlicer( 40 );
+	const slice = timeSlicer();
 	const getDependency = parser.getDependency.bind( parser );
 	let turn = null, first = true;
 	const wait = () => {

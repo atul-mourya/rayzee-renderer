@@ -9,7 +9,7 @@ import { ISSUE_CODES, EngineIssueError } from '../EngineIssues.js';
 import { linearToSRGB } from '../output/ToneMapCPU.js';
 import { getActiveColorManagement } from '../color/ActiveColor.js';
 import { createLogger } from '../Logger.js';
-import { createWorker, hardwareThreads, hasWorkers } from '../Platform.js';
+import { createWorker, hardwareThreads, hasWorkers, timeSlicer } from '../Platform.js';
 
 const log = createLogger( 'textures' );
 
@@ -1310,9 +1310,12 @@ export class TextureCreator {
 
 		const texturesData = [];
 		const placeholder = () => ( { data: new Uint8ClampedArray( [ 255, 255, 255, 255 ] ).buffer, width: 1, height: 1, isImageData: true } );
+		// Each copy below runs on this thread, and a bucket's would otherwise run as one task.
+		const slice = timeSlicer();
 
 		for ( let layer = 0; layer < textures.length; layer ++ ) {
 
+			await slice();
 			const texture = textures[ layer ];
 			if ( ! texture?.image ) {
 
@@ -1917,9 +1920,12 @@ export class TextureCreator {
 		const normalized = [];
 		const bitmapsToClose = [];
 		const bitmapJobs = []; // { index, promise }
+		// Each conversion copies its pixels on this thread.
+		const slice = timeSlicer();
 
 		for ( const tex of textures ) {
 
+			await slice();
 			if ( ! tex?.image ) {
 
 				this._reportTextureLayer( normalized.length, 'no image' );
@@ -2168,6 +2174,31 @@ export function releaseImages( textures ) {
 
 		}
 
+		thumbnailQueue.push( [ stub, image ] );
+		thumbnailing ??= makeThumbnails();
+
+	}
+
+}
+
+// Each thumbnail is a resize on this thread, and a bucket's would otherwise all start in one task.
+const thumbnailQueue = [];
+let thumbnailing = null;
+
+async function makeThumbnails() {
+
+	const slice = timeSlicer();
+	while ( thumbnailQueue.length > 0 ) {
+
+		await slice();
+		const [ stub, image ] = thumbnailQueue.shift();
+		if ( stub.thumbnail ) {
+
+			image.close();
+			continue;
+
+		}
+
 		const scale = Math.min( 1, THUMBNAIL_SIZE / Math.max( image.width, image.height ) );
 		createImageBitmap( image, { resizeWidth: Math.max( 1, Math.round( image.width * scale ) ), resizeHeight: Math.max( 1, Math.round( image.height * scale ) ), resizeQuality: 'medium' } )
 			.then( ( thumbnail ) => {
@@ -2178,6 +2209,8 @@ export function releaseImages( textures ) {
 			.finally( () => image.close() );
 
 	}
+
+	thumbnailing = null;
 
 }
 

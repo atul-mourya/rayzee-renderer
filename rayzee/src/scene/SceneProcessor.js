@@ -24,7 +24,7 @@ import { partitionRange, joinPieces } from '../bvh/SplitBLAS.js';
 import { rebaseNodes } from '../bvh/BVHLeafFold.js';
 import BVHWorker from '../bvh/BVHWorker.js?worker&inline';
 import TLASWorker from '../bvh/TLASWorker.js?worker&inline';
-import { createWorker, hardwareThreads, timeSlicer } from '../Platform.js';
+import { createWorker, hardwareThreads, nextTask, timeSlicer } from '../Platform.js';
 import { meshSource, refitBVH, placementOf, refitBLASes, updateMeshTransforms, withGroupSiblings, writeCopyRecord, takeMoveRanges, takeMovedRecordRanges, computeTLASDirtyRange, computeBLASDirtyRanges, updateMeshTrianglePositions, patchMeshSmoothNormals, refitTLAS, scheduleBackgroundRebuild, swapBLAS, cancelBackgroundRebuilds } from './SceneRefit.js';
 import { needsSpill, spillToDisk, ensureResident, ensureGeometryResident, ensureMovable, spillTLAS, spillOrderMaps, spillAfterLoad, respill, whenTLASEditable, needsPageInForMove, disposeMatrixSpill, restoreGeometry, disposeGeometrySpill, disposeSpill } from '../memory/SceneSpill.js';
 import { updateLoading } from '../EngineEvents.js';
@@ -559,6 +559,8 @@ export class SceneProcessor {
 			await bvhPromise;
 
 			updateLoading( { status: "Building light data...", progress: 77 } );
+			// A task of its own: it walks every triangle, and would otherwise follow the BVH's last slice.
+			await nextTask();
 			timer.start( 'Emissive extraction + Light BVH' );
 			this._buildEmissiveData();
 			timer.end( 'Emissive extraction + Light BVH' );
@@ -655,7 +657,7 @@ export class SceneProcessor {
 
 		try {
 
-			this._adoptExtraction( await this.geometryExtractor.extractSliced( object, timeSlicer( 40 ) ) );
+			this._adoptExtraction( await this.geometryExtractor.extractSliced( object, timeSlicer() ) );
 			const duration = performance.now() - startTime;
 			this._log( `Geometry extraction complete (${duration.toFixed( 2 )}ms)`, {
 				triangleCount: this.triangleCount,

@@ -115,7 +115,7 @@ export function createWorker( WorkerClass, options ) {
 
 // A message: unlike a timer it is not throttled in a background tab, and unlike scheduler.yield it queues behind the
 // page's own timers and posted renders instead of running ahead of them.
-function nextTask() {
+export function nextTask() {
 
 	if ( typeof MessageChannel === 'undefined' ) return new Promise( resolve => setTimeout( resolve, 0 ) );
 	return new Promise( resolve => {
@@ -138,7 +138,7 @@ function nextTask() {
  * For a long loop on the main thread: the returned function gives the page one task turn, to redraw, once `ms` have
  * passed since the last, and returns null in between.
  */
-export function timeSlicer( ms = 50 ) {
+export function timeSlicer( ms = 30 ) {
 
 	let since = performance.now();
 	const resume = () => {

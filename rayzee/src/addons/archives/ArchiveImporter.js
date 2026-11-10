@@ -26,7 +26,7 @@ import { parseBinaryPLY } from './pbrt/BinaryPLY.js';
 import { extractSceneMetadata } from '../../loaders/SceneMetadata.js';
 import { ISSUE_CODES, ISSUE_SEVERITY, EngineIssueError } from '../../EngineIssues.js';
 import { ARCHIVE_FORMATS } from '../../loaders/ArchiveFormats.js';
-import { withHostWorker, getPlatform, timeSlicer } from '../../Platform.js';
+import { withHostWorker, getPlatform, nextTask, timeSlicer } from '../../Platform.js';
 import { platformImageFromBytes, platformImagePlaceholder, imageHeaderSize, IMAGE_HEADER_BYTES } from '../../loaders/PlatformImageLoader.js';
 import { setImageReader } from '../../materials/TextureCreator.js';
 import { updateLoading } from '../../EngineEvents.js';
@@ -919,8 +919,14 @@ export class ArchiveImporter {
 		group.name = loadedEntry || filename;
 		this.loader.releaseTargetModel();
 		this.loader._sourceKey = graphKey;
-		// Before onModelLoad and the build touch the new group.
-		if ( graphKey && ! stored ) this._storeGraph( graphKey, built, filename );
+		// Before onModelLoad and the build touch the new group; a task after the build's last step.
+		if ( graphKey && ! stored ) {
+
+			await nextTask();
+			this._storeGraph( graphKey, built, filename );
+
+		}
+
 		this.loader.targetModel = group;
 		this.loader.animations = animations ?? [];
 

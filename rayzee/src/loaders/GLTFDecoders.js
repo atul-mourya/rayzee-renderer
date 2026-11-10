@@ -1,4 +1,5 @@
 import { getAssetConfig } from '../AssetConfig.js';
+import { nextTask } from '../Platform.js';
 
 const DRACO = 'KHR_draco_mesh_compression';
 const BASISU = 'KHR_texture_basisu';
@@ -70,7 +71,7 @@ function glbViewsPlugin( parser ) {
 
 /**
  * Parses a .glb without copying its binary chunk: three copies the whole chunk, then each buffer view out of that copy.
- * The JSON is decoded once, here, and handed to three parsed.
+ * The JSON is decoded once, here, and handed to three parsed. Decoding, parsing and three's start each get a task.
  * @param {Object} loader - a GLTFLoader
  */
 export function glbInPlace( loader ) {
@@ -80,20 +81,26 @@ export function glbInPlace( loader ) {
 	loader.parse = ( data, path, onLoad, onError ) => {
 
 		const glb = splitGLB( data );
-		let json = null;
-		try {
+		if ( ! glb ) return parse( data, path, onLoad, onError );
 
-			json = glb && JSON.parse( glb.text );
+		nextTask().then( () => {
 
-		} catch {
+			let json = null;
+			try {
 
-			// three's own path, so the error reads as it always has.
+				json = JSON.parse( glb.text );
 
-		}
+			} catch {
 
-		if ( typeof json !== 'object' || json === null ) return parse( data, path, onLoad, onError );
-		json[ GLB_SOURCE ] = glb;
-		parse( json, path, onLoad, onError );
+				// three's own path, so the error reads as it always has.
+
+			}
+
+			if ( typeof json !== 'object' || json === null ) return parse( data, path, onLoad, onError );
+			json[ GLB_SOURCE ] = glb;
+			return nextTask().then( () => parse( json, path, onLoad, onError ) );
+
+		} ).catch( ( error ) => onError?.( error ) );
 
 	};
 
