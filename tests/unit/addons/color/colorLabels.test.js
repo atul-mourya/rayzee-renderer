@@ -151,6 +151,24 @@ suite( 'the ACES CG config', () => {
 
 	} );
 
+	it( 'compares config versions by number, part by part, and names a config by what it is', () => {
+
+		const options = names => builtinConfigOptions( names.map( name => ( { name, uiName: name } ) ) ).presets.map( p => p.value );
+		// 2.10 is newer than 2.9; a missing part counts as 0; equal versions keep the first; Studio is never offered.
+		expect( options( [ 'cg-config-v2.9.0_aces-v1.3_ocio-v2.3', 'cg-config-v2.10.0_aces-v1.3_ocio-v2.3' ] ) ).toEqual( [ 'cg-config-v2.10.0_aces-v1.3_ocio-v2.3' ] );
+		expect( options( [ 'cg-config-v2.1_aces-v1.3_ocio-v2.3', 'cg-config-v2.1.0_aces-v1.3_ocio-v2.4' ] ) ).toEqual( [ 'cg-config-v2.1_aces-v1.3_ocio-v2.3' ] );
+		expect( options( [ 'cg-config-v2.1_aces-v1.3_ocio-v2.3', 'cg-config-v2.1.0.5_aces-v1.3_ocio-v2.3' ] ) ).toEqual( [ 'cg-config-v2.1.0.5_aces-v1.3_ocio-v2.3' ] );
+		expect( options( [ 'studio-config-v4.0.0_aces-v2.0_ocio-v2.5', 'something-else' ] ) ).toEqual( [] );
+		expect( options( [ 'cg-config-v1.0.0_aces-v1.2_ocio-v2.1', 'cg-config-v1.0.0_aces-v1.10_ocio-v2.1' ] ) ).toEqual( [ 'cg-config-v1.0.0_aces-v1.10_ocio-v2.1', 'cg-config-v1.0.0_aces-v1.2_ocio-v2.1' ] );
+
+		expect( configLabel( null ) ).toBe( 'None' );
+		expect( configLabel( { id: 'ocio://studio-config-v4.0.0_aces-v2.0_ocio-v2.5' } ) ).toBe( 'ACES 2.0 Studio (v4.0.0)' );
+		expect( configLabel( { id: 'cg-config-v2.1.0_aces-v1.3_ocio-v2.3' } ) ).toBe( 'ACES 1.3 (v2.1.0)' );
+		expect( configLabel( { id: 'blender.ocio', name: 'Blender' } ) ).toBe( 'Blender' );
+		expect( configLabel( { id: 'studio/pipeline.ocio' } ) ).toBe( 'studio/pipeline.ocio' );
+
+	} );
+
 	it( 'offers one preset per ACES version, newest CG config of each, and nothing else', async () => {
 
 		const builtins = await listBuiltinConfigs();

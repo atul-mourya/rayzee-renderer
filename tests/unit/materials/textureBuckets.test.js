@@ -5,6 +5,8 @@ import {
 
 const CAP = 4096;
 const K = TEXTURE_CONSTANTS.MATERIAL_BUCKET_COUNT;
+// The planner's share of small pools grouped as cheaply as trying every grouping does (0.95 measured).
+const OPTIMAL_SHARE = 0.9;
 
 const cost = ( sizes, shapes ) => sizes.reduce( ( sum, s ) => {
 
@@ -84,6 +86,97 @@ describe( 'planTextureBuckets', () => {
 		const ladderCost = sizes.length * 2048 * 2048 * 4;
 
 		expect( cost( sizes, shapes ) ).toBeLessThan( ladderCost / 2 );
+
+	} );
+
+	it( 'never costs more than the longest-edge ladder, on square and mixed pools alike', () => {
+
+		let seed = 5;
+		const rand = () => ( seed = ( seed * 16807 ) % 2147483647 ) / 2147483647;
+		// The ladder: squares of the cap, half, quarter, eighth; each map in the smallest that holds its edge rounded up to 2^n.
+		const ladder = Array.from( { length: K }, ( _, i ) => CAP / 2 ** ( K - 1 - i ) ).map( e => ( { width: e, height: e } ) );
+		let ladderWins = 0;
+
+		for ( let trial = 0; trial < 60; trial ++ ) {
+
+			const square = trial % 2 === 0;
+			const sizes = Array.from( { length: 8 + Math.floor( rand() * 40 ) }, () => {
+
+				if ( square ) {
+
+					const e = 2 ** ( 6 + Math.floor( rand() * 7 ) );
+					return { width: e, height: e };
+
+				}
+
+				return { width: 16 + Math.floor( rand() * 4000 ), height: 16 + Math.floor( rand() * 4000 ) };
+
+			} );
+			const shapes = planTextureBuckets( sizes, CAP, K );
+
+			expect( shapes.length ).toBeLessThanOrEqual( K );
+			for ( let i = 1; i < shapes.length; i ++ ) expect( shapes[ i ].width * shapes[ i ].height ).toBeGreaterThanOrEqual( shapes[ i - 1 ].width * shapes[ i - 1 ].height );
+			for ( const { width, height } of sizes ) {
+
+				const shape = shapes[ getTextureBucketId( width, height, shapes ) ];
+				expect( shape.width >= Math.min( width, CAP ) && shape.height >= Math.min( height, CAP ) ).toBe( true );
+
+			}
+
+			const ladderCost = sizes.reduce( ( sum, { width, height } ) => {
+
+				const edge = 2 ** Math.ceil( Math.log2( Math.max( width, height ) ) );
+				const shape = ladder.find( l => l.width >= edge ) ?? ladder.at( - 1 );
+				return sum + shape.width * shape.height * 4;
+
+			}, 0 );
+			const planned = cost( sizes, shapes );
+			expect( planned ).toBeLessThanOrEqual( ladderCost );
+			if ( planned === ladderCost ) ladderWins ++;
+
+		}
+
+		// Square pools often land exactly on the ladder: that opening is what they take.
+		expect( ladderWins ).toBeGreaterThan( 0 );
+
+	} );
+
+	it( 'finds the cheapest grouping of a small pool, as trying every grouping does', () => {
+
+		let seed = 17;
+		const rand = () => ( seed = ( seed * 16807 ) % 2147483647 ) / 2147483647;
+		// Every way to split `items` into at most K groups.
+		const partitions = ( items, groups = [] ) => {
+
+			if ( ! items.length ) return [ groups.map( g => g.slice() ) ];
+			const [ first, ...rest ] = items;
+			const out = [];
+			groups.forEach( ( g, i ) => out.push( ...partitions( rest, groups.map( ( h, j ) => ( j === i ? [ ...h, first ] : h ) ) ) ) );
+			if ( groups.length < K ) out.push( ...partitions( rest, [ ...groups, [ first ]] ) );
+			return out;
+
+		};
+
+		let optimal = 0;
+		const trials = 40;
+		for ( let trial = 0; trial < trials; trial ++ ) {
+
+			const sizes = Array.from( { length: 6 + ( trial % 2 ) }, () => ( {
+				width: 32 * ( 1 + Math.floor( rand() * 64 ) ), height: 32 * ( 1 + Math.floor( rand() * 64 ) ),
+			} ) );
+			const best = Math.min( ...partitions( sizes ).map( groups => groups.reduce( ( sum, g ) => {
+
+				const w = alignBucketWidth( Math.max( ...g.map( t => t.width ) ), CAP ), h = Math.max( ...g.map( t => t.height ) );
+				return sum + w * h * 4 * g.length;
+
+			}, 0 ) ) );
+			const planned = cost( sizes, planTextureBuckets( sizes, CAP, K ) );
+			expect( planned ).toBeGreaterThanOrEqual( best );
+			if ( planned === best ) optimal ++;
+
+		}
+
+		expect( optimal / trials ).toBeGreaterThanOrEqual( OPTIMAL_SHARE );
 
 	} );
 

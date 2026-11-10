@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { createFakeOPFS } from '../../__mocks__/opfs.js';
 import { openStorage } from '@/core/addons/storage/OpenStorage.js';
 import { STORAGE_KIND } from '@/core/addons/storage/StorageManager.js';
@@ -96,6 +96,92 @@ describe( 'VideoJob', () => {
 	it( 'returns null without storage', async () => {
 
 		expect( await VideoJob.start( null, spec ) ).toBeNull();
+		expect( await VideoJob.unfinished( null ) ).toEqual( [] );
+
+	} );
+
+	// Resolves, or rejects after a second: a writer left open would hold the entry's lock for good.
+	const soon = promise => Promise.race( [ promise, new Promise( ( _, reject ) => setTimeout( () => reject( new Error( 'still locked' ) ), 1000 ) ) ] );
+
+	// The jobs area's next writer fails at `method` once.
+	function failNext( method, area = storage.area( 'jobs' ) ) {
+
+		const open = area[ method ].bind( area );
+		area[ method ] = async ( ...args ) => {
+
+			area[ method ] = open;
+			const writer = await open( ...args );
+			writer.write = async () => {
+
+				throw new Error( 'disk full' );
+
+			};
+
+			writer.writeJSON = writer.write;
+			return writer;
+
+		};
+
+	}
+
+	it( 'lets a frame whose write fails go, and takes it again', async () => {
+
+		const job = await VideoJob.start( storage, spec );
+		failNext( 'edit' );
+		await expect( job.appendFrame( 0, [ fakeChunk( 'key', 0, new Uint8Array( [ 1 ] ) ) ] ) ).rejects.toThrow( 'disk full' );
+		expect( job.framesDone ).toBe( 0 );
+
+		await soon( job.appendFrame( 0, [ fakeChunk( 'key', 0, new Uint8Array( [ 1 ] ) ) ] ) );
+		expect( job.framesDone ).toBe( 1 );
+		expect( ( await VideoJob.unfinished( storage ) )[ 0 ].framesDone ).toBe( 1 );
+
+	} );
+
+	it( 'leaves no job behind when its first write fails', async () => {
+
+		failNext( 'create' );
+		await expect( VideoJob.start( storage, spec ) ).rejects.toThrow( 'disk full' );
+		expect( await storage.area( 'jobs' ).list() ).toHaveLength( 0 );
+
+	} );
+
+	it( 'keeps the journal when muxing fails, so it can be muxed again', async () => {
+
+		const job = await VideoJob.start( storage, { ...spec, totalFrames: 1 } );
+		await job.appendFrame( 0, [ fakeChunk( 'key', 0, new Uint8Array( [ 5, 6 ] ) ) ] );
+		failNext( 'edit' );
+		await expect( job.finalize() ).rejects.toThrow( 'disk full' );
+
+		const file = await soon( job.finalize() );
+		expect( file.type ).toBe( 'video/webm' );
+
+	} );
+
+	it( 'lists only unfinished video jobs, newest first', async () => {
+
+		const now = vi.spyOn( Date, 'now' );
+		now.mockReturnValue( 1000 );
+		const old = await VideoJob.start( storage, spec );
+		now.mockReturnValue( 2000 );
+		const recent = await VideoJob.start( storage, spec );
+		now.mockReturnValue( 3000 );
+		const done = await VideoJob.start( storage, { ...spec, totalFrames: 1 } );
+		now.mockRestore();
+		await done.appendFrame( 0, [ fakeChunk( 'key', 0, new Uint8Array( [ 1 ] ) ) ] );
+		const other = await storage.area( 'jobs' ).create( 'still:1', { extra: { kind: 'still' } } );
+		await other.writeJSON( 'job.json', { framesDone: 0, totalFrames: 5 } );
+		await other.commit();
+
+		expect( ( await VideoJob.unfinished( storage ) ).map( j => j.key ) ).toEqual( [ recent.key, old.key ] );
+
+	} );
+
+	it( 'says when its entry is gone', async () => {
+
+		const job = await VideoJob.start( storage, spec );
+		await job.discard();
+		await expect( job.appendFrame( 0, [] ) ).rejects.toThrow( /storage entry is gone/ );
+		await expect( job.finalize() ).rejects.toThrow( /storage entry is gone/ );
 
 	} );
 

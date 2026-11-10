@@ -97,6 +97,36 @@ describe( 'CameraTrack', () => {
 
 	} );
 
+	it( 'reports a change only when keys really change, and refuses a time that is not one', () => {
+
+		const changed = vi.fn();
+		const t = new CameraTrack( null, changed );
+		expect( [ t.duration, t.animates ] ).toEqual( [ 0, false ] );
+		t.clear();
+		const a = t.add( pose( 1, 0 ), 0 );
+		const b = t.add( pose( 2, 0 ), 3 );
+		expect( changed ).toHaveBeenCalledTimes( 2 );
+
+		// A key that is not there, a time below zero or not a number: nothing happens, nothing is reported.
+		t.update( 99, pose( 7, 7 ) );
+		t.remove( 99 );
+		for ( const time of [ - 1, NaN, undefined ] ) t.setTime( b.id, time );
+		t.setTime( 99, 1 );
+		expect( changed ).toHaveBeenCalledTimes( 2 );
+		expect( t.keys.map( k => k.time ) ).toEqual( [ 0, 3 ] );
+
+		t.update( a.id, pose( 5, 5 ) );
+		expect( t.get( a.id ).position.toArray() ).toEqual( [ 5, 1, 5 ] );
+		expect( t.get( a.id ).time ).toBe( 0 );
+		t.setTime( b.id, 0.5 );
+		t.remove( a.id );
+		expect( [ t.keys.length, t.duration ] ).toEqual( [ 1, 0.5 ] );
+		t.clear();
+		t.clear();
+		expect( changed ).toHaveBeenCalledTimes( 6 );
+
+	} );
+
 } );
 
 describe( 'TimelineManager', () => {
