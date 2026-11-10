@@ -21,6 +21,7 @@ import {
 	lessThan,
 	array,
 	uint,
+	uvec3,
 	uintBitsToFloat,
 	floatBitsToUint,
 	bool as tslBool,
@@ -29,10 +30,12 @@ import {
 import {
 	TRI_MATERIAL_MASK, TRI_SIDE_SHIFT, TRI_EMIT_SIDE_SHIFT, BVH_LEAF_MARKERS, BVH_MAX_INDEX, BVH_FOLDED_LEAF_MAX,
 	TLAS_LEAF_IDENTITY, COPY_ENTRY, CLUSTER_FIRST_MASK, CLUSTER_COUNT_SHIFT, CLUSTER_SIZE, CLUSTER_ROOT_MASK, CLUSTER_COPY_HIDDEN,
+	WIDE_NODE,
 } from '../scene/BufferLayout.js';
 import { HitInfo } from './Struct.js';
 import {
-	getDatafromStorageBuffer, storageRows, instanceRows, instanceNormalToWorld, unpackTriangleNormal, triangleRow, shadowFlagsSettle
+	getDatafromStorageBuffer, storageRows, instanceRows, instanceNormalToWorld, unpackTriangleNormal, triangleRow, triangleGeoRows, shadowFlagsSettle,
+	clusterLeaf,
 } from './Common.js';
 import { MIN_TRAVERSAL_STACK } from '../bvh/TraversalStack.js';
 
@@ -66,6 +69,26 @@ const nodeRows = ( bvhBuffer, nodeIndex, rows = [ 0, 1, 2, 3 ] ) => {
 // stores it, so child slots are pushed as they are and a leaf needs no fetch.
 const foldedFirst = ( entry ) => int( uint( entry.bitNot() ).shiftRight( uint( 4 ) ) );
 const foldedCount = ( entry ) => int( uint( entry.bitNot() ).bitAnd( uint( BVH_FOLDED_LEAF_MAX ) ) );
+
+/**
+ * Clustered corners (scene/TriangleClusters.js): calls `test( triIndex, rowOf )` for each triangle of a leaf in order. A
+ * leaf node holds what its layout needs in slot [2] and lanes 4–15 (clusterLeaf); a folded leaf reads each triangle's
+ * corners through the per-triangle table.
+ */
+const eachClusteredTriangle = ( tris, first, count, leafNode, test ) => {
+
+	const leaf = leafNode ? clusterLeaf( tris, floatBitsToUint( leafNode.data0.z ), leafNode.node ) : null;
+	const triStart = int( first ).toVar();
+
+	Loop( { start: int( 0 ), end: int( count ) }, ( { i } ) => {
+
+		const triIndex = triStart.add( i ).toVar();
+		const rows = triangleGeoRows( tris, triIndex, leaf && { ...leaf, slot: i } ).map( ( r ) => r.toVar() );
+		test( triIndex, ( k ) => rows[ k ] );
+
+	} );
+
+};
 
 // Leaf node tags sit from 2^30 up; in a folded BVH only to 2^31, where folded leaves begin.
 const leafTagTest = ( folded ) => ( folded
@@ -143,6 +166,72 @@ const pushHitCopies = ( node, nodeIndex, nodeData0, origin, invDir, stack, stack
 		If( dist[ k ].lessThan( limit ).and( stackPtr.lessThan( int( stackDepth ) ) ), () => {
 
 			stack.element( stackPtr ).assign( int( uint( COPY_ENTRY ).bitOr( uint( nodeIndex ).shiftLeft( uint( 2 ) ) ).bitOr( uint( slot[ k ] ) ) ) );
+			stackPtr.addAssign( 1 );
+
+		} );
+
+	}
+
+};
+
+// Four quantised boxes (a wide node, bvh/WideBVH.js: copy-cluster bytes) against a ray, as vec4s: a plane's distance is
+// one multiply-add from its byte, t = q · step · invDir + ( base − origin ) · invDir. Children past `count` and misses
+// read 1e30.
+const wideBoxDistances = wgslFn( `
+	fn wideBoxDistances( lo: vec3<u32>, hi: vec3<u32>, scale: vec3f, offset: vec3f, count: u32, limit: f32 ) -> vec4f {
+
+		let sh = vec4<u32>( 0u, 8u, 16u, 24u );
+		let lx = vec4f( ( vec4<u32>( lo.x ) >> sh ) & vec4<u32>( 255u ) ) * scale.x + offset.x;
+		let hx = vec4f( ( vec4<u32>( hi.x ) >> sh ) & vec4<u32>( 255u ) ) * scale.x + offset.x;
+		let ly = vec4f( ( vec4<u32>( lo.y ) >> sh ) & vec4<u32>( 255u ) ) * scale.y + offset.y;
+		let hy = vec4f( ( vec4<u32>( hi.y ) >> sh ) & vec4<u32>( 255u ) ) * scale.y + offset.y;
+		let lz = vec4f( ( vec4<u32>( lo.z ) >> sh ) & vec4<u32>( 255u ) ) * scale.z + offset.z;
+		let hz = vec4f( ( vec4<u32>( hi.z ) >> sh ) & vec4<u32>( 255u ) ) * scale.z + offset.z;
+		let tNear = max( max( min( lx, hx ), min( ly, hy ) ), min( lz, hz ) );
+		let tFar = min( min( max( lx, hx ), max( ly, hy ) ), max( lz, hz ) ) * 1.00000024f;
+		let hit = ( tNear <= tFar ) & ( tFar > vec4f( 0.0f ) ) & ( tNear < vec4f( limit ) ) & ( vec4<u32>( 0u, 1u, 2u, 3u ) < vec4<u32>( count ) );
+		return select( vec4f( 1e30f ), max( tNear, vec4f( 0.0f ) ), hit );
+
+	}
+` );
+
+// A wide node's hit children, nearest pushed last so it is popped first.
+const pushWideChildren = ( node, nodeData0, origin, invDir, stack, stackPtr, limit, stackDepth ) => {
+
+	const d1 = node( 1 );
+	const d2 = node( 2 );
+	const refs = floatBitsToUint( node( 3 ) ).toVar();
+	const exps = floatBitsToUint( nodeData0.y ).toVar();
+	const stepOf = ( a ) => uintBitsToFloat( exps.shiftRight( uint( a * 8 ) ).bitAnd( uint( 255 ) ).shiftLeft( uint( 23 ) ) );
+	const d = wideBoxDistances( {
+		lo: uvec3( floatBitsToUint( d1.z ), floatBitsToUint( d1.w ), floatBitsToUint( d2.x ) ),
+		hi: uvec3( floatBitsToUint( d2.y ), floatBitsToUint( d2.z ), floatBitsToUint( d2.w ) ),
+		scale: vec3( stepOf( 0 ), stepOf( 1 ), stepOf( 2 ) ).mul( invDir ),
+		offset: vec3( nodeData0.z, d1.x, d1.y ).sub( origin ).mul( invDir ),
+		count: floatBitsToUint( nodeData0.x ),
+		limit,
+	} ).toVar();
+
+	const dist = [ d.x.toVar(), d.y.toVar(), d.z.toVar(), d.w.toVar() ];
+	const ref = [ int( refs.x ).toVar(), int( refs.y ).toVar(), int( refs.z ).toVar(), int( refs.w ).toVar() ];
+
+	for ( const [ a, b ] of SORT_NETWORKS[ 4 ] ) {
+
+		const swap = dist[ b ].lessThan( dist[ a ] ).toVar();
+		const da = select( swap, dist[ b ], dist[ a ] ).toVar(), db = select( swap, dist[ a ], dist[ b ] ).toVar();
+		const ra = select( swap, ref[ b ], ref[ a ] ).toVar(), rb = select( swap, ref[ a ], ref[ b ] ).toVar();
+		dist[ a ].assign( da );
+		dist[ b ].assign( db );
+		ref[ a ].assign( ra );
+		ref[ b ].assign( rb );
+
+	}
+
+	for ( let k = 3; k >= 0; k -- ) {
+
+		If( dist[ k ].lessThan( limit ).and( stackPtr.lessThan( int( stackDepth ) ) ), () => {
+
+			stack.element( stackPtr ).assign( ref[ k ] );
 			stackPtr.addAssign( 1 );
 
 		} );
@@ -327,8 +416,11 @@ const makeTraverseBVH = ( trackStats ) => Fn( ( [
 	const eitherSide = ( insideMedium ?? tslBool( false ) ).or( ( cullBackFaces ?? tslBool( true ) ).not() ).toVar();
 
 	// Folded leaves cost up to 4 % of traversal, so only a BVH built with them gets that code.
-	const folded = bvhBuffer.value?.foldedLeaves === true;
-	const isLeafTag = leafTagTest( folded );
+	// Objects' trees 4-wide (bvh/WideBVH.js) fold their leaves too; a wide node's tag sits among the leaf tags.
+	const wide = bvhBuffer.value?.wide === true;
+	const folded = wide || bvhBuffer.value?.foldedLeaves === true;
+	const isLeafTag = wide ? ( tag ) => leafTagTest( true )( tag ).and( tag.notEqual( uint( WIDE_NODE ) ) ) : leafTagTest( folded );
+	const stackDepth = stackDepthOf( bvhBuffer );
 
 	const closestHit = HitInfo( {
 		didHit: false,
@@ -350,7 +442,6 @@ const makeTraverseBVH = ( trackStats ) => Fn( ( [
 	const closestV = float( 0.0 ).toVar();
 
 	// Stack (native WGSL array — O(1) read/write)
-	const stackDepth = stackDepthOf( bvhBuffer );
 	const stack = createStack( stackDepth );
 	const stackPtr = int( 1 ).toVar();
 	stack.element( int( 0 ) ).assign( int( 0 ) ); // Root node
@@ -418,74 +509,93 @@ const makeTraverseBVH = ( trackStats ) => Fn( ( [
 
 	// Emitted once per leaf kind, in its own branch: hoisted below both, the range stayed live
 	// through the inner-node path and cost 9–13 % of traversal time.
-	const testLeaf = ( first, count ) => {
+	const testLeaf = ( first, count, leafNode = null ) => {
+
+		if ( triangleBuffer.clustered ) {
+
+			eachClusteredTriangle( triangleBuffer, first, count, leafNode, testTriangle );
+			stopIfTouching();
+			return;
+
+		}
 
 		const triStart = int( first ).toVar();
 		const triCount = int( count ).toVar();
 
 		Loop( { start: int( 0 ), end: triCount }, ( { i } ) => {
 
-			if ( trackStats ) closestHit.triTests.addAssign( 1 );
 			const triIndex = triStart.add( i ).toVar();
+			testTriangle( triIndex, ( row ) => triangleRow( triangleBuffer, triIndex, row ).toVar() );
 
-			// Three fetches carry positions AND the packed normals in their .w lanes.
-			const recA = triangleRow( triangleBuffer, triIndex, 0 ).toVar();
-			const recB = triangleRow( triangleBuffer, triIndex, 1 ).toVar();
-			const recC = triangleRow( triangleBuffer, triIndex, 2 ).toVar();
-			const pA = uintBitsToFloat( recA.xyz );
-			const pB = uintBitsToFloat( recB.xyz );
-			const pC = uintBitsToFloat( recC.xyz );
+		} );
 
-			const triResult = RayTriangleGeometry( { rayOrigin, rayDir: rayDirection, pA, pB, pC, closestHitDst: closestHit.dst, woopParams } );
+		stopIfTouching();
 
-			// RayTriangleGeometry already guarantees t < closestHit.dst when w > 0.5
-			If( triResult.w.greaterThan( 0.5 ), () => {
+	};
 
-				const t = triResult.x;
-				const u = triResult.y;
-				const v = triResult.z;
+	// Three fetches carry positions AND the packed normals in their .w lanes.
+	function testTriangle( triIndex, rowOf ) {
 
-				// Normals came with the positions; only the side flag needs a fetch, and
-				// slot 4 also carries matIdx/meshIndex, deferred to post-traversal.
-				const nA = unpackTriangleNormal( recA.w );
-				const nB = unpackTriangleNormal( recB.w );
-				const nC = unpackTriangleNormal( recC.w );
-				const side = triangleSide( triangleRow( triangleBuffer, triIndex, 4 ).z ).toVar();
+		if ( trackStats ) closestHit.triTests.addAssign( 1 );
+		const recA = rowOf( 0 );
+		const recB = rowOf( 1 );
+		const recC = rowOf( 2 );
+		const pA = uintBitsToFloat( recA.xyz );
+		const pB = uintBitsToFloat( recB.xyz );
+		const pC = uintBitsToFloat( recC.xyz );
 
-				// Interpolate normal for the side-culling dot product (kept local,
-				// not stored on closestHit — re-derived post-loop from closestTriIdx).
-				const w = float( 1.0 ).sub( u ).sub( v );
-				const rayDotNormal = rayDirection.dot(
-					normalize( nA.mul( w ).add( nB.mul( u ) ).add( nC.mul( v ) ) )
-				);
+		const triResult = RayTriangleGeometry( { rayOrigin, rayDir: rayDirection, pA, pB, pC, closestHitDst: closestHit.dst, woopParams } );
 
-				// Side culling (inline; per-mesh visibility is at the BLAS-pointer level).
-				If( eitherSide.or( sideAccepts( side, rayDotNormal ) ), () => {
+		// RayTriangleGeometry already guarantees t < closestHit.dst when w > 0.5
+		If( triResult.w.greaterThan( 0.5 ), () => {
 
-					closestHit.didHit.assign( true );
-					closestHit.dst.assign( t );
+			const t = triResult.x;
+			const u = triResult.y;
+			const v = triResult.z;
 
-					// Defer normal/materialIndex/meshIndex/hitPoint/UV to post-traversal
-					// (all re-derived from closestTriIdx after the loop exits).
-					closestTriIdx.assign( triIndex );
-					closestU.assign( u );
-					closestV.assign( v );
-					hitInstLeaf.assign( instLeaf );
+			// Normals came with the positions; only the side flag needs a fetch, and
+			// slot 4 also carries matIdx/meshIndex, deferred to post-traversal.
+			const nA = unpackTriangleNormal( recA.w );
+			const nB = unpackTriangleNormal( recB.w );
+			const nC = unpackTriangleNormal( recC.w );
+			const side = triangleSide( triangleRow( triangleBuffer, triIndex, 4 ).z ).toVar();
 
-				} );
+			// Interpolate normal for the side-culling dot product (kept local,
+			// not stored on closestHit — re-derived post-loop from closestTriIdx).
+			const w = float( 1.0 ).sub( u ).sub( v );
+			const rayDotNormal = rayDirection.dot(
+				normalize( nA.mul( w ).add( nB.mul( u ) ).add( nC.mul( v ) ) )
+			);
+
+			// Side culling (inline; per-mesh visibility is at the BLAS-pointer level).
+			If( eitherSide.or( sideAccepts( side, rayDotNormal ) ), () => {
+
+				closestHit.didHit.assign( true );
+				closestHit.dst.assign( t );
+
+				// Defer normal/materialIndex/meshIndex/hitPoint/UV to post-traversal
+				// (all re-derived from closestTriIdx after the loop exits).
+				closestTriIdx.assign( triIndex );
+				closestU.assign( u );
+				closestV.assign( v );
+				hitInstLeaf.assign( instLeaf );
 
 			} );
 
 		} );
 
-		// If we found a very close hit, we can terminate early
+	}
+
+	// If we found a very close hit, we can terminate early
+	function stopIfTouching() {
+
 		If( closestHit.didHit.and( closestHit.dst.lessThan( 0.001 ) ), () => {
 
 			Break();
 
 		} );
 
-	};
+	}
 
 	const iterCount = int( 0 ).toVar();
 
@@ -517,7 +627,7 @@ const makeTraverseBVH = ( trackStats ) => Fn( ( [
 
 				If( nodeTag.equal( uint( BVH_LEAF_MARKERS.TRIANGLE_LEAF ) ), () => {
 
-					testLeaf( floatBitsToUint( nodeData0.x ), floatBitsToUint( nodeData0.y ) );
+					testLeaf( floatBitsToUint( nodeData0.x ), floatBitsToUint( nodeData0.y ), { data0: nodeData0, node } );
 
 				} ).Else( clustered ? () => {
 
@@ -563,44 +673,58 @@ const makeTraverseBVH = ( trackStats ) => Fn( ( [
 
 			} ).Else( () => {
 
-				// Inner node — child AABBs stored in this node (4 reads total, no child fetches)
-				const nodeData1 = node( 1 );
-				const nodeData2 = node( 2 );
-				const nodeData3 = node( 3 );
+				// Binary in the top level; under compactLayout an object's tree is 4-wide.
+				const binary = () => {
 
-				const leftChild = int( nodeTag ).toVar();
-				const rightChild = int( floatBitsToUint( nodeData1.w ) ).toVar();
+					// Inner node — child AABBs stored in this node (4 reads total, no child fetches)
+					const nodeData1 = node( 1 );
+					const nodeData2 = node( 2 );
+					const nodeData3 = node( 3 );
 
-				const inInst = instLeaf.greaterThanEqual( int( 0 ) );
-				const boxOrigin = select( inInst, rayOrigin, worldOrigin ).toVar();
-				const boxInv = select( inInst, invDir, worldInvDir ).toVar();
-				const dstA = fastRayAABBDst( { rayOrigin: boxOrigin, invDir: boxInv, boxMin: nodeData0.xyz, boxMax: nodeData1.xyz } ).toVar();
-				const dstB = fastRayAABBDst( { rayOrigin: boxOrigin, invDir: boxInv, boxMin: nodeData2.xyz, boxMax: nodeData3.xyz } ).toVar();
+					const leftChild = int( nodeTag ).toVar();
+					const rightChild = int( floatBitsToUint( nodeData1.w ) ).toVar();
 
-				// Optimized early rejection
-				const minDst = min( dstA, dstB );
-				If( minDst.lessThan( closestHit.dst ), () => {
+					const inInst = instLeaf.greaterThanEqual( int( 0 ) );
+					const boxOrigin = select( inInst, rayOrigin, worldOrigin ).toVar();
+					const boxInv = select( inInst, invDir, worldInvDir ).toVar();
+					const dstA = fastRayAABBDst( { rayOrigin: boxOrigin, invDir: boxInv, boxMin: nodeData0.xyz, boxMax: nodeData1.xyz } ).toVar();
+					const dstB = fastRayAABBDst( { rayOrigin: boxOrigin, invDir: boxInv, boxMin: nodeData2.xyz, boxMax: nodeData3.xyz } ).toVar();
 
-					// Improved node ordering with fewer conditionals
-					const aCloser = dstA.lessThan( dstB );
+					// Optimized early rejection
+					const minDst = min( dstA, dstB );
+					If( minDst.lessThan( closestHit.dst ), () => {
 
-					// Push far child first (processed last)
-					If( select( aCloser, dstB, dstA ).lessThan( closestHit.dst ).and( stackPtr.lessThan( int( stackDepth ) ) ), () => {
+						// Improved node ordering with fewer conditionals
+						const aCloser = dstA.lessThan( dstB );
 
-						stack.element( stackPtr ).assign( select( aCloser, rightChild, leftChild ) );
-						stackPtr.addAssign( 1 );
+						// Push far child first (processed last)
+						If( select( aCloser, dstB, dstA ).lessThan( closestHit.dst ).and( stackPtr.lessThan( int( stackDepth ) ) ), () => {
+
+							stack.element( stackPtr ).assign( select( aCloser, rightChild, leftChild ) );
+							stackPtr.addAssign( 1 );
+
+						} );
+
+						// Push near child second (processed first)
+						If( stackPtr.lessThan( int( stackDepth ) ), () => {
+
+							stack.element( stackPtr ).assign( select( aCloser, leftChild, rightChild ) );
+							stackPtr.addAssign( 1 );
+
+						} );
 
 					} );
 
-					// Push near child second (processed first)
-					If( stackPtr.lessThan( int( stackDepth ) ), () => {
+				};
 
-						stack.element( stackPtr ).assign( select( aCloser, leftChild, rightChild ) );
-						stackPtr.addAssign( 1 );
+				if ( wide ) If( nodeTag.equal( uint( WIDE_NODE ) ), () => {
 
-					} );
+					const inInst = instLeaf.greaterThanEqual( int( 0 ) );
+					pushWideChildren( node, nodeData0, select( inInst, rayOrigin, worldOrigin ).toVar(), select( inInst, invDir, worldInvDir ).toVar(),
+						stack, stackPtr, closestHit.dst, stackDepth );
 
-				} );
+				} ).Else( binary );
+				else binary();
 
 			} );
 
@@ -635,9 +759,8 @@ const makeTraverseBVH = ( trackStats ) => Fn( ( [
 
 		// Re-fetch the winning triangle's normals — trading 3 storage reads (once)
 		// for ~3 regs freed across every BVH iteration.
-		const nA = unpackTriangleNormal( triangleRow( triangleBuffer, closestTriIdx, 0 ).w );
-		const nB = unpackTriangleNormal( triangleRow( triangleBuffer, closestTriIdx, 1 ).w );
-		const nC = unpackTriangleNormal( triangleRow( triangleBuffer, closestTriIdx, 2 ).w );
+		const geoRows = triangleGeoRows( triangleBuffer, closestTriIdx ).map( ( row ) => row.toVar() );
+		const [ nA, nB, nC ] = geoRows.map( ( row ) => unpackTriangleNormal( row.w ) );
 		const objectNormal = normalize( nA.mul( w ).add( nB.mul( closestU ) ).add( nC.mul( closestV ) ) ).toVar();
 		If( hitInstLeaf.greaterThanEqual( int( 0 ) ), () => {
 
@@ -681,8 +804,11 @@ const makeTraverseBVHShadow = ( cameraCulled ) => Fn( ( [
 
 	const { alphaShadows } = sceneResources( builder );
 
-	const folded = bvhBuffer.value?.foldedLeaves === true;
-	const isLeafTag = leafTagTest( folded );
+	// Objects' trees 4-wide (bvh/WideBVH.js) fold their leaves too; a wide node's tag sits among the leaf tags.
+	const wide = bvhBuffer.value?.wide === true;
+	const folded = wide || bvhBuffer.value?.foldedLeaves === true;
+	const isLeafTag = wide ? ( tag ) => leafTagTest( true )( tag ).and( tag.notEqual( uint( WIDE_NODE ) ) ) : leafTagTest( folded );
+	const stackDepth = stackDepthOf( bvhBuffer );
 
 	const closestHit = HitInfo( {
 		didHit: false,
@@ -697,7 +823,6 @@ const makeTraverseBVHShadow = ( cameraCulled ) => Fn( ( [
 		triTests: int( 0 ),
 	} ).toVar();
 
-	const stackDepth = stackDepthOf( bvhBuffer );
 	const stack = createStack( stackDepth );
 	const stackPtr = int( 1 ).toVar();
 	stack.element( int( 0 ) ).assign( int( 0 ) );
@@ -761,7 +886,14 @@ const makeTraverseBVHShadow = ( cameraCulled ) => Fn( ( [
 
 	};
 
-	const testLeaf = ( first, count ) => {
+	const testLeaf = ( first, count, leafNode = null ) => {
+
+		if ( triangleBuffer.clustered ) {
+
+			eachClusteredTriangle( triangleBuffer, first, count, leafNode, testTriangle );
+			return;
+
+		}
 
 		const triStart = int( first ).toVar();
 		const triCount = int( count ).toVar();
@@ -769,61 +901,67 @@ const makeTraverseBVHShadow = ( cameraCulled ) => Fn( ( [
 		Loop( { start: int( 0 ), end: triCount }, ( { i } ) => {
 
 			const triIndex = triStart.add( i ).toVar();
-
-			const pA = uintBitsToFloat( triangleRow( triangleBuffer, triIndex, 0 ).xyz );
-			const pB = uintBitsToFloat( triangleRow( triangleBuffer, triIndex, 1 ).xyz );
-			const pC = uintBitsToFloat( triangleRow( triangleBuffer, triIndex, 2 ).xyz );
-
-			const triResult = RayTriangleGeometryShadow( { rayOrigin, rayDir: rayDirection, pA, pB, pC, closestHitDst: closestHit.dst, woopParams } );
-
-			If( triResult.w.greaterThan( 0.5 ), () => {
-
-				// Per-mesh visibility is handled at the BLAS-pointer level.
-				const uvData2 = triangleRow( triangleBuffer, triIndex, 4 ).toVar();
-
-				const record = () => {
-
-					closestHit.didHit.assign( true );
-					closestHit.dst.assign( triResult.x );
-					closestHit.materialIndex.assign( int( uvData2.z.bitAnd( uint( TRI_MATERIAL_MASK ) ) ) );
-					closestHit.meshIndex.assign( int( uvData2.w ) );
-					closestHit.instanceLeaf.assign( instLeaf );
-
-					// Hit point is cheap (origin + dir*t). Geometric normal is deferred
-					// to traceShadowRay — only the transmission branch needs it, so we
-					// skip the cross+normalize for the (much more common) opaque-blocker
-					// and alpha-cutout paths. Normal stays vec3(0) from struct init.
-					closestHit.hitPoint.assign( worldOrigin.add( worldDirection.mul( triResult.x ) ) );
-
-					closestHit.uv.assign( vec2( triResult.y, triResult.z ) );
-					closestHit.triangleIndex.assign( triIndex );
-
-					// An opaque blocker settles the ray. A surface light passes through has to be
-					// the nearest one, or the layers behind the first find are never counted.
-					If( shadowFlagsSettle( uvData2.z, alphaShadows ), () => {
-
-						blocked.assign( true );
-						Break();
-
-					} );
-
-				};
-
-				if ( cameraCulled ) {
-
-					const w = float( 1.0 ).sub( triResult.y ).sub( triResult.z );
-					const n = normalize( unpackTriangleNormal( triangleRow( triangleBuffer, triIndex, 0 ).w ).mul( w )
-						.add( unpackTriangleNormal( triangleRow( triangleBuffer, triIndex, 1 ).w ).mul( triResult.y ) )
-						.add( unpackTriangleNormal( triangleRow( triangleBuffer, triIndex, 2 ).w ).mul( triResult.z ) ) );
-					If( sideAccepts( triangleSide( uvData2.z ), rayDirection.dot( n ).negate() ), record );
-
-				} else record();
-
-			} );
+			testTriangle( triIndex, ( row ) => triangleRow( triangleBuffer, triIndex, row ) );
 
 		} );
 
 	};
+
+	function testTriangle( triIndex, rowOf ) {
+
+		const pA = uintBitsToFloat( rowOf( 0 ).xyz );
+		const pB = uintBitsToFloat( rowOf( 1 ).xyz );
+		const pC = uintBitsToFloat( rowOf( 2 ).xyz );
+
+		const triResult = RayTriangleGeometryShadow( { rayOrigin, rayDir: rayDirection, pA, pB, pC, closestHitDst: closestHit.dst, woopParams } );
+
+		If( triResult.w.greaterThan( 0.5 ), () => {
+
+			// Per-mesh visibility is handled at the BLAS-pointer level.
+			const uvData2 = triangleRow( triangleBuffer, triIndex, 4 ).toVar();
+
+			const record = () => {
+
+				closestHit.didHit.assign( true );
+				closestHit.dst.assign( triResult.x );
+				closestHit.materialIndex.assign( int( uvData2.z.bitAnd( uint( TRI_MATERIAL_MASK ) ) ) );
+				closestHit.meshIndex.assign( int( uvData2.w ) );
+				closestHit.instanceLeaf.assign( instLeaf );
+
+				// Hit point is cheap (origin + dir*t). Geometric normal is deferred
+				// to traceShadowRay — only the transmission branch needs it, so we
+				// skip the cross+normalize for the (much more common) opaque-blocker
+				// and alpha-cutout paths. Normal stays vec3(0) from struct init.
+				closestHit.hitPoint.assign( worldOrigin.add( worldDirection.mul( triResult.x ) ) );
+
+				closestHit.uv.assign( vec2( triResult.y, triResult.z ) );
+				closestHit.triangleIndex.assign( triIndex );
+
+				// An opaque blocker settles the ray. A surface light passes through has to be
+				// the nearest one, or the layers behind the first find are never counted.
+				If( shadowFlagsSettle( uvData2.z, alphaShadows ), () => {
+
+					blocked.assign( true );
+					Break();
+
+				} );
+
+			};
+
+			if ( cameraCulled ) {
+
+				const w = float( 1.0 ).sub( triResult.y ).sub( triResult.z );
+				const n = normalize( unpackTriangleNormal( rowOf( 0 ).w ).mul( w )
+					.add( unpackTriangleNormal( rowOf( 1 ).w ).mul( triResult.y ) )
+					.add( unpackTriangleNormal( rowOf( 2 ).w ).mul( triResult.z ) ) );
+				If( sideAccepts( triangleSide( uvData2.z ), rayDirection.dot( n ).negate() ), record );
+
+			} else record();
+
+
+		} );
+
+	}
 
 	const sIterCount = int( 0 ).toVar();
 
@@ -849,7 +987,7 @@ const makeTraverseBVHShadow = ( cameraCulled ) => Fn( ( [
 
 				If( nodeTag.equal( uint( BVH_LEAF_MARKERS.TRIANGLE_LEAF ) ), () => {
 
-					testLeaf( floatBitsToUint( nodeData0.x ), floatBitsToUint( nodeData0.y ) );
+					testLeaf( floatBitsToUint( nodeData0.x ), floatBitsToUint( nodeData0.y ), { data0: nodeData0, node } );
 
 				} ).Else( clustered ? () => {
 
@@ -893,45 +1031,59 @@ const makeTraverseBVHShadow = ( cameraCulled ) => Fn( ( [
 
 			} ).Else( () => {
 
-				// Inner node — child AABBs stored in this node
-				const nodeData1 = node( 1 );
-				const nodeData2 = node( 2 );
-				const nodeData3 = node( 3 );
+				// Binary in the top level; under compactLayout an object's tree is 4-wide.
+				const binary = () => {
 
-				const leftChild = int( nodeTag ).toVar();
-				const rightChild = int( floatBitsToUint( nodeData1.w ) ).toVar();
+					// Inner node — child AABBs stored in this node
+					const nodeData1 = node( 1 );
+					const nodeData2 = node( 2 );
+					const nodeData3 = node( 3 );
 
-				const inInst = instLeaf.greaterThanEqual( int( 0 ) );
-				const boxOrigin = select( inInst, rayOrigin, worldOrigin ).toVar();
-				const boxInv = select( inInst, invDir, worldInvDir ).toVar();
-				const dstA = fastRayAABBDst( { rayOrigin: boxOrigin, invDir: boxInv, boxMin: nodeData0.xyz, boxMax: nodeData1.xyz } ).toVar();
-				const dstB = fastRayAABBDst( { rayOrigin: boxOrigin, invDir: boxInv, boxMin: nodeData2.xyz, boxMax: nodeData3.xyz } ).toVar();
+					const leftChild = int( nodeTag ).toVar();
+					const rightChild = int( floatBitsToUint( nodeData1.w ) ).toVar();
 
-				// Distance-ordered traversal — nearer child first for faster any-hit
-				// termination. SA build ordering improves cache locality (larger-SA
-				// child = left = first in DFS flat layout).
-				const minDst = min( dstA, dstB );
-				If( minDst.lessThan( closestHit.dst ), () => {
+					const inInst = instLeaf.greaterThanEqual( int( 0 ) );
+					const boxOrigin = select( inInst, rayOrigin, worldOrigin ).toVar();
+					const boxInv = select( inInst, invDir, worldInvDir ).toVar();
+					const dstA = fastRayAABBDst( { rayOrigin: boxOrigin, invDir: boxInv, boxMin: nodeData0.xyz, boxMax: nodeData1.xyz } ).toVar();
+					const dstB = fastRayAABBDst( { rayOrigin: boxOrigin, invDir: boxInv, boxMin: nodeData2.xyz, boxMax: nodeData3.xyz } ).toVar();
 
-					const aCloser = dstA.lessThan( dstB );
+					// Distance-ordered traversal — nearer child first for faster any-hit
+					// termination. SA build ordering improves cache locality (larger-SA
+					// child = left = first in DFS flat layout).
+					const minDst = min( dstA, dstB );
+					If( minDst.lessThan( closestHit.dst ), () => {
 
-					// Push far child first (processed last)
-					If( select( aCloser, dstB, dstA ).lessThan( closestHit.dst ).and( stackPtr.lessThan( int( stackDepth ) ) ), () => {
+						const aCloser = dstA.lessThan( dstB );
 
-						stack.element( stackPtr ).assign( select( aCloser, rightChild, leftChild ) );
-						stackPtr.addAssign( 1 );
+						// Push far child first (processed last)
+						If( select( aCloser, dstB, dstA ).lessThan( closestHit.dst ).and( stackPtr.lessThan( int( stackDepth ) ) ), () => {
+
+							stack.element( stackPtr ).assign( select( aCloser, rightChild, leftChild ) );
+							stackPtr.addAssign( 1 );
+
+						} );
+
+						// Push near child second (processed first)
+						If( stackPtr.lessThan( int( stackDepth ) ), () => {
+
+							stack.element( stackPtr ).assign( select( aCloser, leftChild, rightChild ) );
+							stackPtr.addAssign( 1 );
+
+						} );
 
 					} );
 
-					// Push near child second (processed first)
-					If( stackPtr.lessThan( int( stackDepth ) ), () => {
+				};
 
-						stack.element( stackPtr ).assign( select( aCloser, leftChild, rightChild ) );
-						stackPtr.addAssign( 1 );
+				if ( wide ) If( nodeTag.equal( uint( WIDE_NODE ) ), () => {
 
-					} );
+					const inInst = instLeaf.greaterThanEqual( int( 0 ) );
+					pushWideChildren( node, nodeData0, select( inInst, rayOrigin, worldOrigin ).toVar(), select( inInst, invDir, worldInvDir ).toVar(),
+						stack, stackPtr, closestHit.dst, stackDepth );
 
-				} );
+				} ).Else( binary );
+				else binary();
 
 			} );
 

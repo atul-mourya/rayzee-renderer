@@ -426,6 +426,7 @@ describe( 'deciding to spill', () => {
 		assetLoader: { animations: [], maxEnvironmentWidth: 0 },
 		_sdf: { needsSpill: vi.fn( () => true ) },
 		meshScene: { environment: sky( 16 ) },
+		stages: { pathTracer: { compactLayout: null } },
 		...overrides,
 	} );
 
@@ -445,7 +446,7 @@ describe( 'deciding to spill', () => {
 
 	} );
 
-	it( 'never spills an animated scene or one without storage, and asks no survey when told to spill', () => {
+	it( 'never spills an animated scene or one without storage; a forced spill still asks the size, for the layout', () => {
 
 		const animated = app( { assetLoader: { animations: [ {} ], maxEnvironmentWidth: 99 } } );
 		expect( planSpill( animated ) ).toBe( false );
@@ -458,9 +459,12 @@ describe( 'deciding to spill', () => {
 
 		const forced = app( { assetLoader: undefined, meshScene: null } );
 		expect( planSpill( forced ) ).toBe( true );
+		expect( forced.stages.pathTracer.compactLayout ).toBe( true );
 		forced._memorySpill = true;
+		forced._sdf.needsSpill.mockReturnValue( false );
 		expect( planSpill( forced ) ).toBe( true );
-		expect( forced._sdf.needsSpill ).toHaveBeenCalledOnce();
+		expect( forced.stages.pathTracer.compactLayout ).toBe( false );
+		expect( animated.stages.pathTracer.compactLayout ).toBe( false );
 
 	} );
 

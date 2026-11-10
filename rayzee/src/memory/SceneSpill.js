@@ -402,13 +402,19 @@ export function sceneBudgets( app, options ) {
 }
 
 /**
- * Decides whether the scene about to be built spills: static scenes only, since a deforming clip refits every
- * frame. Held for the build that follows ({@link progressiveSpill}). @private
+ * Decides whether the scene about to be built spills, and whether the GPU keeps it packed: static scenes only, since
+ * a deforming clip refits every frame. Held for the build that follows ({@link progressiveSpill}). @private
  */
 export function planSpill( app ) {
 
-	const offered = app._memorySpill !== false && !! app.storage && ( app.assetLoader?.animations?.length ?? 0 ) === 0;
-	const spill = offered && ( app._memorySpill === true || app._sdf.needsSpill( app.meshScene ) );
+	const still = ( app.assetLoader?.animations?.length ?? 0 ) === 0;
+	const large = app._memorySpill !== false && still && app._sdf.needsSpill( app.meshScene );
+	const offered = app._memorySpill !== false && !! app.storage && still;
+	const spill = offered && ( app._memorySpill === true || large );
+	// Past the line, with a disk or without, the GPU keeps the scene packed: corners in clusters, the objects' trees
+	// 4-wide, copy records in 32 B (PathTracerStage `compactLayout`). Static, like a spilled scene.
+	const stage = app.stages.pathTracer;
+	if ( stage ) stage.compactLayout = large;
 	if ( app.assetLoader ) app.assetLoader.maxEnvironmentWidth = spill ? SPILL_ENVIRONMENT_WIDTH : 0;
 	// An importer installs its own sky at the end of its read, before this.
 	const sky = spill ? app.meshScene?.environment : null;

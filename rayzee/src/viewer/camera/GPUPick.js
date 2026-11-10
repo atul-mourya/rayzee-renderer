@@ -48,7 +48,7 @@ export class GPUPick {
 
 	async _trace( stage, origin, direction, skipMesh ) {
 
-		const key = [ stage.bvhStorageAttr, stage._bvhParts, stage._geoParts, stage._shadeParts ];
+		const key = [ stage.bvhStorageAttr, stage._bvhParts, stage._geoParts, stage._clusterParts, stage._shadeParts ];
 		if ( ! this._key || key.some( ( k, i ) => k !== this._key[ i ] ) ) {
 
 			const nodes = stage.sceneStorageNodes?.();

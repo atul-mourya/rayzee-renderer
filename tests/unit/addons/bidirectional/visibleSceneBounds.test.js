@@ -3,7 +3,7 @@ import { BidirectionalIntegrator } from '@/core/addons/bidirectional/Bidirection
 import { BVH_LEAF_MARKERS, CLUSTER_COUNT_SHIFT, CLUSTER_COPY_HIDDEN } from '@/core/scene/BufferLayout.js';
 
 // The visible scene's box, read from the TLAS as the GPU has it — called on a fake integrator over a flat tree.
-function bounds( nodes, pt = { _bvhRecords: null, bvhStorageAttr: { array: nodes } } ) {
+function bounds( nodes, pt = { _bvhRecords: null, cpuTree: nodes } ) {
 
 	const self = { pt, _u32Views: new WeakMap() };
 	return BidirectionalIntegrator.prototype._visibleSceneBounds.call( self );

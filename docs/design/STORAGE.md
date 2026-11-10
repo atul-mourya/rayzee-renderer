@@ -91,7 +91,8 @@ turns it off or supplies a host manager; `openHeadless` defaults to off.
   kept in `localStorage['rayzee-memory-spill']`).** Each build decides (`RayzeeRenderer._planSpill`, after the parse and
   before the scene's metadata environment starts loading): `'auto'` spills a static scene whose in-memory estimate
   passes `SAFE_SCENE_BYTES` (`SceneProcessor.needsSpill`, the preflight's survey without the spill), true every static
-  scene, false none; storage is required either way. `sceneProcessor.spilling` / `app.sceneSpilled` say a scene went to
+  scene, false none; storage is required either way. The same decision sends a scene past the line to the GPU packed
+  (`compactLayout`, with or without storage; PATH_TRACER_SHADER_ARCHITECTURE.md, "Compact layout"). `sceneProcessor.spilling` / `app.sceneSpilled` say a scene went to
   disk (built to spill and over one chunk) — the after-load spill and respill run only then, and the app shows a
   "Large scene" toast on `MODEL_LOADED`. Ordinary models estimate far below the line (24155522.glb: 651 MB) and take the
   in-memory path exactly as before. ⚠️ An importer installs its own sky at the end of its read (USD dome, pbrt

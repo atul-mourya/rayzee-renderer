@@ -653,7 +653,7 @@ export class BidirectionalIntegrator {
 	_visibleSceneBounds() {
 
 		const records = this.pt._bvhRecords;
-		const flat = records ? null : this.pt.bvhStorageAttr?.array;
+		const flat = records ? null : this.pt.cpuTree;
 		if ( ! records && ! ( flat?.length >= 16 ) ) return null;
 		// A spilled TLAS comes back for the next frame's disc.
 		const blasBase = this.pt._instanceTable?.blasBase ?? 1;

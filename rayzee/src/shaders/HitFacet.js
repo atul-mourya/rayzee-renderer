@@ -15,7 +15,7 @@ import {
 	packHalf2x16, unpackHalf2x16,
 } from 'three/tsl';
 import {
-	unpackTriangleNormal, triangleRow, instanceRows, instanceFaceNormalToWorld, instancePointToWorld,
+	unpackTriangleNormal, triangleRow, triangleGeoRows, instanceRows, instanceFaceNormalToWorld, instancePointToWorld,
 } from './Common.js';
 import { shadowTerminatorLift } from './ShadowTerminator.js';
 
@@ -32,9 +32,7 @@ export function hitFacet( { triangleBuffer, bvhBuffer, triIdx, instanceLeaf, hit
 
 	If( didHit, () => {
 
-		const recA = triangleRow( triangleBuffer, triIdx, 0 ).toVar();
-		const recB = triangleRow( triangleBuffer, triIdx, 1 ).toVar();
-		const recC = triangleRow( triangleBuffer, triIdx, 2 ).toVar();
+		const [ recA, recB, recC ] = triangleGeoRows( triangleBuffer, triIdx ).map( ( row ) => row.toVar() );
 		const V0 = uintBitsToFloat( recA.xyz ).toVar();
 		const V1 = uintBitsToFloat( recB.xyz ).toVar();
 		const V2 = uintBitsToFloat( recC.xyz ).toVar();
@@ -84,8 +82,9 @@ export function hitFacet( { triangleBuffer, bvhBuffer, triIdx, instanceLeaf, hit
  */
 export function windingNormal( triangleBuffer, bvhBuffer, triIdx, instanceLeaf ) {
 
-	const V0 = uintBitsToFloat( triangleRow( triangleBuffer, triIdx, 0 ).xyz ).toVar();
-	const local = cross( uintBitsToFloat( triangleRow( triangleBuffer, triIdx, 1 ).xyz ).sub( V0 ), uintBitsToFloat( triangleRow( triangleBuffer, triIdx, 2 ).xyz ).sub( V0 ) ).toVar();
+	const [ rowA, rowB, rowC ] = triangleGeoRows( triangleBuffer, triIdx );
+	const V0 = uintBitsToFloat( rowA.xyz ).toVar();
+	const local = cross( uintBitsToFloat( rowB.xyz ).sub( V0 ), uintBitsToFloat( rowC.xyz ).sub( V0 ) ).toVar();
 	const n = local.toVar();
 	If( instanceLeaf.greaterThanEqual( int( 0 ) ), () => {
 

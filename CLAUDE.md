@@ -270,8 +270,9 @@ MESH_INDEX_OFFSET: 19
 On the GPU rows 0–2 (positions + packed normals) are `triangleGeoAttr` and rows 3–4 (UVs, flags, mesh index)
 `triangleShadeAttr`; the CPU records stay whole and `PathTracerStage._uploadTriangles` splits them. Kernels take
 `triangleBuffer = { geo, shade }`; with no textured material the shade store is a `uvec2` a triangle (`withoutUV`).
-⚠️ Read a row only through `triangleRow( tris, triIndex, row )` (`shaders/Common.js`), and pass the
-hit's `instanceLeaf`: triangles of a shared geometry are in object space, not world space.
+⚠️ Read a row only through `triangleRow( tris, triIndex, row )` (`shaders/Common.js`), the three corners together
+through `triangleGeoRows` (packed corners read their lookup once), and pass the hit's `instanceLeaf`: triangles of a
+shared geometry are in object space, not world space.
 
 **Buffer parts.** Past `maxStorageBufferBindingSize` (Dawn: 4 GiB − 4) the BVH, geo and shade stores split into parts
 of whole records (`StorageParts`, `shaders/ThreePatches.js`), read through `splitStorage` (`shaders/Common.js`). Every
@@ -300,6 +301,13 @@ children are itself, and a CPU walk of the TLAS searched it forever.
 - **`InstanceTable`** is per **placement**: `sourceMesh[p]` names the template, `placementRunOf( template )` its run.
   ⚠️ Never index it with a mesh/template index. Transforms are runs read in place (`matrixRow( p )`); the first write
   copies a run (`_writeRow`), so a move never rewrites three's matrices.
+- **Compact layout** (`stage.compactLayout`, set per load by `planSpill`: a static scene past the in-memory line, unless
+  `memorySpill` is false): no geo store — corners packed in clusters (`scene/TriangleClusters.js`), each object's tree
+  4-wide (`bvh/WideBVH.js`) under the top level kept binary, copy records 32 B (`packCopyRecord`). Built after the
+  upload (`buildClusteredCorners`, `buildWideBVH`). Later top-level and copy-record writes go through
+  `_writeTreeRecords` (object roots renamed, records packed); edits write `stage.cpuTree`, never the GPU attribute;
+  refits throw. ⚠️ A group tree's inner nodes name their members' roots directly: renamed too. Measurements:
+  docs/design/PATH_TRACER_SHADER_ARCHITECTURE.md, "Compact layout".
 
 ## Key Development Patterns
 

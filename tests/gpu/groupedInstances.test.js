@@ -83,6 +83,16 @@ function copies() {
 
 }
 
+/** The copies with every third one sheared, as a placement under a non-uniformly scaled, turned parent is. */
+function shearSome( matrices ) {
+
+	const out = matrices.slice();
+	const m = new Matrix4(), shear = new Matrix4().makeShear( 0.4, 0, 0.3, 0, 0, 0.2 );
+	for ( let i = 0; i < COPIES; i += 3 ) out.set( m.fromArray( matrices, i * 16 ).multiply( shear ).elements, i * 16 );
+	return out;
+
+}
+
 /** The combined [ TLAS | group trees | BLAS A | BLAS B ] buffer, as SceneProcessor assembles it. */
 function assemble( parts, matrices, { grouped, hideB, hideSome = false, clustered = false } ) {
 
@@ -327,7 +337,7 @@ describeGPU( 'grouped instance traversal', () => {
 			// Hidden after the build, as the app hides a mesh: only that copy's flag in its leaf changes.
 			if ( later ) {
 
-				const stage = { _instanceTable: built.table, bvhStorageAttr: { array: built.nodes } };
+				const stage = { _instanceTable: built.table, bvhStorageAttr: { array: built.nodes }, cpuTree: built.nodes };
 				for ( let p = 0; p < COPIES * 2; p += 3 ) expect( PathTracerStage.prototype._patchTLASLeafVisibility.call( stage, p, false ) ).toBe( true );
 
 			}
@@ -383,6 +393,117 @@ describeGPU( 'grouped instance traversal', () => {
 		}
 
 	}, 30000 );
+
+	it( 'traces the objects 4-wide under the binary top level as the binary tree, read from memory or disk, in one buffer or parts', async () => {
+
+		// Every other chunk of 64 nodes on "disk".
+		const onDisk = ( nodes ) => {
+
+			const per = 64, count = nodes.length / 16, chunks = [];
+			for ( let k = 0; k * per < count; k ++ ) chunks.push( k % 2 ? null : nodes.slice( k * per * 16, Math.min( count, ( k + 1 ) * per ) * 16 ) );
+			return { recordsPerChunk: per, recordCount: count, chunks, _store: { _chunkBytes: per * 64, readAt: async ( at, bytes ) => nodes.buffer.slice( at, at + bytes ) } };
+
+		};
+
+		const compact = ( set, { disk = false, partBytes = Infinity } = {} ) => Object.assign( Object.create( PathTracerStage.prototype ), {
+			renderer, bvhNodeCount: set.nodes.length / 16, _instanceTable: set.table, bufferPartBytes: partBytes, _bvhRecords: disk ? onDisk( set.nodes ) : null,
+			// No triangle parts of its own, so three tree parts fit the default binding limit.
+			_partCounts: { geo: 0, shade: 0 },
+			bvhStorageAttr: { array: disk ? null : set.nodes, copyRecordBase: set.nodes.copyRecordBase, binaryOnly: true },
+			_binaryFlat: disk ? null : set.nodes,
+		} );
+
+		const binaryOf = ( set ) => traceAll( renderer, storage( Object.assign( new StorageInstancedBufferAttribute( set.nodes, 4 ), { copyRecordBase: set.nodes.copyRecordBase } ), 'vec4', set.nodes.length / 4 ).toReadOnly(), triangles, light );
+
+		// Hits on the same triangle of the same instance, at distances and normals within `tolerance` (copy records are
+		// packed to 32 B: a rotation kept to about a millionth); a ray grazing an edge may take its neighbour.
+		const compare = ( reference, traced, tolerance ) => {
+
+			let moved = 0, worst = 0, hits = 0;
+			for ( let i = 0; i < RAYS; i ++ ) {
+
+				const a = reference.subarray( i * 8, i * 8 + 8 ), b = traced.subarray( i * 8, i * 8 + 8 );
+				if ( a[ 7 ] >= 0 ) hits ++;
+				if ( a[ 1 ] !== b[ 1 ] || a[ 2 ] !== b[ 2 ] || a[ 3 ] !== b[ 3 ] || a[ 7 ] !== b[ 7 ] ) {
+
+					if ( moved < 4 ) console.log( 'DIFF', i, Array.from( a ), Array.from( b ) );
+					moved ++;
+					continue;
+
+				}
+
+				if ( a[ 7 ] < 0 ) continue;
+				worst = Math.max( worst, Math.abs( a[ 0 ] - b[ 0 ] ) / a[ 0 ], Math.abs( a[ 4 ] - b[ 4 ] ), Math.abs( a[ 5 ] - b[ 5 ] ), Math.abs( a[ 6 ] - b[ 6 ] ) );
+
+			}
+
+			expect( hits ).toBeGreaterThan( RAYS * 0.02 );
+			if ( tolerance === 0 ) {
+
+				expect( moved ).toBe( 0 );
+				expect( worst ).toBe( 0 );
+
+			} else {
+
+				expect( moved ).toBeLessThan( RAYS * 0.002 );
+				expect( worst ).toBeLessThan( tolerance );
+
+			}
+
+		};
+
+		const cases = [ {}, { grouped: true }, { hideB: true }, { grouped: true, hideB: true }, { clustered: true }, { grouped: true, clustered: true }, { hideSome: true, clustered: true } ];
+		for ( const options of cases ) {
+
+			const set = assemble( parts, matrices, options );
+			const binary = await binaryOf( set );
+
+			let partBytes = Infinity;
+			for ( const disk of [ false, true ] ) {
+
+				const stage = compact( set, { disk, partBytes } );
+				const stats = await stage.buildWideBVH();
+				if ( ! disk && ! options.clustered && ! options.grouped && ! options.hideB ) {
+
+					const back = new Uint32Array( await renderer.getArrayBufferAsync( stage.bvhStorageAttr ) );
+					const bin = new Uint32Array( set.nodes.buffer );
+					const leaves = [];
+					for ( let n = 0; n < 239; n ++ ) if ( bin[ n * 16 + 3 ] === 0x40000001 ) leaves.push( [ n, bin[ n * 16 ], back[ n * 16 ], back[ n * 16 + 3 ].toString( 16 ) ] );
+					let same = 0;
+					for ( let n = 0; n < 239 * 16; n ++ ) if ( back[ n ] === bin[ n ] ) same ++;
+					console.log( 'BACK', back.length / 16, same, 239 * 16, JSON.stringify( leaves.slice( 0, 4 ) ), Array.from( back.subarray( 239 * 16, 240 * 16 ) ).map( v => v.toString( 16 ) ).join( ' ' ) );
+
+				}
+
+				expect( stats.objectNodes ).toBeLessThan( ( stats.binaryNodes - stats.topNodes ) * 0.7 );
+				expect( stats.parts ).toBe( disk ? 3 : 1 );
+				expect( stats.copies ).toBe( options.clustered ? set.table.entryCount : 0 );
+				compare( binary, await traceAll( renderer, stage.bvhStorageNode, triangles, light ), options.clustered ? 1e-4 : 0 );
+				partBytes = Math.ceil( stats.bytes / 64 / 3 + 1 ) * 64;
+
+			}
+
+			if ( ! options.clustered ) continue;
+
+			// A sheared copy keeps its whole record.
+			const sheared = assemble( parts, shearSome( matrices ), options );
+			const stage = compact( sheared );
+			const stats = await stage.buildWideBVH();
+			expect( stats.sheared ).toBeGreaterThan( sheared.table.entryCount / 4 );
+			compare( await binaryOf( sheared ), await traceAll( renderer, stage.bvhStorageNode, triangles, light ), 1e-4 );
+
+			// Edits after the build reach the GPU as the binary tree has them: copies hidden, and every copy record (packed
+			// and sheared) written again.
+			for ( let p = 0; p < COPIES * 2; p += 5 ) stage._patchTLASLeafVisibility( p, false );
+			stage._flushBVHEdits();
+			stage._writeTreeRecords( sheared.nodes.copyRecordBase * 4, sheared.table.entryCount * 12 );
+			const edited = await binaryOf( sheared );
+			expect( edited ).not.toEqual( await binaryOf( assemble( parts, shearSome( matrices ), options ) ) );
+			compare( edited, await traceAll( renderer, stage.bvhStorageNode, triangles, light ), 1e-4 );
+
+		}
+
+	}, 60000 );
 
 	it( 'refits copy clusters to where their copies are', async () => {
 

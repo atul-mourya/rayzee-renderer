@@ -4,8 +4,16 @@ import { TRIANGLE_PATCH_PROPERTIES } from '../materials/MaterialDataManager.js';
 import { usesTextureCoordinates } from './GeometryExtractor.js';
 import { scheduleRespill } from '../memory/SceneSpill.js';
 
+// A scene loaded past the in-memory line keeps its geometry packed on the GPU (PathTracerStage `compactLayout`).
+function assertDeformable( app, what ) {
+
+	if ( app.stages.pathTracer?.compactLayout ) throw new Error( `${what}: a scene past the in-memory line is loaded static (its geometry is packed); set memorySpill false before the load to deform it` );
+
+}
+
 export async function refitBVH( app, newPositions, newNormals ) {
 
+	assertDeformable( app, 'refitBVH' );
 	await app.ensureSceneResident();
 	const { triRanges, bvhRanges, ...result } = await app._sdf.refitBVH( newPositions, newNormals );
 
@@ -19,6 +27,7 @@ export async function refitBVH( app, newPositions, newNormals ) {
 
 export function refitBLASes( app, affectedMeshIndices, newPositions, newNormals ) {
 
+	assertDeformable( app, 'refitBLASes' );
 	if ( app._sdf?.spilled ) throw new Error( 'refitBLASes: the scene is spilled to disk — await app.ensureSceneResident() first' );
 	const result = app._sdf.refitBLASes( affectedMeshIndices, newPositions, newNormals );
 

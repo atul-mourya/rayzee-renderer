@@ -7,7 +7,7 @@ import {
 	MaterialSamples,
 	ExtMapResult,
 } from './Struct.js';
-import { instanceRows, instanceDirToWorld, triangleRow } from './Common.js';
+import { instanceRows, instanceDirToWorld, triangleRow, triangleGeoRows } from './Common.js';
 import { TEXTURE_CONSTANTS } from '../materials/TextureBuckets.js';
 
 // ================================================================================
@@ -361,9 +361,10 @@ const uvTransformInverse = /*@__PURE__*/ wgslFn( `
 // split into Fns passing a mat3 cost Shade 1–2 % in scenes with no map at all.
 function triangleUVDeltas( triangleBuffer, triIndex ) {
 
-	const pA = uintBitsToFloat( triangleRow( triangleBuffer, triIndex, 0 ).xyz );
-	const e1 = uintBitsToFloat( triangleRow( triangleBuffer, triIndex, 1 ).xyz ).sub( pA );
-	const e2 = uintBitsToFloat( triangleRow( triangleBuffer, triIndex, 2 ).xyz ).sub( pA );
+	const [ rowA, rowB, rowC ] = triangleGeoRows( triangleBuffer, triIndex );
+	const pA = uintBitsToFloat( rowA.xyz );
+	const e1 = uintBitsToFloat( rowB.xyz ).sub( pA );
+	const e2 = uintBitsToFloat( rowC.xyz ).sub( pA );
 
 	const uvAB = uintBitsToFloat( triangleRow( triangleBuffer, triIndex, 3 ) );
 	const uvC = uintBitsToFloat( triangleRow( triangleBuffer, triIndex, 4 ).xy );

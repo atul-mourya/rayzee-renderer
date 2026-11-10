@@ -254,6 +254,9 @@ export const BVH_LEAF_MARKERS = {
 	CLUSTER_LEAF: 0x40000003, // TLAS leaf over up to CLUSTER_SIZE copies of one object (copy clusters)
 };
 
+// An inner node of up to four children in an object's 4-wide tree (bvh/WideBVH.js, the compact layout).
+export const WIDE_NODE = 0x40000010;
+
 /**
  * Copy clusters, for a TLAS over millions of copies: a leaf holds up to CLUSTER_SIZE neighbouring copies, and each
  * copy's world-to-object rows are a record of RECORD_VEC4 vec4s behind the BLASes (48 B, against 64 B of leaf node and
@@ -275,6 +278,116 @@ export const CLUSTER_ROOT_MASK = 0x3fffffff;
 export const CLUSTER_COPY_HIDDEN = 0x80000000;
 export const COPY_ENTRY = 0x40000000;
 export const RECORD_VEC4 = 3;
+
+/**
+ * A copy record packed to 8 lanes (the compact layout): a copy is a position, a rotation and three
+ * scales, so its world-to-object rows S⁻¹·Rᵀ·[ I | −t ] keep as
+ *   0–2  t, the copy's origin in world space (f32)
+ *   3–4  R as a unit quaternion, the largest component dropped and the other three in COMPACT_ROTATION_BITS each
+ *        (≈ 1.35e-6 a step), then which one was dropped
+ *   5–7  1 / scale per axis (f32), the last negative for a mirroring copy
+ * Shear has no place in it (packCopyRecord returns how far the rows are from orthogonal): a copy sheared past
+ * COPY_SHEAR_LIMIT keeps its 12 lanes in an overflow table behind the packed records, its slot holding the index there
+ * in lane 3 and COPY_FULL_RECORD in lane 4.
+ */
+export const COMPACT_RECORD_LANES = 8;
+const COMPACT_ROTATION_BITS = 20;
+export const COPY_SHEAR_LIMIT = 1e-5;
+export const COPY_FULL_RECORD = 0x80000000;
+const ROTATION_MAX = ( 1 << COMPACT_ROTATION_BITS ) - 1;
+
+/** Packs the 12-lane record at `src[ so ]` into `f` / `u` (f32 and u32 views of one buffer) at `o`; returns its shear. */
+export function packCopyRecord( src, so, f, u, o ) {
+
+	// Row i of S⁻¹·Rᵀ is column i of R over scale i: R's columns are the rows made unit, n the inverse scales.
+	let n0 = Math.hypot( src[ so ], src[ so + 1 ], src[ so + 2 ] ) || 1;
+	const n1 = Math.hypot( src[ so + 4 ], src[ so + 5 ], src[ so + 6 ] ) || 1;
+	let n2 = Math.hypot( src[ so + 8 ], src[ so + 9 ], src[ so + 10 ] ) || 1;
+	const a0 = src[ so ] / n0, a1 = src[ so + 1 ] / n0, a2 = src[ so + 2 ] / n0;
+	const b0 = src[ so + 4 ] / n1, b1 = src[ so + 5 ] / n1, b2 = src[ so + 6 ] / n1;
+	let c0 = src[ so + 8 ] / n2, c1 = src[ so + 9 ] / n2, c2 = src[ so + 10 ] / n2;
+	if ( a0 * ( b1 * c2 - b2 * c1 ) - a1 * ( b0 * c2 - b2 * c0 ) + a2 * ( b0 * c1 - b1 * c0 ) < 0 ) {
+
+		n2 = - n2;
+		c0 = - c0;
+		c1 = - c1;
+		c2 = - c2;
+
+	}
+
+	const shear = Math.max( Math.abs( a0 * b0 + a1 * b1 + a2 * b2 ), Math.abs( a0 * c0 + a1 * c1 + a2 * c2 ), Math.abs( b0 * c0 + b1 * c1 + b2 * c2 ) );
+
+	// Quaternion of R, whose columns are a, b, c (Shepperd).
+	let x, y, z, w;
+	const trace = a0 + b1 + c2;
+	if ( trace > 0 ) {
+
+		const s = Math.sqrt( trace + 1 ) * 2;
+		x = ( b2 - c1 ) / s; y = ( c0 - a2 ) / s; z = ( a1 - b0 ) / s; w = s / 4;
+
+	} else if ( a0 > b1 && a0 > c2 ) {
+
+		const s = Math.sqrt( 1 + a0 - b1 - c2 ) * 2;
+		x = s / 4; y = ( b0 + a1 ) / s; z = ( c0 + a2 ) / s; w = ( b2 - c1 ) / s;
+
+	} else if ( b1 > c2 ) {
+
+		const s = Math.sqrt( 1 + b1 - a0 - c2 ) * 2;
+		x = ( b0 + a1 ) / s; y = s / 4; z = ( c1 + b2 ) / s; w = ( c0 - a2 ) / s;
+
+	} else {
+
+		const s = Math.sqrt( 1 + c2 - a0 - b1 ) * 2;
+		x = ( c0 + a2 ) / s; y = ( c1 + b2 ) / s; z = s / 4; w = ( a1 - b0 ) / s;
+
+	}
+
+	// The largest component dropped (made positive), the other three in order.
+	const ax = Math.abs( x ), ay = Math.abs( y ), az = Math.abs( z ), aw = Math.abs( w );
+	const big = ax >= ay && ax >= az && ax >= aw ? 0 : ay >= az && ay >= aw ? 1 : az >= aw ? 2 : 3;
+	const largest = big === 0 ? x : big === 1 ? y : big === 2 ? z : w;
+	const scale = ( largest < 0 ? - 1 : 1 ) / Math.hypot( x, y, z, w ) * Math.SQRT2 * 0.5 * ROTATION_MAX;
+	const level = ( v ) => Math.min( ROTATION_MAX, Math.max( 0, Math.round( v * scale + 0.5 * ROTATION_MAX ) ) );
+	const r0 = level( big === 0 ? y : x ), r1 = level( big <= 1 ? z : y ), r2 = level( big <= 2 ? w : z );
+
+	// t = −R·S·w: the point the rows send to the object's origin.
+	const w0 = src[ so + 3 ] / n0, w1 = src[ so + 7 ] / n1, w2 = src[ so + 11 ] / n2;
+	f[ o ] = - ( a0 * w0 + b0 * w1 + c0 * w2 );
+	f[ o + 1 ] = - ( a1 * w0 + b1 * w1 + c1 * w2 );
+	f[ o + 2 ] = - ( a2 * w0 + b2 * w1 + c2 * w2 );
+	u[ o + 3 ] = ( r0 | ( ( r1 & 0xfff ) << 20 ) ) >>> 0;
+	u[ o + 4 ] = ( ( r1 >>> 12 ) | ( r2 << 8 ) | ( big << 28 ) ) >>> 0;
+	f[ o + 5 ] = n0;
+	f[ o + 6 ] = n1;
+	f[ o + 7 ] = n2;
+	return shear;
+
+}
+
+/** The 12-lane world-to-object rows of the packed record at `o`, into `out` from `oo`, as the GPU decodes them. */
+export function unpackCopyRecord( f, u, o, out, oo = 0 ) {
+
+	const lo = u[ o + 3 ], hi = u[ o + 4 ];
+	const v = [ lo & ROTATION_MAX, ( lo >>> 20 ) | ( ( hi & 0xff ) << 12 ), ( hi >>> 8 ) & ROTATION_MAX ].map( ( x ) => ( x * ( 2 / ROTATION_MAX ) - 1 ) * Math.SQRT1_2 );
+	const big = Math.sqrt( Math.max( 0, 1 - v[ 0 ] * v[ 0 ] - v[ 1 ] * v[ 1 ] - v[ 2 ] * v[ 2 ] ) );
+	const q = v.slice();
+	q.splice( hi >>> 28, 0, big );
+	const [ x, y, z, qw ] = q;
+	const cols = [
+		[ 1 - 2 * ( y * y + z * z ), 2 * ( x * y + qw * z ), 2 * ( x * z - qw * y ) ],
+		[ 2 * ( x * y - qw * z ), 1 - 2 * ( x * x + z * z ), 2 * ( y * z + qw * x ) ],
+		[ 2 * ( x * z + qw * y ), 2 * ( y * z - qw * x ), 1 - 2 * ( x * x + y * y ) ],
+	];
+	for ( let i = 0; i < 3; i ++ ) {
+
+		const r = cols[ i ].map( ( c ) => c * f[ o + 5 + i ] );
+		out.set( [ ...r, - ( r[ 0 ] * f[ o ] + r[ 1 ] * f[ o + 1 ] + r[ 2 ] * f[ o + 2 ] ) ], oo + i * 4 );
+
+	}
+
+	return out;
+
+}
 
 const _f32 = new Float32Array( 1 );
 const _u32 = new Uint32Array( _f32.buffer );

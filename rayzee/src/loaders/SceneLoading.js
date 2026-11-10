@@ -482,6 +482,8 @@ export async function loadSceneData( app, { pendingEnvironment = null, keepUserL
 	// Re-read rather than reusing the snapshot above: a pendingEnvironment may have landed
 	// during the BVH build, and the snapshot is then a disposed texture.
 	if ( ! app._sdf.uploadToPathTracer( app.stages.pathTracer, app.lightManager, app.meshScene, hdri(), { keepUserLights } ) ) return false;
+	// Packed now the BVH is final, read from memory or disk, in place of the geo store never made.
+	if ( app.stages.pathTracer.compactLayout ) await app.stages.pathTracer.buildClusteredCorners();
 	// A material rebuild's arrays, if one ran on the last scene: nothing binds them now.
 	if ( app.stages.pathTracer.sdfs !== app._sdf ) app.stages.pathTracer.sdfs?._disposeBucketTextures?.();
 
@@ -495,6 +497,9 @@ export async function loadSceneData( app, { pendingEnvironment = null, keepUserL
 	// Drop authored-hidden meshes' triangles from the emissive-NEE structure
 	// (runs before setupMaterial so the kernels compile against the final buffer)
 	app._refreshEmissiveForVisibility();
+
+	// The objects' trees go to the GPU 4-wide, from the binary tree with visibility patched in.
+	if ( app.stages.pathTracer.compactLayout ) await app.stages.pathTracer.buildWideBVH();
 
 	timer.end( 'GPU data transfer' );
 

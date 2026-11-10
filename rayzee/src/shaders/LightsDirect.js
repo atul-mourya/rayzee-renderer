@@ -30,7 +30,7 @@ import {
 import { Ray, ShadowMaterial, HitInfo } from './Struct.js';
 import {
 	REC709_LUMINANCE_COEFFICIENTS, getShadowMaterial, instanceRows,
-	instanceFaceNormalToWorld, triangleRow, shadowFlagsSettle, offsetRayOrigin,
+	instanceFaceNormalToWorld, triangleRow, triangleGeoRows, shadowFlagsSettle, offsetRayOrigin,
 	getDatafromStorageBuffer, MATERIAL_SLOT, MATERIAL_SLOTS, transmissionTint,
 } from './Common.js';
 import { fresnelDielectric } from './Fresnel.js';
@@ -201,9 +201,7 @@ const makeTraceShadowRay = ( refractiveBlocks ) => Fn( ( [
 			// Deferred geometric-normal compute — refetch triangle positions and
 			// derive the normal here so opaque/alpha-cutout shadow hits don't pay
 			// the cross+normalize cost in BVH traversal.
-			const pA = uintBitsToFloat( triangleRow( triangleBuffer, shadowHit.triangleIndex, 0 ).xyz );
-			const pB = uintBitsToFloat( triangleRow( triangleBuffer, shadowHit.triangleIndex, 1 ).xyz );
-			const pC = uintBitsToFloat( triangleRow( triangleBuffer, shadowHit.triangleIndex, 2 ).xyz );
+			const [ pA, pB, pC ] = triangleGeoRows( triangleBuffer, shadowHit.triangleIndex ).map( ( row ) => uintBitsToFloat( row.xyz ) );
 			// Positions are in the blocker's object space; the cross product is a normal, so
 			// it rides the inverse-transpose back out rather than the forward matrix.
 			const objNormal = normalize( cross( pB.sub( pA ), pC.sub( pA ) ) ).toVar();

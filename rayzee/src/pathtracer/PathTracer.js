@@ -263,7 +263,7 @@ export class PathTracer extends PathTracerStage {
 
 		// Scene geometry (triangle data, two-level BVH, light BVH + emissive)
 		// The light data shares the materials' buffer and is counted with them.
-		t.register( 'geometry', () => [ ...( this._geoParts?.attrs ?? [] ), ...( this._shadeParts?.attrs ?? [] ), ...( this._bvhParts?.attrs ?? [ this.bvhStorageAttr ] ) ] );
+		t.register( 'geometry', () => [ ...( this._geoParts?.attrs ?? [] ), ...( this._clusterParts?.attrs ?? [] ), ...( this._shadeParts?.attrs ?? [] ), ...( this._bvhParts?.attrs ?? [ this.bvhStorageAttr ] ) ] );
 
 		// Material storage buffer + per-property texture arrays
 		t.register( 'materials', () => {

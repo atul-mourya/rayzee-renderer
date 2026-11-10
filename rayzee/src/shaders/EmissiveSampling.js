@@ -29,7 +29,7 @@ import {
 import {
 	MIN_PDF, getDatafromStorageBuffer, powerHeuristic, MATERIAL_SLOTS, MATERIAL_SLOT,
 	computeDotProductsAniso, instanceRows, instanceNormalToWorld, instancePointToWorld,
-	unpackTriangleNormal, triangleRow, SHADOW_END, passesLight, offPlane,
+	unpackTriangleNormal, triangleRow, triangleGeoRows, SHADOW_END, passesLight, offPlane,
 } from './Common.js';
 import { TRI_MATERIAL_MASK } from '../scene/BufferLayout.js';
 import { getRandomSample1D, getRandomSample2D } from './Random.js';
@@ -358,9 +358,7 @@ export const TriangleData = struct( {
 export const fetchTriangleData = Fn( ( [ triangleIndex, triangleBuffer, bvhBuffer, instanceLeaf ] ) => {
 
 	// Positions carry their packed normal in .w
-	const pos0 = triangleRow( triangleBuffer, triangleIndex, 0 ).toVar();
-	const pos1 = triangleRow( triangleBuffer, triangleIndex, 1 ).toVar();
-	const pos2 = triangleRow( triangleBuffer, triangleIndex, 2 ).toVar();
+	const [ pos0, pos1, pos2 ] = triangleGeoRows( triangleBuffer, triangleIndex ).map( ( row ) => row.toVar() );
 
 	const uvMat = triangleRow( triangleBuffer, triangleIndex, 4 );
 

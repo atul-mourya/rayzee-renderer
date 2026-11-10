@@ -4,7 +4,7 @@ import {
 } from 'three/tsl';
 
 import { struct } from './Struct.js';
-import { triangleRow, instanceRows, instanceDirToWorld } from './Common.js';
+import { triangleRow, triangleGeoRows, instanceRows, instanceDirToWorld } from './Common.js';
 import { sampleDisplacementMap, bucketTexelSize } from './TextureSampling.js';
 
 const MIN_MARCH_STEPS = 8;
@@ -48,9 +48,10 @@ export const refineDisplacedIntersection = Fn( ( [
 	// Fetch triangle vertex data
 	const triIdx = hitInfo.triangleIndex;
 
-	const pA = uintBitsToFloat( triangleRow( triangleBuffer, triIdx, 0 ).xyz ).toVar();
-	const pB = uintBitsToFloat( triangleRow( triangleBuffer, triIdx, 1 ).xyz );
-	const pC = uintBitsToFloat( triangleRow( triangleBuffer, triIdx, 2 ).xyz );
+	const [ rowA, rowB, rowC ] = triangleGeoRows( triangleBuffer, triIdx );
+	const pA = uintBitsToFloat( rowA.xyz ).toVar();
+	const pB = uintBitsToFloat( rowB.xyz );
+	const pC = uintBitsToFloat( rowC.xyz );
 
 	const uvData1 = uintBitsToFloat( triangleRow( triangleBuffer, triIdx, 3 ) ).toVar();
 	const uvData2 = uintBitsToFloat( triangleRow( triangleBuffer, triIdx, 4 ).xy );

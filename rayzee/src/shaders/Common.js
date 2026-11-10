@@ -1,4 +1,4 @@
-import { Fn, wgslFn, float, vec2, vec3, vec4, uvec2, uvec4, int, uint, mat3, If, max, dot, clamp, select, sqrt, abs, bool as tslBool } from 'three/tsl';
+import { Fn, wgslFn, float, vec2, vec3, vec4, uvec2, uvec4, int, uint, mat3, If, max, dot, clamp, select, sqrt, abs, floatBitsToUint, bool as tslBool } from 'three/tsl';
 
 import {
 	AnisoFrame,
@@ -55,7 +55,7 @@ export const FP16_MAX = 65504.0;
 export const sanitize1 = ( x, ceiling = 1e7 ) => select( x.equal( x ), x, float( 0.0 ) ).clamp( 0.0, ceiling );
 export const sanitizeRGB = ( c, ceiling = 1e7 ) =>
 	vec3( sanitize1( c.x, ceiling ), sanitize1( c.y, ceiling ), sanitize1( c.z, ceiling ) );
-import { TRI_BLOCKER_SHIFT, TRI_BLOCKER_ALPHA_SHIFT, MATERIAL_DATA_LAYOUT } from '../scene/BufferLayout.js';
+import { TRI_BLOCKER_SHIFT, TRI_BLOCKER_ALPHA_SHIFT, MATERIAL_DATA_LAYOUT, COMPACT_RECORD_LANES } from '../scene/BufferLayout.js';
 
 export const MATERIAL_SLOTS = MATERIAL_DATA_LAYOUT.SLOTS_PER_MATERIAL;
 export const MATERIAL_SLOT = MATERIAL_DATA_LAYOUT.SLOT;
@@ -349,6 +349,7 @@ export const TRI_SHADE_ROWS = 2;
 // uvec2 a triangle: rows 3–4 read as zero UVs around them, 24 B a triangle saved.
 export const triangleRow = ( tris, triIndex, row ) => {
 
+	if ( row < TRI_GEO_ROWS && tris.clustered ) return triangleGeoRows( tris, triIndex )[ row ];
 	if ( row < TRI_GEO_ROWS ) return getDatafromStorageBuffer( tris.geo, triIndex, int( row ), int( TRI_GEO_ROWS ) );
 	if ( ! tris.withoutUV ) return getDatafromStorageBuffer( tris.shade, triIndex, int( row - TRI_GEO_ROWS ), int( TRI_SHADE_ROWS ) );
 	if ( row === TRI_GEO_ROWS ) return uvec4( 0 );
@@ -356,6 +357,65 @@ export const triangleRow = ( tris, triIndex, row ) => {
 	return uvec4( 0, 0, flagsMesh.x, flagsMesh.y );
 
 };
+
+const laneOf = ( v, i ) => select( i.equal( uint( 0 ) ), v.x, select( i.equal( uint( 1 ) ), v.y, select( i.equal( uint( 2 ) ), v.z, v.w ) ) );
+
+/**
+ * A triangle's three corner rows (positions with packed normals). Clustered (scene/TriangleClusters.js), its corner base
+ * and word come from its pair, or, with `leaf` — {@link clusterLeaf} plus the triangle's slot in the leaf being
+ * tested — from the leaf node traversal already holds.
+ */
+export const triangleGeoRows = ( tris, triIndex, leaf = null ) => {
+
+	if ( ! tris.clustered ) return [ 0, 1, 2 ].map( ( r ) => triangleRow( tris, triIndex, r ) );
+
+	const buffer = tris.clustered;
+	// Each triangle's [ corner base, word ], two a row.
+	const fromPair = () => {
+
+		const t = uint( asNode( triIndex ) ).toVar();
+		const pair = storageElement( buffer, int( t.shiftRight( uint( 1 ) ) ) ).toVar();
+		const odd = t.bitAnd( uint( 1 ) ).equal( uint( 1 ) );
+		return [ int( select( odd, pair.z, pair.x ) ), select( odd, pair.w, pair.y ) ];
+
+	};
+
+	let word, corners;
+	if ( leaf ) {
+
+		const slot = uint( leaf.slot ).toVar();
+		const rows = leaf.words;
+		const row = rows.length === 1 ? rows[ 0 ]
+			: rows.length === 2 ? select( slot.lessThan( uint( 4 ) ), rows[ 0 ], rows[ 1 ] )
+				: select( slot.lessThan( uint( 4 ) ), rows[ 0 ], select( slot.lessThan( uint( 8 ) ), rows[ 1 ], rows[ 2 ] ) );
+		word = laneOf( row, slot.bitAnd( uint( 3 ) ) ).toVar();
+		corners = int( leaf.cornerBase ).toVar();
+		// A leaf past its node's lanes (NODE_NO_LANES in slot [2]) reads through the pairs.
+		if ( tris.clusterNoLanes ) If( corners.equal( int( - 1 ) ), () => {
+
+			const [ c, w ] = fromPair();
+			corners.assign( c );
+			word.assign( w );
+
+		} );
+
+	} else {
+
+		const [ c, w ] = fromPair();
+		corners = c.toVar();
+		word = w.toVar();
+
+	}
+
+	return [ 0, 1, 2 ].map( ( k ) => storageElement( buffer, corners.add( int( word.shiftRight( uint( 8 * k ) ).bitAnd( uint( 255 ) ) ) ) ) );
+
+};
+
+/** The leaf context {@link triangleGeoRows} takes, from a triangle leaf node: slot [2] and its lanes 4–15 (`node( k )`). */
+export const clusterLeaf = ( tris, cornerBase, node ) => ( {
+	cornerBase: int( cornerBase ).toVar(),
+	words: Array.from( { length: tris.nodeWordRows }, ( _, k ) => floatBitsToUint( node( k + 1 ) ).toVar() ),
+} );
 
 // Unit normal to an octahedral snorm16 pair; GPU twin of packNormalOct in EngineDefaults.
 export const packNormalOct = /*@__PURE__*/ wgslFn( `
@@ -688,10 +748,68 @@ export const shadowFlagsSettle = ( flags, alphaShadows ) => {
 
 };
 
+// A packed copy record's rotation (BufferLayout packCopyRecord): three components of 20 bits, the dropped one rebuilt.
+const copyRotation = /*@__PURE__*/ wgslFn( `
+	fn copyRotation( lo: u32, hi: u32 ) -> vec4f {
+
+		let q = vec3f( f32( lo & 0xFFFFFu ), f32( ( lo >> 20u ) | ( ( hi & 0xFFu ) << 12u ) ), f32( ( hi >> 8u ) & 0xFFFFFu ) );
+		let v = ( q * ( 2.0f / 1048575.0f ) - 1.0f ) * 0.70710678f;
+		let big = sqrt( max( 0.0f, 1.0f - dot( v, v ) ) );
+		let k = hi >> 28u;
+		if ( k == 0u ) { return vec4f( big, v ); }
+		if ( k == 1u ) { return vec4f( v.x, big, v.yz ); }
+		if ( k == 2u ) { return vec4f( v.xy, big, v.z ); }
+		return vec4f( v, big );
+
+	}
+` );
+
 export const instanceRows = ( bvhBuffer, leafIndex ) => {
 
 	// Over copy clusters an instance is a 3-vec4 copy record, which can straddle two parts: read per element.
 	const records = bvhBuffer.value?.copyRecordBase;
+	if ( records !== undefined && bvhBuffer.value?.compactCopies ) {
+
+		// Packed (the compact layout): origin, rotation and inverse scales, rebuilt into the same rows.
+		const stride = COMPACT_RECORD_LANES / 4;
+		const a = getDatafromStorageBuffer( bvhBuffer, leafIndex, int( records ), int( stride ) ).toVar();
+		const b = getDatafromStorageBuffer( bvhBuffer, leafIndex, int( records + 1 ), int( stride ) ).toVar();
+		const decode = () => {
+
+			const q = copyRotation( { lo: floatBitsToUint( a.w ), hi: floatBitsToUint( b.x ) } ).toVar();
+			const { x, y, z, w } = q;
+			const cols = [
+				vec3( float( 1 ).sub( y.mul( y ).add( z.mul( z ) ).mul( 2 ) ), x.mul( y ).add( w.mul( z ) ).mul( 2 ), x.mul( z ).sub( w.mul( y ) ).mul( 2 ) ),
+				vec3( x.mul( y ).sub( w.mul( z ) ).mul( 2 ), float( 1 ).sub( x.mul( x ).add( z.mul( z ) ).mul( 2 ) ), y.mul( z ).add( w.mul( x ) ).mul( 2 ) ),
+				vec3( x.mul( z ).add( w.mul( y ) ).mul( 2 ), y.mul( z ).sub( w.mul( x ) ).mul( 2 ), float( 1 ).sub( x.mul( x ).add( y.mul( y ) ).mul( 2 ) ) ),
+			];
+			return cols.map( ( c, i ) => {
+
+				const r = c.mul( [ b.y, b.z, b.w ][ i ] ).toVar();
+				return vec4( r, r.dot( a.xyz ).negate() );
+
+			} );
+
+		};
+
+		const overflow = bvhBuffer.value.copyOverflowBase;
+		if ( overflow === undefined ) return decode().map( ( r ) => r.toVar() );
+		// A sheared copy's slot names its 12-lane record in the overflow table.
+		const rows = [ vec4( 0 ).toVar(), vec4( 0 ).toVar(), vec4( 0 ).toVar() ];
+		If( floatBitsToUint( b.x ).shiftRight( uint( 31 ) ).equal( uint( 1 ) ), () => {
+
+			const at = floatBitsToUint( a.w );
+			rows.forEach( ( r, k ) => r.assign( getDatafromStorageBuffer( bvhBuffer, at, int( overflow + k ), int( 3 ) ) ) );
+
+		} ).Else( () => {
+
+			decode().forEach( ( r, k ) => rows[ k ].assign( r ) );
+
+		} );
+		return rows;
+
+	}
+
 	if ( records !== undefined ) return [ 0, 1, 2 ].map( ( row ) => getDatafromStorageBuffer( bvhBuffer, leafIndex, int( records + row ), int( 3 ) ) );
 	if ( bvhBuffer.isSplitStorage ) return storageRows( bvhBuffer, int( leafIndex ).mul( 4 ), [ 1, 2, 3 ] );
 	return [

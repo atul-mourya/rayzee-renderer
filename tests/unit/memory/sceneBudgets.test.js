@@ -43,10 +43,10 @@ describe( 'PathTracerApp spill plan', () => {
 
 		const app = {
 			_memorySpill: mode, storage, meshScene: { environment }, assetLoader: { animations, maxEnvironmentWidth: 0 },
-			_sdf: { needsSpill: () => big }, _chunkUploader: () => 'uploader',
+			_sdf: { needsSpill: () => big }, _chunkUploader: () => 'uploader', stages: { pathTracer: { compactLayout: null } },
 		};
 		const spill = PathTracerApp.prototype._planSpill.call( app );
-		return { app, spill };
+		return { app, spill, compact: app.stages.pathTracer.compactLayout };
 
 	};
 
@@ -96,6 +96,19 @@ describe( 'PathTracerApp spill plan', () => {
 		app._sdf.needsSpill = () => false;
 		expect( progressive() ).toEqual( { storage: app.storage, uploader: 'uploader' } );
 		expect( progressive() ).toBe( null );
+
+	} );
+
+	it( 'packs on the GPU a static scene past the line, with a disk or without, unless spill is off', () => {
+
+		expect( plan().compact ).toBe( false );
+		expect( plan( { big: true } ).compact ).toBe( true );
+		expect( plan( { storage: null, big: true } ).compact ).toBe( true );
+		expect( plan( { mode: true, big: true } ).compact ).toBe( true );
+		// Spilled only because it was asked: small, and left editable.
+		expect( plan( { mode: true } ).compact ).toBe( false );
+		expect( plan( { mode: false, big: true } ).compact ).toBe( false );
+		expect( plan( { big: true, animations: [ {} ] } ).compact ).toBe( false );
 
 	} );
 
