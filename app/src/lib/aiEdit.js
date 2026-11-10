@@ -25,9 +25,9 @@ export const IDEAS = [
 ];
 
 export const SIZES = [
-	{ value: '2K', label: '2K, same shape' },
-	{ value: '4K', label: '4K, same shape' },
 	{ value: '1K', label: '1K, fastest' },
+	{ value: '2K', label: '2K' },
+	{ value: '4K', label: '4K' },
 ];
 
 export const MAX_REFERENCES = 4;

@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState } from 'react';
-import { ChevronsLeftRight, Loader2 } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import { useRef, useState } from 'react';
+import { ChevronsLeftRight, Columns2, Image, SquareSplitHorizontal } from 'lucide-react';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 
 const clamp = v => Math.min( 1, Math.max( 0, v ) );
 const stop = e => e.stopPropagation();
@@ -20,63 +20,32 @@ function capture( element, e ) {
 
 }
 
-export function Elapsed( { since } ) {
-
-	const [ now, setNow ] = useState( Date.now );
-	useEffect( () => {
-
-		const timer = setInterval( () => setNow( Date.now() ), 1000 );
-		return () => clearInterval( timer );
-
-	}, [] );
-	const seconds = Math.max( 0, Math.floor( ( now - since ) / 1000 ) );
-	return `${Math.floor( seconds / 60 )}:${String( seconds % 60 ).padStart( 2, '0' )}`;
-
-}
-
-/** The render and its AI versions, as thumbnails to switch between. */
-export function VersionStrip( { render, shown, job, onShow } ) {
-
-	const versions = render.aiVersions ?? [];
-	if ( ! versions.length && ! job ) return null;
-
-	const item = ( key, active, onClick, src, label, title ) => (
-		<button key={key} type="button" onClick={onClick} aria-pressed={active} title={title} className="flex flex-col gap-1 shrink-0 text-left">
-			<span className={`block w-16 h-12 rounded-md overflow-hidden bg-black ${active ? 'ring-2 ring-primary' : 'ring-1 ring-border'}`}>
-				{src && <img src={src} alt="" className="w-full h-full object-cover" />}
-			</span>
-			<span className="text-xs leading-none font-medium">{label}</span>
-		</button>
-	);
-
-	return (
-		<div aria-label="Versions of this render" onPointerDown={stop} onMouseDown={stop}
-			className="flex gap-2 p-1.5 pb-2 rounded-md bg-background/90 border border-border overflow-x-auto max-w-full">
-			{item( 'render', shown === 'render', () => onShow( 'render' ), render.thumb, 'Render', 'As rendered' )}
-			{versions.map( v => item( v.n, shown === v.n, () => onShow( v.n ), v.url, `v${v.n}`, v.prompt ) )}
-			{job && (
-				<div className="flex flex-col gap-1 shrink-0">
-					<span className="w-16 h-12 rounded-md border border-dashed border-purple-500 flex items-center justify-center">
-						<Loader2 className="h-4 w-4 animate-spin text-purple-400" />
-					</span>
-					<span className="text-xs leading-none font-medium">v{job.n}</span>
-				</div>
-			)}
-		</div>
-	);
-
-}
-
 export function CompareSwitch( { value, onChange, n } ) {
 
+	const modes = [
+		{ value: 'slider', Icon: SquareSplitHorizontal, name: 'Slider' },
+		{ value: 'side', Icon: Columns2, name: 'Side by side' },
+		{ value: 'version', Icon: Image, name: `v${n} only` },
+	];
+
 	return (
-		<Tabs value={value} onValueChange={onChange} onPointerDown={stop} onMouseDown={stop}>
-			<TabsList aria-label="Compare as" className="h-8 shadow-md">
-				<TabsTrigger value="slider" className="text-xs px-2.5">Slider</TabsTrigger>
-				<TabsTrigger value="side" className="text-xs px-2.5">Side by side</TabsTrigger>
-				<TabsTrigger value="version" className="text-xs px-2.5">v{n} only</TabsTrigger>
-			</TabsList>
-		</Tabs>
+		<TooltipProvider delayDuration={300}>
+			<Tabs value={value} onValueChange={onChange} onPointerDown={stop} onMouseDown={stop}>
+				<TabsList aria-label="Compare as" className="h-8 shadow-md">
+					{/* The tip wraps the icon: on the trigger, its data-state would hide which mode is on. */}
+					{modes.map( ( { value: mode, Icon, name } ) => (
+						<TabsTrigger key={mode} value={mode} aria-label={name} className="p-0">
+							<Tooltip>
+								<TooltipTrigger asChild>
+									<span className="flex items-center px-2 py-1"><Icon className="h-4 w-4" /></span>
+								</TooltipTrigger>
+								<TooltipContent side="bottom">{name}</TooltipContent>
+							</Tooltip>
+						</TabsTrigger>
+					) )}
+				</TabsList>
+			</Tabs>
+		</TooltipProvider>
 	);
 
 }
@@ -181,18 +150,6 @@ export function AreaLayer( { fitted, onChange, editable } ) {
 					<span className="absolute top-1 left-1 px-2 py-0.5 rounded-md bg-purple-600 text-white text-xs whitespace-nowrap">Area to change</span>
 				</div>
 			)}
-		</div>
-	);
-
-}
-
-export function JobChip( { job, onCancel } ) {
-
-	return (
-		<div role="status" onPointerDown={stop} onMouseDown={stop} className="flex items-center gap-2 pl-2.5 pr-1 py-1 bg-black/80 rounded-md text-xs text-gray-300 shadow-md whitespace-nowrap">
-			<Loader2 className="h-3 w-3 animate-spin text-purple-400" />
-			<span>Making v{job.n} · <Elapsed since={job.startedAt} />{job.part ? ' · only the marked area' : ''}</span>
-			<Button size="sm" variant="outline" className="h-6 px-2 text-xs" onClick={onCancel}>Cancel</Button>
 		</div>
 	);
 

@@ -11,7 +11,7 @@ import { Row } from '@/components/ui/row';
 import { useToast } from '@/hooks/use-toast';
 import { useLocalStorage } from '@/hooks/useLocalStorage';
 import { useActiveApp } from '@/hooks/useActiveApp';
-import { useStore, useAnimationStore, videoDuration } from '@/store';
+import { useStore, useAnimationStore, useAIStore, videoDuration } from '@/store';
 import { useColorStatus, colorManagement, ensureDefaultConfig } from '@/lib/colorManagement';
 import { exportSpaceOptions, workingSpaceLabel } from '@/lib/colorLabels';
 import {
@@ -346,7 +346,10 @@ const ExportDialog = () => {
 
 		if ( ! request ) return;
 		setTab( request.tab ?? 'picture' );
-		setSavedSource( request.source ?? 'edited' );
+		// A saved render starts on what the Results page shows: its edited picture, or the AI version on screen.
+		const opened = useStore.getState().selectedResult;
+		const shown = opened && useAIStore.getState().shown[ opened.id ];
+		setSavedSource( opened?.aiVersions?.some( v => v.n === shown ) ? `v${shown}` : 'edited' );
 
 	}, [ request ] );
 

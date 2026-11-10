@@ -113,13 +113,12 @@ describe( 'AI edits', () => {
 
 	} );
 
-	it( 'starts from a version when asked, and shows the render again when that version is deleted', async () => {
+	it( 'edits the picture shown, and shows the render again when that version is deleted', async () => {
 
 		useAIStore.setState( { key: 'K' } );
 		const { getAIVersionFile, deleteAIVersion } = await import( '@/lib/database' );
 		const store = useAIStore.getState();
 		store.setPrompt( 'Warmer' );
-		store.setStartFrom( 5, 1 );
 		store.show( 5, 1 );
 		getAIVersionFile.mockResolvedValueOnce( new Blob( [ 'v1' ] ) );
 		runEdit.mockResolvedValueOnce( { blob: new Blob( [ 'x' ] ), width: 4, height: 3, text: '' } );
@@ -127,12 +126,12 @@ describe( 'AI edits', () => {
 		await store.generate( render );
 		expect( getAIVersionFile ).toHaveBeenCalledWith( 5, 1 );
 		expect( addAIVersion.mock.calls[ 0 ][ 1 ].from ).toBe( 1 );
+		expect( useAIStore.getState().shown[ 5 ] ).toBe( 3 );
 
 		store.show( 5, 1 );
 		await store.deleteVersion( render, 1 );
 		expect( deleteAIVersion ).toHaveBeenCalledWith( 5, 1 );
 		expect( useAIStore.getState().shown[ 5 ] ).toBe( 'render' );
-		expect( useAIStore.getState().startFrom[ 5 ] ).toBe( 'render' );
 
 	} );
 

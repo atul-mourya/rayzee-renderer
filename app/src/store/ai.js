@@ -82,7 +82,7 @@ export const useAIStore = create( ( set, get ) => ( {
 	size: '2K',
 	references: [],
 	areas: {},
-	startFrom: {},
+	// The picture each render shows, which is also what its next edit starts from: 'render' or a version number.
 	shown: {},
 	compare: 'slider',
 	split: 0.5,
@@ -96,7 +96,6 @@ export const useAIStore = create( ( set, get ) => ( {
 	setCompare: compare => set( { compare } ),
 	setSplit: split => set( { split: Math.min( 1, Math.max( 0, split ) ) } ),
 	setArea: ( id, area ) => set( s => ( { areas: area ? { ...s.areas, [ id ]: area } : without( s.areas, id ) } ) ),
-	setStartFrom: ( id, from ) => set( s => ( { startFrom: { ...s.startFrom, [ id ]: from } } ) ),
 	show: ( id, which ) => set( s => ( { shown: { ...s.shown, [ id ]: which } } ) ),
 	dismissNotice: id => set( s => ( { notices: without( s.notices, id ) } ) ),
 
@@ -163,7 +162,7 @@ export const useAIStore = create( ( set, get ) => ( {
 		}
 
 		const id = render.id;
-		const from = s.startFrom[ id ] ?? 'render';
+		const from = s.shown[ id ] ?? 'render';
 		const prompt = s.prompt.trim();
 		const job = { n: nextVersionOf( render ), startedAt: Date.now(), prompt, part: !! area, controller: new AbortController() };
 		set( st => ( { jobs: { ...st.jobs, [ id ]: job }, notices: without( st.notices, id ) } ) );
@@ -208,10 +207,7 @@ export const useAIStore = create( ( set, get ) => ( {
 
 		await deleteAIVersion( render.id, n );
 		const back = which => which === n ? 'render' : which;
-		set( s => ( {
-			shown: { ...s.shown, [ render.id ]: back( s.shown[ render.id ] ) },
-			startFrom: { ...s.startFrom, [ render.id ]: back( s.startFrom[ render.id ] ) },
-		} ) );
+		set( s => ( { shown: { ...s.shown, [ render.id ]: back( s.shown[ render.id ] ) } } ) );
 		window.dispatchEvent( new Event( 'render-saved' ) );
 
 	},

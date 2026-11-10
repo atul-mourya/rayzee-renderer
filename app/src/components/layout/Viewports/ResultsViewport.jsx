@@ -6,7 +6,7 @@ import { TooltipProvider } from '@radix-ui/react-tooltip';
 import { useToast } from '@/hooks/use-toast';
 import { useStore, useAIStore } from '@/store';
 import { fitArea } from '@/lib/aiEdit';
-import { AreaLayer, CompareSwitch, JobChip, SplitHandle, VersionStrip } from './AIOverlay';
+import { AreaLayer, CompareSwitch, SplitHandle } from './AIOverlay';
 import { ImageProcessorComposer, pictureGrade, hdrShowsPicture } from '@/lib/ImageProcessor';
 import ViewportToolbar from './ViewportToolbar';
 import { updateRender, getRenderHDR } from '@/lib/database';
@@ -89,7 +89,6 @@ const ResultsViewport = forwardRef( function ResultsViewport( props, ref ) {
 	const split = useAIStore( s => s.split );
 	const where = useAIStore( s => s.where );
 	const area = useAIStore( s => s.areas[ renderId ] );
-	const from = useAIStore( s => s.startFrom[ renderId ] ?? 'render' );
 	const job = useAIStore( s => s.jobs[ renderId ] );
 	const version = imageData?.aiVersions?.find( v => v.n === shown ) ?? null;
 	const [ drawnVersion, setDrawnVersion ] = useState( null );
@@ -656,11 +655,7 @@ const ResultsViewport = forwardRef( function ResultsViewport( props, ref ) {
 			style={{ cursor: isPanning ? 'grabbing' : ( imageData ? 'grab' : 'default' ) }}
 			onPointerDown={imageData ? handlePointerDown : undefined}
 		>
-			{job ? (
-				<div className="absolute top-2 left-1/2 -translate-x-1/2 z-20">
-					<JobChip job={job} onCancel={() => ai.cancel( renderId )} />
-				</div>
-			) : imageData && ( isHovering || viewingOriginal ) && ! marking && (
+			{imageData && ( isHovering || viewingOriginal ) && ! marking && (
 				<div className="absolute top-2 left-1/2 transform -translate-x-1/2 z-20">
 					<div className="px-2 py-1 bg-black/80 rounded-md text-xs text-gray-300 flex items-center gap-1 shadow-md">
 						<Eye size={12} className="text-gray-400" />
@@ -669,22 +664,16 @@ const ResultsViewport = forwardRef( function ResultsViewport( props, ref ) {
 				</div>
 			)}
 
-			{showingVersion && (
-				<div className="absolute top-2 left-2 z-20 flex gap-1.5 max-w-[45%]">
-					{compare !== 'version' && <span className="px-2 py-1 bg-black/60 rounded-md text-xs text-gray-300">Render</span>}
-					<span className="px-2 py-1 bg-purple-600 rounded-md text-xs text-white truncate" title={version.prompt}>v{version.n}{version.prompt ? ` · ${version.prompt}` : ''}</span>
+			{showingVersion && compare !== 'version' && (
+				<div className="absolute top-2 left-2 z-20 flex gap-1.5">
+					<span className="px-2 py-1 bg-black/60 rounded-md text-xs text-gray-300">Render</span>
+					<span className="px-2 py-1 bg-purple-600 rounded-md text-xs text-white">v{version.n}</span>
 				</div>
 			)}
 
 			{showingVersion && (
 				<div className="absolute top-2 right-2 z-20">
 					<CompareSwitch value={compare} onChange={ai.setCompare} n={version.n} />
-				</div>
-			)}
-
-			{imageData && imageLoadState.loaded && (
-				<div className="absolute left-2 bottom-12 z-20 max-w-[calc(100%-1rem)]">
-					<VersionStrip render={imageData} shown={shown} job={job} onShow={which => ai.show( renderId, which )} />
 				</div>
 			)}
 
@@ -827,7 +816,7 @@ const ResultsViewport = forwardRef( function ResultsViewport( props, ref ) {
 
 					{showingVersion && compare === 'slider' && <SplitHandle split={split} onChange={ai.setSplit} label={`Compare the render with v${version.n}`} />}
 
-					{where === 'part' && imageLoadState.loaded && ! side && shown === from && (
+					{where === 'part' && imageLoadState.loaded && ! side && (
 						<AreaLayer fitted={fitted} editable={marking} onChange={next => ai.setArea( renderId, next )} />
 					)}
 

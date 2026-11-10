@@ -156,6 +156,8 @@ owns it), exports, test layout, docs and comments; how a cleanup is run; the aud
   `renders` entry of its own (`render:<id>:v<n>`, `database.js`); an earlier build's single `ai.png` reads as v1. An
   edit belongs to the render it started from and outlives the panel. "Part of it" sends only the marked area, grown to
   a shape Gemini returns, and blends the answer back. ⚠️ The model has no streaming endpoint, so no drafts while waiting.
+  ⚠️ The picture shown is the picture edited (`shown`): a separate start-from choice made Generate edit the render while
+  a version was on screen.
 - **Material catalogue** (Assets → Materials → Physically Based; `services/MaterialService.js`): the physicallybased.info
   database (CC0) plus pbrt's measured media and optical glasses it lacks (`services/MeasuredMaterials.js`). Its colours
   are linear Rec.709 and lengths centimetres: `subsurfaceRadius` is the diffuse mean free path 1 / σtr, turned into the
