@@ -155,4 +155,34 @@ describe( 'GeometryExtractor.extractSliced', () => {
 
 	} );
 
+	it( 'fills a large mesh in steps, baked and as emissive copies, with the bytes extract() writes', async () => {
+
+		const large = () => {
+
+			const group = scene();
+			// 79,600 triangles a sphere: past the size filled in steps.
+			const big = new Mesh( new SphereGeometry( 2, 200, 200 ), new MeshStandardMaterial( { color: 0x404040 } ) );
+			big.position.set( 0, - 5, 0 );
+			big.rotation.set( 0.3, 0.7, 0 );
+			big.scale.set( 1, - 1, 1 );
+			const glow = new InstancedMesh( new SphereGeometry( 1, 200, 200 ), new MeshStandardMaterial( { emissive: new Color( 1, 0.5, 0 ) } ), 2 );
+			for ( let i = 0; i < 2; i ++ ) glow.setMatrixAt( i, new Matrix4().makeTranslation( i * 4, - 10, 0 ) );
+			group.add( big, glow );
+			group.updateMatrixWorld( true );
+			return group;
+
+		};
+
+		const plain = new GeometryExtractor().extract( large() );
+		let asked = 0;
+		const sliced = await new GeometryExtractor().extractSliced( large(), () => ( ++ asked % 2 ? null : Promise.resolve() ) );
+
+		expect( plain.triangleCount ).toBeGreaterThan( 3 * 79600 );
+		expect( Array.from( sliced.triangleData.copyOf( 0, sliced.triangleCount ) ) )
+			.toEqual( Array.from( plain.triangleData.copyOf( 0, plain.triangleCount ) ) );
+		expect( sliced.meshTriangleRanges ).toEqual( plain.meshTriangleRanges );
+		expect( asked ).toBeGreaterThan( 3 * 79600 / ( 1 << 14 ) );
+
+	} );
+
 } );

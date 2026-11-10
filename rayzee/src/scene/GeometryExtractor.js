@@ -68,6 +68,10 @@ export const MATERIAL_VALUE_SOURCE = Object.freeze( {
 
 const IDENTITY_ELEMENTS = [ 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 ];
 
+// extractSliced fills a mesh past this many triangles FILL_STEP at a time, the page getting turns between.
+const DEFER_FILL_TRIANGLES = 1 << 16;
+const FILL_STEP = 1 << 14;
+
 function isIdentityElements( e ) {
 
 	for ( let i = 0; i < 16; i ++ ) if ( e[ i ] !== IDENTITY_ELEMENTS[ i ] ) return false;
@@ -385,16 +389,38 @@ export class GeometryExtractor {
 	async extractSliced( object, pause ) {
 
 		this._beginExtract( object );
+		this._fills = [];
 
-		// Depth-first pre-order, as traverseObject: mesh indices follow the same walk.
-		const stack = [ object ];
-		while ( stack.length ) {
+		try {
 
-			const node = stack.pop();
-			this._visit( node );
-			if ( node.children ) for ( let i = node.children.length - 1; i >= 0; i -- ) stack.push( node.children[ i ] );
-			const turn = pause();
-			if ( turn ) await turn;
+			// Depth-first pre-order, as traverseObject: mesh indices follow the same walk.
+			const stack = [ object ];
+			while ( stack.length ) {
+
+				const node = stack.pop();
+				this._visit( node );
+				if ( node.children ) for ( let i = node.children.length - 1; i >= 0; i -- ) stack.push( node.children[ i ] );
+				// What the visit left to fill, before the next visit can read its records.
+				for ( const { job, count } of this._fills.splice( 0 ) ) {
+
+					for ( let from = 0; from < count; from += FILL_STEP ) {
+
+						this._fillTriangles( job, from, Math.min( count, from + FILL_STEP ) );
+						const turn = pause();
+						if ( turn ) await turn;
+
+					}
+
+				}
+
+				const turn = pause();
+				if ( turn ) await turn;
+
+			}
+
+		} finally {
+
+			this._fills = null;
 
 		}
 
@@ -1556,6 +1582,24 @@ export class GeometryExtractor {
 		while ( this.materialTriangleCounts.length <= materialIndex ) this.materialTriangleCounts.push( 0 );
 		this.materialTriangleCounts[ materialIndex ] += triangleCount;
 
+		// Ensure capacity for this batch up front (single grow check per mesh)
+		this._ensureCapacity( this.currentTriangleIndex + triangleCount );
+
+		const deferred = this._fills && triangleCount > DEFER_FILL_TRIANGLES;
+		const job = {
+			positions, normals, uvs, indices, materialIndex, meshIndex, flipWinding, start: this.currentTriangleIndex,
+			// Pooled matrices: a deferred fill keeps its own copy.
+			bm: deferred ? bakeMatrix?.elements.slice() : bakeMatrix?.elements, bn: deferred ? bakeNormal?.elements.slice() : bakeNormal?.elements,
+		};
+		this.currentTriangleIndex += triangleCount;
+		if ( deferred ) this._fills.push( { job, count: triangleCount } );
+		else this._fillTriangles( job, 0, triangleCount );
+
+	}
+
+	/** Writes triangles [from, to) of one extractTrianglesInBatch call into its records. @private */
+	_fillTriangles( { positions, normals, uvs, indices, materialIndex, meshIndex, flipWinding, start, bm, bn }, from, to ) {
+
 		// Pre-allocate objects for positions, normals, and UVs
 		const posA = this._getVec3( 0 );
 		const posB = this._getVec3( 1 );
@@ -1569,14 +1613,10 @@ export class GeometryExtractor {
 		const uvB = this._getVec2( 1 );
 		const uvC = this._getVec2( 2 );
 
-		// Ensure capacity for this batch up front (single grow check per mesh)
-		this._ensureCapacity( this.currentTriangleIndex + triangleCount );
-
-		const bm = bakeMatrix?.elements, bn = bakeNormal?.elements;
 		const readPosition = this._vertexReader( positions ), readNormal = this._vertexReader( normals ), readUV = uvs && this._vertexReader( uvs );
 
 		// Batch process triangles to avoid excessive function calls
-		for ( let i = 0; i < triangleCount; i ++ ) {
+		for ( let i = from; i < to; i ++ ) {
 
 			const i3 = i * 3;
 			const idxA = indices ? indices[ i3 + 0 ] : i3 + 0;
@@ -1608,7 +1648,7 @@ export class GeometryExtractor {
 
 			// Shared geometry stays in object space, its transform on the TLAS leaf, so every
 			// placement reads one copy. Single-use geometry is baked to world here instead.
-			if ( bakeMatrix ) {
+			if ( bm ) {
 
 				affinePoint( posA, bm ); affinePoint( posB, bm ); affinePoint( posC, bm );
 				linearDir( normalA, bn ); linearDir( normalB, bn ); linearDir( normalC, bn );
@@ -1621,15 +1661,13 @@ export class GeometryExtractor {
 
 			// Pack triangle datas
 			this.packTriangleDataTextureFormat(
-				this.currentTriangleIndex,
+				start + i,
 				posA, posB, posC,
 				normalA, normalB, normalC,
 				uvA, uvB, uvC,
 				materialIndex,
 				meshIndex
 			);
-
-			this.currentTriangleIndex ++;
 
 		}
 
