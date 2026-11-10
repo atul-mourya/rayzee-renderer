@@ -78,23 +78,17 @@ const Viewport3D = forwardRef( ( { viewportMode = "preview" }, _ref ) => {
 	// A final render pans and wheel-zooms as the Results view does; elsewhere the mouse moves the camera.
 	const panZoom = canvasReady && viewportMode === 'final-render';
 
-	// The page is drawn only between traced frames: tracing waits while the view pans or zooms, then carries on.
+	// The page is drawn only between traced frames: the loop waits while the view pans or zooms, then carries on.
+	// pause(), not pauseRendering: that flag is the play button's, the Results tab's and the loaders', and a hold
+	// ending would undo theirs.
 	const traceHeldRef = useRef( false );
 	const holdTrace = useCallback( ( active ) => {
 
 		const app = getApp();
-		if ( ! app ) return;
-		if ( active && ! app.pauseRendering ) {
-
-			app.pauseRendering = true;
-			traceHeldRef.current = true;
-
-		} else if ( ! active && traceHeldRef.current ) {
-
-			traceHeldRef.current = false;
-			app.pauseRendering = false;
-
-		}
+		if ( ! app || active === traceHeldRef.current ) return;
+		traceHeldRef.current = active;
+		if ( active ) app.pause();
+		else app.resume();
 
 	}, [] );
 
