@@ -7,15 +7,25 @@
 -   Fast compilation on windows devices
 -   make bvh an independent library — built as the `rayzee-bvh` package on the night of 2026-11-05 (branch
     `night/bvh-package`), not committed
+- gemini ai image workflow needs improve user experience: audit and proposal written 2026-11-10
+  (docs/internal/specs/results-ai-edit-ux.md), nothing built. Worst: after viewing v3, Generate edits the original render
+- claude design: redesign all ui component used in the application to create a custom design system
+- scrolling and panning behaviour on final render page needs to be have exactly like how its behaving on results tab
+- explore which aspects of the engine can be moved to rust based webassembly to maximise the performance gain and minimize the browser related bottlenecks
+- can headless render in hdr?
 
 ### MVP
+- [ ] Tools and filters features are missing from results page. Requirements, specification and system design (including
+  the overall Results tab) written 2026-11-10 (docs/internal/specs/results-tools-filters.md); implementation left
 - [ ] Coat darkening (OpenPBR `coat_darkening`), on its own and done properly: reverted (was 8f9e51f3, b119e0b1) — it
   darkened many scenes and brought artifacts. pbrt coateddiffuse's Lambertian base (no specular of its own) went with it.
 - [ ] https://github.com/DennisSmolek/Fsr3 (no FSR3 branch here any more)
 - [ ] tiled output for lower vram — Blender Cycles-style render-region tiling; VRAM-bounded 4K/8K final render + video. See docs/internal/specs/wavefront-tiled-output.md; unmerged branches `feat/tiled-output` and `feat/tiled-output-v2`
 
 ### pbrt: read but not used (audit of the 26 catalog scenes, 2026-11-01)
-- [ ] PixelFilter (triangle, radius 1; 25 scenes) — engine uses its own pixel reconstruction
+- [ ] PixelFilter: box, triangle and Gaussian are drawn (`pixelFilter`, 2026-11-10; a file naming none gets pbrt's
+  Gaussian); Mitchell and Lanczos are not (negative lobes: a weight of ±1 a sample, which a plain average cannot carry),
+  and none under the bidirectional integrators (light tracing would need splats spread by the filter)
 - [ ] Not read, not in the catalog: realistic cameras, perspective `screenwindow`, `frameaspectratio`, shutter (motion blur), Film sensor response curves (approximated: its white balance is read) / `cropwindow`, CameraMedium and space-filling media, non-homogeneous media, scattering inside media (σs folds into absorption)
 
 ### UX issue
@@ -204,8 +214,6 @@
   MIP-filtered render is even).
 - [ ] **One table per directive**: pbrt-v4's parameter names, types, defaults and the `file:line` they come from, the
   translators and their tests derived from it (`pbrt/defaults.test.js` checks the defaults by hand today).
-- [ ] **Count non-finite samples** each frame in FinalWrite and record them as an issue: only OIDN counts them
-  (`denoiser.non_finite_input`), and only while it runs. kroken's NaN pixels were found by eye.
 - [ ] `bench:pbrt` — each pbrt-v4-scenes camera against its reference image, with the reference's own post applied
   (`docs/design/SCENE_IMPORT.md` → Extending it), over a local copy (skip what is not downloaded).
 
