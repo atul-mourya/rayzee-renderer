@@ -10,6 +10,48 @@
 import { AnimationMixer, EventDispatcher, Timer, Vector3, LoopRepeat, LoopOnce, PropertyBinding } from 'three';
 import { EngineEvents } from '../../EngineEvents.js';
 
+/**
+ * PropertyBinding.findNode from one walk of `root`: three walks the tree again for every track it binds. The first node
+ * in pre-order whose name or uuid matches wins, as there.
+ */
+function nodeFinder( root ) {
+
+	const first = new Map();
+	for ( const child of root.children ?? [] ) child.traverse( node => {
+
+		if ( ! first.has( node.name ) ) first.set( node.name, node );
+		if ( ! first.has( node.uuid ) ) first.set( node.uuid, node );
+
+	} );
+
+	return ( nodeName ) => {
+
+		if ( nodeName === undefined || nodeName === '' || nodeName === '.' || nodeName === - 1 || nodeName === root.name || nodeName === root.uuid ) return root;
+		const bone = root.skeleton?.getBoneByName( nodeName );
+		if ( bone !== undefined ) return bone;
+		return first.get( nodeName ) ?? null;
+
+	};
+
+}
+
+// Runs `bind` with three's node search under `root` answered by `find`.
+function boundWith( root, find, bind ) {
+
+	const findNode = PropertyBinding.findNode;
+	PropertyBinding.findNode = ( from, nodeName ) => from === root ? find( nodeName ) : findNode.call( PropertyBinding, from, nodeName );
+	try {
+
+		return bind();
+
+	} finally {
+
+		PropertyBinding.findNode = findNode;
+
+	}
+
+}
+
 /** The nodes of `nodes` with no ancestor in it, or null when updating each would cost more than one pass over `root`. */
 function subtreeRoots( nodes, root ) {
 
@@ -89,31 +131,19 @@ export class AnimationManager extends EventDispatcher {
 		// Try mixerRoot (GLTF model root) first for track resolution.
 		// Fall back to scene if no tracks bind successfully.
 		this.mixer = new AnimationMixer( mixerRoot );
-		let actions = animations.map( clip => this.mixer.clipAction( clip ) );
+		const find = nodeFinder( mixerRoot );
+		let actions = boundWith( mixerRoot, find, () => animations.map( clip => this.mixer.clipAction( clip ) ) );
 
 		// Check if any tracks actually bind to nodes in the mixer root hierarchy.
 		// If not, retry with the top-level scene as mixer root.
-		const findNode = ( root, name ) =>
-			root.name === name || root.getObjectByName( name ) !== undefined;
-
-		const hasBoundTracks = actions.some( action => {
-
-			const clip = action.getClip();
-			return clip.tracks.some( track => {
-
-				const nodeName = track.name.split( '.' )[ 0 ];
-				return findNode( mixerRoot, nodeName );
-
-			} );
-
-		} );
+		const hasBoundTracks = animations.some( clip => clip.tracks.some( track => find( PropertyBinding.parseTrackName( track.name ).nodeName ) ) );
 
 		if ( ! hasBoundTracks && mixerRoot !== scene ) {
 
 			console.log( '[AnimationManager] Tracks did not resolve from model root, retrying with scene root' );
 			this.mixer = new AnimationMixer( scene );
 			this._mixerRoot = scene;
-			actions = animations.map( clip => this.mixer.clipAction( clip ) );
+			actions = boundWith( scene, nodeFinder( scene ), () => animations.map( clip => this.mixer.clipAction( clip ) ) );
 
 		}
 
@@ -166,14 +196,7 @@ export class AnimationManager extends EventDispatcher {
 	_planClips( animations ) {
 
 		const root = this._mixerRoot;
-		const byName = new Map();
-		// First name in pre-order wins, as in PropertyBinding.findNode.
-		root.traverse?.( node => {
-
-			if ( ! byName.has( node.name ) ) byName.set( node.name, node );
-			byName.set( node.uuid, node );
-
-		} );
+		const find = nodeFinder( root );
 
 		this._plans = animations.map( clip => {
 
@@ -183,8 +206,7 @@ export class AnimationManager extends EventDispatcher {
 			for ( const track of clip.tracks ) {
 
 				const { nodeName, propertyName } = PropertyBinding.parseTrackName( track.name );
-				// As PropertyBinding.findNode: no node name binds the root itself.
-				const node = nodeName === '' || nodeName === '.' ? root : byName.get( nodeName );
+				const node = find( nodeName );
 				if ( ! node ) {
 
 					unresolved = true;

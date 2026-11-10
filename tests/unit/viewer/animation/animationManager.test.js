@@ -213,6 +213,11 @@ describe( 'AnimationManager', () => {
 
 		mockMixerRoot = {
 			name: 'ModelRoot',
+			children: [ { name: 'Bone1', uuid: 'bone-1', traverse( visit ) {
+
+				visit( this );
+
+			} } ],
 			getObjectByName: vi.fn( ( name ) => name === 'Bone1' ? {} : undefined ),
 			updateMatrixWorld: vi.fn(),
 		};
@@ -291,6 +296,7 @@ describe( 'AnimationManager', () => {
 		it( 'falls back to scene root if tracks do not resolve from mixerRoot', () => {
 
 			mockMixerRoot.getObjectByName = vi.fn( () => undefined );
+			mockMixerRoot.children = [];
 			mockMixerRoot.name = 'NoMatch';
 
 			manager.init( mockScene, mockMixerRoot, mockMeshes, mockAnimations );
