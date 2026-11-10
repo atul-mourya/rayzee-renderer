@@ -11,8 +11,8 @@
  */
 
 import {
-	Fn, wgslFn, float, vec2, vec4, int, uint, uvec2, bool as tslBool,
-	If, mix, select, texture, textureStore, length, max,
+	Fn, wgslFn, float, vec2, vec3, vec4, int, uint, uvec2, bool as tslBool,
+	If, mix, select, texture, textureStore, length, max, floatBitsToUint,
 	localId, workgroupId, instanceIndex, atomicAdd,
 } from 'three/tsl';
 
@@ -49,6 +49,20 @@ export const guideWeights = ( unlikely, prevCount, auxSamples, auxAccumulationAl
 	replace: unlikely.not().and( prevCount.equal( uint( 0 ) ) ),
 	alpha: select( unlikely.or( prevCount.equal( auxSamples ) ), auxAccumulationAlpha, float( 1.0 ).div( float( prevCount.add( uint( 1 ) ) ) ) ),
 	count: select( unlikely, prevCount, prevCount.add( uint( 1 ) ) ),
+} );
+
+const EXPONENT_BITS = 0x7F800000;
+const nonFiniteBits = v => floatBitsToUint( v ).bitAnd( uint( EXPONENT_BITS ) ).equal( uint( EXPONENT_BITS ) );
+
+/**
+ * A sample's colour with a NaN or infinite one dropped to black, as pbrt's film drops it: averaged in, it stays in the
+ * pixel for the rest of the render. `.w` is 1 where it was dropped. Read from the bits: WGSL may fold `x != x` away.
+ */
+export const dropNonFinite = /*@__PURE__*/ Fn( ( [ color ] ) => {
+
+	const bad = nonFiniteBits( color.x ).or( nonFiniteBits( color.y ) ).or( nonFiniteBits( color.z ) );
+	return vec4( select( bad, vec3( 0.0 ), color ), select( bad, float( 1.0 ), float( 0.0 ) ) );
+
 } );
 
 /**
@@ -100,6 +114,8 @@ export function buildFinalWriteKernel( params ) {
 		emissionRW = null, emissionOutput = null,
 		// The per-sample cap, compiled in only while it has a limit under the path integrator ({ limit, toXYZ } uniforms).
 		sampleClamp = null,
+		// COUNTER.NON_FINITE_SAMPLES counts the samples dropped as NaN or infinite.
+		counters,
 	} = params;
 
 	const auxOn = auxGBufferEnabled.greaterThan( uint( 0 ) );
@@ -122,7 +138,10 @@ export function buildFinalWriteKernel( params ) {
 			const rayID = uint( localGy.mul( renderWidth ).add( gx ) ); // LOCAL path/gBuffer slot
 			const pixelId = uint( gy.mul( renderWidth ).add( gx ) ); // GLOBAL pixel (persistent buffers + texture)
 
-			const read = readRayRadiance( rayBufferRO, rayID );
+			const radiance = readRayRadiance( rayBufferRO, rayID ).toVar();
+			const checked = dropNonFinite( radiance.xyz ).toVar();
+			// The NaN / Inf view (visMode 11) shows the sample as it came.
+			const read = vec4( select( visMode.equal( int( 11 ) ), radiance.xyz, checked.xyz ), radiance.w );
 			const capScale = sampleClamp ? sampleClampScale( read.xyz, sampleClamp.limit, sampleClamp.toXYZ ).toVar() : null;
 			const sampleColor = capScale ? vec4( read.xyz.mul( capScale ), read.w ).toVar() : read;
 			const finalColor = sampleColor.xyz.toVar();
@@ -134,6 +153,13 @@ export function buildFinalWriteKernel( params ) {
 			// the accumulated colour through unchanged (below) instead of mixing it. Inert unless adaptiveOn.
 			const wasFrozen = adaptiveOn.and( frame.greaterThan( uint( 0 ) ) )
 				.and( frozenMaskRO.element( pixelId ).equal( uint( 1 ) ) ).toVar();
+
+			// A frozen pixel's slot holds an old sample, already counted.
+			If( checked.w.greaterThan( 0.0 ).and( wasFrozen.not() ), () => {
+
+				atomicAdd( counters.element( uint( COUNTER.NON_FINITE_SAMPLES ) ), uint( 1 ) );
+
+			} );
 
 			// MRT comes from the per-chunk G-buffer (LOCAL slot). Half-packed: decode.
 			// auxOn gates the decode + stores so a no-denoiser frame does no G-buffer read and no aux writes.
@@ -319,8 +345,10 @@ export function buildFinalWriteKernel( params ) {
 
 			if ( emissionRW ) If( emissionOutput.greaterThan( uint( 0 ) ), () => {
 
-				// Its share of the sample, capped with it.
-				const emission = ( capScale ? readPathEmission( gBufferRO, rayID ).mul( capScale ) : readPathEmission( gBufferRO, rayID ) ).toVar();
+				// Its share of the sample, capped with it; none of a dropped sample, nor a non-finite share.
+				const own = dropNonFinite( readPathEmission( gBufferRO, rayID ) ).xyz;
+				const kept = select( checked.w.greaterThan( 0.0 ), vec3( 0.0 ), own );
+				const emission = ( capScale ? kept.mul( capScale ) : kept ).toVar();
 				const prev = emissionRW.element( pixelId ).xyz;
 				If( enableAccumulation.and( cameraIsMoving.not() ).and( frame.greaterThan( uint( 0 ) ) ).and( hasPreviousAccumulated ), () => {
 

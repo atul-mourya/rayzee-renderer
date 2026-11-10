@@ -652,6 +652,7 @@ export class RayzeeRenderer extends EventDispatcher {
 
 		const info = this._completionInfo();
 		const restarts = this.stages.pathTracer.resetCount;
+		this.stages.pathTracer.readNonFiniteNow?.().catch( () => {} );
 		const announce = () => {
 
 			if ( ! this.completion.renderCompleteDispatched || this.stages.pathTracer?.resetCount !== restarts ) return;
@@ -1892,6 +1893,8 @@ export class RayzeeRenderer extends EventDispatcher {
 
 		}
 
+		// The last frames' NaN and infinite samples, and a render shorter than the readback cadence.
+		await stage.readNonFiniteNow?.();
 		await this._finishImage();
 		return stage.frameCount;
 
@@ -1971,6 +1974,7 @@ export class RayzeeRenderer extends EventDispatcher {
 			}
 
 			const info = this._completionInfo();
+			await stage.readNonFiniteNow?.();
 			// Before it is announced: a listener reading pixels sees the finished image's exposure.
 			await this._finishImage();
 			if ( this.completion.markComplete() ) this.dispatchEvent( { type: EngineEvents.RENDER_COMPLETE, ...info } );

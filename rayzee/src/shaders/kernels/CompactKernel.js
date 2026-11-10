@@ -139,7 +139,14 @@ export function writeListSizes( sizes, count, maxGroups ) {
 }
 
 // CONVERGED and the geometry counts are per frame, summed over its chunks in FinalWrite: zeroed on its first chunk only.
-function resetFrameCounts( counters, isFirstChunk ) {
+// NON_FINITE_SAMPLES runs over a render: zeroed on a restart's first frame.
+function resetFrameCounts( counters, isFirstChunk, frame ) {
+
+	If( isFirstChunk.greaterThan( uint( 0 ) ).and( frame.equal( uint( 0 ) ) ), () => {
+
+		atomicStore( counters.element( uint( COUNTER.NON_FINITE_SAMPLES ) ), uint( 0 ) );
+
+	} );
 
 	If( isFirstChunk.greaterThan( uint( 0 ) ), () => {
 
@@ -152,7 +159,7 @@ function resetFrameCounts( counters, isFirstChunk ) {
 }
 
 /** The chunk's identity list, bounded on its ray count (the pool has no margin), and its counters seeded. */
-export function buildInitActiveIndicesKernel( { activeIndicesRW, counters, maxRayCount, isFirstChunk, sizes, maxGroups } ) {
+export function buildInitActiveIndicesKernel( { activeIndicesRW, counters, maxRayCount, isFirstChunk, frame, sizes, maxGroups } ) {
 
 	return Fn( () => {
 
@@ -167,7 +174,7 @@ export function buildInitActiveIndicesKernel( { activeIndicesRW, counters, maxRa
 			atomicStore( counters.element( uint( COUNTER.ACTIVE_RAY_COUNT ) ), maxRayCount );
 			atomicStore( counters.element( uint( COUNTER.ENTERING_COUNT ) ), maxRayCount );
 			writeListSizes( sizes, maxRayCount, maxGroups );
-			resetFrameCounts( counters, isFirstChunk );
+			resetFrameCounts( counters, isFirstChunk, frame );
 
 		} );
 
@@ -176,12 +183,12 @@ export function buildInitActiveIndicesKernel( { activeIndicesRW, counters, maxRa
 }
 
 /** Before a chunk's frozen-pixel scatter: ACTIVE is per chunk. */
-export function buildResetFrameCountersKernel( { counters, isFirstChunk } ) {
+export function buildResetFrameCountersKernel( { counters, isFirstChunk, frame } ) {
 
 	return Fn( () => {
 
 		atomicStore( counters.element( uint( COUNTER.ACTIVE_RAY_COUNT ) ), uint( 0 ) );
-		resetFrameCounts( counters, isFirstChunk );
+		resetFrameCounts( counters, isFirstChunk, frame );
 
 	} );
 

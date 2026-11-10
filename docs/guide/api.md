@@ -88,6 +88,7 @@ surface** — pin a version and branch on the strings; they are never renamed or
 | `refit.shared_geometry` | a deform was asked for on a mesh that shares its triangles, and was skipped |
 | `denoiser.unavailable` | a requested denoise or upscale produced nothing — the denoiser was not built, OIDN was off while accumulating, or the pass needs a canvas in a document |
 | `denoiser.non_finite_input` | the render handed OIDN NaN or infinite pixels (`detail.color` / `albedo` / `normal`: how many), which were treated as zero — a warning, recorded again only after a clean frame |
+| `render.non_finite_samples` | samples came out NaN or infinite and were left out of the render as black, as pbrt's film leaves them out (`detail.count`: how many at the first count) — a warning, recorded once a restart; debug mode 11 still shows them |
 | `output.source_fallback` | `renderToBuffer( { source: 'display' } )` found no denoised picture and returned the raw accumulation |
 | `output.tonemap_fallback` | `renderToBuffer`'s `'srgb'` bytes were tone-mapped on the CPU, not the GPU — the picture is the same within a level, only slower (a warning: strict does not throw) |
 | `output.pass_unavailable` | `exportImage` was asked for an EXR layer it cannot write, such as `albedo` or `normal` with no denoiser on (`detail.pass`); the file is written without it |

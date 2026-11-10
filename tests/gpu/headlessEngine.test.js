@@ -514,6 +514,36 @@ describeGPU( 'the engine headless on Dawn', () => {
 
 	} );
 
+	it( 'leaves NaN samples out of the render, says so once a restart, and renders clean after', async () => {
+
+		const index = materialOf( 'ball' );
+		const at = pixelOf( 'ball' );
+		const color = meshNamed( 'ball' ).material.color.clone();
+		app.clearIssues();
+
+		app.setMaterialProperty( index, 'color', new Color( NaN, 0.5, 0.5 ) );
+		const broken = await render( 8 );
+		await app.stages.pathTracer.readbackWait?.();
+		const issues = app.issues.filter( issue => issue.code === 'render.non_finite_samples' );
+		expect( broken.every( Number.isFinite ) ).toBe( true );
+		expect( rgb( broken, at ) ).toEqual( [ 0, 0, 0 ] );
+		expect( issues.length ).toBe( 1 );
+		expect( issues[ 0 ] ).toMatchObject( { severity: 'warning' } );
+		expect( issues[ 0 ].detail.count ).toBeGreaterThan( 0 );
+
+		// Shorter than the readback cadence: read once at the end.
+		app.clearIssues();
+		await render( 2 );
+		expect( app.issues.filter( issue => issue.code === 'render.non_finite_samples' ).length ).toBe( 1 );
+
+		app.setMaterialProperty( index, 'color', color );
+		app.clearIssues();
+		const back = await render( SAMPLES );
+		expect( maxDifference( back, baseline ) ).toBe( 0 );
+		expect( app.issues.filter( issue => issue.code === 'render.non_finite_samples' ) ).toEqual( [] );
+
+	} );
+
 	it( 'deforms a mesh in place and refits it back', async () => {
 
 		const box = meshNamed( 'box' );

@@ -148,6 +148,11 @@ export class PathTracer extends PathTracerStage {
 		this._convergedGeometryFraction = 0;
 		this._geometryPixelCount = 0;
 		this._convergedReadbackPending = false;
+		// Samples dropped as NaN or infinite (_noteNonFinite): the GPU total last read and how many since its frame 0,
+		// and which frame 0 that was.
+		this._nonFiniteSeen = 0;
+		this._nonFiniteSinceReset = 0;
+		this._nonFiniteEpoch = 0;
 
 		// Lockstep: readbacks issued on a fixed cadence and applied a fixed number of frames later,
 		// so when one lands cannot change the image. { due, read, apply } while one is in flight.
@@ -710,6 +715,15 @@ export class PathTracer extends PathTracerStage {
 		if ( this._learnsVisibility && frameValue === 0 && ( this._pinSeedToFrame || this._lockstep || ! this.cameraChanged ) ) {
 
 			km.dispatch( 'visibilityClear' );
+
+		}
+
+		// Frame 0's counter reset zeroes the non-finite total: what was read before belongs to the render before.
+		if ( frameValue === 0 ) {
+
+			this._nonFiniteEpoch ++;
+			this._nonFiniteSeen = 0;
+			this._nonFiniteSinceReset = 0;
 
 		}
 
@@ -1363,8 +1377,10 @@ export class PathTracer extends PathTracerStage {
 				// Full-FRAME pixel count (CONVERGED_COUNT sums across all chunks) — not _wfMaxRayCount, which
 				// after the chunk loop holds only the last band's pixel count.
 				const total = this._wfRenderWidth.value * this._wfRenderHeight.value;
+				const issuedAt = this._nonFiniteEpoch;
 				this.renderer.getArrayBufferAsync( cAttr, null, 0, COUNTER.COUNT * 4 ).then( ( buf ) => {
 
+					this._noteNonFinite( buf, issuedAt );
 					if ( cgen === this._readbackGeneration && total > 0 ) this._applyCounters( buf, total );
 
 					this._convergedReadbackPending = false;
@@ -1397,6 +1413,7 @@ export class PathTracer extends PathTracerStage {
 		const gen = this._readbackGeneration;
 		const measured = this._curveMeasure();
 		const total = this._wfRenderWidth.value * this._wfRenderHeight.value;
+		const issuedAt = this._nonFiniteEpoch;
 
 		const entry = { due, read: null, apply: null };
 		entry.read = Promise.all( [
@@ -1406,6 +1423,7 @@ export class PathTracer extends PathTracerStage {
 
 			entry.apply = () => {
 
+				this._noteNonFinite( counterBuf, issuedAt );
 				if ( gen !== this._readbackGeneration ) return;
 				this._applyBounceCounts( bounceBuf, measured );
 				if ( total > 0 ) this._applyCounters( counterBuf, total );
@@ -1509,6 +1527,35 @@ export class PathTracer extends PathTracerStage {
 		this._lastBounceEnergy = recut( this._lastBounceEnergy );
 		this._curveLayout = { width, height, chunkRows };
 		this._lastActivePixelCounts = null;
+
+	}
+
+	/**
+	 * Samples FinalWrite dropped as NaN or infinite since the last readback: a total on the GPU from the render's frame
+	 * 0, so a frame between readbacks still counts. The first readback after a frame 0 with any announces them, once;
+	 * one issued before it (`issuedAt`, its `_nonFiniteEpoch`) read the render before, and is dropped.
+	 */
+	_noteNonFinite( buf, issuedAt ) {
+
+		const seen = new Uint32Array( buf )[ COUNTER.NON_FINITE_SAMPLES ];
+		if ( issuedAt !== this._nonFiniteEpoch ) return;
+		// A smaller total is a new counters buffer (a rebuild), which starts from zero.
+		const added = ( seen >= this._nonFiniteSeen ? seen - this._nonFiniteSeen : seen ) >>> 0;
+		this._nonFiniteSeen = seen;
+		if ( ! added ) return;
+		const first = this._nonFiniteSinceReset === 0;
+		this._nonFiniteSinceReset += added;
+		if ( first ) this.issues?.warn( ISSUE_CODES.RENDER_NON_FINITE_SAMPLES, `${added} samples came out NaN or infinite and were left out of the render; more may follow until it restarts`, { count: added } );
+
+	}
+
+	/** Reads the non-finite count now, off the readback cadence: a render shorter than it, or its last frames. */
+	async readNonFiniteNow() {
+
+		const attr = this._queueManager?.getCountersAttribute();
+		if ( ! attr ) return;
+		const issuedAt = this._nonFiniteEpoch;
+		this._noteNonFinite( await this.renderer.getArrayBufferAsync( attr, null, 0, COUNTER.COUNT * 4 ), issuedAt );
 
 	}
 
@@ -1889,7 +1936,7 @@ export class PathTracer extends PathTracerStage {
 		const activeWriteA = qm.activeIndices.a;
 		this._kernelManager.register( 'initActiveIndices',
 			buildInitActiveIndicesKernel( {
-				activeIndicesRW: activeWriteA, counters, maxRayCount: this._wfMaxRayCount, isFirstChunk: this._wfIsFirstChunk,
+				activeIndicesRW: activeWriteA, counters, maxRayCount: this._wfMaxRayCount, isFirstChunk: this._wfIsFirstChunk, frame: this.frame,
 				sizes: sizeNodes[ 0 ], maxGroups,
 			} )().compute( [ Math.ceil( ( this._chunkRows * w ) / LIST_WG_SIZE ), 1, 1 ], [ LIST_WG_SIZE, 1, 1 ] )
 		);
@@ -1939,7 +1986,7 @@ export class PathTracer extends PathTracerStage {
 		// Pixel freeze (usePixelFreeze) replaces generate + initActiveIndices: reset the counters, mask, scatter the
 		// unfrozen pixels into the active list, publish its count, then the list-driven generate.
 		this._kernelManager.register( 'resetFrameCounters',
-			buildResetFrameCountersKernel( { counters, isFirstChunk: this._wfIsFirstChunk } )().compute( [ 1, 1, 1 ], [ 1, 1, 1 ] )
+			buildResetFrameCountersKernel( { counters, isFirstChunk: this._wfIsFirstChunk, frame: this.frame } )().compute( [ 1, 1, 1 ], [ 1, 1, 1 ] )
 		);
 		this._kernelManager.register( 'freezeMask',
 			buildFreezeMaskKernel( {
@@ -2254,6 +2301,7 @@ export class PathTracer extends PathTracerStage {
 			emissionRW: this._emissionCompiled ? this._emissionNode : null,
 			emissionOutput: this._emissionUniform,
 			sampleClamp: this._compiledSampleClamp ? { limit: this.sampleClamp, toXYZ: this._sampleClampXYZ ??= uniform( new Matrix3() ) } : null,
+			counters,
 			chunkRowBase: this._wfChunkRowBase,
 			chunkRows: this._wfChunkRows,
 		} );

@@ -17,9 +17,9 @@ export const COUNTER = {
 	// per-frame count of pixels whose Tier-1 relative-error dropped below threshold; zeroed at frame start by
 	// initActiveIndices, incremented in FinalWrite, read back async to drive the whole-frame convergence early-stop.
 	CONVERGED_COUNT: 2,
-	// Reserved hole — was FROZEN_COUNT, a write-only counter no reader ever consumed. Kept as a hole so
-	// slot indices stay stable across the JS enum and every kernel that stores by index.
-	RESERVED_3: 3,
+	// Samples FinalWrite dropped as NaN or infinite over a render: zeroed on a restart's first frame, read as
+	// differences (PathTracer._noteNonFinite).
+	NON_FINITE_SAMPLES: 3,
 	// Reserved hole — was ACTIVE_PIXEL_COUNT, which held only the last row band's count; each band's now rides
 	// with its survivor curve (QueueManager.pixelCountOffset).
 	RESERVED_4: 4,

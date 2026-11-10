@@ -149,6 +149,16 @@ textures[1] = gNormalDepth // World-space normal (xyz, 0..1) + NDC depth (a)
 textures[2] = gAlbedo      // Albedo (RGB) + hit distance (a) — denoiser input
 ```
 
+A sample with a NaN or infinite channel is dropped to black before it is averaged in (`dropNonFinite`, read from the
+float's bits: WGSL may fold `x != x` away), as pbrt's film drops it; averaged in, one stayed in its pixel for the rest of
+the render. FinalWrite counts them in `COUNTER.NON_FINITE_SAMPLES`, a total over the render (zeroed on a restart's first
+frame by the counter reset, which `_nonFiniteEpoch` mirrors), read with the other counters on their cadence
+(`_noteNonFinite`; a readback issued before that frame 0 is dropped) and once more as `renderFrames`,
+`renderUntilComplete` or the loop finishes a render (`readNonFiniteNow`); the first count after a frame 0 records
+`render.non_finite_samples`. A frozen pixel's stale sample is not counted again, and the emission kept apart for NRD
+(`requestOutput( 'emission' )`) drops with its sample. Debug mode 11 shows the
+sample as it came. Cost: a bit test and a rarely taken atomic; 53 of 54 quality goldens stayed bit-identical.
+
 `gColor.a` is `1.0` for opaque output; with `transparentBackground` it carries the path's coverage alpha (also blended through accumulation).
 
 `gNormalDepth` and `gAlbedo` are the aux outputs. They are written, and copied to the read target, only while a denoiser has them on (`setAuxGBufferEnabled()`, a live uniform, so toggling needs no rebuild). They accumulate on their own epoch (`auxAccumulationAlpha`, `hasPreviousAux`).

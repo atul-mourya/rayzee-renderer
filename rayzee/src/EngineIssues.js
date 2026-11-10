@@ -42,6 +42,7 @@ export const ISSUE_CODES = Object.freeze( {
 	LIGHT_PLACEHOLDER_SKIPPED: 'light.placeholder_skipped',
 	CAPABILITY_MISSING: 'capability.missing',
 	SETTING_IGNORED: 'setting.ignored',
+	RENDER_NON_FINITE_SAMPLES: 'render.non_finite_samples',
 } );
 
 /** Strict throws on ERROR only. */
