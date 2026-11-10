@@ -32,7 +32,6 @@ async function attachDecoders( loader, text, renderer ) {
 	if ( draco ) {
 
 		const dracoLoader = new draco.DRACOLoader();
-		dracoLoader.setDecoderConfig( { type: 'js' } );
 		dracoLoader.setDecoderPath( dracoDecoderPath );
 		loader.setDRACOLoader( dracoLoader );
 
