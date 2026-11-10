@@ -788,10 +788,14 @@ describeGPU( 'a first load', () => {
 
 			const floor = new Mesh( new PlaneGeometry( 4, 4 ), new MeshPhysicalMaterial() );
 			floor.rotation.x = - Math.PI / 2;
+			const before = build.mock.calls.length;
 			await app.loadObject3D( new Scene().add( floor ), 'floor' );
-			const atLoad = build.mock.calls.length;
+			// What a host sets once the load lands is in the one build, at the first frame.
+			app.settings.set( 'pixelFilter', 'gaussian' );
+			app.settings.set( 'pixelFilterRadius', 1.5 );
 			await app.renderFrames( 2 );
-			expect( build.mock.calls.length ).toBe( atLoad );
+			expect( build.mock.calls.length - before ).toBe( 1 );
+			expect( app.stages.pathTracer._compiledPixelFilter ).not.toBe( '' );
 
 		} finally {
 

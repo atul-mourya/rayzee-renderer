@@ -23,9 +23,9 @@ export const LOAD_PHASES = [
 	{ key: 'assemble', parent: 'scene', about: 'combined BVH' },
 	{ key: 'textures', parent: 'scene', about: 'material textures, beside the BVH' },
 	{ key: 'upload', parent: 'load', about: 'scene buffers and textures to the GPU' },
-	{ key: 'kernels', parent: 'load', about: 'wavefront kernels built (setupMaterial)' },
 	{ key: 'finish', parent: 'load', about: 'environment table and settings' },
-	{ key: 'firstFrame', parent: 'ready', about: 'kernel compile and one sample' },
+	{ key: 'firstFrame', parent: 'ready', about: 'kernel build and compile, and one sample' },
+	{ key: 'kernels', parent: 'firstFrame', about: 'wavefront kernels built (_buildWavefrontKernels), before their compile' },
 	{ key: 'store', parent: null, about: 'Chrome: storage writes the load left running, after ready' },
 	{ key: 'compile', parent: null, about: 'Chrome: firstFrame of a fresh browser\'s first load, whose kernels compile cold' },
 ];

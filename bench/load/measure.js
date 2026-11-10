@@ -61,7 +61,8 @@ export async function measureLoad( app, model, runtime ) {
 
 	const restore = [
 		instrument( app._sdf, 'buildBVH', marks, 'scene' ),
-		instrument( app.stages.pathTracer, 'setupMaterial', marks, 'kernels' ),
+		instrument( app.stages.pathTracer, 'setupMaterial', marks, 'setup' ),
+		instrument( app.stages.pathTracer, '_buildWavefrontKernels', marks, 'kernels' ),
 	];
 
 	let error = null;
@@ -126,9 +127,9 @@ export async function measureLoad( app, model, runtime ) {
 			tlas: finite( metrics.tlasBuildTime ),
 			assemble: finite( metrics.bvhAssembleTime ),
 			textures: finite( metrics.textureCreationTime ),
-			upload: finite( marks.kernelsStart - marks.sceneEnd ),
+			upload: finite( marks.setupStart - marks.sceneEnd ),
 			kernels: finite( marks.kernels ),
-			finish: finite( t1 - marks.kernelsEnd ),
+			finish: finite( t1 - marks.setupEnd ),
 			firstFrame: t2 - t1,
 			store: stored ? t3 - t2 : undefined,
 		},

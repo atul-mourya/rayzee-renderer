@@ -83,6 +83,7 @@ export class PathTracer extends PathTracerStage {
 		this._pixelStatsValid = false; // m2 has followed the colour since its first sample (getPixelVariance)
 		this._dilateFrozenUniform = uniform( 1, 'int' ); // 1 = dilate (default); 0 = plain per-pixel freeze
 		this._wavefrontReady = false;
+		this._kernelBuildPending = false; // _buildKernelsAtNextFrame
 		// The background compile of the kernels last built (_compileKernels), and its build's number.
 		this._kernelsCompiling = null;
 		this._kernelGeneration = 0;
@@ -292,13 +293,7 @@ export class PathTracer extends PathTracerStage {
 		super.setupMaterial();
 
 		// First setupMaterial call has 0 triangles/materials — skip it.
-		if ( this.materialData?.materialCount > 0 ) {
-
-			if ( this._kernelManager ) this._kernelManager.dispose();
-			this._wavefrontReady = false;
-			this._buildWavefrontKernels();
-
-		}
+		if ( this.materialData?.materialCount > 0 ) this._buildKernelsAtNextFrame();
 
 	}
 
@@ -377,13 +372,19 @@ export class PathTracer extends PathTracerStage {
 		this._integrator = next;
 		this._pathBudget = 0;
 
-		if ( this._packedBuffers && this.materialData?.materialCount > 0 ) {
+		if ( this._packedBuffers && this.materialData?.materialCount > 0 ) this._buildKernelsAtNextFrame();
 
-			if ( this._kernelManager ) this._kernelManager.dispose();
-			this._wavefrontReady = false;
-			this._buildWavefrontKernels();
+	}
 
-		}
+	/**
+	 * The kernels are built at the next frame rather than now: what a host sets once a load lands (the scene's
+	 * integrator, pixel filter, sample clamp) changes them too, and building first rebuilt every kernel right after.
+	 * @private
+	 */
+	_buildKernelsAtNextFrame() {
+
+		this._kernelBuildPending = true;
+		this._wavefrontReady = false;
 
 	}
 
@@ -575,6 +576,13 @@ export class PathTracer extends PathTracerStage {
 	}
 
 	render( context ) {
+
+		if ( this._kernelBuildPending && this.isReady ) {
+
+			if ( this._kernelManager ) this._kernelManager.dispose();
+			this._buildWavefrontKernels();
+
+		}
 
 		// Kernels not built yet (first frame / mid-resize) — skip until ready.
 		if ( ! this.isReady || ! this._wavefrontReady ) return;
@@ -1824,6 +1832,13 @@ export class PathTracer extends PathTracerStage {
 
 	}
 
+	/** Whether frames are traced: false while the kernels are built or compile. */
+	get kernelsReady() {
+
+		return this._wavefrontReady && ! this._kernelBuildPending;
+
+	}
+
 	/** Whether the kernels write the G-buffer: asked for directly, or for the hit distance that rides in it. */
 	get _gBufferCompiled() {
 
@@ -1836,7 +1851,8 @@ export class PathTracer extends PathTracerStage {
 		const texNodes = this.shaderBuilder.getSceneTextureNodes();
 		if ( ! texNodes ) return;
 
-		// A fresh build binds the current lightStorageAttr — any pending realloc is covered.
+		// A fresh build binds the current lightStorageAttr — any pending realloc is covered, and any build asked for.
+		this._kernelBuildPending = false;
 		this._lightBufferRealloc = false;
 		this._outputsChanged = false;
 		this._integrator?.beforeKernelBuild();
