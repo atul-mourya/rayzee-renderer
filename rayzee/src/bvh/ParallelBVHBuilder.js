@@ -9,13 +9,36 @@
 
 import BVHWorker from './BVHWorker.js?worker&inline';
 import BVHSubtreeWorker from './BVHSubtreeWorker.js?worker&inline';
-import { setBVHWorkerFactory } from './BVHBuilder.js';
+import { setBVHWorkerFactory, setBVHCore, bvhCore } from './BVHBuilder.js';
+import { BVH_CORE_WASM } from './BVHCoreWasm.js';
 import { createLogger, fmt } from '../Logger.js';
 import { createWorker, hardwareThreads, hasWorkers } from '../Platform.js';
 
 setBVHWorkerFactory( () => createWorker( BVHWorker ) );
 
 const log = createLogger( 'bvh' );
+
+let coreCompile = null;
+
+/** Compiles the WebAssembly BVH build once for this page; a build started before it lands runs in JavaScript. */
+export function bvhCoreReady() {
+
+	coreCompile ??= ( async () => {
+
+		try {
+
+			setBVHCore( await WebAssembly.compile( Uint8Array.from( atob( BVH_CORE_WASM ), ( ch ) => ch.charCodeAt( 0 ) ) ) );
+
+		} catch ( error ) {
+
+			log.debug( 'WebAssembly BVH build unavailable, building in JavaScript:', error );
+
+		}
+
+	} )();
+	return coreCompile;
+
+}
 
 const FPT = 20; // FLOATS_PER_TRIANGLE — the record is uint lanes, not floats
 const PARALLEL_THRESHOLD = 50000;
@@ -192,6 +215,7 @@ export function buildBVHParallel( triangles, depth, progressCallback, config ) {
 				depth,
 				parallelDepth,
 				reportProgress: !! progressCallback,
+				bvhCore: bvhCore(),
 			} );
 
 		} )().catch( ( error ) => {
@@ -413,7 +437,8 @@ async function handlePhase2(
 			maxBins: config.maxBins,
 			minBins: config.minBins,
 			reinsertionConfig: config.reinsertionOptimization,
-			reportProgress: !! progressCallback
+			reportProgress: !! progressCallback,
+			bvhCore: bvhCore()
 		} );
 
 	}
@@ -483,7 +508,8 @@ function buildSingleWorker( triangles, depth, progressCallback, config ) {
 				reportProgress: !! progressCallback,
 				sharedReorderBuffer,
 				reinsertionOptimization: config.reinsertionOptimization,
-				foldLeaves: config.foldLeaves
+				foldLeaves: config.foldLeaves,
+				bvhCore: bvhCore()
 			}, [ transferBuffer ] );
 
 		} )().catch( ( error ) => {

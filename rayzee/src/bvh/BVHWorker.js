@@ -1,4 +1,4 @@
-import { BVHBuilder } from './BVHBuilder.js';
+import { BVHBuilder, setBVHCore } from './BVHBuilder.js';
 import { foldLeaves } from './BVHLeafFold.js';
 import { createLogger, fmt, applyWorkerLogLevel } from '../Logger.js';
 
@@ -12,6 +12,7 @@ self.onmessage = function ( e ) {
 
 	const data = e.data;
 	const type = data.type;
+	if ( data.bvhCore ) setBVHCore( data.bvhCore );
 
 	// Workers get their own globals, so the main thread forwards its level per message.
 	applyWorkerLogLevel( data.logLevel );
@@ -88,7 +89,7 @@ function handlePhase1( data ) {
 		// Phase 1c: Build top-level tree to parallelDepth
 		builder.frontierTasks = [];
 		const sahStart = performance.now();
-		const root = builder.buildNodeRecursiveToDepth( 0, triangleCount, depth, parallelDepth, progressCallback );
+		const root = builder.buildRange( 0, triangleCount, depth, parallelDepth, progressCallback );
 		builder.splitStats.sahBuildTime = performance.now() - sahStart;
 
 		// Phase 1d: Surface-area child ordering (DFS cache locality)

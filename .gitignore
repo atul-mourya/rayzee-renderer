@@ -53,3 +53,6 @@ app/public/24155522.glb
 
 # Bench run output (the quality report)
 bench/results/
+
+# Rust build output (rayzee/wasm/*; the wasm itself is generated into rayzee/src by npm run build:wasm)
+rayzee/wasm/*/target/

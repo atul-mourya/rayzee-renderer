@@ -1,4 +1,4 @@
-import { BVHBuilder } from './BVHBuilder.js';
+import { BVHBuilder, setBVHCore } from './BVHBuilder.js';
 import { ReinsertionOptimizer } from './ReinsertionOptimizer.js';
 
 self.onmessage = function ( e ) {
@@ -9,8 +9,10 @@ self.onmessage = function ( e ) {
 		triangleCount,
 		maxLeafSize, numBins, maxBins, minBins,
 		reinsertionConfig,
-		reportProgress
+		reportProgress,
+		bvhCore
 	} = e.data;
+	if ( bvhCore ) setBVHCore( bvhCore );
 
 	// Process each task sequentially
 	for ( let t = 0; t < tasks.length; t ++ ) {
@@ -61,11 +63,9 @@ self.onmessage = function ( e ) {
 			const startTime = performance.now();
 
 			// Build subtree using precomputed shared data
-			const root = builder.buildNodeRecursive(
-				task.start, task.end, task.depth, progressCallback,
-				task.preMinX, task.preMinY, task.preMinZ,
-				task.preMaxX, task.preMaxY, task.preMaxZ
-			);
+			const root = builder.buildRange( task.start, task.end, task.depth, Infinity, progressCallback, [
+				task.preMinX, task.preMinY, task.preMinZ, task.preMaxX, task.preMaxY, task.preMaxZ
+			] );
 
 			// Reinsertion optimization on subtree
 			if ( reinsertionConfig && reinsertionConfig.enabled && ( task.end - task.start ) > 1000 ) {

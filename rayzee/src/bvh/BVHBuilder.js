@@ -54,6 +54,29 @@ function permuteRecords( records, order, lanes ) {
 const floatView = ( data ) => data instanceof Float32Array
 	? data : new Float32Array( data.buffer, data.byteOffset, data.length );
 
+// The SAH build compiled from rayzee/wasm/bvh: the same tree as buildNodeRecursive. A reference is
+// 10 lanes (box min, box max, centroid, triangle); a node 8 (box, then right child and INNER, offset
+// and count, or task and FRONTIER); a frontier task 9 (start, end, depth, box).
+const REF_LANES = 10;
+const NODE_LANES = 8;
+const TASK_LANES = 9;
+const INNER = 0xFFFFFFFF;
+const FRONTIER = 0xFFFFFFFE;
+const NO_FRONTIER = 0x3FFFFFFF;
+const NO_BOX = [ 0, 0, 0, 0, 0, 0 ];
+
+// Compiled once on the page (ParallelBVHBuilder) and posted to each worker with its job.
+let coreModule = null;
+
+/** The compiled core this thread's builders use; null builds in JavaScript. */
+export function setBVHCore( module ) {
+
+	coreModule = module ?? null;
+
+}
+
+export const bvhCore = () => coreModule;
+
 class BVHNode {
 
 	constructor() {
@@ -75,6 +98,8 @@ export class BVHBuilder {
 	constructor() {
 
 		this.useWorker = true;
+		// The SAH build in WebAssembly where it runs; false builds in JavaScript (the same tree).
+		this.useWasm = true;
 		this.maxLeafSize = 8;
 		this.foldLeaves = false;
 		this.numBins = 32;
@@ -471,6 +496,7 @@ export class BVHBuilder {
 						depth,
 						reportProgress: !! progressCallback,
 						sharedReorderBuffer,
+						bvhCore: coreModule,
 						reinsertionOptimization: {
 							enabled: this.enableReinsertionOptimization,
 							batchSizeRatio: this.reinsertionBatchSizeRatio,
@@ -554,27 +580,10 @@ export class BVHBuilder {
 		};
 
 		const n = this.totalTriangles;
-
-		// Phase 1: Allocate and initialize per-triangle arrays
-		const initStart = performance.now();
-
-		this.centroids = new Float32Array( n * 3 );
-		this.bMin = new Float32Array( n * 3 );
-		this.bMax = new Float32Array( n * 3 );
 		this.indices = new Uint32Array( n );
-		this.mortonCodes = new Uint32Array( n );
 
-		this.initializeTriangleArrays();
-
-		this.splitStats.initTime = performance.now() - initStart;
-
-		// Phase 2: Morton code spatial clustering
-		this.sortTrianglesByMortonCode();
-
-		// Phase 3: Recursive SAH build
-		const sahStart = performance.now();
-		const root = this.buildNodeRecursive( 0, n, depth, progressCallback );
-		this.splitStats.sahBuildTime = performance.now() - sahStart;
+		// Phases 1–3: init, Morton sort, SAH
+		const root = this._buildSyncInCore( n, depth, progressCallback ) ?? this._buildSyncInJS( n, depth, progressCallback );
 
 		// Phase 4: Reinsertion optimization (Meister & Bittner)
 		if ( this.enableReinsertionOptimization && this.totalTriangles > 1000 ) {
@@ -658,6 +667,253 @@ export class BVHBuilder {
 		this.mortonCodes = null;
 
 		return root;
+
+	}
+
+	/** @private */
+	_buildSyncInJS( n, depth, progressCallback ) {
+
+		const initStart = performance.now();
+		this.centroids = new Float32Array( n * 3 );
+		this.bMin = new Float32Array( n * 3 );
+		this.bMax = new Float32Array( n * 3 );
+		this.mortonCodes = new Uint32Array( n );
+		this.initializeTriangleArrays();
+		this.splitStats.initTime = performance.now() - initStart;
+
+		this.sortTrianglesByMortonCode();
+
+		const sahStart = performance.now();
+		const root = this.buildNodeRecursive( 0, n, depth, progressCallback );
+		this.splitStats.sahBuildTime = performance.now() - sahStart;
+		return root;
+
+	}
+
+	/** Phases 1–3 in the core; null where it cannot run. @private */
+	_buildSyncInCore( n, depth, progressCallback ) {
+
+		const opened = this._openCore( n, progressCallback );
+		if ( ! opened ) return null;
+		const { core, at } = opened;
+
+		try {
+
+			const initStart = performance.now();
+			this._writeRefsFromTriangles( core, at, n );
+			this.splitStats.initTime = performance.now() - initStart;
+
+			if ( this.useMortonCodes && n >= this.mortonClusterThreshold ) {
+
+				const sortStart = performance.now();
+				if ( ! core.sort( n, this.mortonBits ) ) return null;
+				this.splitStats.mortonSortTime += performance.now() - sortStart;
+
+			}
+
+			const sahStart = performance.now();
+			const root = this._runCore( core, at, 0, n, depth, NO_FRONTIER, null );
+			this.splitStats.sahBuildTime = performance.now() - sahStart;
+			if ( ! root ) this.processedTriangles = 0;
+			return root;
+
+		} catch ( error ) {
+
+			log.debug( 'WebAssembly BVH build failed, building in JavaScript:', error );
+			this.processedTriangles = 0;
+			return null;
+
+		}
+
+	}
+
+	/**
+	 * `buildNodeRecursive` over `indices[ start, end )` (`buildNodeRecursiveToDepth` with a finite
+	 * `frontierDepth`), in the core where it runs. `bounds` is the range's box, else it is measured.
+	 */
+	buildRange( start, end, depth, frontierDepth, progressCallback, bounds = null ) {
+
+		const count = end - start;
+		const before = this.processedTriangles;
+		const opened = count > 0 ? this._openCore( count, progressCallback ) : null;
+		if ( opened ) {
+
+			try {
+
+				this._gatherRefs( opened.core, opened.at, start, count );
+				const root = this._runCore( opened.core, opened.at, start, count, depth, Number.isFinite( frontierDepth ) ? frontierDepth : NO_FRONTIER, bounds );
+				if ( root ) return root;
+
+			} catch ( error ) {
+
+				log.debug( 'WebAssembly BVH build failed, building in JavaScript:', error );
+
+			}
+
+		}
+
+		this.processedTriangles = before;
+		const b = bounds ?? [];
+		return Number.isFinite( frontierDepth )
+			? this.buildNodeRecursiveToDepth( start, end, depth, frontierDepth, progressCallback, ...b )
+			: this.buildNodeRecursive( start, end, depth, progressCallback, ...b );
+
+	}
+
+	/** A fresh core instance with room for `count` references, or null. @private */
+	_openCore( count, progressCallback ) {
+
+		const module = this.useWasm ? coreModule : null;
+		if ( ! module ) return null;
+
+		try {
+
+			const core = new WebAssembly.Instance( module, { env: { progress: ( n ) => this.updateProgress( n, progressCallback ) } } ).exports;
+			const at = core.reserve( count );
+			return at ? { core, at } : null;
+
+		} catch ( error ) {
+
+			log.debug( 'WebAssembly BVH build unavailable:', error );
+			return null;
+
+		}
+
+	}
+
+	/** The references from the records, in triangle order: the same arithmetic as initializeTriangleArrays. @private */
+	_writeRefsFromTriangles( core, at, n ) {
+
+		const f = new Float32Array( core.memory.buffer, at, n * REF_LANES );
+		const u = new Uint32Array( core.memory.buffer, at, n * REF_LANES );
+		const src = floatView( this.triangles );
+		const PA = TRIANGLE_DATA_LAYOUT.POSITION_A_OFFSET;
+		const PB = TRIANGLE_DATA_LAYOUT.POSITION_B_OFFSET;
+		const PC = TRIANGLE_DATA_LAYOUT.POSITION_C_OFFSET;
+
+		for ( let i = 0; i < n; i ++ ) {
+
+			const base = i * FPT;
+			const ax = src[ base + PA ], ay = src[ base + PA + 1 ], az = src[ base + PA + 2 ];
+			const bx = src[ base + PB ], by = src[ base + PB + 1 ], bz = src[ base + PB + 2 ];
+			const cx = src[ base + PC ], cy = src[ base + PC + 1 ], cz = src[ base + PC + 2 ];
+			const r = i * REF_LANES;
+
+			f[ r ] = ax < bx ? ( ax < cx ? ax : cx ) : ( bx < cx ? bx : cx );
+			f[ r + 1 ] = ay < by ? ( ay < cy ? ay : cy ) : ( by < cy ? by : cy );
+			f[ r + 2 ] = az < bz ? ( az < cz ? az : cz ) : ( bz < cz ? bz : cz );
+			f[ r + 3 ] = ax > bx ? ( ax > cx ? ax : cx ) : ( bx > cx ? bx : cx );
+			f[ r + 4 ] = ay > by ? ( ay > cy ? ay : cy ) : ( by > cy ? by : cy );
+			f[ r + 5 ] = az > bz ? ( az > cz ? az : cz ) : ( bz > cz ? bz : cz );
+			f[ r + 6 ] = ( ax + bx + cx ) / 3;
+			f[ r + 7 ] = ( ay + by + cy ) / 3;
+			f[ r + 8 ] = ( az + bz + cz ) / 3;
+			u[ r + 9 ] = i;
+
+		}
+
+	}
+
+	/** The references of `indices[ start, start + count )` from the per-triangle arrays. @private */
+	_gatherRefs( core, at, start, count ) {
+
+		const f = new Float32Array( core.memory.buffer, at, count * REF_LANES );
+		const u = new Uint32Array( core.memory.buffer, at, count * REF_LANES );
+		const idx = this.indices, c = this.centroids, mn = this.bMin, mx = this.bMax;
+
+		for ( let i = 0; i < count; i ++ ) {
+
+			const t = idx[ start + i ], o = t * 3, r = i * REF_LANES;
+			f[ r ] = mn[ o ]; f[ r + 1 ] = mn[ o + 1 ]; f[ r + 2 ] = mn[ o + 2 ];
+			f[ r + 3 ] = mx[ o ]; f[ r + 4 ] = mx[ o + 1 ]; f[ r + 5 ] = mx[ o + 2 ];
+			f[ r + 6 ] = c[ o ]; f[ r + 7 ] = c[ o + 1 ]; f[ r + 8 ] = c[ o + 2 ];
+			u[ r + 9 ] = t;
+
+		}
+
+	}
+
+	/** Builds the core's references as `indices[ start, start + count )`; the root, or null out of memory. @private */
+	_runCore( core, at, start, count, depth, frontierDepth, bounds ) {
+
+		const b = bounds ?? NO_BOX;
+		const flags = ( this.enableObjectMedianFallback ? 1 : 0 ) | ( this.enableSpatialMedianFallback ? 2 : 0 );
+		const nodeCount = core.build( count, depth, frontierDepth, this.maxLeafSize, this.minBins, this.maxBins,
+			this.traversalCost, this.intersectionCost, flags, bounds ? 1 : 0, b[ 0 ], b[ 1 ], b[ 2 ], b[ 3 ], b[ 4 ], b[ 5 ] );
+		if ( nodeCount < 0 ) return null;
+
+		const mem = core.memory.buffer;
+		const refs = new Uint32Array( mem, at, count * REF_LANES );
+		const idx = this.indices;
+		for ( let i = 0; i < count; i ++ ) idx[ start + i ] = refs[ i * REF_LANES + 9 ];
+
+		const taskBase = this.frontierTasks ? this.frontierTasks.length : 0;
+		const taskCount = core.task_count();
+		if ( taskCount ) {
+
+			const ti = new Int32Array( mem, core.tasks(), taskCount * TASK_LANES );
+			const tf = new Float32Array( mem, core.tasks(), taskCount * TASK_LANES );
+			for ( let k = 0; k < taskCount; k ++ ) {
+
+				const o = k * TASK_LANES;
+				this.frontierTasks.push( {
+					taskId: taskBase + k, start: start + ti[ o ], end: start + ti[ o + 1 ], depth: ti[ o + 2 ],
+					preMinX: tf[ o + 3 ], preMinY: tf[ o + 4 ], preMinZ: tf[ o + 5 ],
+					preMaxX: tf[ o + 6 ], preMaxY: tf[ o + 7 ], preMaxZ: tf[ o + 8 ]
+				} );
+
+			}
+
+		}
+
+		const nf = new Float32Array( mem, core.nodes(), nodeCount * NODE_LANES );
+		const nu = new Uint32Array( mem, core.nodes(), nodeCount * NODE_LANES );
+		const nodes = new Array( nodeCount );
+		for ( let i = 0; i < nodeCount; i ++ ) {
+
+			const o = i * NODE_LANES, node = new BVHNode();
+			node.minX = nf[ o ]; node.minY = nf[ o + 1 ]; node.minZ = nf[ o + 2 ];
+			node.maxX = nf[ o + 3 ]; node.maxY = nf[ o + 4 ]; node.maxZ = nf[ o + 5 ];
+			const a = nu[ o + 6 ], k = nu[ o + 7 ];
+			if ( k === FRONTIER ) {
+
+				const task = this.frontierTasks[ taskBase + a ];
+				node.triangleOffset = task.start;
+				node.triangleCount = task.end - task.start;
+				node.isFrontier = true;
+				node.frontierTaskId = task.taskId;
+
+			} else if ( k !== INNER ) {
+
+				node.triangleOffset = start + a;
+				node.triangleCount = k;
+
+			}
+
+			nodes[ i ] = node;
+
+		}
+
+		for ( let i = 0; i < nodeCount; i ++ ) {
+
+			if ( nu[ i * NODE_LANES + 7 ] !== INNER ) continue;
+			nodes[ i ].leftChild = nodes[ i + 1 ];
+			nodes[ i ].rightChild = nodes[ nu[ i * NODE_LANES + 6 ] ];
+
+		}
+
+		const st = new Float64Array( mem, core.stats(), 6 );
+		const s = this.splitStats;
+		const attempts = s.totalSplitAttempts + st[ 4 ];
+		if ( attempts ) s.avgBinsUsed = ( s.avgBinsUsed * s.totalSplitAttempts + st[ 5 ] * st[ 4 ] ) / attempts;
+		s.sahSplits += st[ 0 ];
+		s.objectMedianSplits += st[ 1 ];
+		s.spatialMedianSplits += st[ 2 ];
+		s.failedSplits += st[ 3 ];
+		s.totalSplitAttempts = attempts;
+		this.totalNodes += nodeCount;
+
+		return nodes[ 0 ];
 
 	}
 

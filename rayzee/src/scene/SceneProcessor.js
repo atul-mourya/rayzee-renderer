@@ -1,6 +1,6 @@
 // SceneProcessor.js - Processes scene geometry into GPU-ready data (BVH, textures, materials)
-import { BVHBuilder } from '../bvh/BVHBuilder.js';
-import { buildBVHParallel, shouldUseParallelBuild } from '../bvh/ParallelBVHBuilder.js';
+import { BVHBuilder, bvhCore } from '../bvh/BVHBuilder.js';
+import { buildBVHParallel, shouldUseParallelBuild, bvhCoreReady } from '../bvh/ParallelBVHBuilder.js';
 import { TLASBuilder } from '../bvh/TLASBuilder.js';
 import { InstanceTable, IN_PLACE } from './InstanceTable.js';
 import { ChunkedRecords, SHARED_MEMORY_AVAILABLE, setChunkObserver, DEFAULT_CHUNK_BYTES } from '../memory/ChunkedRecords.js';
@@ -732,6 +732,7 @@ export class SceneProcessor {
 		this._blasKey = null;
 
 		const templates = new Map();
+		await bvhCoreReady();
 		const workerOpts = this._blasWorkerOpts();
 		let waiters = [];
 		const built = () => new Promise( resolve => waiters.push( resolve ) );
@@ -1027,6 +1028,7 @@ export class SceneProcessor {
 
 		}
 
+		await bvhCoreReady();
 		const workerOpts = this._blasWorkerOpts();
 
 		const totalTasks = poolTasks.length + parallelTasks.length;
@@ -1755,6 +1757,7 @@ export class SceneProcessor {
 					maxBins: opts.maxBins,
 					minBins: opts.minBins,
 					logLevel: opts.logLevel,
+					bvhCore: bvhCore(),
 				}, inPlace ? [] : [ meshTriData.buffer ] );
 
 			} catch ( error ) {

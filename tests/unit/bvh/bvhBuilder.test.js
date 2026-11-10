@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest';
 import { BVH_LEAF_MARKERS, bvhIndexView } from '@/core/scene/BufferLayout.js';
 import { inspectBVH } from './bvhInvariants.js';
 
@@ -33,6 +33,7 @@ vi.mock( '@/core/bvh/ReinsertionOptimizer.js', () => ( {
 } ) );
 
 import { BVHBuilder, setBVHWorkerFactory } from '@/core/bvh/BVHBuilder.js';
+import { bvhCoreReady } from '@/core/bvh/ParallelBVHBuilder.js';
 
 /**
  * Helper: create a Float32Array of triangle data (32 floats per triangle).
@@ -1029,6 +1030,7 @@ describe( 'BVHBuilder splits', () => {
 	it( 'makes a leaf of a split that would leave one side empty', () => {
 
 		const builder = new BVHBuilder();
+		builder.useWasm = false;
 		builder.enableReinsertionOptimization = false;
 		builder.maxLeafSize = 2;
 		vi.spyOn( builder, 'findBestSplitPositionSAH' ).mockReturnValue( { success: true, axis: 0, pos: 1e9, method: 'SAH' } );
@@ -1041,6 +1043,7 @@ describe( 'BVHBuilder splits', () => {
 	it( 'reports progress as leaves are made, never 100 before the end', () => {
 
 		const builder = new BVHBuilder();
+		builder.useWasm = false;
 		builder.enableReinsertionOptimization = false;
 		builder.maxLeafSize = 2;
 		builder.progressUpdateInterval = - 1;
@@ -1146,6 +1149,140 @@ describe( 'BVHBuilder parallel build', () => {
 		lopsided.frontierTasks = [];
 		vi.spyOn( lopsided, 'findBestSplitPositionSAH' ).mockReturnValue( { success: true, axis: 0, pos: - 1e9, method: 'SAH' } );
 		expect( lopsided.buildNodeRecursiveToDepth( 0, 64, 30, 3 ).triangleCount ).toBe( 64 );
+
+	} );
+
+} );
+
+describe( 'BVHBuilder in WebAssembly', () => {
+
+	beforeAll( () => bvhCoreReady() );
+	afterEach( () => vi.restoreAllMocks() );
+
+	const u32 = ( a ) => new Uint32Array( a.buffer, a.byteOffset, a.length );
+
+	function both( data, setup = () => {} ) {
+
+		const out = [ false, true ].map( useWasm => {
+
+			const b = new BVHBuilder();
+			b.enableReinsertionOptimization = false;
+			setup( b );
+			b.useWasm = useWasm;
+			const ran = vi.spyOn( b, '_runCore' );
+			const root = b.buildSync( data.slice() );
+			const s = b.splitStats;
+			return {
+				bvh: [ ...u32( b.flattenBVH( root ) ) ], triangles: [ ...b.reorderedTriangleData ], map: [ ...b.originalToBvhMap ],
+				stats: [ s.sahSplits, s.objectMedianSplits, s.spatialMedianSplits, s.failedSplits, s.totalSplitAttempts, b.totalNodes ],
+				core: ran.mock.calls.length,
+			};
+
+		} );
+		expect( out[ 0 ].core ).toBe( 0 );
+		expect( out[ 1 ].core ).toBe( 1 );
+		return out;
+
+	}
+
+	it( 'builds the tree the JavaScript build does, bit for bit', () => {
+
+		const broken = scatter( 300 );
+		new Float32Array( broken.buffer )[ 17 * FPT ] = NaN;
+		const cases = [
+			[ scatter( 3000 ) ],
+			[ scatter( 400 ), b => b.setMortonConfig( { threshold: 16 } ) ],
+			[ makeTriData( Array.from( { length: 40 }, () => atX( 5, - 1, 1 ) ) ), b => ( b.maxLeafSize = 2 ) ],
+			[ scatter( 64 ), b => Object.assign( b, { maxLeafSize: 2, traversalCost: 1e9 } ) ],
+			[ scatter( 64 ), b => {
+
+				b.maxLeafSize = 2; b.traversalCost = 1e9; b.setFallbackConfig( { objectMedian: false } );
+
+			} ],
+			[ scatter( 64 ), b => {
+
+				b.traversalCost = 1e9; b.setFallbackConfig( { objectMedian: false, spatialMedian: false } );
+
+			} ],
+			[ broken ],
+			[ scatter( 1 ) ],
+		];
+		for ( const [ data, setup ] of cases ) {
+
+			const [ js, wasm ] = both( data, setup );
+			expect( wasm ).toEqual( { ...js, core: 1 } );
+
+		}
+
+	} );
+
+	it( 'builds top levels to a frontier and subtrees from their boxes as the JavaScript build does', () => {
+
+		const data = scatter( 2000 );
+		const run = ( useWasm ) => {
+
+			const top = prepared( data, b => ( b.useWasm = useWasm ) );
+			top.frontierTasks = [];
+			const root = top.buildRange( 0, 2000, 30, 3, null );
+			const subtrees = top.frontierTasks.map( t => {
+
+				const sub = prepared( data, b => ( b.useWasm = useWasm ) );
+				Object.assign( sub, { centroids: top.centroids, bMin: top.bMin, bMax: top.bMax, indices: top.indices } );
+				const r = sub.buildRange( t.start, t.end, t.depth, Infinity, null, [ t.preMinX, t.preMinY, t.preMinZ, t.preMaxX, t.preMaxY, t.preMaxZ ] );
+				return [ ...u32( sub.flattenBVH( r ) ) ];
+
+			} );
+			return { top: [ ...u32( top.flattenBVHWithFrontier( root ).flatData ) ], tasks: top.frontierTasks, subtrees, order: [ ...top.indices ] };
+
+		};
+
+		const js = run( false ), wasm = run( true );
+		expect( js.tasks.length ).toBe( 8 );
+		expect( wasm ).toEqual( js );
+
+	} );
+
+	it( 'reports progress while it builds, 100 only at the end', () => {
+
+		const builder = new BVHBuilder();
+		builder.enableReinsertionOptimization = false;
+		builder.progressUpdateInterval = - 1;
+		const progress = [];
+		builder.buildSync( scatter( 70000 ), 30, p => progress.push( p ) );
+		expect( progress.length ).toBeGreaterThan( 1 );
+		expect( progress.at( - 1 ) ).toBe( 100 );
+		expect( progress.slice( 0, - 1 ).every( ( p, i, all ) => p <= 99 && ( i === 0 || p >= all[ i - 1 ] ) ) ).toBe( true );
+
+	} );
+
+	it( 'builds in JavaScript when the core cannot run or fails partway', () => {
+
+		const data = scatter( 500 );
+		const [ js ] = both( data );
+		for ( const failure of [ () => vi.spyOn( BVHBuilder.prototype, '_openCore' ).mockReturnValue( null ),
+			() => vi.spyOn( BVHBuilder.prototype, '_runCore' ).mockImplementation( () => {
+
+				throw new WebAssembly.RuntimeError( 'unreachable' );
+
+			} ),
+			() => vi.spyOn( BVHBuilder.prototype, '_runCore' ).mockReturnValue( null ) ] ) {
+
+			failure();
+			const b = new BVHBuilder();
+			b.enableReinsertionOptimization = false;
+			b.progressUpdateInterval = - 1;
+			const progress = [];
+			const root = b.buildSync( data.slice(), 30, p => progress.push( p ) );
+			expect( [ ...u32( b.flattenBVH( root ) ) ] ).toEqual( js.bvh );
+			expect( [ ...b.reorderedTriangleData ] ).toEqual( js.triangles );
+			expect( progress.every( p => p <= 100 ) ).toBe( true );
+
+			const top = prepared( data );
+			top.frontierTasks = [];
+			expect( top.buildRange( 0, 500, 30, Infinity, null ).triangleCount ).toBeGreaterThanOrEqual( 0 );
+			vi.restoreAllMocks();
+
+		}
 
 	} );
 

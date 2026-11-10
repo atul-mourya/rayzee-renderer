@@ -7,6 +7,7 @@ import { BVHRefitter } from '../bvh/BVHRefitter.js';
 import { ISSUE_CODES } from '../EngineIssues.js';
 import { multiplyAffine, isIdentity } from './InstanceTable.js';
 import { TLASBuilder } from '../bvh/TLASBuilder.js';
+import { bvhCore } from '../bvh/BVHBuilder.js';
 import { createLogger } from '../Logger.js';
 import BVHWorker from '../bvh/BVHWorker.js?worker&inline';
 
@@ -883,6 +884,7 @@ export function scheduleBackgroundRebuild( processor, meshIndices, onSwap ) {
 			minBins: processor.bvhBuilder.minBins,
 			reportProgress: false,
 			sharedReorderBuffer: null,
+			bvhCore: bvhCore(),
 			reinsertionOptimization: {
 				enabled: processor.bvhBuilder.enableReinsertionOptimization,
 				batchSizeRatio: processor.bvhBuilder.reinsertionBatchSizeRatio,
