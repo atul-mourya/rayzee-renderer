@@ -231,6 +231,22 @@ describe( 'DenoisingManager — first refresh of an accumulation', () => {
 
 	} );
 
+	it( 'waits for the kernels, even while the view moves', () => {
+
+		const { manager } = makeManager();
+		manager.continuousDenoiseInterval = 0;
+		const stage = manager._stages.pathTracer;
+		stage.viewIsChanging = true;
+
+		stage.kernelsReady = false;
+		expect( manager.tickContinuousDenoise( 0 ) ).toBe( false );
+		expect( manager.denoiser.start ).not.toHaveBeenCalled();
+
+		stage.kernelsReady = true;
+		expect( manager.tickContinuousDenoise( 0 ) ).toBe( true );
+
+	} );
+
 } );
 
 describe( 'DenoisingManager — a tiled denoise on screen', () => {

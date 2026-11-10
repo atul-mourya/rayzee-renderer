@@ -749,6 +749,8 @@ export class DenoisingManager extends EventDispatcher {
 
 		const dn = this.denoiser;
 		if ( ! this.continuousDenoise || this._cadenceSuspended || ! dn ) return false;
+		// Nothing is traced while the kernels compile, and a denoise then only competes with their compile for the GPU.
+		if ( this._stages.pathTracer?.kernelsReady === false ) return false;
 
 		this._checkHeldFrameHealthy();
 
