@@ -76,7 +76,13 @@ function scene() {
 function records( direct ) {
 
 	const extractor = new GeometryExtractor();
-	if ( ! direct ) extractor._vertexReader = ( attribute ) => ( index, target ) => extractor.getVertex( attribute, index, target );
+	if ( ! direct ) {
+
+		extractor._vertexReader = ( attribute ) => ( index, target ) => extractor.getVertex( attribute, index, target );
+		extractor._fillPlain = extractor._fillGeneral;
+
+	}
+
 	let calls = 0;
 	const getVertex = extractor.getVertex.bind( extractor );
 	extractor.getVertex = ( ...args ) => {
@@ -102,6 +108,7 @@ describe( 'extractor vertex reads', () => {
 		expect( [ direct.length, first ] ).toEqual( [ called.length, - 1 ] );
 		// Only the interleaved, quantised and half-float meshes' 40 triangles take the calls: 3 attributes × 3 corners.
 		expect( calls ).toBe( 40 * 3 * 3 );
+		expect( records( false ).calls ).toBe( 90 * 3 * 3 - 20 * 3 );
 
 	} );
 

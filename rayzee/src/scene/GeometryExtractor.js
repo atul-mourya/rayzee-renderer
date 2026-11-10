@@ -252,6 +252,16 @@ function linearDir( v, e ) {
 
 }
 
+/** An attribute read straight from its array, as `_vertexReader`'s fast case reads it. */
+function plainAttribute( attribute, itemSize, exact = 0 ) {
+
+	const P = BufferAttribute.prototype;
+	return attribute.isBufferAttribute && ! attribute.isInterleavedBufferAttribute && ! attribute.normalized && !! attribute.array
+		&& attribute.getX === P.getX && attribute.getY === P.getY && attribute.getZ === P.getZ
+		&& ( exact ? attribute.itemSize === exact : attribute.itemSize >= itemSize );
+
+}
+
 // Emissive instances become real triangles, so the expansion is capped.
 const MAX_EXPANDED_EMISSIVE_TRIANGLES = 1 << 21;
 
@@ -1598,7 +1608,17 @@ export class GeometryExtractor {
 	}
 
 	/** Writes triangles [from, to) of one extractTrianglesInBatch call into its records. @private */
-	_fillTriangles( { positions, normals, uvs, indices, materialIndex, meshIndex, flipWinding, start, bm, bn }, from, to ) {
+	_fillTriangles( job, from, to ) {
+
+		const { positions, normals, uvs } = job;
+		const plain = plainAttribute( positions, 3 ) && plainAttribute( normals, 3 ) && ( ! uvs || plainAttribute( uvs, 2, 2 ) );
+		if ( plain ) this._fillPlain( job, from, to );
+		else this._fillGeneral( job, from, to );
+
+	}
+
+	/** @private */
+	_fillGeneral( { positions, normals, uvs, indices, materialIndex, meshIndex, flipWinding, start, bm, bn }, from, to ) {
 
 		// Pre-allocate objects for positions, normals, and UVs
 		const posA = this._getVec3( 0 );
@@ -1668,6 +1688,71 @@ export class GeometryExtractor {
 				materialIndex,
 				meshIndex
 			);
+
+		}
+
+	}
+
+	/** `_fillTriangles` over plain float arrays, record for record the same: one chunk lookup a run, no vectors. @private */
+	_fillPlain( { positions, normals, uvs, indices, materialIndex, meshIndex, flipWinding, start, bm, bn }, from, to ) {
+
+		const L = TRIANGLE_DATA_LAYOUT;
+		const P = positions.array, ps = positions.itemSize;
+		const N = normals.array, ns = normals.itemSize;
+		const T = uvs ? uvs.array : null;
+		const flags = packTriangleFlags( materialIndex, this.materials[ materialIndex ] );
+		const b = flipWinding ? 2 : 1, c = flipWinding ? 1 : 2;
+		const store = this.triangles, floats = this.triangleFloatChunks, lanes = L.FLOATS_PER_TRIANGLE;
+		const corners = [ 0, 0, 0 ];
+		const slots = [ L.POSITION_A_OFFSET, L.POSITION_B_OFFSET, L.POSITION_C_OFFSET ];
+		const normalSlots = [ L.NORMAL_A_PACKED_OFFSET, L.NORMAL_B_PACKED_OFFSET, L.NORMAL_C_PACKED_OFFSET ];
+		const uvSlots = [ L.UV_AB_OFFSET, L.UV_AB_OFFSET + 2, L.UV_C_OFFSET ];
+
+		for ( let i = from; i < to; ) {
+
+			const record = start + i;
+			const u = store.chunkFor( record ), f = floats.chunkFor( record );
+			const end = Math.min( to, i + store.recordsPerChunk - ( record % store.recordsPerChunk ) );
+
+			for ( let o = store.baseOf( record ); i < end; i ++, o += lanes ) {
+
+				const i3 = i * 3;
+				corners[ 0 ] = indices ? indices[ i3 ] : i3;
+				corners[ 1 ] = indices ? indices[ i3 + b ] : i3 + b;
+				corners[ 2 ] = indices ? indices[ i3 + c ] : i3 + c;
+
+				for ( let k = 0; k < 3; k ++ ) {
+
+					const v = corners[ k ];
+					let x = P[ v * ps ], y = P[ v * ps + 1 ], z = P[ v * ps + 2 ];
+					let nx = N[ v * ns ], ny = N[ v * ns + 1 ], nz = N[ v * ns + 2 ];
+					if ( bm ) {
+
+						const px = x, py = y, pz = z;
+						x = bm[ 0 ] * px + bm[ 4 ] * py + bm[ 8 ] * pz + bm[ 12 ];
+						y = bm[ 1 ] * px + bm[ 5 ] * py + bm[ 9 ] * pz + bm[ 13 ];
+						z = bm[ 2 ] * px + bm[ 6 ] * py + bm[ 10 ] * pz + bm[ 14 ];
+						const qx = nx, qy = ny, qz = nz;
+						nx = bn[ 0 ] * qx + bn[ 3 ] * qy + bn[ 6 ] * qz;
+						ny = bn[ 1 ] * qx + bn[ 4 ] * qy + bn[ 7 ] * qz;
+						nz = bn[ 2 ] * qx + bn[ 5 ] * qy + bn[ 8 ] * qz;
+
+					}
+
+					// Vector3.normalize(): multiplied by 1 / ( length || 1 )
+					const inv = 1 / ( Math.sqrt( nx * nx + ny * ny + nz * nz ) || 1 );
+					const slot = o + slots[ k ];
+					f[ slot ] = x; f[ slot + 1 ] = y; f[ slot + 2 ] = z;
+					u[ o + normalSlots[ k ] ] = packNormalOct( nx * inv, ny * inv, nz * inv );
+					f[ o + uvSlots[ k ] ] = T ? T[ v * 2 ] : 0;
+					f[ o + uvSlots[ k ] + 1 ] = T ? T[ v * 2 + 1 ] : 0;
+
+				}
+
+				u[ o + L.MATERIAL_FLAGS_OFFSET ] = flags;
+				u[ o + L.MESH_INDEX_OFFSET ] = meshIndex;
+
+			}
 
 		}
 
