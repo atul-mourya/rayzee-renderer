@@ -374,9 +374,8 @@ decided in `planSpill` with or without a disk; `memorySpill: false` keeps the pl
   leaves with at most 256 distinct corners; each corner (position + packed normal, 16 B) is kept once and a triangle
   names its three by bytes. One uvec4 store, in parts like the others: each triangle's `[ corner base, word ]` (8 B, two
   a row) for every reader without a leaf node, then the corners. A leaf node of ≤ 12 triangles also keeps its cluster's
-  base in slot [2] and its words in lanes 4–15, so traversal reads no pair first; a folded leaf reads the pairs. Packed
-  after the upload from the records where they are (memory, or 4 MB at a time from a spilling build's disk): a count
-  pass, then a write pass paced by `drainUploads`. The corners read back bit for bit.
+  base in slot [2] and its words in lanes 4–15, so traversal reads no pair first; a folded leaf reads the pairs. The
+  corners read back bit for bit.
 - **Objects' trees 4-wide** (`bvh/WideBVH.js`, `buildWideBVH`): each object's binary tree collapsed into nodes of up to
   four children, their boxes quantised as a copy cluster's are, leaves folded. The top level (TLAS, group trees) stays
   binary, so visibility and moves keep writing its nodes; what in it names an object — a placement leaf, a copy
@@ -385,6 +384,15 @@ decided in `planSpill` with or without a disk; `memorySpill: false` keeps the pl
   own need (`collapseSteps` returns it) through `traversalStackNeed( …, { count, objectNeed } )`.
 - **Copy records 32 B** (`packCopyRecord`: position f32, rotation as its smallest three components × 20 bits, inverse
   scales f32). A copy sheared past `COPY_SHEAR_LIMIT` keeps its 12 lanes in an overflow table behind, its slot naming it.
+
+**The build** (`pathtracer/CompactLayout.js`) runs after the upload, from the binary records where they are, in memory
+or spilled. Each pass is cut into jobs of 512K records — triangles at leaf boundaries, objects whole, copy records in
+ranges — run in `CompactWorker`s (`CompactJobs.js` on the page where there are none): every job counted, the GPU buffer
+sized from the counts, then every job packed at its offset and uploaded, each drained before its lane takes the next.
+A worker views a resident chunk's shared memory; a spilled piece the page reads for it, one at a time, 4 MB a step, and
+hands over: a worker reading the spill file itself went at 0.48 GB/s for eight together against the page's 3 GB/s, and
+eight reads at once on the page at a third of one. The jobs allocate next to nothing (the collapse keeps one frame a
+depth): with a few arrays a node, the island's object trees took 90 s of worker time a pass, without them 4.7 s.
 
 Edits write the CPU's binary tree (`stage.cpuTree` or the chunks) as before; `_writeTreeRecords` sends their compact
 form (a record sheared only after the load is drawn as its nearest unsheared one, warned once). A refit throws
@@ -395,15 +403,15 @@ session against main:
 
 | | plain | compact |
 |---|---|---|
-| corners | geo store 5.36 GB | 2.78 GB (117.95M corners, 1.06 a triangle), packed in 33.7 s |
-| tree | 5.53 GB | 3.71 GB (top 20.0M nodes kept; objects 36.5M → 17.5M nodes; copy records 1.92 → 1.29 GB, 597,242 sheared), built in 39.1 s |
-| GPU process | 13.0 GB settled and peak | 8.6 GB settled, 9.0 GB peak |
-| load / first frame | 270 s / +26 s | 287 s / +9 s |
+| corners | geo store 5.36 GB | 2.78 GB (117.95M corners, 1.06 a triangle), packed in 14.5 s (one thread: 33.7 s) |
+| tree | 5.53 GB | 3.71 GB (top 20.0M nodes kept; objects 36.5M → 17.5M nodes; copy records 1.92 → 1.29 GB, 597,242 sheared), built in 10.1 s (one thread: 39.1 s) |
+| GPU process | 13.0 GB settled and peak | 8.6–9.0 GB settled, 9.0 GB peak |
+| load / first frame | 270 s / 296 s | 239 s / 243 s (one thread: 287 / 296 s) |
 | frame (512 × 214) | 107–125 ms | 115–120 ms |
 
-The first frame waited on macOS wiring the GPU's buffers out of swap; with 4.4 GB less it waits a third as long, and
-the two passes cost what that saved. Both passes are single-threaded and read the spilled records from disk
-(5,110 and 2,060 pieces): the next lever for the load.
+The first frame waited on macOS wiring the GPU's buffers out of swap: with 4.4 GB less it waits a fifth as long. The
+corner pass is bound by reading the spilled records twice (8.9 GB a pass, 213 jobs on 8 workers); its workers compute
+1.7 s of each pass.
 
 ### Scene data: materials, then lights (`materialStorageNode`)
 One buffer, one Shade binding: `[ materials | light BVH nodes | emissive entries | bit-trail map ]`. Light reads go through `lightDataNode`, which adds `lightVec4Offset` (where the light data starts). Material edits upload only the material region.

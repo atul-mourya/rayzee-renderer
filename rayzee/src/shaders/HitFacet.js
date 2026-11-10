@@ -15,7 +15,7 @@ import {
 	packHalf2x16, unpackHalf2x16,
 } from 'three/tsl';
 import {
-	unpackTriangleNormal, triangleRow, triangleGeoRows, instanceRows, instanceFaceNormalToWorld, instancePointToWorld,
+	unpackTriangleNormal, triangleGeoRows, instanceRows, instanceFaceNormalToWorld, instancePointToWorld,
 } from './Common.js';
 import { shadowTerminatorLift } from './ShadowTerminator.js';
 

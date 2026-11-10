@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { packCorners, NODE_WORD_LANES, NODE_NO_LANES } from '@/core/scene/TriangleClusters.js';
+import { packCornerBlock, NODE_WORD_LANES, NODE_NO_LANES } from '@/core/scene/TriangleClusters.js';
 import { TRIANGLE_DATA_LAYOUT } from '@/core/scene/BufferLayout.js';
 
 const LANES = TRIANGLE_DATA_LAYOUT.FLOATS_PER_TRIANGLE;
@@ -73,51 +73,101 @@ function gridRecords( count ) {
 
 }
 
-// The whole pack, through a sink, `chunkRows` rows a call.
-async function pack( records, count, first, sizes, chunkRows ) {
+// The GPU buffer the stage assembles from jobs (pathtracer/CompactLayout.js): each job's pairs at its first triangle,
+// its corners at the row the counts before it give, after the pairs. `cuts` split the triangles into jobs.
+function pack( records, count, first, sizes, cuts = [] ) {
 
-	const counted = await packCorners( records, count, first, sizes );
-	const data = new Uint32Array( counted.rows * 4 );
-	const built = await packCorners( records, count, first, sizes, ( row, piece ) => data.set( piece, row * 4 ), chunkRows );
-	return { ...built, data, counted };
+	const edges = [ 0, ...cuts, count ];
+	const jobs = edges.slice( 0, - 1 ).map( ( from, k ) => {
+
+		const to = edges[ k + 1 ];
+		const leaves = first.map( ( f, l ) => l ).filter( ( l ) => first[ l ] >= from && first[ l ] < to );
+		return {
+			from, to, leaves,
+			records: records.subarray( from * LANES, to * LANES ),
+			leafFirst: Uint32Array.from( leaves, ( l ) => first[ l ] - from ), leafCount: Uint32Array.from( leaves, ( l ) => sizes[ l ] ),
+		};
+
+	} );
+	let at = Math.ceil( count / 2 );
+	const counted = jobs.map( ( j ) => packCornerBlock( j.records, j.to - j.from, j.leafFirst, j.leafCount ) );
+	const bases = counted.map( ( c ) => ( at += c.corners ) - c.corners );
+	const data = new Uint32Array( at * 4 );
+	const leafBase = new Uint32Array( first.length ), leafWords = new Uint32Array( first.length * NODE_WORD_LANES );
+	let clusters = 0, tooBig = 0;
+	jobs.forEach( ( j, k ) => {
+
+		const r = packCornerBlock( j.records, j.to - j.from, j.leafFirst, j.leafCount, bases[ k ] );
+		expect( r.corners ).toBe( counted[ k ].corners );
+		data.set( r.pairs, j.from * 2 );
+		data.set( r.rows, bases[ k ] * 4 );
+		j.leaves.forEach( ( l, i ) => {
+
+			leafBase[ l ] = r.leafBase[ i ];
+			leafWords.set( r.leafWords.subarray( i * NODE_WORD_LANES, ( i + 1 ) * NODE_WORD_LANES ), l * NODE_WORD_LANES );
+
+		} );
+		clusters += r.clusters;
+		tooBig += r.tooBig;
+
+	} );
+	return { data, leafBase, leafWords, clusters, tooBig, corners: at - Math.ceil( count / 2 ) };
 
 }
 
 const expected = ( records, t ) => [ 0, 1, 2 ].map( ( k ) => Array.from( records.subarray( t * LANES + k * 4, t * LANES + k * 4 + 4 ) ) );
 
-describe( 'packCorners', () => {
+const readsBack = ( built, records, count, first, sizes ) => {
 
-	it( 'reads every triangle back through its pair and its leaf node, gaps included', async () => {
+	for ( let t = 0; t < count; t ++ ) expect( readNodeCorners( built.data, t ) ).toEqual( expected( records, t ) );
+	first.forEach( ( f, l ) => {
+
+		if ( built.leafBase[ l ] === NODE_NO_LANES ) return;
+		for ( let i = 0; i < sizes[ l ]; i ++ ) {
+
+			const leaf = { cornerBase: built.leafBase[ l ], word: built.leafWords[ l * NODE_WORD_LANES + i ] };
+			expect( readNodeCorners( built.data, f + i, leaf ) ).toEqual( expected( records, f + i ) );
+
+		}
+
+	} );
+
+};
+
+describe( 'packCornerBlock', () => {
+
+	it( 'reads every triangle back through its pair and its leaf node, gaps included', () => {
 
 		const count = 700;
 		const records = gridRecords( count );
 		const { first, sizes } = leaves( count );
-		const built = await pack( records, count, Uint32Array.from( first ), Uint32Array.from( sizes ) );
+		const built = pack( records, count, first, sizes );
 
 		expect( built.clusters ).toBeGreaterThan( 1 );
-		expect( built.counted.rows ).toBe( built.rows );
 		// A strip shares its corners: far fewer than three a triangle.
 		expect( built.corners ).toBeLessThan( count * 3 / 2 );
-		for ( let t = 0; t < count; t ++ ) expect( readNodeCorners( built.data, t ) ).toEqual( expected( records, t ) );
-		first.forEach( ( f, l ) => {
-
-			for ( let i = 0; i < sizes[ l ]; i ++ ) {
-
-				const leaf = { cornerBase: built.leafBase[ l ], word: built.leafWords[ l * NODE_WORD_LANES + i ] };
-				expect( readNodeCorners( built.data, f + i, leaf ) ).toEqual( expected( records, f + i ) );
-
-			}
-
-		} );
+		readsBack( built, records, count, first, sizes );
 
 	} );
 
-	it( 'keeps corners that differ only in the normal or in -0 apart', async () => {
+	it( 'packs in jobs cut at leaf boundaries, an odd one included, each at the offset the counts before it give', () => {
+
+		const count = 701;
+		const records = gridRecords( count );
+		const { first, sizes } = leaves( count );
+		// Cuts at leaf starts, as the build makes them: never inside a leaf.
+		const cuts = [ first[ 9 ], first[ 40 ], first[ 61 ], first[ 90 ] ];
+		expect( cuts.some( ( c ) => c % 2 ) ).toBe( true );
+		readsBack( pack( records, count, first, sizes, cuts ), records, count, first, sizes );
+
+	} );
+
+	it( 'keeps corners that differ only in the normal or in -0 apart', () => {
 
 		const records = gridRecords( 2 );
 		records[ 3 ] = 0x12345678;
 		records[ LANES + 2 ] = 0;
-		const { data } = await pack( records, 2, Uint32Array.of( 0 ), Uint32Array.of( 2 ) );
+		const { data } = pack( records, 2, [ 0 ], [ 2 ] );
 		expect( readNodeCorners( data, 0 )[ 0 ][ 3 ] ).toBe( 0x12345678 );
 		expect( readNodeCorners( data, 1 )[ 0 ][ 3 ] ).toBe( 0x7fff0000 );
 		expect( readNodeCorners( data, 1 )[ 0 ][ 2 ] ).toBe( 0 );
@@ -125,77 +175,17 @@ describe( 'packCorners', () => {
 
 	} );
 
-	it( 'streams what it writes a few rows at a time, each waited on, the same rows', async () => {
-
-		const count = 701;
-		const records = gridRecords( count );
-		const { first, sizes } = leaves( count );
-		const whole = await pack( records, count, Uint32Array.from( first ), Uint32Array.from( sizes ) );
-
-		const out = new Uint32Array( whole.rows * 4 );
-		const calls = [];
-		let drains = 0;
-		const streamed = await packCorners( records, count, Uint32Array.from( first ), Uint32Array.from( sizes ), ( row, data ) => {
-
-			calls.push( data.length / 4 );
-			out.set( data, row * 4 );
-			return Promise.resolve().then( () => drains ++ );
-
-		}, 7 );
-		expect( drains ).toBe( calls.length );
-		expect( Math.max( ...calls ) ).toBeLessThanOrEqual( 7 );
-		expect( out ).toEqual( whole.data );
-		expect( streamed.leafBase ).toEqual( whole.leafBase );
-		expect( streamed.leafWords ).toEqual( whole.leafWords );
-
-	} );
-
-	it( 'reads a leaf past the lanes through its pairs, marked for traversal', async () => {
+	it( 'reads a leaf past the lanes through its pairs, marked for traversal', () => {
 
 		const count = 120;
 		const records = gridRecords( count );
-		const built = await pack( records, count, Uint32Array.of( 0, 50, 110 ), Uint32Array.of( 50, 60, 10 ) );
+		const first = [ 0, 50, 110 ], sizes = [ 50, 60, 10 ];
+		const built = pack( records, count, first, sizes );
 
 		expect( built.tooBig ).toBe( 2 );
 		expect( built.leafBase[ 0 ] ).toBe( NODE_NO_LANES );
 		expect( built.leafBase[ 1 ] ).toBe( NODE_NO_LANES );
-		for ( let t = 0; t < count; t ++ ) expect( readNodeCorners( built.data, t ) ).toEqual( expected( records, t ) );
-		for ( let i = 0; i < 10; i ++ ) {
-
-			const leaf = { cornerBase: built.leafBase[ 2 ], word: built.leafWords[ 2 * NODE_WORD_LANES + i ] };
-			expect( readNodeCorners( built.data, 110 + i, leaf ) ).toEqual( expected( records, 110 + i ) );
-
-		}
-
-	} );
-
-	it( 'packs through a small window loaded on demand: the same rows', async () => {
-
-		const count = 700;
-		const records = gridRecords( count );
-		const { first, sizes } = leaves( count );
-		const whole = await pack( records, count, Uint32Array.from( first ), Uint32Array.from( sizes ) );
-		const size = 37;
-		const buffer = new Uint32Array( size * LANES );
-		let loads = 0;
-		const window = {
-			windowed: true, start: 0, end: 0,
-			at: () => buffer,
-			base: ( t ) => ( t - window.start ) * LANES,
-			has: ( f, n ) => f >= window.start && f + n <= window.end,
-			load: async ( f ) => {
-
-				loads ++;
-				window.start = f;
-				window.end = Math.min( count, f + size );
-				buffer.set( records.subarray( f * LANES, window.end * LANES ) );
-
-			},
-		};
-
-		const windowed = await pack( window, count, Uint32Array.from( first ), Uint32Array.from( sizes ) );
-		expect( loads ).toBeGreaterThan( 2 * count / size - 2 );
-		expect( windowed.data ).toEqual( whole.data );
+		readsBack( built, records, count, first, sizes );
 
 	} );
 

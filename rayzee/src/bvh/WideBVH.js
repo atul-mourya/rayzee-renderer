@@ -41,6 +41,29 @@ export class WideWriter {
 
 	}
 
+	/** at( n ) into one object, overwritten by the next call. */
+	cursor( n ) {
+
+		const c = this._cursor ??= { f: null, u: null, o: 0 };
+		const p = Math.floor( ( n - this.base ) / this.pageNodes );
+		if ( p < this.sent ) {
+
+			c.f = this.late;
+			c.u = this.late.u;
+			c.o = 0;
+			return c;
+
+		}
+
+		const page = this.pages[ p ];
+		page.u ??= new Uint32Array( page.buffer );
+		c.f = page;
+		c.u = page.u;
+		c.o = ( ( n - this.base ) % this.pageNodes ) * 16;
+		return c;
+
+	}
+
 	/** The f32 and u32 views and lane offset of node n. */
 	at( n ) {
 
@@ -117,39 +140,54 @@ export function* collapseSteps( src, root, out, { onLeafCopy = null } = {} ) {
 
 	};
 
-	// Inner node n opened to up to four children, the largest inner child first; null when a node it needs is not loaded.
-	const expand = ( n ) => {
+	// One expansion's children, up to WIDTH and one more while the largest inner one opens; and one frame a depth, reused.
+	// Allocated a node, their collection was most of the time in workers.
+	const sRefs = new Uint32Array( WIDTH + 2 ), sKinds = new Uint8Array( WIDTH + 2 ), sBox = new Float64Array( ( WIDTH + 2 ) * 6 );
+	let sCount = 0;
+	const frames = [];
+	const frameAt = ( d ) => frames[ d ] ??= { at: 0, count: 0, next: 0, need: 0, refs: new Uint32Array( WIDTH ), kinds: new Uint8Array( WIDTH ), box: new Float64Array( WIDTH * 6 ), wide: new Uint32Array( WIDTH ) };
 
-		const refs = [], kinds = [], box = [];
-		const open = ( m ) => {
+	const open = ( m ) => {
 
-			const o = src.at( m );
-			if ( o < 0 ) {
+		const o = src.at( m );
+		if ( o < 0 ) {
 
-				missing = m;
-				return false;
+			missing = m;
+			return false;
 
-			}
+		}
 
-			const f = src.f, u = src.u;
-			const l = u[ o + 3 ], r = u[ o + 7 ];
-			box.push( f[ o ], f[ o + 1 ], f[ o + 2 ], f[ o + 4 ], f[ o + 5 ], f[ o + 6 ], f[ o + 8 ], f[ o + 9 ], f[ o + 10 ], f[ o + 12 ], f[ o + 13 ], f[ o + 14 ] );
-			const kl = kindOf( l ), kr = kindOf( r );
-			if ( kl < 0 || kr < 0 ) return false;
-			refs.push( l, r );
-			kinds.push( kl, kr );
-			return true;
+		const f = src.f, u = src.u;
+		const l = u[ o + 3 ], r = u[ o + 7 ];
+		const b = sCount * 6;
+		sBox[ b ] = f[ o ]; sBox[ b + 1 ] = f[ o + 1 ]; sBox[ b + 2 ] = f[ o + 2 ];
+		sBox[ b + 3 ] = f[ o + 4 ]; sBox[ b + 4 ] = f[ o + 5 ]; sBox[ b + 5 ] = f[ o + 6 ];
+		sBox[ b + 6 ] = f[ o + 8 ]; sBox[ b + 7 ] = f[ o + 9 ]; sBox[ b + 8 ] = f[ o + 10 ];
+		sBox[ b + 9 ] = f[ o + 12 ]; sBox[ b + 10 ] = f[ o + 13 ]; sBox[ b + 11 ] = f[ o + 14 ];
+		const kl = kindOf( l ), kr = kindOf( r );
+		if ( kl < 0 || kr < 0 ) return false;
+		sRefs[ sCount ] = l;
+		sKinds[ sCount ] = kl;
+		sRefs[ sCount + 1 ] = r;
+		sKinds[ sCount + 1 ] = kr;
+		sCount += 2;
+		return true;
 
-		};
+	};
 
+	// Inner node n opened to up to four children, the largest inner child first, into the frame for `depth`; null when a
+	// node it needs is not loaded.
+	const expand = ( n, depth ) => {
+
+		sCount = 0;
 		if ( ! open( n ) ) return null;
 		for ( ;; ) {
 
 			let best = - 1, bestArea = - 1;
-			if ( refs.length < WIDTH ) for ( let k = 0; k < refs.length; k ++ ) {
+			if ( sCount < WIDTH ) for ( let k = 0; k < sCount; k ++ ) {
 
-				if ( kinds[ k ] !== INNER ) continue;
-				const a = area( box, k * 6 );
+				if ( sKinds[ k ] !== INNER ) continue;
+				const a = area( sBox, k * 6 );
 				if ( a > bestArea ) {
 
 					best = k;
@@ -160,22 +198,31 @@ export function* collapseSteps( src, root, out, { onLeafCopy = null } = {} ) {
 			}
 
 			if ( best < 0 ) break;
-			const m = refs[ best ];
-			refs.splice( best, 1 );
-			kinds.splice( best, 1 );
-			box.splice( best * 6, 6 );
+			const m = sRefs[ best ];
+			for ( let k = best; k < sCount - 1; k ++ ) {
+
+				sRefs[ k ] = sRefs[ k + 1 ];
+				sKinds[ k ] = sKinds[ k + 1 ];
+				for ( let a = 0; a < 6; a ++ ) sBox[ k * 6 + a ] = sBox[ k * 6 + 6 + a ];
+
+			}
+
+			sCount --;
 			if ( ! open( m ) ) return null;
 
 		}
 
 		// A child no ray reaches (a hidden member's far box) would stretch the quantisation range to it.
-		const frame = { at: out.alloc(), refs: [], kinds: [], box: new Float64Array( WIDTH * 6 ), next: 0, wide: [], need: 0 };
-		for ( let k = 0; k < refs.length; k ++ ) {
+		const frame = frameAt( depth );
+		frame.at = out.alloc();
+		frame.count = frame.next = frame.need = 0;
+		for ( let k = 0; k < sCount; k ++ ) {
 
-			if ( ! ( box[ k * 6 ] < BVH_EMPTY_BOX * 0.5 ) ) continue;
-			frame.box.set( box.slice( k * 6, k * 6 + 6 ), frame.refs.length * 6 );
-			frame.refs.push( refs[ k ] );
-			frame.kinds.push( kinds[ k ] );
+			if ( ! ( sBox[ k * 6 ] < BVH_EMPTY_BOX * 0.5 ) ) continue;
+			const c = frame.count ++;
+			for ( let a = 0; a < 6; a ++ ) frame.box[ c * 6 + a ] = sBox[ k * 6 + a ];
+			frame.refs[ c ] = sRefs[ k ];
+			frame.kinds[ c ] = sKinds[ k ];
 
 		}
 
@@ -204,7 +251,7 @@ export function* collapseSteps( src, root, out, { onLeafCopy = null } = {} ) {
 
 		if ( tag !== BVH_LEAF_MARKERS.TRIANGLE_LEAF ) throw new Error( `WideBVH: leaf tag ${tag.toString( 16 )} in an object's tree` );
 		const at = out.alloc();
-		const w = out.at( at );
+		const w = out.cursor( at );
 		w.f.set( f.subarray( o, o + 16 ), w.o );
 		onLeafCopy?.( n, w );
 
@@ -230,12 +277,12 @@ export function* collapseSteps( src, root, out, { onLeafCopy = null } = {} ) {
 	}
 
 	let first;
-	while ( ! ( first = expand( root ) ) ) yield { need: missing };
+	while ( ! ( first = expand( root, 0 ) ) ) yield { need: missing };
 	const stack = [ first ];
 	for ( ;; ) {
 
 		const top = stack[ stack.length - 1 ];
-		if ( top.next < top.refs.length ) {
+		if ( top.next < top.count ) {
 
 			const k = top.next;
 			const ref = top.refs[ k ], kind = top.kinds[ k ];
@@ -249,7 +296,7 @@ export function* collapseSteps( src, root, out, { onLeafCopy = null } = {} ) {
 			} else {
 
 				let frame;
-				while ( ! ( frame = expand( ref ) ) ) yield { need: missing };
+				while ( ! ( frame = expand( ref, stack.length ) ) ) yield { need: missing };
 				stack.push( frame );
 				continue;
 
@@ -260,8 +307,8 @@ export function* collapseSteps( src, root, out, { onLeafCopy = null } = {} ) {
 
 		}
 
-		const w = out.at( top.at );
-		const count = top.refs.length;
+		const w = out.cursor( top.at );
+		const count = top.count;
 		encodeClusterBoxes( w.f, w.u, w.o, top.box, count, null, 0 );
 		w.u[ w.o ] = count;
 		w.u[ w.o + 3 ] = WIDE_NODE;
@@ -277,6 +324,43 @@ export function* collapseSteps( src, root, out, { onLeafCopy = null } = {} ) {
 		parent.wide[ parent.next ++ ] = top.at;
 
 	}
+
+}
+
+/**
+ * The 4-wide trees of `roots` (binary roots, ascending; every node they reach in `src`), one job of a build spread over
+ * workers. Without `wideBase` each one's node count and stack need; with it their nodes, written from `wideBase` on in
+ * order, as one array, and each one's wide root.
+ * @returns {{ counts?: Uint32Array, stacks?: Uint32Array, nodes?: Float32Array, roots?: Uint32Array }}
+ */
+export function collapseObjects( src, roots, { wideBase = null, onLeafCopy = null } = {} ) {
+
+	const counting = wideBase === null;
+	// Counting sends each full page nowhere; writing keeps them for the one array.
+	const out = new WideWriter( wideBase ?? 0, counting ? () => {} : null );
+	const counts = new Uint32Array( roots.length ), stacks = new Uint32Array( roots.length ), wide = new Uint32Array( roots.length );
+	for ( let i = 0; i < roots.length; i ++ ) {
+
+		const before = out.count;
+		const steps = collapseSteps( src, roots[ i ], out, { onLeafCopy } );
+		let step;
+		while ( ! ( step = steps.next() ).done ) {
+
+			if ( step.value.need !== undefined ) throw new Error( `WideBVH: node ${step.value.need} is not in the job` );
+			if ( counting ) out.flush();
+
+		}
+
+		wide[ i ] = step.value.root;
+		stacks[ i ] = step.value.stack;
+		counts[ i ] = out.count - before;
+
+	}
+
+	if ( counting ) return { counts, stacks };
+	const nodes = new Float32Array( out.count * 16 );
+	out.pages.forEach( ( page, k ) => nodes.set( page.subarray( 0, Math.min( out.pageNodes, out.count - k * out.pageNodes ) * 16 ), k * out.pageNodes * 16 ) );
+	return { nodes, roots: wide };
 
 }
 

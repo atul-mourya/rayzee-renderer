@@ -401,7 +401,7 @@ describeGPU( 'grouped instance traversal', () => {
 
 			const per = 64, count = nodes.length / 16, chunks = [];
 			for ( let k = 0; k * per < count; k ++ ) chunks.push( k % 2 ? null : nodes.slice( k * per * 16, Math.min( count, ( k + 1 ) * per ) * 16 ) );
-			return { recordsPerChunk: per, recordCount: count, chunks, _store: { _chunkBytes: per * 64, readAt: async ( at, bytes ) => nodes.buffer.slice( at, at + bytes ) } };
+			return { recordsPerChunk: per, recordCount: count, lanesPerRecord: 16, chunks, _store: { _chunkBytes: per * 64, readAt: async ( at, bytes ) => nodes.buffer.slice( at, at + bytes ) } };
 
 		};
 
@@ -411,6 +411,8 @@ describeGPU( 'grouped instance traversal', () => {
 			_partCounts: { geo: 0, shade: 0 },
 			bvhStorageAttr: { array: disk ? null : set.nodes, copyRecordBase: set.nodes.copyRecordBase, binaryOnly: true },
 			_binaryFlat: disk ? null : set.nodes,
+			// Small jobs: objects in several batches, copy records in several ranges.
+			compactJobSize: 7,
 		} );
 
 		const binaryOf = ( set ) => traceAll( renderer, storage( Object.assign( new StorageInstancedBufferAttribute( set.nodes, 4 ), { copyRecordBase: set.nodes.copyRecordBase } ), 'vec4', set.nodes.length / 4 ).toReadOnly(), triangles, light );

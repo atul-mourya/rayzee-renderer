@@ -296,6 +296,36 @@ export const COPY_SHEAR_LIMIT = 1e-5;
 export const COPY_FULL_RECORD = 0x80000000;
 const ROTATION_MAX = ( 1 << COMPACT_ROTATION_BITS ) - 1;
 
+/**
+ * `count` copy records of 12 lanes (`src`), one job of a build spread over workers. Without `slotBase` how many are
+ * sheared past COPY_SHEAR_LIMIT; with it each packed (COMPACT_RECORD_LANES), a sheared one's slot naming its whole
+ * record in the overflow table from `slotBase` on, and those records (`full`) with their places (`sheared`).
+ * @returns {{ sheared: number|Uint32Array, packed?: Float32Array, full?: Float32Array }}
+ */
+export function packCopyRange( src, count, slotBase = null ) {
+
+	const OUT = COMPACT_RECORD_LANES, counting = slotBase === null;
+	const packed = new Float32Array( counting ? OUT : count * OUT ), u = new Uint32Array( packed.buffer );
+	const sheared = [];
+	for ( let k = 0; k < count; k ++ ) {
+
+		const o = counting ? 0 : k * OUT;
+		if ( packCopyRecord( src, k * 12, packed, u, o ) <= COPY_SHEAR_LIMIT ) continue;
+		sheared.push( k );
+		if ( counting ) continue;
+		packed.fill( 0, o, o + OUT );
+		u[ o + 3 ] = slotBase + sheared.length - 1;
+		u[ o + 4 ] = COPY_FULL_RECORD;
+
+	}
+
+	if ( counting ) return { sheared: sheared.length };
+	const full = new Float32Array( sheared.length * 12 );
+	sheared.forEach( ( k, i ) => full.set( src.subarray( k * 12, k * 12 + 12 ), i * 12 ) );
+	return { packed, full, sheared: Uint32Array.from( sheared ) };
+
+}
+
 /** Packs the 12-lane record at `src[ so ]` into `f` / `u` (f32 and u32 views of one buffer) at `o`; returns its shear. */
 export function packCopyRecord( src, so, f, u, o ) {
 

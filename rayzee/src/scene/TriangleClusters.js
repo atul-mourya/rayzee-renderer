@@ -60,26 +60,6 @@ class CornerSet {
 
 }
 
-// Triangle records as one array or ChunkedRecords, read as u32 lanes (a curve's NaN marker compares by its bits): the
-// array holding triangle t and its first lane there.
-function source( records ) {
-
-	const views = new Map();
-	const u32 = ( a ) => {
-
-		if ( a instanceof Uint32Array ) return a;
-		let v = views.get( a );
-		if ( ! v ) views.set( a, v = new Uint32Array( a.buffer, a.byteOffset, a.length ) );
-		return v;
-
-	};
-
-	return records.chunkFor
-		? { at: ( t ) => u32( records.chunkFor( t ) ), base: ( t ) => records.baseOf( t ) }
-		: { at: () => u32( records ), base: ( t ) => t * LANES };
-
-}
-
 // Every triangle in exactly one range, in order: the leaves, and the gaps between them in pieces of 8 (−1 for no leaf).
 function leafRanges( count, leafFirst, leafCount, maxLeaf ) {
 
@@ -133,12 +113,10 @@ function leafRanges( count, leafFirst, leafCount, maxLeaf ) {
 
 }
 
-// Groups whole ranges into clusters of at most MAX_CORNERS distinct corners, `flush( pending, set )` writing each. It
-// yields after each flush, so a caller can let an upload drain, and yields { need } when `records` is a window
-// (`windowed`) that does not hold the next range, for the caller to load it.
-function* clusterSteps( records, { firsts, counts, leafOf }, flush ) {
+// Groups whole ranges of `records` (u32 lanes, triangle 0 first) into clusters of at most MAX_CORNERS distinct
+// corners, `flush( pending, set )` writing each.
+function clusterRanges( records, { firsts, counts, leafOf }, flush ) {
 
-	const src = records.windowed ? records : source( records );
 	const set = new CornerSet();
 	const words = new Uint32Array( 1 << LEAF_SLOT_BITS );
 	let pending = [];
@@ -159,25 +137,24 @@ function* clusterSteps( records, { firsts, counts, leafOf }, flush ) {
 	for ( let r = 0; r < firsts.length; r ++ ) {
 
 		const first = firsts[ r ], n = counts[ r ];
-		if ( src.windowed && ! src.has( first, n ) ) yield { need: first };
 
 		// A range's corners all go in one cluster: count the new ones first, a corner repeated in it once.
 		let fresh = 0;
 		for ( let t = first; t < first + n; t ++ ) {
 
-			const array = src.at( t ), s = src.base( t );
+			const s = t * LANES;
 			for ( let k = 0; k < 3; k ++ ) {
 
 				const c = s + k * 4;
-				if ( set.find( array, c, false ) !== - 1 ) continue;
+				if ( set.find( records, c, false ) !== - 1 ) continue;
 				let repeated = false;
 				for ( let u = first; u <= t && ! repeated; u ++ ) {
 
-					const other = src.at( u ), o = src.base( u );
+					const o = u * LANES;
 					for ( let j = 0; j < ( u === t ? k : 3 ); j ++ ) {
 
 						const d = o + j * 4;
-						if ( other[ d ] === array[ c ] && other[ d + 1 ] === array[ c + 1 ] && other[ d + 2 ] === array[ c + 2 ] && other[ d + 3 ] === array[ c + 3 ] ) {
+						if ( records[ d ] === records[ c ] && records[ d + 1 ] === records[ c + 1 ] && records[ d + 2 ] === records[ c + 2 ] && records[ d + 3 ] === records[ c + 3 ] ) {
 
 							repeated = true;
 							break;
@@ -194,18 +171,13 @@ function* clusterSteps( records, { firsts, counts, leafOf }, flush ) {
 
 		}
 
-		if ( set.count + fresh > MAX_CORNERS ) {
-
-			close();
-			yield;
-
-		}
+		if ( set.count + fresh > MAX_CORNERS ) close();
 
 		for ( let t = first, i = 0; t < first + n; t ++, i ++ ) {
 
-			const array = src.at( t ), s = src.base( t );
+			const s = t * LANES;
 			let word = 0;
-			for ( let k = 0; k < 3; k ++ ) word |= set.find( array, s + k * 4, true ) << ( 8 * k );
+			for ( let k = 0; k < 3; k ++ ) word |= set.find( records, s + k * 4, true ) << ( 8 * k );
 			words[ i ] = word >>> 0;
 
 		}
@@ -223,134 +195,58 @@ function* clusterSteps( records, { firsts, counts, leafOf }, flush ) {
 export const NODE_NO_LANES = 0xFFFFFFFF;
 
 /**
- * The packed corners without holding them whole: `sink( row, data )` takes it in order, a region at a time (the
- * per-triangle table, then the corners), `chunkRows` rows a call; a promise it returns is waited on before the next
- * cluster. Without a sink it only counts the rows. `records` may be a window over records kept elsewhere: `{ windowed:
- * true, at( t ), base( t ), has( first, n ), load( first ) }`, loaded on demand. A leaf past
- * NODE_WORD_LANES triangles gets NODE_NO_LANES as its base: its node has no room for its words.
- * @returns {{ rows: number, clusters: number, corners: number, leafBase: ?Uint32Array, leafWords: ?Uint32Array, tooBig: number }}
+ * The packed corners of `count` triangles (`records`, u32 lanes from the first; leaves relative to it), one job of a
+ * build spread over workers. Without `cornerBase` only how many corners and clusters; with it each triangle's
+ * [ corner base, word ] (`pairs`, two lanes a triangle) and the corners as rows from `cornerBase` on (`rows`), with
+ * each leaf's base and words for its node. A leaf past NODE_WORD_LANES triangles gets NODE_NO_LANES as its base: its
+ * node has no room for its words.
+ * @returns {{ corners: number, clusters: number, tooBig: number, pairs?: Uint32Array, rows?: Uint32Array, leafBase?: Uint32Array, leafWords?: Uint32Array }}
  */
-export async function packCorners( records, count, leafFirst, leafCount, sink = null, chunkRows = 1 << 20 ) {
+export function packCornerBlock( records, count, leafFirst, leafCount, cornerBase = null ) {
 
 	const ranges = leafRanges( count, leafFirst, leafCount, NODE_WORD_LANES );
-	const pairRows = Math.ceil( count / 2 );
-	// Runs the steps, loading the window a range needs and waiting on what the sink returned.
-	let waiting = null;
-	const run = async ( steps ) => {
+	const write = cornerBase !== null;
+	const pairs = write ? new Uint32Array( count * 2 ) : null;
+	const leafBase = write ? new Uint32Array( leafFirst.length ) : null;
+	const leafWords = write ? new Uint32Array( leafFirst.length * NODE_WORD_LANES ) : null;
+	if ( write ) for ( const l of ranges.tooBig ) leafBase[ l ] = NODE_NO_LANES;
+	const blocks = [];
+	let at = cornerBase ?? 0;
 
-		let step;
-		while ( ! ( step = steps.next() ).done ) {
+	const { clusters, corners } = clusterRanges( records, ranges, ( pending, set ) => {
 
-			if ( step.value?.need !== undefined ) await records.load( step.value.need );
-			if ( waiting ) await waiting;
-			waiting = null;
+		if ( write ) {
 
-		}
+			for ( const p of pending ) {
 
-		return step.value;
+				for ( let i = 0; i < p.count; i ++ ) {
 
-	};
-
-	if ( ! sink ) {
-
-		const { clusters, corners } = await run( clusterSteps( records, ranges, () => {} ) );
-		return { rows: pairRows + corners, clusters, corners, leafBase: null, leafWords: null, tooBig: ranges.tooBig.length };
-
-	}
-
-	const leafBase = new Uint32Array( leafFirst.length );
-	const leafWords = new Uint32Array( leafFirst.length * NODE_WORD_LANES );
-	for ( const l of ranges.tooBig ) leafBase[ l ] = NODE_NO_LANES;
-
-	// Two append-only regions, each staged `chunkRows` rows at a time.
-	const region = ( start ) => {
-
-		const stage = new Uint32Array( chunkRows * 4 );
-		let base = start, filled = 0;
-		const flush = () => {
-
-			if ( filled ) sink( base, stage.subarray( 0, filled * 4 ) );
-			base += filled;
-			filled = 0;
-
-		};
-
-		return {
-			flush,
-			// Lane `lane` of row `row`, rows only ever moving forward.
-			put( row, lane, value ) {
-
-				while ( row - base >= chunkRows ) {
-
-					filled = chunkRows;
-					flush();
-					stage.fill( 0 );
+					pairs[ ( p.first + i ) * 2 ] = at;
+					pairs[ ( p.first + i ) * 2 + 1 ] = p.words[ i ];
 
 				}
 
-				stage[ ( row - base ) * 4 + lane ] = value;
-				filled = Math.max( filled, row - base + 1 );
+				if ( p.leaf >= 0 ) {
 
-			},
-			append( data ) {
-
-				for ( let at = 0; at < data.length; ) {
-
-					const n = Math.min( data.length - at, ( chunkRows - filled ) * 4 );
-					stage.set( data.subarray( at, at + n ), filled * 4 );
-					filled += n / 4;
-					at += n;
-					if ( filled === chunkRows ) flush();
+					leafBase[ p.leaf ] = at;
+					leafWords.set( p.words, p.leaf * NODE_WORD_LANES );
 
 				}
 
-			},
-		};
-
-	};
-
-	const pairs = region( 0 );
-	const corners = region( pairRows );
-	let cornerAt = pairRows;
-
-	// A sink may return a promise (an upload draining): the next cluster waits for it.
-	const put = sink;
-	sink = ( row, data ) => {
-
-		waiting = put( row, data ) ?? waiting;
-
-	};
-
-	const steps = clusterSteps( records, ranges, ( pending, set ) => {
-
-		for ( const p of pending ) {
-
-			for ( let i = 0; i < p.count; i ++ ) {
-
-				const t = p.first + i;
-				pairs.put( t >> 1, ( t & 1 ) * 2, cornerAt );
-				pairs.put( t >> 1, ( t & 1 ) * 2 + 1, p.words[ i ] );
-
 			}
 
-			if ( p.leaf >= 0 ) {
-
-				leafBase[ p.leaf ] = cornerAt;
-				leafWords.set( p.words, p.leaf * NODE_WORD_LANES );
-
-			}
+			blocks.push( set.corners.slice( 0, set.count * 4 ) );
 
 		}
 
-		corners.append( set.corners.subarray( 0, set.count * 4 ) );
-		cornerAt += set.count;
+		at += set.count;
 
 	} );
 
-	const { clusters, corners: total } = await run( steps );
-	pairs.flush();
-	corners.flush();
-	if ( waiting ) await waiting;
-	return { rows: pairRows + total, clusters, corners: total, leafBase, leafWords, tooBig: ranges.tooBig.length };
+	const tooBig = ranges.tooBig.length;
+	if ( ! write ) return { corners, clusters, tooBig };
+	const rows = new Uint32Array( corners * 4 );
+	for ( let k = 0, o = 0; k < blocks.length; o += blocks[ k ].length, k ++ ) rows.set( blocks[ k ], o );
+	return { corners, clusters, tooBig, pairs, rows, leafBase, leafWords };
 
 }

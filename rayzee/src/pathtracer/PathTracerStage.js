@@ -21,14 +21,10 @@ import { LightSerializer } from '../lights/LightSerializer';
 
 // Constants
 import { ENGINE_DEFAULTS as DEFAULT_STATE } from '../EngineDefaults.js';
-import {
-	TRIANGLE_DATA_LAYOUT, CLUSTER_COPY_HIDDEN, CLUSTER_COUNT_SHIFT, CLUSTER_ROOT_MASK, BVH_LEAF_MARKERS, BVH_MAX_INDEX, bvhIndexView, COMPACT_RECORD_LANES,
-	COPY_SHEAR_LIMIT, COPY_FULL_RECORD, packCopyRecord,
-} from '../scene/BufferLayout.js';
-import { traversalStackSize, SPILLED_TRAVERSAL_STACK } from '../bvh/TraversalStack.js';
+import { TRIANGLE_DATA_LAYOUT, CLUSTER_COPY_HIDDEN, bvhIndexView } from '../scene/BufferLayout.js';
+import { traversalStackSize } from '../bvh/TraversalStack.js';
 import { TRI_GEO_ROWS, TRI_SHADE_ROWS, splitStorage } from '../shaders/Common.js';
-import { packCorners, NODE_WORD_LANES } from '../scene/TriangleClusters.js';
-import { WideWriter, collapseSteps } from '../bvh/WideBVH.js';
+import { buildCorners, buildWideTree, wideTraversalStack, writeTreeRecords } from './CompactLayout.js';
 import { createLogger, fmt } from '../Logger.js';
 
 // Triangles converted per staging pass: 256K is 12 + 8 MB of staging, kept for the stage's life.
@@ -86,23 +82,6 @@ const SHADE_OTHER_BINDINGS = 5;
 function readParts( parts, type ) {
 
 	return splitStorage( parts.attrs.map( ( attr ) => storage( attr, type, attr.count ).toReadOnly() ), parts.elementsPerPart, type );
-
-}
-
-/** The index of `value` in ascending `sorted`, or −1. */
-function binarySearch( sorted, value ) {
-
-	let lo = 0, hi = sorted.length - 1;
-	while ( lo <= hi ) {
-
-		const mid = ( lo + hi ) >>> 1;
-		if ( sorted[ mid ] === value ) return mid;
-		if ( sorted[ mid ] < value ) lo = mid + 1;
-		else hi = mid - 1;
-
-	}
-
-	return - 1;
 
 }
 
@@ -933,61 +912,22 @@ export class PathTracerStage extends RenderStage {
 	}
 
 	/**
-	 * Packs the corners in clusters (scene/TriangleClusters.js) from the triangle records and the final BVH, both read
-	 * where they are — in memory, or a piece at a time from disk after a spilling build — and uploads them a piece at a
-	 * time, each drained before the next. With `compactLayout` the load calls it after uploadToPathTracer, in place of
-	 * the geo store it never made. A triangle leaf node keeps its cluster's corner base in slot [2], its words in
-	 * lanes 4–15.
+	 * Packs the corners in clusters (scene/TriangleClusters.js, pathtracer/CompactLayout.js) from the triangle records and
+	 * the final BVH where they are. With `compactLayout` the load calls it after uploadToPathTracer, in place of the geo
+	 * store it never made.
 	 * @returns {Promise<Object>} the clusters' sizes
 	 */
 	async buildClusteredCorners() {
 
-		const startedAt = performance.now();
-		const count = this._triangleRecordCount;
 		this._disposeClusters();
-		await this._writeClusterLanes( null );
-
-		const leaves = await this._triangleLeaves();
-		const window = this._triangleWindow();
-		const counted = await packCorners( window, count, leaves.first, leaves.count );
-		const backend = this.renderer.backend;
-		const parts = new StorageParts( counted.rows * 4, 4, this._maxPartBytes(), Uint32Array );
-		this._assertBindings( { geo: parts.attrs.length } );
-		parts.create( backend );
-		// Each piece drains before the next: unpaced, Chrome's upload pool grew by the whole store and kept it.
-		const built = await packCorners( window, count, leaves.first, leaves.count, ( row, data ) => {
-
-			parts.write( backend, row * 4, data, 0, data.length );
-			return this.drainUploads();
-
-		} );
-
-		const lanes = { nodes: [], first: [], count: [], base: [], words: [] };
-		for ( let i = 0; i < leaves.node.length; i ++ ) {
-
-			lanes.nodes.push( leaves.node[ i ] );
-			lanes.first.push( leaves.first[ i ] );
-			lanes.count.push( leaves.count[ i ] );
-			lanes.base.push( built.leafBase[ i ] );
-			lanes.words.push( built.leafWords.subarray( i * NODE_WORD_LANES, ( i + 1 ) * NODE_WORD_LANES ) );
-
-		}
-
-		await this._writeClusterLanes( lanes );
-
+		const { parts, stats } = await buildCorners( this );
 		this._clusterParts = parts;
-		parts.nodeWordRows = Math.ceil( leaves.count.reduce( ( m, n ) => ( n > NODE_WORD_LANES ? m : Math.max( m, n ) ), 1 ) / 4 );
-		parts.noLanes = built.tooBig > 0;
 		this.triangleStorageNode = triangleNodes( this._geoParts, this._shadeParts, parts );
 		// Stages that trace on their own (NormalDepth) rebind when this changes.
 		this.triangleGeoAttr = parts.attrs[ 0 ];
-		this.triangleClusterStats = {
-			triangles: count, clusters: built.clusters, corners: built.corners, bytes: built.rows * 16,
-			geoBytes: count * TRI_GEO_ROWS * 16, leafNodes: leaves.node.length, tooBig: built.tooBig, piecesFromDisk: window.diskReads,
-			buildMs: performance.now() - startedAt,
-		};
-		log.info( `clustered corners: ${fmt.n( count )} triangles, ${( built.rows * 16 / 2 ** 30 ).toFixed( 2 )} GiB (geo store ${( count * TRI_GEO_ROWS * 16 / 2 ** 30 ).toFixed( 2 )} GiB), ${fmt.ms( this.triangleClusterStats.buildMs )}` );
-		return this.triangleClusterStats;
+		this.triangleClusterStats = stats;
+		log.info( `clustered corners: ${fmt.n( stats.triangles )} triangles, ${( stats.bytes / 2 ** 30 ).toFixed( 2 )} GiB (geo store ${( stats.geoBytes / 2 ** 30 ).toFixed( 2 )} GiB), ${stats.jobs} jobs on ${stats.workers}, ${fmt.ms( stats.buildMs )}` );
+		return stats;
 
 	}
 
@@ -1000,533 +940,21 @@ export class PathTracerStage extends RenderStage {
 	}
 
 	/**
-	 * A window of WINDOW_RECORDS triangle records for packCorners, filled from the records in memory or, for a chunk
-	 * a spilling build left on disk, read in 4 MB pieces (a near-full tab failed 64 MB reads).
-	 * @private
-	 */
-	_triangleWindow( size = 1 << 18 ) {
-
-		const LANES = TRIANGLE_DATA_LAYOUT.FLOATS_PER_TRIANGLE;
-		const records = this._triangleRecords, flat = this._triangleFlat, count = this._triangleRecordCount;
-		const u32 = ( a ) => ( a instanceof Uint32Array ? a : new Uint32Array( a.buffer, a.byteOffset, a.length ) );
-		const buffer = new Uint32Array( size * LANES );
-		const window = {
-			windowed: true, start: 0, end: 0, diskReads: 0,
-			at: () => buffer,
-			base: ( t ) => ( t - window.start ) * LANES,
-			has: ( first, n ) => first >= window.start && first + n <= window.end,
-			load: async ( first ) => {
-
-				const end = Math.min( count, first + size );
-				for ( let t = first; t < end; ) {
-
-					if ( ! records ) {
-
-						buffer.set( u32( flat ).subarray( t * LANES, end * LANES ), ( t - first ) * LANES );
-						break;
-
-					}
-
-					const k = Math.floor( t / records.recordsPerChunk ), chunkStart = k * records.recordsPerChunk;
-					const upTo = Math.min( end, chunkStart + records.recordsPerChunk );
-					const chunk = records.chunks[ k ];
-					if ( chunk ) buffer.set( u32( chunk ).subarray( ( t - chunkStart ) * LANES, ( upTo - chunkStart ) * LANES ), ( t - first ) * LANES );
-					else {
-
-						const store = records._store;
-						for ( let at = t; at < upTo; ) {
-
-							const n = Math.min( upTo - at, 52428 );
-							const bytes = await store.readAt( k * store._chunkBytes + ( at - chunkStart ) * LANES * 4, n * LANES * 4 );
-							buffer.set( new Uint32Array( bytes ), ( at - first ) * LANES );
-							bytes.transfer?.( 0 );
-							window.diskReads ++;
-							at += n;
-
-						}
-
-					}
-
-					t = upTo;
-
-				}
-
-				window.start = first;
-				window.end = end;
-
-			},
-		};
-		return window;
-
-	}
-
-	/**
-	 * Every triangle leaf node of the combined BVH, by first triangle, its chunks read where they are (from disk in 4 MB
-	 * pieces). Leaves folded into their parents have no node: their triangles cluster as runs of 8. The copy records
-	 * after the nodes are not nodes. @private
-	 */
-	async _triangleLeaves() {
-
-		const attr = this.bvhStorageAttr;
-		const end = attr.copyRecordBase !== undefined ? attr.copyRecordBase / 4 : this.bvhNodeCount;
-		const TRIANGLE_LEAF = BVH_LEAF_MARKERS.TRIANGLE_LEAF;
-		const first = [], count = [], node = [];
-		const scan = ( u, firstNode, nodes ) => {
-
-			for ( let i = 0; i < nodes; i ++ ) {
-
-				const o = i * 16;
-				if ( u[ o + 3 ] === TRIANGLE_LEAF && u[ o + 1 ] > 0 ) {
-
-					node.push( firstNode + i );
-					first.push( u[ o ] );
-					count.push( u[ o + 1 ] );
-
-				}
-
-			}
-
-		};
-
-		const recs = this._bvhRecords;
-		if ( ! recs ) scan( this._bvhIndexView( attr.array ), 0, end );
-		else for ( let k = 0; k < recs.chunks.length; k ++ ) {
-
-			const startNode = k * recs.recordsPerChunk;
-			if ( startNode >= end ) break;
-			const here = Math.min( recs.recordsPerChunk, end - startNode );
-			const chunk = recs.chunks[ k ];
-			if ( chunk ) {
-
-				scan( this._bvhIndexView( chunk ), startNode, here );
-				continue;
-
-			}
-
-			for ( let p = 0; p < here; p += 65536 ) {
-
-				const nodes = Math.min( 65536, here - p );
-				const bytes = await recs._store.readAt( k * recs._store._chunkBytes + p * 64, nodes * 64 );
-				scan( new Uint32Array( bytes ), startNode + p, nodes );
-				bytes.transfer?.( 0 );
-
-			}
-
-		}
-
-		const order = Uint32Array.from( { length: node.length }, ( _, k ) => k );
-		if ( first.some( ( f, i ) => i > 0 && f < first[ i - 1 ] ) ) order.sort( ( a, b ) => first[ a ] - first[ b ] );
-		const by = ( a ) => Uint32Array.from( order, ( k ) => a[ k ] );
-		return { first: by( first ), count: by( count ), node: by( node ) };
-
-	}
-
-	/**
-	 * The objects' trees 4-wide (bvh/WideBVH.js), from the binary tree where it is — in memory, or 4 MB at a time from
-	 * disk after a spilling build — sent to the GPU a page at a time, each drained before the next. A count pass sizes the
-	 * buffer first, so neither tree is ever whole in memory and the binary objects never reach the GPU. Layout: the top
-	 * level (the TLAS, then the group trees) binary as built, its object roots renamed; the objects' trees; the copy
-	 * records packed to 32 B, sheared ones whole behind them. The load calls it under `compactLayout`, once visibility is
-	 * patched in; later writes to the top level and the copy records go through {@link _writeTreeRecords}.
+	 * The objects' trees 4-wide under the binary top level, with the copy records packed (pathtracer/CompactLayout.js),
+	 * from the binary tree where it is. The load calls it under `compactLayout`, once visibility is patched in; later
+	 * writes to the top level and the copy records go through {@link _writeTreeRecords}.
 	 * @returns {Promise<Object>} the tree's sizes
 	 */
 	async buildWideBVH() {
 
-		const startedAt = performance.now();
-		const attr = this.bvhStorageAttr;
-		const table = this._instanceTable;
-		if ( ! attr?.binaryOnly ) throw new Error( 'wide BVH: the binary tree is on the GPU already' );
-		if ( ! table ) throw new Error( 'wide BVH: no instance table' );
-		const end = attr.copyRecordBase !== undefined ? attr.copyRecordBase / 4 : this.bvhNodeCount;
-		const top = table.blasBase;
-		const src = this._binaryNodes();
-		const backend = this.renderer.backend;
-		const leafLanes = this._wideLeafLanes;
-		const onLeafCopy = leafLanes?.size ? ( n, w ) => {
-
-			const lanes = leafLanes.get( n );
-			if ( lanes ) w.u.set( lanes, w.o );
-
-		} : null;
-
-		// Each object once, in tree order: its wide root and the stack its walk needs, named by the count pass.
-		const objects = [ ...new Set( table.tplBlasOffset.subarray( 0, table.templateCount ) ) ].filter( ( n ) => n >= top && n < end ).sort( ( a, b ) => a - b );
-		const roots = new Map(), needs = new Map();
-		const run = async ( steps, out, drain ) => {
-
-			let step;
-			while ( ! ( step = steps.next() ).done ) {
-
-				if ( step.value.need !== undefined ) await src.load( step.value.need );
-				else {
-
-					out.flush();
-					if ( drain ) await this.drainUploads();
-
-				}
-
-			}
-
-			return step.value;
-
-		};
-
-		const pass = async ( sink ) => {
-
-			const out = new WideWriter( top, sink ?? ( () => {} ) );
-			for ( const n of objects ) {
-
-				const { root, stack } = await run( collapseSteps( src, n, out, { onLeafCopy } ), out, sink !== null );
-				if ( sink === null ) {
-
-					roots.set( n, root );
-					needs.set( n, stack );
-
-				} else if ( roots.get( n ) !== root ) throw new Error( `wide BVH: object ${n} moved from ${roots.get( n )} to ${root}` );
-
-			}
-
-			out.flush( true );
-			if ( sink !== null ) await this.drainUploads();
-			return out.count;
-
-		};
-
-		const objectNodes = await pass( null );
-		const nodes = top + objectNodes;
-		const copies = attr.copyRecordBase !== undefined ? table.entryCount : 0;
-		const sheared = copies ? await this._eachCopyRecord( src, end, copies, ( records, n ) => {
-
-			let count = 0;
-			for ( let k = 0; k < n; k ++ ) if ( packCopyRecord( records, k * 12, this._shearScratch, this._shearScratchU, 0 ) > COPY_SHEAR_LIMIT ) count ++;
-			return count;
-
-		} ) : 0;
-		const packedNodes = Math.ceil( copies * COMPACT_RECORD_LANES / 16 );
-		const recordNodes = copies ? packedNodes + Math.ceil( sheared * 12 / 16 ) : 0;
-		const parts = new StorageParts( ( nodes + recordNodes ) * 16, 16, this._maxPartBytes(), Float32Array );
-		this._assertBindings( { bvh: parts.attrs.length } );
-		parts.create( backend );
-
-		this._wide = { top, end, nodes, roots, needs, packedAt: nodes, overflowAt: nodes + packedNodes, shearedRecords: null };
-		await this._writeTopNodes( src, parts, top );
-		const written = await pass( ( first, data ) => parts.write( backend, first * 16, data, 0, data.length ) );
-		if ( written !== objectNodes ) throw new Error( 'wide BVH: the write pass differs from the count' );
-		if ( copies ) this._wide.shearedRecords = await this._packCopyRecords( src, end, copies, parts, nodes, nodes + packedNodes );
-
-		const wide = parts.attrs[ 0 ];
-		wide.wide = true;
-		wide.foldedLeaves = true;
-		wide.copyRecordBase = copies ? nodes * 4 : undefined;
-		wide.compactCopies = copies > 0;
-		wide.copyOverflowBase = sheared ? ( nodes + packedNodes ) * 4 : undefined;
-		wide.traversalStack = this._wideTraversalStack( top, needs );
+		const { parts, attr, stats } = await buildWideTree( this );
 		this.bvhStorageNode = readParts( parts, 'vec4' );
-		this.bvhStorageAttr = wide;
+		this.bvhStorageAttr = attr;
 		this._bvhParts = parts;
 		this._wideBuilt = true;
-		this.wideBVHStats = {
-			binaryNodes: end, topNodes: top, objectNodes, recordNodes, objects: objects.length, copies, sheared,
-			bytes: ( nodes + recordNodes ) * 64, binaryBytes: this.bvhNodeCount * 64, parts: parts.attrs.length, piecesFromDisk: src.diskReads,
-			stack: wide.traversalStack, buildMs: performance.now() - startedAt,
-		};
-		log.info( `wide BVH: ${fmt.n( end - top )} object nodes → ${fmt.n( objectNodes )}, ${( ( nodes + recordNodes ) * 64 / 2 ** 30 ).toFixed( 2 )} GiB (binary ${( this.bvhNodeCount * 64 / 2 ** 30 ).toFixed( 2 )} GiB), ${fmt.ms( this.wideBVHStats.buildMs )}` );
-		return this.wideBVHStats;
-
-	}
-
-	/** The stack for the top level over the objects' wide trees, as traversalStackSize sizes one. @private */
-	_wideTraversalStack( top, needs ) {
-
-		const recs = this._bvhRecords;
-		const resident = ! recs || recs.chunks.slice( 0, Math.ceil( top / recs.recordsPerChunk ) ).every( Boolean );
-		// The top level on disk cannot be walked: the size a spilled tree gets.
-		if ( ! resident ) return Math.max( SPILLED_TRAVERSAL_STACK, ...needs.values() );
-		const nodes = recs ?? this.bvhStorageAttr.array;
-		return traversalStackSize( nodes, { folded: true, count: top, objectNeed: ( n ) => needs.get( n ) ?? 0 } );
-
-	}
-
-	/**
-	 * The top level (nodes before `top`) to the GPU as built, each object root renamed to its wide root; the run read
-	 * where it is, 64K nodes at a time. @private
-	 */
-	async _writeTopNodes( src, parts, top ) {
-
-		const RUN = 65536;
-		const staging = new Float32Array( RUN * 16 );
-		const u = new Uint32Array( staging.buffer );
-		for ( let n = 0; n < top; ) {
-
-			let o = src.at( n );
-			if ( o < 0 ) {
-
-				await src.load( n );
-				o = src.at( n );
-
-			}
-
-			const count = Math.min( src.end, top, n + RUN ) - n;
-			staging.set( src.f.subarray( o, o + count * 16 ) );
-			this._renameObjectRoots( u, count );
-			parts.write( this.renderer.backend, n * 16, staging, 0, count * 16 );
-			await this.drainUploads();
-			n += count;
-
-		}
-
-	}
-
-	/**
-	 * Points what names an object among `count` top-level nodes at its wide root: a placement leaf, a copy cluster's
-	 * copies, and a group tree's inner nodes, whose children are its members' roots. @private
-	 */
-	_renameObjectRoots( u, count ) {
-
-		const { top, roots } = this._wide;
-		const rename = ( n ) => ( n >= top ? roots.get( n ) ?? n : n );
-		for ( let i = 0, o = 0; i < count; i ++, o += 16 ) {
-
-			const tag = u[ o + 3 ];
-			if ( tag < BVH_MAX_INDEX ) {
-
-				u[ o + 3 ] = rename( tag );
-				u[ o + 7 ] = rename( u[ o + 7 ] );
-
-			} else if ( tag === BVH_LEAF_MARKERS.BLAS_POINTER_LEAF ) u[ o ] = rename( u[ o ] );
-			else if ( tag === BVH_LEAF_MARKERS.CLUSTER_LEAF ) {
-
-				const copies = ( ( u[ o ] >>> CLUSTER_COUNT_SHIFT ) & 3 ) + 1;
-				for ( let k = 0; k < copies; k ++ ) {
-
-					const word = u[ o + 12 + k ];
-					u[ o + 12 + k ] = ( ( word & ~ CLUSTER_ROOT_MASK ) | rename( word & CLUSTER_ROOT_MASK ) ) >>> 0;
-
-				}
-
-			}
-
-		}
-
-	}
-
-	/**
-	 * The copy records, 12 lanes each from binary node `first` on, packed to COMPACT_RECORD_LANES (BufferLayout
-	 * packCopyRecord) and written from node `at` of `parts`; one sheared past COPY_SHEAR_LIMIT goes whole to the
-	 * overflow table from node `overflowAt`, its slot naming it. 64K records at a time, each drained before the next.
-	 * @returns {Promise<Uint32Array>} the sheared records, ascending: record i's slot is its place here
-	 * @private
-	 */
-	async _packCopyRecords( src, first, copies, parts, at, overflowAt ) {
-
-		const OUT = COMPACT_RECORD_LANES, backend = this.renderer.backend;
-		const out = new Float32Array( 65536 * OUT ), outU = new Uint32Array( out.buffer );
-		const full = new Float32Array( 65536 * 12 );
-		let r = 0, sheared = 0, held = 0;
-		const ids = [];
-		const flushFull = () => {
-
-			parts.write( backend, overflowAt * 16 + ( sheared - held ) * 12, full, 0, held * 12 );
-			held = 0;
-
-		};
-
-		await this._eachCopyRecord( src, first, copies, async ( records, n ) => {
-
-			for ( let k = 0; k < n; k ++ ) {
-
-				if ( packCopyRecord( records, k * 12, out, outU, k * OUT ) <= COPY_SHEAR_LIMIT ) continue;
-				out.fill( 0, k * OUT, ( k + 1 ) * OUT );
-				outU[ k * OUT + 3 ] = sheared;
-				outU[ k * OUT + 4 ] = COPY_FULL_RECORD;
-				full.set( records.subarray( k * 12, k * 12 + 12 ), held * 12 );
-				ids.push( r + k );
-				sheared ++;
-				if ( ++ held === 65536 ) flushFull();
-
-			}
-
-			parts.write( backend, at * 16 + r * OUT, out, 0, n * OUT );
-			r += n;
-			await this.drainUploads();
-
-		} );
-		if ( held ) flushFull();
-		await this.drainUploads();
-		return Uint32Array.from( ids );
-
-	}
-
-	/**
-	 * Calls `batch( records, n )` with each run of up to 64K copy records, 12 lanes each from binary node `first` on, read
-	 * where they are; returns the sum of what it returns. @private
-	 */
-	async _eachCopyRecord( src, first, copies, batch ) {
-
-		const BATCH = 65536, IN = 12;
-		const staging = new Float32Array( BATCH * IN );
-		this._shearScratch ??= new Float32Array( COMPACT_RECORD_LANES );
-		this._shearScratchU ??= new Uint32Array( this._shearScratch.buffer );
-		let lane = first * 16, sum = 0;
-		for ( let r = 0; r < copies; r += BATCH ) {
-
-			const n = Math.min( BATCH, copies - r );
-			for ( let filled = 0; filled < n * IN; ) {
-
-				const node = Math.floor( lane / 16 );
-				let o = src.at( node );
-				if ( o < 0 ) {
-
-					await src.load( node );
-					o = src.at( node );
-
-				}
-
-				const from = o + lane - node * 16;
-				const take = Math.min( n * IN - filled, ( src.end - node ) * 16 - ( lane - node * 16 ) );
-				staging.set( src.f.subarray( from, from + take ), filled );
-				filled += take;
-				lane += take;
-
-			}
-
-			sum += ( await batch( staging, n ) ) || 0;
-
-		}
-
-		return sum;
-
-	}
-
-	/**
-	 * The binary tree's nodes for collapseSteps: `at( n )` points `f` / `u` at node n (and `end` past the run it sits in)
-	 * where it is in memory, or in one of the last 16 pieces of 64K nodes read from disk, else −1; `load( n )` reads its
-	 * piece. @private
-	 */
-	_binaryNodes() {
-
-		const recs = this._bvhRecords, flat = this.bvhStorageAttr.array;
-		const PIECE = 65536, KEEP = 16;
-		const pieces = new Map();
-		let lastChunk = null, lastIndex = null;
-		const src = {
-			f: null, u: null, end: 0, diskReads: 0,
-			at: ( n ) => {
-
-				if ( ! recs ) {
-
-					src.f = flat;
-					src.u = lastIndex ??= this._bvhIndexView( flat );
-					src.end = this.bvhNodeCount;
-					return n * 16;
-
-				}
-
-				const k = Math.floor( n / recs.recordsPerChunk ), local = n - k * recs.recordsPerChunk;
-				const chunk = recs.chunks[ k ];
-				if ( chunk ) {
-
-					if ( chunk !== lastChunk ) {
-
-						lastChunk = chunk;
-						lastIndex = this._bvhIndexView( chunk );
-
-					}
-
-					src.f = chunk;
-					src.u = lastIndex;
-					src.end = Math.min( recs.recordCount, ( k + 1 ) * recs.recordsPerChunk );
-					return local * 16;
-
-				}
-
-				const q = Math.floor( local / PIECE );
-				const piece = pieces.get( k * 2 ** 20 + q );
-				if ( ! piece ) return - 1;
-				src.f = piece.f;
-				src.u = piece.u;
-				src.end = piece.end;
-				return ( local - q * PIECE ) * 16;
-
-			},
-			load: async ( n ) => {
-
-				const k = Math.floor( n / recs.recordsPerChunk ), local = n - k * recs.recordsPerChunk;
-				const q = Math.floor( local / PIECE ), first = q * PIECE;
-				const count = Math.min( PIECE, recs.recordCount - k * recs.recordsPerChunk - first, recs.recordsPerChunk - first );
-				const bytes = await recs._store.readAt( k * recs._store._chunkBytes + first * 64, count * 64 );
-				src.diskReads ++;
-				if ( pieces.size >= KEEP ) pieces.delete( pieces.keys().next().value );
-				pieces.set( k * 2 ** 20 + q, { f: new Float32Array( bytes ), u: new Uint32Array( bytes ), end: k * recs.recordsPerChunk + first + count } );
-
-			},
-		};
-		return src;
-
-	}
-
-	/**
-	 * Writes each leaf node's corner base into slot [2] and its words into lanes 4–15 (null: back to 0, as built): into
-	 * the CPU records where they are in memory, and onto the GPU a node at a time. @private
-	 */
-	async _writeClusterLanes( leaves ) {
-
-		const previous = this._clusterLeafNodes;
-		if ( ! leaves && ! previous ) return;
-		const set = leaves ?? previous;
-		const lanes = new Uint32Array( 16 );
-		const floats = new Float32Array( lanes.buffer );
-		const recs = this._bvhRecords;
-		const TRIANGLE_LEAF = BVH_LEAF_MARKERS.TRIANGLE_LEAF;
-		// A chunk in memory is patched and goes up whole once; one on disk gets its leaf nodes written one by one.
-		const dirty = new Set();
-		for ( let i = 0; i < set.nodes.length; i ++ ) {
-
-			const n = set.nodes[ i ];
-			lanes.fill( 0 );
-			lanes[ 0 ] = set.first[ i ];
-			lanes[ 1 ] = set.count[ i ];
-			lanes[ 2 ] = leaves ? set.base[ i ] : 0;
-			lanes[ 3 ] = TRIANGLE_LEAF;
-			if ( leaves ) lanes.set( set.words[ i ], 4 );
-			if ( ! recs ) {
-
-				this._bvhIndexView( this.bvhStorageAttr.array ).set( lanes, n * 16 );
-				continue;
-
-			}
-
-			const k = Math.floor( n / recs.recordsPerChunk );
-			if ( recs.chunks[ k ] ) {
-
-				this._bvhIndexView( recs.chunks[ k ] ).set( lanes, recs.baseOf( n ) );
-				dirty.add( k );
-
-			} else if ( this.bvhStorageAttr.binaryOnly ) this._wideLeafLanes.set( n, lanes.slice() );
-			else this._bvhParts.write( this.renderer.backend, n * 16, floats, 0, 16 );
-
-		}
-
-		this._clusterLeafNodes = leaves ? { nodes: set.nodes, first: set.first, count: set.count } : null;
-		if ( this.bvhStorageAttr.binaryOnly ) return;
-		if ( ! recs ) {
-
-			this.bvhStorageAttr.clearUpdateRanges();
-			this.bvhStorageAttr.needsUpdate = true;
-			return;
-
-		}
-
-		const lanesPerChunk = recs.recordsPerChunk * recs.lanesPerRecord;
-		for ( const k of dirty ) {
-
-			const chunk = recs.chunks[ k ];
-			this._bvhParts.write( this.renderer.backend, k * lanesPerChunk, chunk, 0, chunk.length );
-			await this.drainUploads();
-
-		}
-
-		await this.drainUploads();
+		this.wideBVHStats = stats;
+		log.info( `wide BVH: ${fmt.n( stats.binaryNodes - stats.topNodes )} object nodes → ${fmt.n( stats.objectNodes )}, ${( stats.bytes / 2 ** 30 ).toFixed( 2 )} GiB (binary ${( stats.binaryBytes / 2 ** 30 ).toFixed( 2 )} GiB), ${stats.jobs} jobs on ${stats.workers}, ${fmt.ms( stats.buildMs )}` );
+		return stats;
 
 	}
 
@@ -1840,67 +1268,10 @@ export class PathTracerStage extends RenderStage {
 
 	}
 
-	/**
-	 * Writes binary tree lanes [offset, offset + count) — the CPU records, as edits leave them — to the compact layout:
-	 * top-level nodes as they are, their object roots renamed; copy records packed (a sheared one whole, in the slot it
-	 * got at load). An object's own tree is never written again: its triangles and nodes stay as loaded. @private
-	 */
+	/** Binary tree lanes [offset, offset + count), as edits leave them, to the compact layout (CompactLayout.js). @private */
 	_writeTreeRecords( offset, count ) {
 
-		const { top, end, nodes } = this._wide;
-		const backend = this.renderer.backend;
-		const first = Math.floor( offset / 16 ), last = Math.ceil( ( offset + count ) / 16 );
-		if ( first < top ) {
-
-			const k = Math.min( last, top ) - first;
-			const staging = this._readLanes( first * 16, k * 16 ).slice();
-			this._renameObjectRoots( new Uint32Array( staging.buffer ), k );
-			this._bvhParts.write( backend, first * 16, staging, 0, k * 16 );
-
-		}
-
-		if ( last > top && first < end ) throw new Error( 'compact layout: an object\'s tree is static' );
-		if ( last <= end ) return;
-
-		// Copy records: 12 lanes each from node `end` of the binary tree.
-		const from = Math.floor( ( Math.max( offset, end * 16 ) - end * 16 ) / 12 );
-		const to = Math.ceil( ( offset + count - end * 16 ) / 12 );
-		const lanes = this._readLanes( end * 16 + from * 12, ( to - from ) * 12 );
-		const OUT = COMPACT_RECORD_LANES;
-		const packed = new Float32Array( OUT ), packedU = new Uint32Array( packed.buffer );
-		const sheared = this._wide.shearedRecords;
-		for ( let r = from; r < to; r ++ ) {
-
-			const k = r - from;
-			const slot = sheared ? binarySearch( sheared, r ) : - 1;
-			if ( slot >= 0 ) {
-
-				this._bvhParts.write( backend, this._wide.overflowAt * 16 + slot * 12, lanes, k * 12, 12 );
-				continue;
-
-			}
-
-			if ( packCopyRecord( lanes, k * 12, packed, packedU, 0 ) > COPY_SHEAR_LIMIT && ! this._shearWarned ) {
-
-				log.warn( 'compact layout: a copy sheared after the load is drawn as the nearest unsheared one' );
-				this._shearWarned = true;
-
-			}
-
-			this._bvhParts.write( backend, ( nodes * 16 ) + r * OUT, packed, 0, OUT );
-
-		}
-
-	}
-
-	/** Binary tree lanes [lane, lane + count) from the CPU records. @private */
-	_readLanes( lane, count ) {
-
-		const n = Math.floor( lane / 16 ), k = Math.ceil( ( lane + count ) / 16 ) - n;
-		const nodes = new Float32Array( k * 16 );
-		if ( this._bvhRecords ) this._bvhRecords.readRecords( n, k, nodes );
-		else nodes.set( this._binaryFlat.subarray( n * 16, ( n + k ) * 16 ) );
-		return nodes.subarray( lane - n * 16, lane - n * 16 + count );
+		writeTreeRecords( this, offset, count );
 
 	}
 
@@ -2045,7 +1416,7 @@ export class PathTracerStage extends RenderStage {
 	/** The stack the traversal needs for the tree as it now stands; the kernels grow theirs at the next frame. */
 	remeasureTraversalStack( bvhData ) {
 
-		if ( this._wideBuilt ) this.bvhStorageAttr.traversalStack = this._wideTraversalStack( this._wide.top, this._wide.needs );
+		if ( this._wideBuilt ) this.bvhStorageAttr.traversalStack = wideTraversalStack( this );
 		else if ( this.bvhStorageAttr ) this.bvhStorageAttr.traversalStack = traversalStackSize( bvhData );
 
 	}

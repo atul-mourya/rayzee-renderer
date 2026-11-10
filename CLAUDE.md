@@ -304,10 +304,13 @@ children are itself, and a CPU walk of the TLAS searched it forever.
 - **Compact layout** (`stage.compactLayout`, set per load by `planSpill`: a static scene past the in-memory line, unless
   `memorySpill` is false): no geo store — corners packed in clusters (`scene/TriangleClusters.js`), each object's tree
   4-wide (`bvh/WideBVH.js`) under the top level kept binary, copy records 32 B (`packCopyRecord`). Built after the
-  upload (`buildClusteredCorners`, `buildWideBVH`). Later top-level and copy-record writes go through
-  `_writeTreeRecords` (object roots renamed, records packed); edits write `stage.cpuTree`, never the GPU attribute;
-  refits throw. ⚠️ A group tree's inner nodes name their members' roots directly: renamed too. Measurements:
-  docs/design/PATH_TRACER_SHADER_ARCHITECTURE.md, "Compact layout".
+  upload (`pathtracer/CompactLayout.js`: each pass counted, then packed, in `CompactWorker` jobs). Later top-level and
+  copy-record writes go through `_writeTreeRecords` (object roots renamed, records packed); edits write
+  `stage.cpuTree`, never the GPU attribute; refits throw. ⚠️ A group tree's inner nodes name their members' roots
+  directly: renamed too. ⚠️ The page reads a job's spilled records and hands them over: reading the spill file in a
+  worker went at a sixth of the page's speed. ⚠️ Keep job code allocation-free: the collapse allocating a few arrays a
+  node ran 19× slower across eight workers on the island. Measurements: PATH_TRACER_SHADER_ARCHITECTURE.md, "Compact
+  layout".
 
 ## Key Development Patterns
 

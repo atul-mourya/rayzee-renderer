@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { BVH_LEAF_MARKERS, BVH_FOLDED_LEAF_MAX, WIDE_NODE, CLUSTER_COUNT_SHIFT, encodeClusterBoxes, packCopyRecord, unpackCopyRecord, COMPACT_RECORD_LANES } from '@/core/scene/BufferLayout.js';
+import { BVH_LEAF_MARKERS, BVH_FOLDED_LEAF_MAX, WIDE_NODE, packCopyRecord, unpackCopyRecord, packCopyRange, COMPACT_RECORD_LANES, COPY_FULL_RECORD } from '@/core/scene/BufferLayout.js';
 import { Matrix4, Quaternion, Vector3 } from 'three';
 
 vi.mock( '@/core/bvh/ReinsertionOptimizer.js', () => ( {
@@ -18,7 +18,7 @@ vi.mock( '@/core/bvh/ReinsertionOptimizer.js', () => ( {
 } ) );
 
 import { BVHBuilder } from '@/core/bvh/BVHBuilder.js';
-import { collapse, collapseSteps, WideWriter } from '@/core/bvh/WideBVH.js';
+import { collapse, collapseSteps, collapseObjects, WideWriter } from '@/core/bvh/WideBVH.js';
 
 const LANES = 20;
 const BASE_SLOT = [ 2, 4, 5 ];
@@ -251,6 +251,79 @@ describe( 'collapse to a 4-wide tree', () => {
 		expect( errors( 1 ).packedWorst ).toBeLessThan( 2e-5 );
 		const far = errors( 4e5 );
 		expect( far.packedWorst ).toBeLessThan( far.originalWorst * 2 );
+
+	} );
+
+	it( 'collapses a batch of objects as one job: counted, then written from its base, the same nodes as one by one', () => {
+
+		// Three objects side by side in one buffer, as a batch of the combined tree holds them.
+		const parts = [ 400, 1, 900 ].map( ( n ) => binaryTree( n ).nodes );
+		const bases = [];
+		let at = 10;
+		for ( const p of parts ) {
+
+			bases.push( at );
+			at += p.length / 16;
+
+		}
+
+		const nodes = new Float32Array( ( at - 10 ) * 16 );
+		const u = new Uint32Array( nodes.buffer );
+		parts.forEach( ( p, k ) => {
+
+			nodes.set( p, ( bases[ k ] - 10 ) * 16 );
+			// Child indices move with the object, as rebaseNodes moves them.
+			for ( let o = ( bases[ k ] - 10 ) * 16, e = o + p.length; o < e; o += 16 ) if ( u[ o + 3 ] < 0x40000000 ) {
+
+				u[ o + 3 ] += bases[ k ];
+				u[ o + 7 ] += bases[ k ];
+
+			}
+
+		} );
+		const src = { f: nodes, u, at: ( n ) => ( n >= 10 && n < at ? ( n - 10 ) * 16 : - 1 ) };
+		const roots = Uint32Array.from( bases );
+
+		const counted = collapseObjects( src, roots );
+		const written = collapseObjects( src, roots, { wideBase: 500 } );
+		expect( written.nodes.length / 16 ).toBe( counted.counts.reduce( ( a, b ) => a + b, 0 ) );
+		let base = 500;
+		roots.forEach( ( root, k ) => {
+
+			expect( written.roots[ k ] ).toBe( base );
+			const one = new WideWriter( base );
+			const { root: alone, stack } = collapse( src, root, one );
+			expect( alone ).toBe( base );
+			expect( stack ).toBe( counted.stacks[ k ] );
+			for ( let n = 0; n < one.count; n ++ ) {
+
+				const w = one.at( base + n );
+				expect( Array.from( written.nodes.subarray( ( base - 500 + n ) * 16, ( base - 500 + n + 1 ) * 16 ) ) ).toEqual( Array.from( w.f.subarray( w.o, w.o + 16 ) ) );
+
+			}
+
+			base += counted.counts[ k ];
+
+		} );
+
+	} );
+
+	it( 'packs a range of copy records as one job: sheared ones counted, then slotted from the base given', () => {
+
+		const records = new Float32Array( 6 * 12 );
+		const straight = [ 1, 0, 0, 5, 0, 1, 0, 6, 0, 0, 1, 7 ], bent = [ 1, 0.3, 0, 5, 0, 1, 0, 6, 0, 0, 1, 7 ];
+		[ straight, bent, straight, straight, bent, straight ].forEach( ( r, k ) => records.set( r, k * 12 ) );
+
+		expect( packCopyRange( records, 6 ) ).toEqual( { sheared: 2 } );
+		const { packed, full, sheared } = packCopyRange( records, 6, 40 );
+		const u = new Uint32Array( packed.buffer );
+		expect( Array.from( sheared ) ).toEqual( [ 1, 4 ] );
+		expect( [ u[ 1 * 8 + 3 ], u[ 4 * 8 + 3 ] ] ).toEqual( [ 40, 41 ] );
+		expect( [ u[ 1 * 8 + 4 ], u[ 4 * 8 + 4 ] ] ).toEqual( [ COPY_FULL_RECORD, COPY_FULL_RECORD ] );
+		expect( Array.from( full ) ).toEqual( [ ...bent, ...bent ].map( Math.fround ) );
+		const one = new Float32Array( COMPACT_RECORD_LANES );
+		packCopyRecord( records, 0, one, new Uint32Array( one.buffer ), 0 );
+		expect( Array.from( packed.subarray( 0, 8 ) ) ).toEqual( Array.from( one ) );
 
 	} );
 

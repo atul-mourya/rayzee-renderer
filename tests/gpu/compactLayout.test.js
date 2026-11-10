@@ -56,10 +56,11 @@ describeGPU( 'a scene loaded in the compact layout', () => {
 
 	afterAll( () => app?.dispose() );
 
-	// Past the in-memory line or not, as the load's survey says.
+	// Past the in-memory line or not, as the load's survey says; small jobs, so each pass runs as many.
 	const load = async ( large ) => {
 
 		app._sdf.needsSpill = () => large;
+		app.stages.pathTracer.compactJobSize = 997;
 		await app.loadObject3D( scene(), 'compact' );
 		app.camera.position.set( 0, 3, 5 );
 		app.camera.lookAt( 0, 0.5, 0 );
@@ -114,6 +115,9 @@ describeGPU( 'a scene loaded in the compact layout', () => {
 		expect( stage._clusterParts?.attrs.length ).toBeGreaterThan( 0 );
 		expect( stage.wideBVHStats.objectNodes ).toBeLessThan( ( stage.wideBVHStats.binaryNodes - stage.wideBVHStats.topNodes ) * 0.7 );
 		expect( stage.triangleClusterStats.corners ).toBeLessThan( stage.triangleClusterStats.triangles );
+		expect( stage.triangleClusterStats.jobs ).toBeGreaterThan( 5 );
+		expect( stage.wideBVHStats.jobs ).toBeGreaterThan( 1 );
+		expect( stage.triangleClusterStats.workers ).toBeGreaterThan( 1 );
 
 		const packed = await render();
 		expect( differing( packed, plain ) ).toBeLessThan( SIZE * SIZE * 0.002 );

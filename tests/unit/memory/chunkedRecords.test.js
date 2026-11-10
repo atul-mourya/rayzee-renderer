@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { ChunkedRecords, SHARED_MEMORY_AVAILABLE } from '@/core/memory/ChunkedRecords.js';
+import { ChunkedRecords, SHARED_MEMORY_AVAILABLE, lanePieces, readPieces } from '@/core/memory/ChunkedRecords.js';
 
 // 4 lanes per record, 16 bytes, so 64 bytes per chunk = 4 records per chunk.
 const LANES = 4;
@@ -394,5 +394,28 @@ describe( 'ChunkedRecords against a flat array', () => {
 		} );
 
 	}
+
+} );
+
+describe( 'lanePieces / readPieces', () => {
+
+	it( 'reads a lane range across resident and spilled chunks, viewing one piece of shared memory', async () => {
+
+		const records = filled( 12 );
+		// Chunk 1 "on disk": a store whose file holds every chunk at its place.
+		const disk = new Uint8Array( 3 * CHUNK_BYTES );
+		records.chunks.forEach( ( c, k ) => disk.set( new Uint8Array( c.buffer, c.byteOffset, CHUNK_BYTES ), k * CHUNK_BYTES ) );
+		records._store = { _chunkBytes: CHUNK_BYTES, readAt: async ( at, bytes ) => disk.slice( at, at + bytes ).buffer };
+		records.chunks[ 1 ] = null;
+
+		const pieces = lanePieces( records, 6, 30 );
+		expect( pieces.map( ( p ) => ( p.store ? 'disk' : 'memory' ) ) ).toEqual( [ 'memory', 'disk', 'memory' ] );
+		const lanes = await readPieces( pieces );
+		expect( Array.from( lanes ) ).toEqual( Array.from( { length: 30 }, ( _, i ) => ( ( 6 + i ) >> 2 ) * 100 + ( ( 6 + i ) & 3 ) ) );
+
+		const flat = SHARED_MEMORY_AVAILABLE ? new Uint32Array( new SharedArrayBuffer( 64 ) ).fill( 3 ) : null;
+		if ( flat ) expect( ( await readPieces( lanePieces( flat, 4, 8 ) ) ).buffer ).toBe( flat.buffer );
+
+	} );
 
 } );

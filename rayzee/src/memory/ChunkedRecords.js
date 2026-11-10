@@ -26,6 +26,67 @@ export const DEFAULT_CHUNK_BYTES = 64 * 1024 * 1024;
 export const SHARED_MEMORY_AVAILABLE = typeof SharedArrayBuffer !== 'undefined';
 
 /**
+ * Lanes [lane, lane + count) of `records` (ChunkedRecords, or one typed array; 4-byte lanes) as pieces a worker can read
+ * without them: a view of a resident chunk's shared memory, a copy of a non-shared one, or where a spilled chunk sits in
+ * its store (`{ store, at, bytes }`).
+ */
+export function lanePieces( records, lane, count ) {
+
+	const pieces = [];
+	const view = ( a, from, n ) => ( a.buffer instanceof ArrayBuffer
+		? { buffer: a.buffer.slice( a.byteOffset + from * 4, a.byteOffset + ( from + n ) * 4 ), byteOffset: 0, byteLength: n * 4 }
+		: { buffer: a.buffer, byteOffset: a.byteOffset + from * 4, byteLength: n * 4 } );
+	if ( ! records.chunks ) return [ view( records, lane, count ) ];
+
+	const perChunk = records.recordsPerChunk * records.lanesPerRecord;
+	for ( let at = lane, end = lane + count; at < end; ) {
+
+		const k = Math.floor( at / perChunk ), local = at - k * perChunk;
+		const n = Math.min( end - at, perChunk - local );
+		const chunk = records.chunks[ k ];
+		if ( chunk ) pieces.push( view( chunk, local, n ) );
+		else pieces.push( { store: records._store, at: k * records._store._chunkBytes + local * 4, bytes: n * 4 } );
+		at += n;
+
+	}
+
+	return pieces;
+
+}
+
+/** {@link lanePieces}' pieces as one Uint32Array: one piece of shared memory is viewed, not copied. */
+export async function readPieces( pieces ) {
+
+	if ( pieces.length === 1 && pieces[ 0 ].buffer && ! ( pieces[ 0 ].buffer instanceof ArrayBuffer ) ) {
+
+		const p = pieces[ 0 ];
+		return new Uint32Array( p.buffer, p.byteOffset, p.byteLength / 4 );
+
+	}
+
+	const bytes = pieces.reduce( ( sum, p ) => sum + ( p.byteLength ?? p.bytes ), 0 );
+	const out = new Uint8Array( bytes );
+	let at = 0;
+	for ( const p of pieces ) {
+
+		if ( p.buffer ) {
+
+			out.set( new Uint8Array( p.buffer, p.byteOffset, p.byteLength ), at );
+			at += p.byteLength;
+			continue;
+
+		}
+
+		out.set( new Uint8Array( await p.store.readAt( p.at, p.bytes ) ), at );
+		at += p.bytes;
+
+	}
+
+	return new Uint32Array( out.buffer );
+
+}
+
+/**
  * Notified of every chunk allocated, so a build can attribute memory to the phase that spent it.
  * At most one watcher, and it must not throw — this sits on the allocation path.
  * @type {?function(number, boolean): void}
