@@ -858,6 +858,51 @@ describeGPU( 'a TLAS built in a worker', () => {
 
 	}, 120000 );
 
+	it( 'groups copies into clusters across workers as the page groups them', async () => {
+
+		configurePlatform( { ...nodePlatform(), Worker: SourceWorker } );
+		const app = await openHeadless( { width: 32, height: 32, strict: false } );
+		const scene = () => {
+
+			const copies = new InstancedMesh( new BoxGeometry( 0.1, 0.1, 0.1 ), new MeshPhysicalMaterial(), 60000 );
+			for ( let i = 0; i < 60000; i ++ ) copies.setMatrixAt( i, new Matrix4().makeTranslation( ( i % 300 ) * 0.2, Math.floor( i / 300 ) * 0.2, ( i * 7919 % 13 ) * 0.1 ) );
+			return new Scene().add( copies );
+
+		};
+
+		const built = () => {
+
+			const sdf = app._sdf, table = sdf.instanceTable;
+			return { clusters: table.clusterCount, order: Array.from( table.recordEntry ), tree: Array.from( sdf.bvhIndexChunks.copyOf( 0, table.blasBase ) ) };
+
+		};
+
+		try {
+
+			app._sdf.config.clusterCopies = true;
+			const grouped = vi.spyOn( app._sdf, '_groupCopiesInWorkers' );
+			await app.loadObject3D( scene(), 'copies' );
+			expect( await grouped.mock.results[ 0 ].value ).not.toBe( null );
+			const inWorkers = built();
+			await app.renderFrames( 1 );
+
+			app._sdf._tlasWorkerFailed = true;
+			await app.loadObject3D( scene(), 'copies' );
+			const onPage = built();
+
+			expect( inWorkers.clusters ).toBeGreaterThanOrEqual( 15000 );
+			expect( inWorkers.order ).toEqual( onPage.order );
+			expect( inWorkers.tree ).toEqual( onPage.tree );
+
+		} finally {
+
+			vi.restoreAllMocks();
+			app.dispose();
+
+		}
+
+	}, 120000 );
+
 } );
 
 describeGPU( 'material rebuilds', () => {

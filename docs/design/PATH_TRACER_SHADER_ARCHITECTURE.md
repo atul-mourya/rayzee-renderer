@@ -343,7 +343,9 @@ unload and the next build.
 - **Copy clusters** (past `CLUSTER_MIN_ENTRIES`, 1M TLAS entries; `config.clusterCopies`): the TLAS is built over leaves
   of up to `CLUSTER_SIZE` (4) neighbouring copies of any objects — the entries halved at the centre median of their widest
   axis (`InstanceTable.formClusters`), so the count is ⌈entries / 4⌉ before any bounds (the BLAS cache needs `blasBase`
-  then). Each copy's world-to-object rows are a 48 B record after the BLASes (`recordNodeStart`, `copyRecordBase` on the
+  then). The load groups them in TLAS workers over shared memory (`SceneProcessor._groupCopiesInWorkers`): one splits
+  the top into ranges, the rest finish the ranges, the same order as one pass (the island: 30 s on the page; 40M
+  copies in Node 13.6 → 3.6 s). Each copy's world-to-object rows are a 48 B record after the BLASes (`recordNodeStart`, `copyRecordBase` on the
   buffer); the leaf (`CLUSTER_LEAF`, layout in `BufferLayout.js`) holds byte boxes of each copy on a power-of-two grid and
   one word a copy: root | identity | `CLUSTER_COPY_HIDDEN`, so visibility and identity are per copy. ~80 B a copy against
   128; Moana's 39.9M entries → 10M leaves. Traversal pushes the copies a ray reaches nearest-first as

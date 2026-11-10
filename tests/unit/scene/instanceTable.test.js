@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { InstanceTable } from '@/core/scene/InstanceTable.js';
+import { InstanceTable, splitIntoRuns } from '@/core/scene/InstanceTable.js';
 import { BVH_LEAF_MARKERS, bvhIndexView } from '@/core/scene/BufferLayout.js';
 
 // Triangle record: 20 uint lanes; positions f32 at 0,1,2 (A), 4,5,6 (B), 8,9,10 (C)
@@ -302,6 +302,140 @@ describe( 'InstanceTable', () => {
 			expect( placed.at( - 1 ) ).toBeLessThanOrEqual( n );
 			expect( step.value.findIndex( ( v, i ) => v !== bounds[ i ] ) ).toBe( - 1 );
 			expect( stepped.recordEntry.findIndex( ( v, i ) => v !== whole.recordEntry[ i ] ) ).toBe( - 1 );
+
+		} );
+
+		// Clumps of copies, as an island's plants and rocks lie.
+		const clumps = ( n ) => {
+
+			const world = new Float32Array( n * 6 );
+			let seed = 5;
+			const rnd = () => ( seed = ( seed * 16807 ) % 2147483647 ) / 2147483647;
+			for ( let e = 0; e < n; ) {
+
+				const cx = rnd() * 1e4, cz = rnd() * 1e4, size = 1 + Math.floor( rnd() * 300 );
+				for ( let k = 0; k < size && e < n; k ++, e ++ ) {
+
+					const x = cx + rnd() * 30, y = rnd() * 5, z = cz + rnd() * 30, s = 0.2 + rnd();
+					world.set( [ x, y, z, x + s, y + s * 2, z + s ], e * 6 );
+
+				}
+
+			}
+
+			return world;
+
+		};
+
+		const order = ( n, split ) => {
+
+			const sorted = Int32Array.from( { length: n }, ( _, e ) => e );
+			split( sorted );
+			return sorted;
+
+		};
+
+		const drain = ( steps ) => {
+
+			while ( ! steps.next().done );
+
+		};
+
+		it( 'groups as one call when its ranges past a floor are finished one by one, in any order', () => {
+
+			const n = 200_000, world = clumps( n );
+			const whole = order( n, ( s ) => drain( splitIntoRuns( s, 0, n, world ) ) );
+			const parts = order( n, ( s ) => {
+
+				const ranges = [];
+				drain( splitIntoRuns( s, 0, n, world, Math.ceil( n / 32 ), ranges ) );
+				expect( ranges.length / 2 ).toBeGreaterThan( 8 );
+				for ( let i = ranges.length - 2; i >= 0; i -= 2 ) drain( splitIntoRuns( s, ranges[ i ], ranges[ i + 1 ], world ) );
+
+			} );
+			expect( parts ).toEqual( whole );
+
+		} );
+
+		it( 'picks the axis the three-pass scan picked, so the grouping is as before', () => {
+
+			// The scan before: one pass an axis, the first widest winning.
+			const before = ( sorted, world ) => {
+
+				const select = ( lo, hi, k, axis ) => {
+
+					const key = ( i ) => world[ sorted[ i ] * 6 + axis ] + world[ sorted[ i ] * 6 + 3 + axis ];
+					let l = lo, r = hi - 1;
+					while ( r > l ) {
+
+						const m = ( l + r ) >>> 1, a = key( l ), b = key( m ), c = key( r );
+						const pivot = a < b ? ( b < c ? b : a < c ? c : a ) : ( a < c ? a : b < c ? c : b );
+						let i = l, j = r;
+						while ( i <= j ) {
+
+							while ( key( i ) < pivot ) i ++;
+							while ( key( j ) > pivot ) j --;
+							if ( i <= j ) {
+
+								[ sorted[ i ], sorted[ j ] ] = [ sorted[ j ], sorted[ i ] ];
+								i ++;
+								j --;
+
+							}
+
+						}
+
+						if ( k <= j ) r = j;
+						else if ( k >= i ) l = i;
+						else return;
+
+					}
+
+				};
+
+				const stack = [ 0, sorted.length ];
+				while ( stack.length ) {
+
+					const end = stack.pop(), start = stack.pop();
+					if ( end - start <= 4 ) continue;
+					let axis = 0, widest = - 1;
+					for ( let a = 0; a < 3; a ++ ) {
+
+						let min = Infinity, max = - Infinity;
+						for ( let i = start; i < end; i ++ ) {
+
+							const c = world[ sorted[ i ] * 6 + a ] + world[ sorted[ i ] * 6 + 3 + a ];
+							min = Math.min( min, c );
+							max = Math.max( max, c );
+
+						}
+
+						if ( max - min > widest ) {
+
+							widest = max - min;
+							axis = a;
+
+						}
+
+					}
+
+					const mid = start + 4 * Math.ceil( ( end - start ) / 8 );
+					select( start, end, mid, axis );
+					stack.push( start, mid, mid, end );
+
+				}
+
+			};
+
+			const n = 50_000, world = clumps( n );
+			// Equal extents on two axes too: a cube of copies.
+			const cube = new Float32Array( 4096 * 6 );
+			for ( let e = 0; e < 4096; e ++ ) cube.set( [ e & 15, ( e >> 4 ) & 15, e >> 8, ( e & 15 ) + 1, ( ( e >> 4 ) & 15 ) + 1, ( e >> 8 ) + 1 ], e * 6 );
+			for ( const [ w, count ] of [[ world, n ], [ cube, 4096 ]] ) {
+
+				expect( order( count, ( s ) => drain( splitIntoRuns( s, 0, count, w ) ) ) ).toEqual( order( count, ( s ) => before( s, w ) ) );
+
+			}
 
 		} );
 

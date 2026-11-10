@@ -564,7 +564,17 @@ export class InstanceTable {
 		const sorted = new Int32Array( n );
 		for ( let e = 0; e < n; e ++ ) sorted[ e ] = e;
 		yield * splitIntoRuns( sorted, 0, n, world );
+		return this.finishClusters( sorted, world );
 
+	}
+
+	/**
+	 * Takes `sorted`, the entries in run order ({@link splitIntoRuns}), as the copy records' order; returns each
+	 * cluster's union box (6 a cluster) from the entries' world boxes.
+	 */
+	finishClusters( sorted, world ) {
+
+		const n = this.entryCount;
 		const bounds = new Float64Array( this.clusterCount * 6 );
 		for ( let c = 0; c < this.clusterCount; c ++ ) {
 
@@ -1215,9 +1225,11 @@ const _recordInverse = new Float64Array( 16 );
 /**
  * Orders `sorted[ lo, hi )` so each run of CLUSTER_SIZE holds neighbours: halved at the centre median of the widest
  * axis, the lower part a whole number of runs, which keeps the run count ⌈n / CLUSTER_SIZE⌉. Yields how many entries
- * are in their run, about every million entries of work.
+ * are in their run, about every million entries of work. With `floor`, a range of at most `floor` entries is left
+ * whole, pushed to `ranges` as start, end, for a worker to finish: the ranges are independent, so finishing each
+ * alone orders them as one call would.
  */
-function * splitIntoRuns( sorted, lo, hi, world ) {
+export function * splitIntoRuns( sorted, lo, hi, world, floor = 0, ranges = null ) {
 
 	const stack = [ lo, hi ];
 	let placed = 0, work = 0;
@@ -1231,6 +1243,14 @@ function * splitIntoRuns( sorted, lo, hi, world ) {
 
 		}
 
+		if ( floor && end - start <= floor ) {
+
+			ranges.push( start, end );
+			placed += end - start;
+			continue;
+
+		}
+
 		work += end - start;
 		if ( work >= 1 << 20 ) {
 
@@ -1239,26 +1259,23 @@ function * splitIntoRuns( sorted, lo, hi, world ) {
 
 		}
 
-		let axis = 0, widest = - 1;
-		for ( let a = 0; a < 3; a ++ ) {
+		// The three axes' extents in one pass; the first widest wins.
+		let x0 = Infinity, x1 = - Infinity, y0 = Infinity, y1 = - Infinity, z0 = Infinity, z1 = - Infinity;
+		for ( let i = start; i < end; i ++ ) {
 
-			let min = Infinity, max = - Infinity;
-			for ( let i = start; i < end; i ++ ) {
-
-				const c = world[ sorted[ i ] * 6 + a ] + world[ sorted[ i ] * 6 + 3 + a ];
-				if ( c < min ) min = c;
-				if ( c > max ) max = c;
-
-			}
-
-			if ( max - min > widest ) {
-
-				widest = max - min;
-				axis = a;
-
-			}
+			const o = sorted[ i ] * 6;
+			const cx = world[ o ] + world[ o + 3 ], cy = world[ o + 1 ] + world[ o + 4 ], cz = world[ o + 2 ] + world[ o + 5 ];
+			if ( cx < x0 ) x0 = cx;
+			if ( cx > x1 ) x1 = cx;
+			if ( cy < y0 ) y0 = cy;
+			if ( cy > y1 ) y1 = cy;
+			if ( cz < z0 ) z0 = cz;
+			if ( cz > z1 ) z1 = cz;
 
 		}
+
+		const ex = x1 - x0, ey = y1 - y0, ez = z1 - z0;
+		const axis = ey > ex ? ( ez > ey ? 2 : 1 ) : ( ez > ex ? 2 : 0 );
 
 		const mid = start + CLUSTER_SIZE * Math.ceil( ( end - start ) / ( 2 * CLUSTER_SIZE ) );
 		selectNth( sorted, start, end, mid, world, axis );

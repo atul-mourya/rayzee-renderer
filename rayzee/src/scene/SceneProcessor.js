@@ -1165,8 +1165,17 @@ export class SceneProcessor {
 		this.instanceTable.computeGroupAABBs();
 		if ( clustered ) {
 
-			// Each entry's world box picks its cluster and sizes its byte box; dropped once the leaves are written.
-			table.clusterWorld = new Float32Array( table.entryCount * 6 );
+			// Each entry's world box picks its cluster and sizes its byte box; dropped once the leaves are written. Shared,
+			// so workers can group the copies.
+			let world = null;
+			if ( SHARED_MEMORY_AVAILABLE && ! this._tlasWorkerFailed ) try {
+
+				world = new Float32Array( new SharedArrayBuffer( table.entryCount * 24 ) );
+
+			} catch { /* grouped on the page */ }
+
+			const shared = world !== null;
+			table.clusterWorld = world ?? new Float32Array( table.entryCount * 6 );
 			for ( let e = 0; e < table.entryCount; e += SLICE_RECORDS ) {
 
 				table.writeEntryWorldAABBs( table.clusterWorld, e, Math.min( table.entryCount, e + SLICE_RECORDS ) );
@@ -1174,10 +1183,15 @@ export class SceneProcessor {
 
 			}
 
-			const steps = table.clusterSteps( table.clusterWorld );
-			let step;
-			while ( ! ( step = steps.next() ).done ) await this._turn( 'Grouping copies', step.value, table.entryCount, 72 );
-			table.clusterBounds = step.value;
+			table.clusterBounds = shared ? await this._groupCopiesInWorkers( table ) : null;
+			if ( ! table.clusterBounds ) {
+
+				const steps = table.clusterSteps( table.clusterWorld );
+				let step;
+				while ( ! ( step = steps.next() ).done ) await this._turn( 'Grouping copies', step.value, table.entryCount, 72 );
+				table.clusterBounds = step.value;
+
+			}
 
 		}
 
@@ -2718,6 +2732,67 @@ export class SceneProcessor {
 		}
 
 		return this.tlasBuilder.build( table ).data;
+
+	}
+
+	/**
+	 * Groups the copies into clusters across TLAS workers, as `table.clusterSteps` does on the page: one splits the top
+	 * of the order into ranges, then every worker finishes ranges, largest first, in the shared `sorted`. Null, and
+	 * nothing kept, when a worker fails. @private
+	 */
+	async _groupCopiesInWorkers( table ) {
+
+		const n = table.entryCount, world = table.clusterWorld;
+		let sorted, workers = [];
+		try {
+
+			sorted = new Int32Array( new SharedArrayBuffer( n * 4 ) );
+			for ( let e = 0; e < n; e ++ ) sorted[ e ] = e;
+			const count = Math.min( 8, Math.max( 1, hardwareThreads() - 1 ) );
+			for ( let i = 0; i < count; i ++ ) workers.push( createWorker( TLASWorker ) );
+			const run = ( worker, lo, hi, floor ) => this._workerJob( worker, { type: 'runs', sorted: sorted.buffer, world: world.buffer, lo, hi, floor } );
+
+			updateLoading( { status: 'Grouping copies...', progress: 72 } );
+			const { ranges } = await run( workers[ 0 ], 0, n, Math.ceil( n / ( count * 4 ) ) );
+			const queue = [];
+			for ( let i = 0; i < ranges.length; i += 2 ) queue.push( [ ranges[ i ], ranges[ i + 1 ] ] );
+			queue.sort( ( a, b ) => ( b[ 1 ] - b[ 0 ] ) - ( a[ 1 ] - a[ 0 ] ) );
+			await Promise.all( workers.map( async ( worker ) => {
+
+				while ( queue.length ) {
+
+					const [ lo, hi ] = queue.shift();
+					await run( worker, lo, hi, 0 );
+
+				}
+
+			} ) );
+
+		} catch ( error ) {
+
+			log.warn( `copies grouped on the page: ${error.message}` );
+			return null;
+
+		} finally {
+
+			workers.forEach( ( w ) => w.terminate() );
+
+		}
+
+		return table.finishClusters( sorted, world );
+
+	}
+
+	/** One message to `worker` and its answer. @private */
+	_workerJob( worker, message ) {
+
+		return new Promise( ( resolve, reject ) => {
+
+			worker.onmessage = ( e ) => ( e.data?.error ? reject( new Error( e.data.error ) ) : resolve( e.data ) );
+			worker.onerror = ( e ) => reject( new Error( e.message || 'worker error' ) );
+			worker.postMessage( message );
+
+		} );
 
 	}
 
