@@ -834,6 +834,7 @@ const ResultsViewport = forwardRef( function ResultsViewport( props, ref ) {
 				onResize={handleViewportResize}
 				viewportWrapperRef={viewportRef}
 				appRef={resultsToolbarRef}
+				scale={viewportScale}
 				position="bottom-right"
 				defaultSize={100}
 				minSize={5}

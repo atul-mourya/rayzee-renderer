@@ -2,6 +2,11 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 
 const clamp = ( val, min, max ) => Math.min( Math.max( val, min ), max );
 
+// Pixels per wheel unit: Firefox reports lines (1) or pages (2).
+const WHEEL_UNIT = [ 1, 16, 800 ];
+// A gesture ends this long after its last wheel step or pointer-up.
+const GESTURE_IDLE_MS = 150;
+
 /**
  * Hook for pan (left-click + drag) and scroll-zoom interactions.
  * Designed to work alongside useAutoFitScale without modifying it.
@@ -12,9 +17,10 @@ export const usePanZoom = ( {
 	onScaleChange,
 	minScale = 5,
 	maxScale = 300,
-	zoomSensitivity = 0.001,
+	zoomSensitivity = 0.002,
 	enabled = true,
 	suppressRef = null,
+	onActiveChange = null,
 } ) => {
 
 	// State for rendering
@@ -43,6 +49,42 @@ export const usePanZoom = ( {
 
 	}, [ onScaleChange ] );
 
+	// Whether a pan or zoom is under way, for `onActiveChange`.
+	const activeRef = useRef( false );
+	const idleTimerRef = useRef( null );
+	const onActiveChangeRef = useRef( onActiveChange );
+	useEffect( () => {
+
+		onActiveChangeRef.current = onActiveChange;
+
+	}, [ onActiveChange ] );
+
+	const setActive = useCallback( ( active ) => {
+
+		clearTimeout( idleTimerRef.current );
+		if ( activeRef.current === active ) return;
+		activeRef.current = active;
+		onActiveChangeRef.current?.( active );
+
+	}, [] );
+
+	const endSoon = useCallback( () => {
+
+		clearTimeout( idleTimerRef.current );
+		idleTimerRef.current = setTimeout( () => {
+
+			if ( ! isPrimedRef.current ) setActive( false );
+
+		}, GESTURE_IDLE_MS );
+
+	}, [ setActive ] );
+
+	useEffect( () => {
+
+		if ( ! enabled ) setActive( false );
+
+	}, [ enabled, setActive ] );
+
 	// Reset pan to origin (guarded to avoid no-op re-renders)
 	const resetPan = useCallback( () => {
 
@@ -58,10 +100,11 @@ export const usePanZoom = ( {
 		return () => {
 
 			dragCleanupRef.current?.();
+			setActive( false );
 
 		};
 
-	}, [] );
+	}, [ setActive ] );
 
 	// Pointer down handler for pan — attach to the viewport div
 	const handlePointerDown = useCallback( ( e ) => {
@@ -69,7 +112,7 @@ export const usePanZoom = ( {
 		if ( ! enabled || e.button !== 0 ) return;
 
 		// Skip clicks on UI controls (toolbar buttons, sliders, radix items)
-		if ( e.target.closest( 'button, [role="slider"], [data-radix-collection-item]' ) ) return;
+		if ( e.target.closest( 'button, [role="slider"], [data-radix-collection-item], [data-no-pan]' ) ) return;
 
 		// Clean up any lingering drag session (e.g. rapid pointer-down before previous up)
 		dragCleanupRef.current?.();
@@ -81,6 +124,8 @@ export const usePanZoom = ( {
 			panY: panRef.current.y,
 		};
 		isPrimedRef.current = true;
+		// From the press, not the first move: work already queued on the GPU drains meanwhile.
+		setActive( true );
 
 		const onMove = ( ev ) => {
 
@@ -121,6 +166,17 @@ export const usePanZoom = ( {
 
 		const cleanup = () => {
 
+			// The click ending a drag is not one: the canvas places focus points on click.
+			if ( isPanningRef.current ) {
+
+				const swallow = ev => ev.stopPropagation();
+				window.addEventListener( 'click', swallow, { capture: true, once: true } );
+				setTimeout( () => window.removeEventListener( 'click', swallow, { capture: true } ) );
+
+			}
+
+			endSoon();
+
 			isPrimedRef.current = false;
 			isPanningRef.current = false;
 			setIsPanning( false );
@@ -136,7 +192,7 @@ export const usePanZoom = ( {
 		window.addEventListener( 'pointermove', onMove );
 		window.addEventListener( 'pointerup', onUp );
 
-	}, [ enabled, suppressRef ] );
+	}, [ enabled, suppressRef, setActive, endSoon ] );
 
 	// Wheel handler for zoom (attached via addEventListener for passive: false)
 	useEffect( () => {
@@ -148,22 +204,25 @@ export const usePanZoom = ( {
 
 			e.preventDefault();
 
-			const oldScalePercent = scaleRef.current;
-			const delta = - e.deltaY * zoomSensitivity;
-			const factor = Math.pow( 2, delta );
-			const newScalePercent = Math.round( clamp( oldScalePercent * factor, minScale, maxScale ) );
+			const px = e.deltaY * ( WHEEL_UNIT[ e.deltaMode ] ?? 1 );
+			// A trackpad pinch is a ctrl wheel of −100·ln( scale ) (as Chrome's PDF viewer reads it); capped so a mouse
+			// wheel with ctrl held steps like a pinch, not 2.7× a notch.
+			const factor = e.ctrlKey ? Math.exp( - clamp( px, - 25, 25 ) / 100 ) : Math.pow( 2, - px * zoomSensitivity );
+			// Unrounded: a trackpad's small steps would each round back to the same percent.
+			const next = clamp( scaleRef.current * factor, minScale, maxScale );
+			if ( next === scaleRef.current ) return;
 
-			if ( newScalePercent === oldScalePercent ) return;
-
-			scaleRef.current = newScalePercent;
-			onScaleChangeRef.current?.( newScalePercent );
+			scaleRef.current = next;
+			onScaleChangeRef.current?.( Math.round( next * 100 ) / 100 );
+			setActive( true );
+			endSoon();
 
 		};
 
 		el.addEventListener( 'wheel', handleWheel, { passive: false } );
 		return () => el.removeEventListener( 'wheel', handleWheel );
 
-	}, [ viewportRef, enabled, minScale, maxScale, zoomSensitivity ] );
+	}, [ viewportRef, enabled, minScale, maxScale, zoomSensitivity, setActive, endSoon ] );
 
 	return { panOffset, isPanning, resetPan, handlePointerDown };
 

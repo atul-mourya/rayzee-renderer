@@ -11,6 +11,7 @@ import { useToast } from '@/hooks/use-toast';
 import { useStore, usePathTracerStore, useCameraStore, useAnimationStore, useLightStore } from '@/store';
 import { saveRender, startRenderMaintenance } from '@/lib/database';
 import { useAutoFitScale } from '@/hooks/useAutoFitScale';
+import { usePanZoom } from '@/hooks/usePanZoom';
 import { generateViewportStyles } from '@/lib/viewport';
 import { PathTracerApp, configureAssets } from 'rayzee';
 import { getApp, setApp } from '@/lib/appProxy';
@@ -22,6 +23,10 @@ import { isArchiveUrl } from '@/lib/archives';
 
 // How long startup holds the first frame for the CDN colour config before showing the built-in view.
 const DEFAULT_COLOR_WAIT_MS = 2000;
+
+// The Results view's zoom range.
+const MIN_ZOOM = 5;
+const MAX_ZOOM = 300;
 
 const Viewport3D = forwardRef( ( { viewportMode = "preview" }, _ref ) => {
 
@@ -65,10 +70,62 @@ const Viewport3D = forwardRef( ( { viewportMode = "preview" }, _ref ) => {
 		canvasWidth,
 		canvasHeight,
 		padding: 40,
-		minScale: 5,
+		minScale: MIN_ZOOM,
 		maxScale: 200,
 		enabled: canvasReady // Only enable auto-fit after canvases are ready
 	} );
+
+	// A final render pans and wheel-zooms as the Results view does; elsewhere the mouse moves the camera.
+	const panZoom = canvasReady && viewportMode === 'final-render';
+
+	// The page is drawn only between traced frames: tracing waits while the view pans or zooms, then carries on.
+	const traceHeldRef = useRef( false );
+	const holdTrace = useCallback( ( active ) => {
+
+		const app = getApp();
+		if ( ! app ) return;
+		if ( active && ! app.pauseRendering ) {
+
+			app.pauseRendering = true;
+			traceHeldRef.current = true;
+
+		} else if ( ! active && traceHeldRef.current ) {
+
+			traceHeldRef.current = false;
+			app.pauseRendering = false;
+
+		}
+
+	}, [] );
+
+	const { panOffset, isPanning, resetPan, handlePointerDown } = usePanZoom( {
+		viewportRef,
+		viewportScale,
+		onScaleChange: handleViewportResize,
+		minScale: MIN_ZOOM,
+		maxScale: MAX_ZOOM,
+		enabled: panZoom,
+		onActiveChange: holdTrace,
+	} );
+
+	useEffect( () => {
+
+		if ( ! isManualScale ) resetPan();
+
+	}, [ isManualScale, autoFitScale, resetPan ] );
+
+	useEffect( () => {
+
+		resetPan();
+
+	}, [ viewportMode, canvasWidth, canvasHeight, resetPan ] );
+
+	const handleResetToAutoFitWithPan = useCallback( () => {
+
+		handleResetToAutoFit();
+		resetPan();
+
+	}, [ handleResetToAutoFit, resetPan ] );
 
 
 	// Effect to mark canvases as ready
@@ -414,13 +471,23 @@ const Viewport3D = forwardRef( ( { viewportMode = "preview" }, _ref ) => {
 	}, [ isRenderComplete, isDenoising, isUpscaling, viewportMode, isAppInitialized ] );
 
 	// Memoize style objects
-	const { wrapperStyle, containerStyle, canvasStyle } = useMemo( () =>
+	const { wrapperStyle: baseWrapperStyle, containerStyle, canvasStyle } = useMemo( () =>
 		generateViewportStyles( canvasWidth, canvasHeight, viewportScale ),
 	[ canvasWidth, canvasHeight, viewportScale ]
 	);
 
+	const wrapperStyle = useMemo( () => panZoom ? {
+		...baseWrapperStyle,
+		transform: `translate(${panOffset.x}px, ${panOffset.y}px) scale(${viewportScale / 100})`,
+	} : baseWrapperStyle, [ panZoom, baseWrapperStyle, panOffset.x, panOffset.y, viewportScale ] );
+
 	return (
-		<div ref={viewportRef} className="flex justify-center items-center h-full overflow-scroll" >
+		<div
+			ref={viewportRef}
+			className={`flex justify-center items-center h-full ${panZoom ? 'overflow-hidden' : 'overflow-scroll'}`}
+			style={panZoom ? { cursor: isPanning ? 'grabbing' : 'grab' } : undefined}
+			onPointerDown={panZoom ? handlePointerDown : undefined}
+		>
 
 			<div ref={viewportWrapperRef} className="relative shadow-2xl transition-none" style={wrapperStyle} >
 				<div ref={containerRef} className={`relative`} style={containerStyle} >
@@ -447,9 +514,12 @@ const Viewport3D = forwardRef( ( { viewportMode = "preview" }, _ref ) => {
 				<ViewportToolbar
 					onResize={handleViewportResize}
 					viewportWrapperRef={viewportRef}
+					scale={viewportScale}
+					minSize={MIN_ZOOM}
+					maxSize={MAX_ZOOM}
 					autoFitScale={autoFitScale}
 					isManualScale={isManualScale}
-					onResetToAutoFit={handleResetToAutoFit}
+					onResetToAutoFit={handleResetToAutoFitWithPan}
 				/>
 			)}
 

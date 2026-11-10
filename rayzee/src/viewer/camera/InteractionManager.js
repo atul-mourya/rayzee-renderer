@@ -201,7 +201,7 @@ export class InteractionManager extends EventDispatcher {
 		this.focusMode = ! this.focusMode;
 
 		// Update cursor to indicate mode
-		this.canvas.style.cursor = this.focusMode ? 'crosshair' : 'auto';
+		this.canvas.style.cursor = this.focusMode ? 'crosshair' : '';
 
 		// Manage event listeners
 		if ( this.focusMode ) {
@@ -321,7 +321,7 @@ export class InteractionManager extends EventDispatcher {
 	exitAFPointPlacementMode() {
 
 		this.afPointPlacementMode = false;
-		this.canvas.style.cursor = 'auto';
+		this.canvas.style.cursor = '';
 		this.canvas.removeEventListener( 'click', this.handleAFPointClick );
 
 	}
@@ -360,7 +360,7 @@ export class InteractionManager extends EventDispatcher {
 		this.selectMode = ! this.selectMode;
 
 		// Update cursor
-		this.canvas.style.cursor = this.selectMode ? 'pointer' : 'auto';
+		this.canvas.style.cursor = this.selectMode ? 'pointer' : '';
 
 		// Manage event listeners
 		if ( this.selectMode ) {
@@ -410,7 +410,7 @@ export class InteractionManager extends EventDispatcher {
 		this.selectMode = false;
 
 		// Restore cursor
-		this.canvas.style.cursor = 'auto';
+		this.canvas.style.cursor = '';
 
 		// Remove event listeners (context menu listeners stay active)
 		this.canvas.removeEventListener( 'mousedown', this.handleMouseDown );
@@ -890,7 +890,7 @@ export class InteractionManager extends EventDispatcher {
 		}
 
 		// Restore cursor
-		this.canvas.style.cursor = 'auto';
+		this.canvas.style.cursor = '';
 
 		// Clear references
 		this.scene = null;

@@ -42,6 +42,9 @@ const ViewportToolbar = ( {
 	viewportWrapperRef,
 	appRef,
 
+	// The view's zoom as set elsewhere (the wheel)
+	scale,
+
 	// Auto-fit functionality
 	autoFitScale = 100,
 	isManualScale = false,
@@ -103,6 +106,9 @@ const ViewportToolbar = ( {
 
 	}, [ autoFitScale, isManualScale, onResetToAutoFit ] );
 
+	// The wheel zooms too: a parent passing `scale` is followed.
+	const shown = scale ?? size;
+
 	// Define position classes based on position prop
 	const positionClasses = {
 		"top-left": "top-2 left-2",
@@ -121,7 +127,7 @@ const ViewportToolbar = ( {
 
 	const handleZoomIn = () => {
 
-		const newSize = Math.min( size + zoomStep, maxSize );
+		const newSize = Math.min( shown + zoomStep, maxSize );
 		setSize( newSize );
 		onResize?.( newSize );
 
@@ -129,7 +135,7 @@ const ViewportToolbar = ( {
 
 	const handleZoomOut = () => {
 
-		const newSize = Math.max( size - zoomStep, minSize );
+		const newSize = Math.max( shown - zoomStep, minSize );
 		setSize( newSize );
 		onResize?.( newSize );
 
@@ -210,7 +216,7 @@ const ViewportToolbar = ( {
 	const needsSeparator = hasZoomControls && hasOtherControls;
 
 	return (
-		<div className={cn(
+		<div data-no-pan className={cn(
 			"flex absolute h-8 text-xs text-foreground rounded-full bg-secondary backdrop-blur items-center",
 			positionClasses[ position ],
 			className
@@ -266,10 +272,11 @@ const ViewportToolbar = ( {
 
 				{controls.zoomSlider && (
 					<Slider
-						value={[ size ]}
+						value={[ shown ]}
 						min={minSize}
 						max={maxSize}
 						step={step}
+						precision={0}
 						onValueChange={handleSizeChange}
 						className="w-30"
 						snapPoints={onResetToAutoFit ? [ autoFitScale ] : undefined}

@@ -17,6 +17,8 @@ const AutoFocusOverlay = ( { containerRef } ) => {
 
 	const handlePointerDown = ( e ) => {
 
+		// Moving the point is not a pan of the view.
+		e.stopPropagation();
 		setIsDragging( true );
 		e.target.setPointerCapture( e.pointerId );
 		dragContainerRef.current = containerRef.current;
