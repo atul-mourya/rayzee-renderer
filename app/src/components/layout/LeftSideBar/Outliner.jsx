@@ -7,6 +7,7 @@ import {
 import { useStore } from '@/store';
 import { getApp } from '@/lib/appProxy';
 import { useToast } from '@/hooks/use-toast';
+import { ROW_HEIGHT, flattenRows, scrollToShow, ancestorsOf } from '@/lib/outlinerRows';
 import { cn } from "@/lib/utils";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -103,15 +104,14 @@ function useIsSelected( uuid ) {
 
 }
 
-const VisibilityToggle = memo( ( { item, isVisible, onVisibilityChange } ) => {
+const VisibilityToggle = memo( ( { item, isVisible } ) => {
 
 	const handleToggle = useCallback( ( e ) => {
 
 		e.stopPropagation();
 		useStore.getState().toggleMeshVisibility( item.uuid );
-		onVisibilityChange?.( ! isVisible );
 
-	}, [ item.uuid, isVisible, onVisibilityChange ] );
+	}, [ item.uuid ] );
 
 	return (
 		<div
@@ -193,91 +193,44 @@ const ChevronToggle = memo( ( { isOpen, onToggle, hasChildren } ) => {
 
 ChevronToggle.displayName = 'ChevronToggle';
 
-// An open node mounts this many children at a time: the Moana island's 71k shapes under one group were 1.4M DOM nodes.
-const CHILD_PAGE = 200;
-// The last reveal, read by rows that mount because of it: they were not mounted to hear the event.
-let pendingReveal = null;
+// Only the rows in view, and OVERSCAN either side, are mounted: 24155522.glb's ~1,000 took the page 0.42 s to build and
+// lay out after a load.
+const OVERSCAN = 12;
+const LIST_PADDING = 4;
 
-/** Children to mount so the revealed path is among them. */
-const shownFor = ( item, reveal, shown ) => {
+// Visibility from the store's events, by uuid, over what the layers were built with; cleared when they are rebuilt.
+// A new map on each change, which is the snapshot.
+const rowVisibility = {
+	map: new Map(),
+	listeners: new Set(),
+	replace( map ) {
 
-	if ( ! reveal?.ancestors.has( item.uuid ) ) return shown;
-	const i = item.children.findIndex( c => c.uuid === reveal.target || reveal.ancestors.has( c.uuid ) );
-	return i < shown ? shown : Math.ceil( ( i + 1 ) / CHILD_PAGE ) * CHILD_PAGE;
+		this.map = map;
+		this.listeners.forEach( listener => listener() );
 
+	},
+	set( uuid, visible ) {
+
+		this.replace( new Map( this.map ).set( uuid, visible ) );
+
+	},
+	clear() {
+
+		if ( this.map.size > 0 ) this.replace( new Map() );
+
+	},
+	subscribe( listener ) {
+
+		rowVisibility.listeners.add( listener );
+		return () => rowVisibility.listeners.delete( listener );
+
+	},
 };
 
-const ShowMoreRow = memo( ( { depth, hidden, onShowMore } ) => (
-	<div
-		className="flex items-center h-7 pr-1 cursor-pointer text-xs text-muted-foreground hover:text-foreground hover:bg-accent/50"
-		style={{ paddingLeft: depth * 12 + 33 }}
-		onClick={onShowMore}
-	>
-		Show {Math.min( CHILD_PAGE, hidden ).toLocaleString()} more ({hidden.toLocaleString()} hidden)
-	</div>
-) );
+const OutlinerRow = memo( ( { row, onToggleOpen } ) => {
 
-ShowMoreRow.displayName = 'ShowMoreRow';
-
-const LayerTreeItem = memo( ( { item, depth, parentHidden } ) => {
-
-	const [ isOpen, setIsOpen ] = useState( true );
-	const [ shown, setShown ] = useState( () => shownFor( item, pendingReveal, CHILD_PAGE ) );
-	const rowRef = useRef( null );
+	const { item, depth, parentHidden, visible, open } = row;
 	const isSelected = useIsSelected( item.uuid );
-
-	const getInitialVisibility = useCallback( () => {
-
-		if ( item.visible !== undefined ) return item.visible;
-		if ( item.type !== 'Mesh' || ! getApp() ) return true;
-		const app = getApp();
-		const scene = app.getScene();
-		const object = scene.getObjectByProperty( 'uuid', item.uuid );
-		return object?.visible ?? true;
-
-	}, [ item ] );
-
-	const [ isVisible, setIsVisible ] = useState( getInitialVisibility );
-
-	const handleVisibilityChange = useCallback( ( newVisibility ) => {
-
-		setIsVisible( newVisibility );
-
-	}, [] );
-
-	useEffect( () => {
-
-		const handleMeshVisibilityChanged = ( event ) => {
-
-			if ( event.detail.uuid === item.uuid ) {
-
-				setIsVisible( event.detail.visible );
-
-			}
-
-		};
-
-		window.addEventListener( 'meshVisibilityChanged', handleMeshVisibilityChanged );
-		return () => window.removeEventListener( 'meshVisibilityChanged', handleMeshVisibilityChanged );
-
-	}, [ item.uuid ] );
-
-	// Only the topmost collapsed ancestor is mounted to hear this — everything
-	// below it remounts with isOpen defaulted true, so one pass opens the path.
-	useEffect( () => {
-
-		const handleReveal = ( event ) => {
-
-			if ( ! event.detail.ancestors.has( item.uuid ) ) return;
-			setIsOpen( true );
-			setShown( n => shownFor( item, event.detail, n ) );
-
-		};
-
-		window.addEventListener( 'outliner:reveal', handleReveal );
-		return () => window.removeEventListener( 'outliner:reveal', handleReveal );
-
-	}, [ item ] );
 
 	const handleNodeClick = useCallback( ( e ) => {
 
@@ -344,84 +297,55 @@ const LayerTreeItem = memo( ( { item, depth, parentHidden } ) => {
 	const toggleOpen = useCallback( ( e ) => {
 
 		e.stopPropagation();
-		setIsOpen( p => ! p );
+		onToggleOpen( item.uuid );
 
-	}, [] );
-
-	const paddingLeft = depth * 12 + 8;
-
-	// Runs on mount too, which is what reveals a row that an ancestor just expanded.
-	useEffect( () => {
-
-		if ( ! isSelected ) return;
-		const id = requestAnimationFrame( () => {
-
-			rowRef.current?.scrollIntoView( { block: 'nearest', inline: 'nearest' } );
-
-		} );
-		return () => cancelAnimationFrame( id );
-
-	}, [ isSelected ] );
+	}, [ item.uuid, onToggleOpen ] );
 
 	return (
-		<div className="flex flex-col select-none min-w-full w-fit">
-			<div
-				ref={rowRef}
-				className={cn(
-					"group flex items-center h-7 pr-1 cursor-pointer transition-colors border-none outline-none min-w-full w-fit",
-					isSelected ? STYLES.itemActive : "hover:bg-accent/50 text-muted-foreground hover:text-foreground",
-					( parentHidden || ! isVisible ) && "opacity-50"
-				)}
-				style={{ paddingLeft: paddingLeft }}
-				onClick={handleNodeClick}
-				onContextMenu={handleContextMenu}
-			>
-				<ChevronToggle isOpen={isOpen} onToggle={toggleOpen} hasChildren={item.children.length > 0} />
+		<div
+			className={cn(
+				"group flex items-center h-7 pr-1 cursor-pointer transition-colors border-none outline-none min-w-full w-fit select-none",
+				isSelected ? STYLES.itemActive : "hover:bg-accent/50 text-muted-foreground hover:text-foreground",
+				( parentHidden || ! visible ) && "opacity-50"
+			)}
+			style={{ paddingLeft: depth * 12 + 8 }}
+			onClick={handleNodeClick}
+			onContextMenu={handleContextMenu}
+		>
+			<ChevronToggle isOpen={open} onToggle={toggleOpen} hasChildren={item.children.length > 0} />
 
-				<div className="flex items-center justify-center w-5 h-full">
-					<ObjectIcon object={item} />
-				</div>
-
-				<span className={cn(
-					"text-xs ml-1 flex-1 whitespace-nowrap pr-2",
-					isSelected ? "text-accent-foreground font-medium" : "opacity-70"
-				)}>
-					{item.name}
-				</span>
-
-				{/* Right side controls */}
-				<div className="sticky right-0 flex items-center h-full pl-2 pr-1 ml-auto">
-					<div className="absolute inset-0 bg-background -z-20" />
-					<div className={cn(
-						"absolute inset-0 -z-10 transition-colors",
-						isSelected ? "bg-accent" : "group-hover:bg-accent/0"
-					)} />
-					{/* Gradient mask for smooth transition - simplified */}
-					<div className={cn(
-						"absolute left-0 top-0 bottom-0 w-4 -translate-x-full bg-gradient-to-l from-background to-transparent pointer-events-none",
-						isSelected && "from-accent"
-					)} />
-					{item.removable && <RemoveButton uuid={item.uuid} />}
-					<VisibilityToggle item={item} isVisible={isVisible} onVisibilityChange={handleVisibilityChange} />
-				</div>
+			<div className="flex items-center justify-center w-5 h-full">
+				<ObjectIcon object={item} />
 			</div>
 
-			{item.children.length > 0 && isOpen && (
-				<div className="flex flex-col">
-					{item.children.slice( 0, shown ).map( child => (
-						<LayerTreeItem key={child.uuid} item={child} depth={depth + 1} parentHidden={parentHidden || ! isVisible} />
-					) )}
-					{item.children.length > shown && (
-						<ShowMoreRow depth={depth + 1} hidden={item.children.length - shown} onShowMore={() => setShown( n => n + CHILD_PAGE )} />
-					)}
-				</div>
-			)}
+			<span className={cn(
+				"text-xs ml-1 flex-1 whitespace-nowrap pr-2",
+				isSelected ? "text-accent-foreground font-medium" : "opacity-70"
+			)}>
+				{item.name}
+			</span>
+
+			{/* Right side controls */}
+			<div className="sticky right-0 flex items-center h-full pl-2 pr-1 ml-auto">
+				<div className="absolute inset-0 bg-background -z-20" />
+				<div className={cn(
+					"absolute inset-0 -z-10 transition-colors",
+					isSelected ? "bg-accent" : "group-hover:bg-accent/0"
+				)} />
+				{/* Gradient mask for smooth transition - simplified */}
+				<div className={cn(
+					"absolute left-0 top-0 bottom-0 w-4 -translate-x-full bg-gradient-to-l from-background to-transparent pointer-events-none",
+					isSelected && "from-accent"
+				)} />
+				{item.removable && <RemoveButton uuid={item.uuid} />}
+				<VisibilityToggle item={item} isVisible={visible} />
+			</div>
 		</div>
 	);
 
 } );
 
-LayerTreeItem.displayName = 'LayerTreeItem';
+OutlinerRow.displayName = 'OutlinerRow';
 
 const OutlinerHeader = memo( ( { searchTerm, onSearchChange, filters, onFilterChange } ) => {
 
@@ -574,6 +498,13 @@ const Outliner = () => {
 	const layers = useStore( ( state ) => state.layers );
 	const setLayers = useStore( ( state ) => state.setLayers );
 	const selectedObject = useStore( ( state ) => state.selectedObject );
+	// By uuid, so a node keeps its state across a rebuild of the layers, as its row did.
+	const [ collapsed, setCollapsed ] = useState( () => new Set() );
+	const visibleOf = useSyncExternalStore( rowVisibility.subscribe, () => rowVisibility.map );
+	const scrollRef = useRef( null );
+	const [ view, setView ] = useState( { top: 0, height: 0 } );
+	const revealRef = useRef( selectedObject?.uuid ?? null );
+	const [ revealed, setRevealed ] = useState( 0 );
 
 	useLayoutEffect( () => rowSelection.select( selectedObject?.uuid ?? null ), [ selectedObject ] );
 
@@ -596,6 +527,7 @@ const Outliner = () => {
 
 	const updateLayers = useCallback( () => {
 
+		rowVisibility.clear();
 		setLayers( getSceneElements() );
 
 	}, [ getSceneElements, setLayers ] );
@@ -613,38 +545,76 @@ const Outliner = () => {
 
 	}, [ updateLayers ] );
 
-	// Selection often arrives from the viewport, where the row may be scrolled out
-	// of view or buried under a collapsed group.
 	useEffect( () => {
 
-		if ( ! selectedObject ) return;
+		const handleMeshVisibilityChanged = ( event ) => rowVisibility.set( event.detail.uuid, event.detail.visible );
+		window.addEventListener( 'meshVisibilityChanged', handleMeshVisibilityChanged );
+		return () => window.removeEventListener( 'meshVisibilityChanged', handleMeshVisibilityChanged );
 
-		const ancestors = new Set();
-		const findPath = ( nodes, trail ) => nodes.some( node => {
+	}, [] );
 
-			if ( node.uuid === selectedObject.uuid ) {
+	// Selection often arrives from the viewport, where the row may be scrolled out of view or under a collapsed group.
+	useEffect( () => useStore.subscribe( ( state, previous ) => {
 
-				trail.forEach( uuid => ancestors.add( uuid ) );
-				return true;
+		const object = state.selectedObject;
+		if ( ! object || object === previous.selectedObject ) return;
+		const ancestors = ancestorsOf( state.layers, object.uuid );
+		if ( ! ancestors ) return;
+		revealRef.current = object.uuid;
+		setCollapsed( set => ancestors.some( uuid => set.has( uuid ) ) ? new Set( [ ...set ].filter( uuid => ! ancestors.includes( uuid ) ) ) : set );
+		setRevealed( n => n + 1 );
 
-			}
-
-			return findPath( node.children, [ ...trail, node.uuid ] );
-
-		} );
-
-		if ( findPath( layers, [] ) && ancestors.size > 0 ) {
-
-			pendingReveal = { ancestors, target: selectedObject.uuid };
-			window.dispatchEvent( new CustomEvent( 'outliner:reveal', { detail: pendingReveal } ) );
-
-		}
-
-	}, [ selectedObject, layers ] );
+	} ), [] );
 
 	const filteredLayers = useMemo( () =>
 		filterLayers( layers, searchTerm, filters )
 	, [ layers, searchTerm, filters ] );
+
+	const rows = useMemo( () => flattenRows( filteredLayers, collapsed, visibleOf ), [ filteredLayers, collapsed, visibleOf ] );
+
+	const toggleOpen = useCallback( ( uuid ) => {
+
+		setCollapsed( set => {
+
+			const next = new Set( set );
+			if ( next.has( uuid ) ) next.delete( uuid );
+			else next.add( uuid );
+			return next;
+
+		} );
+
+	}, [] );
+
+	const measure = useCallback( () => {
+
+		const el = scrollRef.current;
+		if ( el ) setView( v => ( v.top === el.scrollTop && v.height === el.clientHeight ? v : { top: el.scrollTop, height: el.clientHeight } ) );
+
+	}, [] );
+
+	useLayoutEffect( () => {
+
+		const el = scrollRef.current;
+		if ( ! el ) return;
+		measure();
+		const observer = new ResizeObserver( measure );
+		observer.observe( el );
+		return () => observer.disconnect();
+
+	}, [ measure ] );
+
+	useLayoutEffect( () => {
+
+		const uuid = revealRef.current;
+		const el = scrollRef.current;
+		if ( ! uuid || ! el ) return;
+		revealRef.current = null;
+		const index = rows.findIndex( row => row.item.uuid === uuid );
+		if ( index < 0 ) return;
+		el.scrollTop = scrollToShow( index, el.scrollTop - LIST_PADDING, el.clientHeight ) + LIST_PADDING;
+		measure();
+
+	}, [ rows, revealed, measure ] );
 
 	const handleSearchChange = useCallback( ( e ) => {
 
@@ -658,6 +628,9 @@ const Outliner = () => {
 
 	}, [] );
 
+	const first = Math.max( 0, Math.floor( ( view.top - LIST_PADDING ) / ROW_HEIGHT ) - OVERSCAN );
+	const last = Math.min( rows.length, Math.ceil( ( view.top + view.height ) / ROW_HEIGHT ) + OVERSCAN );
+
 	return (
 		<div className={cn( "w-full h-full flex flex-col overflow-hidden select-none", STYLES.bg )}>
 			<OutlinerHeader
@@ -666,12 +639,16 @@ const Outliner = () => {
 				filters={filters}
 				onFilterChange={handleFilterChange}
 			/>
-			<div className="flex-1 overflow-auto py-1">
+			<div ref={scrollRef} className="flex-1 overflow-auto py-1" onScroll={measure}>
 				<div className="flex flex-col min-w-full w-fit">
-					{filteredLayers.length > 0 ? (
-						filteredLayers.map( ( layer ) => (
-							<LayerTreeItem key={layer.uuid} item={layer} depth={0} />
-						) )
+					{rows.length > 0 ? (
+						<>
+							<div style={{ height: first * ROW_HEIGHT }} />
+							{rows.slice( first, last ).map( ( row ) => (
+								<OutlinerRow key={row.item.uuid} row={row} onToggleOpen={toggleOpen} />
+							) )}
+							<div style={{ height: ( rows.length - last ) * ROW_HEIGHT }} />
+						</>
 					) : (
 						<div className="text-xs text-muted-foreground/50 px-4 py-8 text-center italic">
             No items found
