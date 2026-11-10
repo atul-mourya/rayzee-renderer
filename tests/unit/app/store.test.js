@@ -874,6 +874,23 @@ describe( 'what a scene\'s file asks for', () => {
 
 	} );
 
+	it( 'draws the camera rays through the pixel filter the file asks for, and the plain pixel for the next model', async () => {
+
+		const app = await withApp();
+		const calls = () => app.settings.set.mock.calls.filter( ( [ key ] ) => key.startsWith( 'pixelFilter' ) ).map( ( [ key, v, { source } ] ) => [ key, v, source ] );
+		pt().applySceneRequest( { pixelFilter: 'triangle', pixelFilterRadius: 1 } );
+		pt().applySceneRequest( { pixelFilter: 'triangle', pixelFilterRadius: 1 } );
+		expect( pt()._sceneRequest.pixelFilter ).toEqual( { type: 'triangle', radius: 1 } );
+		pt().applySceneRequest( { pixelFilter: 'triangle', pixelFilterRadius: 2 } );
+		pt().applySceneRequest( { integrator: 'path' } );
+		expect( calls() ).toEqual( [
+			[ 'pixelFilter', 'triangle', 'scene-metadata' ], [ 'pixelFilterRadius', 1, 'scene-metadata' ],
+			[ 'pixelFilter', 'triangle', 'scene-metadata' ], [ 'pixelFilterRadius', 2, 'scene-metadata' ],
+			[ 'pixelFilter', 'box', 'scene-metadata' ], [ 'pixelFilterRadius', 0.5, 'scene-metadata' ],
+		] );
+
+	} );
+
 	it( 'keeps the bounces and samples it asks for to show, applying neither', async () => {
 
 		await withApp();

@@ -229,7 +229,7 @@ describe( 'timeline and settings sessions', () => {
 		const other = {
 			integrator: 'bidirectional', shadowRays: 'all', renderLimitMode: 'time', backgroundColor: '#123456', fogColor: '#654321',
 			cameraProjection: 'orthographic', dofMode: 'physical', fogBounds: { min: [ - 1, 0, - 1 ], max: [ 1, 2, 1 ] }, fogFloor: 0.5,
-			panoramaLonRange: [ - 90, 90 ], panoramaLatRange: [ - 45, 45 ],
+			panoramaLonRange: [ - 90, 90 ], panoramaLatRange: [ - 45, 45 ], pixelFilter: 'triangle',
 		};
 		const away = ( key, d ) => ( key in other ? other[ key ] : typeof d === 'boolean' ? ! d : typeof d === 'number' ? d + 1 : undefined );
 		const a = new RenderSettings( ENGINE_DEFAULTS );

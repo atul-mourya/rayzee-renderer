@@ -275,6 +275,18 @@ the shadow terminator, shadow-ray picking, sized lights and fog. CLAUDE.md keeps
   pbrt-v4's own render of lit tiles: one below the cap untouched in both, an orange one scaled 0.234 here and 0.225
   there, at ISO 100 and 400 alike; a saturated blue loses more in pbrt, which caps each sample per wavelength.
   `tests/gpu/sampleClamp.test.js`.
+- **Pixel filter** (`pixelFilter`, `pixelFilterRadius`; pbrt-v4's box, triangle and Gaussian PixelFilter; path integrator only, else
+  `setting.ignored`) — Generate draws each camera sample's offset from the filter, pbrt's way (`TriangleFilter::Sample`
+  is `SampleTent`, weight 1): the tent by its inverse CDF (`tentOffset`), each axis apart, so the stratified jitter stays
+  stratified. pbrt's Gaussian (max( 0, g( x ) − g( r ) ), separable; pbrt tabulates it and weighs each sample f / pdf) is
+  drawn exactly instead, its CDF in closed form through erf (Abramowitz & Stegun 7.1.26) inverted by 24 bisection steps
+  (`gaussianOffset`, within 2e-5 of the exact inverse), so every sample weighs 1 and the plain average is pbrt's; its σ
+  is radius / 3, pbrt's 0.5 at its default 1.5 (another σ is reported approximated). Compiled in only off the box of 0.5; off, every kernel is as before. Under the bidirectional integrators light
+  tracing splats each light path into one pixel, so the camera's importance would no longer match it. A rendered edge holds
+  the filter to pbrt-v4's own render of it (16 px, 4096 samples): beside it a triangle of 1 gives 0.1250 / 0.8750 (pbrt
+  0.1249 / 0.8750), of 2 0.0313 / 0.2813 (0.031 / 0.281), a box of 1 0.25 / 0.75 (0.2498 / 0.7500), a Gaussian of 2
+  0.0078 / 0.2217 / 0.7783 / 0.9922 (0.0077 / 0.2216 / 0.7783 / 0.9922); back to the box, the same pixels as before.
+  Mitchell and Lanczos are not drawn.
 - **Light radius** — a point or spot light with `userData.radius` (USD `SphereLight` radius unless `treatAsPoint`) is lit
   as Cycles' Soft Falloff: NEE samples a disc of that radius facing the shaded point and scales the emission by the disc's
   cosine, so on its axis it gives I / (d² + r²); a spot's cone, gobo and IES are read from the centre. Packed as the

@@ -122,7 +122,7 @@ const DEFAULT_CURVE_SIDES = { flat: 1, ribbon: 1, cylinder: 2 };
 const DEFAULT_CURVE_TOLERANCE = 0.05;
 
 /** Bumped whenever the same scene files build a different graph, so a stored graph is not reused. */
-export const PBRT_BUILD_REVISION = 34;
+export const PBRT_BUILD_REVISION = 35;
 
 function samePlacements( a, b ) {
 
@@ -360,11 +360,16 @@ const PBRT_INTEGRATORS = new Map( [[ 'path', 'path' ], [ 'volpath', 'path' ], [ 
 // 90° to −270°, the horizon not levelled (posed to face the middle, a pitched camera's tilt would become a roll).
 const PBRT_PANORAMA = Object.freeze( { cameraProjection: 'equirectangular', panoramaLonRange: [ 90, - 270 ], panoramaLatRange: [ - 90, 90 ], panoramaLevelHorizon: false } );
 
+// pbrt-v4's filter where a file names none (`PixelFilter "gaussian"`, radius 1.5, σ 0.5).
+const PBRT_DEFAULT_FILTER = Object.freeze( { type: 'gaussian', radius: 1.5 } );
+
 // What the scene asks the renderer for, where it says: the Integrator, its maxdepth and `regularize`, sppm's `radius` as
 // vertex merging's (scene units), the Sampler's pixelsamples, the Film's resolution, as `exposure` pbrt's imaging
 // ratio, shutter time × ISO / 100, the film's `whiteBalance`, as `sampleClamp` the Film's maxcomponentvalue before that
-// ratio (pbrt caps the sensor's XYZ after it; its sppm writes the image itself and never caps), and a spherical camera's
-// panorama — scene metadata's `render`.
+// ratio (pbrt caps the sensor's XYZ after it; its sppm writes the image itself and never caps), the PixelFilter (box,
+// triangle or Gaussian; pbrt's Gaussian where none is named) as `pixelFilter` and `pixelFilterRadius` unless it is the
+// engine's own box of 0.5 (not under bdpt or sppm: the engine's bidirectional integrators draw the plain pixel), and a
+// spherical camera's panorama — scene metadata's `render`.
 function renderRequest( ir ) {
 
 	// Its `equalarea` square (pbrt's default) is the engine's equal-area projection, which has no framing of its own.
@@ -391,6 +396,11 @@ function renderRequest( ir ) {
 	if ( exposure > 0 && exposure !== 1 ) render.exposure = exposure;
 	const cap = ir.film?.maxcomponentvalue;
 	if ( cap > 0 && cap < Infinity && ir.integrator?.type !== 'sppm' ) render.sampleClamp = cap / ( exposure > 0 ? exposure : 1 );
+	// No PixelFilter is pbrt's Gaussian of 1.5; the engine's bidirectional integrators draw the plain pixel (light tracing
+	// splats into one).
+	const filter = ir.pixelFilter === undefined ? PBRT_DEFAULT_FILTER : ir.pixelFilter;
+	const splats = ir.integrator?.type === 'bdpt' || ir.integrator?.type === 'sppm';
+	if ( filter && filter.radius > 0 && ! ( filter.type === 'box' && filter.radius === 0.5 ) && ! splats ) Object.assign( render, { pixelFilter: filter.type, pixelFilterRadius: filter.radius } );
 
 	// Under a camera's own sensor curves pbrt balances for 6500 K unless told otherwise (film.cpp, PixelSensor::Create).
 	const film = ir.film;

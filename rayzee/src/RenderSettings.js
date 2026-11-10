@@ -54,6 +54,8 @@ const SETTING_ROUTES = {
 	samplingTechnique: { uniform: 'samplingTechnique', reset: true },
 	fireflyThreshold: { uniform: 'fireflyThreshold', reset: true },
 	sampleClamp: { handler: 'handleSampleClamp', reset: true },
+	pixelFilter: { handler: 'handlePixelFilter', reset: true },
+	pixelFilterRadius: { handler: 'handlePixelFilterRadius', reset: true },
 	shadowTerminatorOffset: { uniform: 'shadowTerminatorOffset', reset: true },
 	enableAlphaShadows: { uniform: 'enableAlphaShadows', reset: true },
 	// Adaptive sampling — whole-frame early-stop (useAdaptiveSampling) + per-pixel freeze (usePixelFreeze)
@@ -244,6 +246,8 @@ export class RenderSettings extends EventDispatcher {
 
 			// The box is measured only while there is fog: off, nothing reads it.
 			handleSampleClamp: ( value ) => stages.pathTracer?.setUniform( 'sampleClamp', Math.max( Number( value ) || 0, 0 ) ),
+			handlePixelFilter: ( value ) => stages.pathTracer?.setPixelFilter?.( value ),
+			handlePixelFilterRadius: ( value ) => stages.pathTracer?.setUniform( 'pixelFilterRadius', Math.max( Number( value ) || 0, 0 ) ),
 
 			handleFogDensity: ( value ) => {
 

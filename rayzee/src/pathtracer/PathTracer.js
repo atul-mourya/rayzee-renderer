@@ -50,6 +50,7 @@ const log = createLogger( 'wavefront' );
 const XYZ_FROM_REC709 = [ 0.4124564, 0.3575761, 0.1804375, 0.2126729, 0.7151522, 0.0721750, 0.0193339, 0.1191920, 0.9503041 ];
 
 const PICKED_SHADOW_RAYS = [ 'two', 'one' ];
+const PIXEL_FILTERS = [ 'box', 'triangle', 'gaussian' ];
 const SHADOW_RAY_MODES = [ 'all', ...PICKED_SHADOW_RAYS ];
 
 // Sized per bounce iteration: the camera loop from counts written on the GPU (all LIST_WG_SIZE wide), the light pass
@@ -192,6 +193,9 @@ export class PathTracer extends PathTracerStage {
 		this._shadowRays = ENGINE_DEFAULTS.shadowRays;
 		this._compiledPick = null;
 		this._pathRegularization = ENGINE_DEFAULTS.pathRegularization;
+		// The pixel filter the camera rays are drawn from, and the one Generate was compiled with ('' = the box of 0.5).
+		this._pixelFilter = ENGINE_DEFAULTS.pixelFilter;
+		this._compiledPixelFilter = '';
 		this._learnsVisibility = false;
 
 		// Integrators other than the path tracer's own, by name (registerIntegrator); the chosen one's instance, or
@@ -495,6 +499,40 @@ export class PathTracer extends PathTracerStage {
 
 	}
 
+	/** The filter each camera sample's position is drawn from (pbrt's PixelFilter): 'box', 'triangle' or 'gaussian'. */
+	setPixelFilter( type ) {
+
+		if ( ! PIXEL_FILTERS.includes( type ) ) {
+
+			log.warn( `pixelFilter: unknown filter "${type}", using 'box'` );
+			type = 'box';
+
+		}
+
+		this._pixelFilter = type;
+
+	}
+
+	/**
+	 * The pixel filter Generate compiles in, or '' for the plain pixel (the box of radius 0.5): path integrator only, as
+	 * light tracing splats each light path into one pixel.
+	 */
+	_pixelFilterNeeded() {
+
+		const radius = this.pixelFilterRadius.value;
+		if ( ! ( radius > 0 ) || ( this._pixelFilter === 'box' && radius === 0.5 ) ) return '';
+		if ( ! this._integrator ) return this._pixelFilter;
+		if ( this._pixelFilterIgnoredBy !== this._integrator.name ) {
+
+			this._pixelFilterIgnoredBy = this._integrator.name;
+			this.issues?.warn( ISSUE_CODES.SETTING_IGNORED, `the pixel filter is the path integrator's only: "${this._integrator.name}" draws the plain pixel`, { setting: 'pixelFilter', integrator: this._integrator.name } );
+
+		}
+
+		return '';
+
+	}
+
 	/** Whether the per-sample cap is compiled in: it has a limit, under the path integrator. */
 	_sampleClampNeeded() {
 
@@ -563,6 +601,7 @@ export class PathTracer extends PathTracerStage {
 		// A tree deeper than the stack compiled (an added object, a rebuilt BLAS) grows it; a shallower one waits.
 		if ( this._stackNeeded() > this._compiledStack ) this._outputsChanged = true;
 		if ( this._sampleClampNeeded() !== this._compiledSampleClamp ) this._outputsChanged = true;
+		if ( this._pixelFilterNeeded() !== this._compiledPixelFilter ) this._outputsChanged = true;
 
 		if ( this._lightBufferRealloc || this._outputsChanged ) {
 
@@ -1941,6 +1980,7 @@ export class PathTracer extends PathTracerStage {
 			} )().compute( [ Math.ceil( ( this._chunkRows * w ) / LIST_WG_SIZE ), 1, 1 ], [ LIST_WG_SIZE, 1, 1 ] )
 		);
 
+		this._compiledPixelFilter = this._pixelFilterNeeded();
 		const genParams = {
 			rayBufferRW: pb.rayBuffer.rw,
 			hitBufferRW: pb.hitBuffer.rw,
@@ -1974,6 +2014,7 @@ export class PathTracer extends PathTracerStage {
 			auxGBufferEnabled: this._auxGBufferUniform,
 			gBuffer: this._gBufferCompiled,
 			bidirectional: this._integrator?.uniforms ?? null,
+			pixelFilter: this._compiledPixelFilter ? { type: this._compiledPixelFilter, radius: this.pixelFilterRadius } : null,
 		};
 		const genFn = buildGenerateKernel( genParams );
 		this._kernelManager.register( 'generate',

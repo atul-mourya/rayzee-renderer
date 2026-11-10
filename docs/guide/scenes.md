@@ -34,7 +34,10 @@ Collada's `aspect_ratio` (or `xfov` with `yfov`, `xmag / ymag`) — kept on that
 imaging ratio (the camera's shutter time × the Film's `iso` / 100, which pbrt scales every pixel by), and `whiteBalance`,
 the Film's `whitebalance` (6500 under a camera `sensor` that sets none, as pbrt has it); where its file says,
 `pathRegularization` (its `regularize`), `sampleClamp` (the Film's `maxcomponentvalue` over that imaging ratio; none under
-sppm, which pbrt never caps) and `mergeRadius` (sppm's `radius`, in scene units:
+sppm, which pbrt never caps), `pixelFilter` and `pixelFilterRadius` (its box, triangle or Gaussian PixelFilter at pbrt-v4's
+default radius where it gives none: 0.5, 2, 1.5; a file naming none asks for pbrt's Gaussian of 1.5; Mitchell and Lanczos
+are reported, and the pixel stays plain; none under bdpt or sppm) and
+`mergeRadius` (sppm's `radius`, in scene units:
 `pathTracer.activeIntegrator.setMergeRadius( r, { units: 'scene' } )` under `'vcm'`); a spherical camera, as
 `cameraProjection`, `panoramaLonRange`, `panoramaLatRange` and `panoramaLevelHorizon` (settings of those names, framed
 as pbrt frames it; a panorama renders 2:1, whatever the Film's `aspect`). USD's RenderSettings carry `width`

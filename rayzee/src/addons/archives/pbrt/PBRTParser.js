@@ -40,6 +40,9 @@ const TYPED_ARRAY_THRESHOLD = 8;
 
 const START = 1, END = 2, BOTH = 3;
 
+// pbrt-v4's default radius of each pixel filter the engine draws; Mitchell and Lanczos are reported ignored.
+const PIXEL_FILTER_RADIUS = { box: 0.5, triangle: 2, gaussian: 1.5 };
+
 // pbrt-v4's integrators that take `regularize`.
 const REGULARIZING_INTEGRATORS = new Set( [ 'path', 'volpath', 'bdpt', 'mlt' ] );
 
@@ -784,8 +787,30 @@ export class PBRTParser {
 
 			}
 
+			// The box, triangle and Gaussian filters are the engine's (PBRTSceneBuilder renderRequest); pbrt-v4's radius defaults.
+			case 'PixelFilter': {
+
+				const type = this._peek()?.type === TokenType.STRING ? this._next().value : 'gaussian';
+				const params = this._parseParams();
+				this._translate( params, `${name} ${type}`, () => {
+
+					// One it does not draw (Mitchell, Lanczos): the plain pixel, its parameters reported.
+					this.ir.pixelFilter = null;
+					if ( ! Object.hasOwn( PIXEL_FILTER_RADIUS, type ) ) return;
+					const radius = this._num( param( params, 'xradius' ), PIXEL_FILTER_RADIUS[ type ] );
+					// One radius for both axes: a different y radius takes x's.
+					if ( this._num( param( params, 'yradius' ), radius ) !== radius ) approximated( params, 'yradius' );
+					// The engine's Gaussian has σ = radius / 3, pbrt's 0.5 at its default 1.5: another σ is approximated (reported on
+					// the parameter the file gives, σ or the radius).
+					if ( type === 'gaussian' && Math.abs( this._num( param( params, 'sigma' ), 0.5 ) - radius / 3 ) > 1e-6 ) approximated( params, params.sigma ? 'sigma' : 'xradius' );
+					this.ir.pixelFilter = { type, radius };
+
+				} );
+				break;
+
+			}
+
 			// Consumed for completeness; not used by the engine.
-			case 'PixelFilter':
 			case 'Filter':
 			case 'Accelerator':
 			case 'ColorSpace': {

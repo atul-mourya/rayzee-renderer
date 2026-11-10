@@ -59,6 +59,8 @@ exports[`defaults that shape pixels — a change here says how renders change in
     180,
   ],
   "pathRegularization": false,
+  "pixelFilter": "box",
+  "pixelFilterRadius": 0.5,
   "pixelFreezeStability": 8,
   "pixelFreezeThreshold": 0.02,
   "renderLimitMode": "frames",

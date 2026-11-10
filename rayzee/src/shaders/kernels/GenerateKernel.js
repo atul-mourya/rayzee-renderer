@@ -11,9 +11,9 @@
  */
 
 import {
-	Fn, float, vec2, vec3, vec4, int, uint,
+	Fn, wgslFn, float, vec2, vec3, vec4, int, uint,
 	If, instanceIndex, atomicLoad,
-	localId, workgroupId, dot, max, select,
+	localId, workgroupId, dot, max, select, sqrt,
 } from 'three/tsl';
 
 import {
@@ -33,6 +33,45 @@ import {
 
 const WG_SIZE = 16;
 
+/** The tent filter of radius 1 drawn from `u` in [0, 1) by its inverse CDF (pbrt's SampleTent): offsets in (-1, 1). */
+export const tentOffset = /*@__PURE__*/ Fn( ( [ u ] ) => {
+
+	return select( u.lessThan( 0.5 ), sqrt( u.mul( 2.0 ) ).sub( 1.0 ), float( 1.0 ).sub( sqrt( float( 2.0 ).sub( u.mul( 2.0 ) ) ) ) );
+
+} );
+
+// Abramowitz & Stegun 7.1.26, within 1.5e-7.
+const erfApprox = /*@__PURE__*/ wgslFn( `
+	fn erfApprox( x: f32 ) -> f32 {
+		let a = abs( x );
+		let t = 1.0f / ( 1.0f + 0.3275911f * a );
+		let y = 1.0f - ( ( ( ( 1.061405429f * t - 1.453152027f ) * t + 1.421413741f ) * t - 0.284496736f ) * t + 0.254829592f ) * t * exp( - a * a );
+		return select( - y, y, x >= 0.0f );
+	}
+` );
+
+/**
+ * pbrt-v4's Gaussian filter along one axis, max( 0, g( x ) - g( radius ) ) with g( x ) = exp( -x² / 2σ² ), drawn from
+ * `u` by its inverse CDF, solved by bisection: offsets in (-radius, radius).
+ */
+export const gaussianOffset = /*@__PURE__*/ wgslFn( `
+	fn gaussianOffset( u: f32, radius: f32, sigma: f32 ) -> f32 {
+		let k = 0.70710678f / sigma;
+		let s = 1.25331414f * sigma;
+		let gr = exp( - radius * radius / ( 2.0f * sigma * sigma ) );
+		let e = erfApprox( radius * k );
+		let goal = u * ( 2.0f * s * e - 2.0f * radius * gr );
+		var lo = - radius;
+		var hi = radius;
+		for ( var i = 0; i < 24; i ++ ) {
+			let mid = 0.5f * ( lo + hi );
+			let c = s * ( erfApprox( mid * k ) + e ) - gr * ( mid + radius );
+			if ( c < goal ) { lo = mid; } else { hi = mid; }
+		}
+		return 0.5f * ( lo + hi );
+	}
+`, [ erfApprox ] );
+
 export function buildGenerateKernel( params ) {
 
 	const {
@@ -50,6 +89,10 @@ export function buildGenerateKernel( params ) {
 		// listDriven: 1D dispatch over the active-pixel list (activeIndicesRO[tid] = LOCAL slot) instead of 2D.
 		listDriven = false, activeIndicesRO = null, counters = null,
 		bidirectional: bdpt = null,
+		// pbrt's pixel filter, compiled in only when not the box of radius 0.5 ({ type: 'box' | 'triangle' | 'gaussian',
+		// radius: uniform }; the Gaussian's σ is radius / 3, pbrt's 0.5 at 1.5): each sample lands where the filter is
+		// drawn, at weight 1.
+		pixelFilter = null,
 	} = params;
 
 	const auxOn = auxGBufferEnabled.greaterThan( uint( 0 ) );
@@ -67,7 +110,22 @@ export function buildGenerateKernel( params ) {
 
 		// Y is subtracted because uv.y grows downward while the NDC this used to build grew upward —
 		// keeps the sub-pixel sample sequence bit-identical to the pre-panorama ray gen.
-		const jitterOffset = stratifiedJitter.sub( 0.5 );
+		const filterOffset = () => {
+
+			const { type, radius } = pixelFilter;
+			if ( type === 'triangle' ) return vec2( tentOffset( stratifiedJitter.x ), tentOffset( stratifiedJitter.y ) ).mul( radius );
+			if ( type === 'gaussian' ) {
+
+				const sigma = radius.div( 3.0 );
+				return vec2( gaussianOffset( stratifiedJitter.x, radius, sigma ), gaussianOffset( stratifiedJitter.y, radius, sigma ) );
+
+			}
+
+			return stratifiedJitter.sub( 0.5 ).mul( radius.mul( 2.0 ) );
+
+		};
+
+		const jitterOffset = pixelFilter ? filterOffset() : stratifiedJitter.sub( 0.5 );
 		const jitteredUV = vec2(
 			pixelCoord.x.add( jitterOffset.x ),
 			pixelCoord.y.sub( jitterOffset.y )

@@ -139,7 +139,7 @@ describe( 'PBRT scene builder', () => {
 
 		const scene = 'Integrator "volpath" "integer maxdepth" 15\nSampler "zsobol" "integer pixelsamples" 1024\n' + SCENE;
 		const { render, camera } = await loadPBRTScene( buildArgs( { vfs: { 'scene.pbrt': enc.encode( scene ) } } ) );
-		expect( render ).toEqual( { integrator: 'path', maxBounces: 15, samples: 1024, width: 800, height: 600 } );
+		expect( render ).toEqual( { integrator: 'path', maxBounces: 15, samples: 1024, width: 800, height: 600, pixelFilter: 'gaussian', pixelFilterRadius: 1.5 } );
 		expect( camera.userData.aspect ).toBe( 800 / 600 );
 		for ( const [ pbrt, engine ] of [[ 'bdpt', 'bidirectional' ], [ 'sppm', 'vcm' ], [ 'mlt', undefined ]] ) {
 
@@ -149,7 +149,8 @@ describe( 'PBRT scene builder', () => {
 		}
 
 		const bare = 'WorldBegin\nShape "sphere"\n';
-		expect( ( await loadPBRTScene( buildArgs( { vfs: { 'scene.pbrt': enc.encode( bare ) } } ) ) ).render ).toBeNull();
+		// Even a bare file asks for pbrt's own filter.
+		expect( ( await loadPBRTScene( buildArgs( { vfs: { 'scene.pbrt': enc.encode( bare ) } } ) ) ).render ).toEqual( { pixelFilter: 'gaussian', pixelFilterRadius: 1.5 } );
 
 	} );
 
@@ -216,6 +217,52 @@ describe( 'PBRT scene builder', () => {
 		expect( ( await load( 'Integrator "bdpt"\n' ) ).render.sampleClamp ).toBeCloseTo( 2.5, 9 );
 		expect( ( await load( 'Integrator "sppm"\n' ) ).render.sampleClamp ).toBeUndefined();
 		expect( ( await loadPBRTScene( buildArgs( { vfs: { 'scene.pbrt': enc.encode( SCENE ) } } ) ) ).render?.sampleClamp ).toBeUndefined();
+
+	} );
+
+	it( 'asks for a box, triangle or Gaussian PixelFilter other than the plain pixel, pbrt-v4\'s Gaussian where none is named, and reports the rest', async () => {
+
+		const load = async ( filter ) => loadPBRTScene( buildArgs( { vfs: { 'scene.pbrt': enc.encode( `PixelFilter ${filter}\n` + SCENE ) } } ) );
+		const unused = ( { parameters } ) => Object.keys( parameters.unused ).filter( ( key ) => key.startsWith( 'PixelFilter' ) );
+
+		// The catalog's.
+		const catalog = await load( '"triangle" "float xradius" [ 1 ] "float yradius" [ 1 ]' );
+		expect( catalog.render ).toMatchObject( { pixelFilter: 'triangle', pixelFilterRadius: 1 } );
+		expect( unused( catalog ) ).toEqual( [] );
+		expect( ( await load( '"triangle"' ) ).render ).toMatchObject( { pixelFilter: 'triangle', pixelFilterRadius: 2 } );
+		expect( ( await load( '"box" "float xradius" 1' ) ).render ).toMatchObject( { pixelFilter: 'box', pixelFilterRadius: 1 } );
+		expect( ( await load( '"box"' ) ).render?.pixelFilter ).toBeUndefined();
+
+		// One radius for both axes.
+		const oblong = await load( '"triangle" "float xradius" 1 "float yradius" 2' );
+		expect( oblong.render ).toMatchObject( { pixelFilter: 'triangle', pixelFilterRadius: 1 } );
+		expect( Object.keys( oblong.parameters.approximated ?? {} ).filter( ( key ) => key.startsWith( 'PixelFilter' ) ) ).toEqual( [ 'PixelFilter triangle: yradius' ] );
+
+		// Under bdpt and sppm the engine's bidirectional integrators draw the plain pixel: nothing asked, nothing ignored later.
+		for ( const integrator of [ 'bdpt', 'sppm' ] ) {
+
+			const scene = await loadPBRTScene( buildArgs( { vfs: { 'scene.pbrt': enc.encode( `Integrator "${integrator}"\nPixelFilter "triangle" "float xradius" 1\n` + SCENE ) } } ) );
+			expect( scene.render.pixelFilter ).toBeUndefined();
+
+		}
+
+		// A name that is only an object's own property elsewhere.
+		expect( ( await load( '"toString"' ) ).render?.pixelFilter ).toBeUndefined();
+
+		// pbrt's Gaussian, named or not: σ is the engine's radius / 3 (pbrt's 0.5 at 1.5), another reported approximated.
+		const approximatedOf = ( { parameters } ) => Object.keys( parameters.approximated ?? {} ).filter( ( key ) => key.startsWith( 'PixelFilter' ) );
+		const gaussian = await load( '"gaussian" "float sigma" 0.5' );
+		expect( gaussian.render ).toMatchObject( { pixelFilter: 'gaussian', pixelFilterRadius: 1.5 } );
+		expect( [ unused( gaussian ), approximatedOf( gaussian ) ] ).toEqual( [[], []] );
+		expect( approximatedOf( await load( '"gaussian" "float sigma" 0.3' ) ) ).toEqual( [ 'PixelFilter gaussian: sigma' ] );
+		expect( approximatedOf( await load( '"gaussian" "float xradius" 2' ) ) ).toEqual( [ 'PixelFilter gaussian: xradius' ] );
+		const unnamed = await loadPBRTScene( buildArgs( { vfs: { 'scene.pbrt': enc.encode( SCENE ) } } ) );
+		expect( unnamed.render ).toMatchObject( { pixelFilter: 'gaussian', pixelFilterRadius: 1.5 } );
+
+		// Filters the engine does not draw: the plain pixel, their parameters reported.
+		const mitchell = await load( '"mitchell" "float B" 0.3' );
+		expect( mitchell.render?.pixelFilter ).toBeUndefined();
+		expect( unused( mitchell ) ).toEqual( [ 'PixelFilter mitchell: B' ] );
 
 	} );
 

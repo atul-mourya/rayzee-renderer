@@ -569,6 +569,17 @@ export const usePathTracerStore = create( ( set, get ) => ( {
 		if ( clamp ) request.sampleClamp = clamp;
 		if ( clamp !== ( opened.sampleClamp ?? 0 ) ) getApp()?.settings.set( 'sampleClamp', clamp, { source: SETTING_SOURCE.SCENE_METADATA } );
 
+		// The PixelFilter, likewise: the plain pixel for the next model.
+		const filter = render?.pixelFilter && render.pixelFilterRadius > 0 ? { type: render.pixelFilter, radius: render.pixelFilterRadius } : null;
+		if ( filter ) request.pixelFilter = filter;
+		const was = opened.pixelFilter ?? null;
+		if ( filter?.type !== was?.type || filter?.radius !== was?.radius ) {
+
+			getApp()?.settings.set( 'pixelFilter', filter?.type ?? 'box', { source: SETTING_SOURCE.SCENE_METADATA } );
+			getApp()?.settings.set( 'pixelFilterRadius', filter?.radius ?? 0.5, { source: SETTING_SOURCE.SCENE_METADATA } );
+
+		}
+
 		const regularize = render?.pathRegularization === true;
 		if ( regularize ) request.pathRegularization = true;
 		if ( regularize !== ( opened.pathRegularization ?? false ) ) {

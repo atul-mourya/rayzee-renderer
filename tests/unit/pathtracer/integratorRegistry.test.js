@@ -113,6 +113,34 @@ describe( 'the path tracer\'s integrators', () => {
 
 	} );
 
+	it( 'compiles the pixel filter in only off the plain pixel, under the path integrator', () => {
+
+		const pt = bare();
+		pt.registerIntegrator( [ 'bidirectional', 'vcm' ], p => new FakeIntegrator( p ) );
+		pt.pixelFilterRadius = { value: 0.5 };
+		pt.setPixelFilter( 'box' );
+		expect( pt._pixelFilterNeeded() ).toBe( '' );
+		pt.pixelFilterRadius.value = 1;
+		expect( pt._pixelFilterNeeded() ).toBe( 'box' );
+		pt.setPixelFilter( 'triangle' );
+		expect( pt._pixelFilterNeeded() ).toBe( 'triangle' );
+		pt.pixelFilterRadius.value = 0;
+		expect( pt._pixelFilterNeeded() ).toBe( '' );
+		pt.pixelFilterRadius.value = 1;
+
+		pt.setIntegrator( 'bidirectional' );
+		expect( [ pt._pixelFilterNeeded(), pt._pixelFilterNeeded() ] ).toEqual( [ '', '' ] );
+		expect( pt.issues.list.map( i => [ i.code, i.detail.setting, i.detail.integrator ] ) )
+			.toEqual( [[ ISSUE_CODES.SETTING_IGNORED, 'pixelFilter', 'bidirectional' ]] );
+		pt.setIntegrator( 'path' );
+		expect( pt._pixelFilterNeeded() ).toBe( 'triangle' );
+
+		// A name it does not know: the box.
+		pt.setPixelFilter( 'mitchell' );
+		expect( pt._pixelFilterNeeded() ).toBe( 'box' );
+
+	} );
+
 	it( 'measures the clamp in CIE XYZ from whatever the working space is', () => {
 
 		const pt = bare();

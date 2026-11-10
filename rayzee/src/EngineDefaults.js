@@ -20,6 +20,8 @@ export const ENGINE_DEFAULTS = deepFreeze( {
 	enableAlphaShadows: false,
 	fireflyThreshold: 3.0,
 	sampleClamp: 0, // a camera sample's largest CIE XYZ component, before exposure (pbrt's maxcomponentvalue); 0 is none, and compiles it out
+	pixelFilter: 'box', // the filter each camera sample's position is drawn from: 'box', 'triangle' or 'gaussian' (σ = radius / 3; pbrt's); path integrator
+	pixelFilterRadius: 0.5, // its radius in pixels; the box of 0.5 is the plain pixel, and compiles the filter out
 	shadowTerminatorOffset: 0.1, // Cycles' Geometry Offset at Blender's default; 0 turns it off
 	globalIlluminationIntensity: 1,
 	wavefrontSortMaterials: true, // sort rays by material before Shade (above 8 materials); read when kernels build

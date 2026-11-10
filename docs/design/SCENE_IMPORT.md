@@ -126,7 +126,9 @@ subtree per element, and the whole thing rarely fits: Moana is 29 GB unpacked.
   chosen): the same aperture radius in both DOF modes, focused by hand. The `Integrator` (as the engine's `integrator`:
   bdpt → bidirectional, sppm → vcm), its maxdepth and `regularize` (`pathRegularization`; path, volpath, bdpt and mlt
   take it), sppm's `radius` (`mergeRadius`, scene units), the Film's `maxcomponentvalue` (`sampleClamp`, over the imaging
-  ratio: pbrt caps sensor XYZ after it; none under sppm, which writes its image without the film's cap), `Sampler`
+  ratio: pbrt caps sensor XYZ after it; none under sppm, which writes its image without the film's cap), a box or triangle
+  `PixelFilter` (`pixelFilter`, `pixelFilterRadius`: box, triangle or Gaussian; none named is pbrt's Gaussian of 1.5; one
+  radius, a different `yradius` reported approximated, a Gaussian's σ other than radius / 3 too; none under bdpt or sppm), `Sampler`
   pixelsamples, the Film's resolution and its
   `whitebalance` (`whiteBalance`; 6500 K under a camera `sensor` that sets none, as `PixelSensor::Create` does — the
   sensor's own response curves are reported approximated) are
