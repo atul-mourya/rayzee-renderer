@@ -193,8 +193,7 @@ const ChevronToggle = memo( ( { isOpen, onToggle, hasChildren } ) => {
 
 ChevronToggle.displayName = 'ChevronToggle';
 
-// Only the rows in view, and OVERSCAN either side, are mounted: 24155522.glb's ~1,000 took the page 0.42 s to build and
-// lay out after a load.
+// Only the rows in view, and OVERSCAN either side, are mounted.
 const OVERSCAN = 12;
 const LIST_PADDING = 4;
 
