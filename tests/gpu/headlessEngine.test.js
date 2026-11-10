@@ -1,5 +1,5 @@
 import { it, expect, beforeAll, afterAll, vi } from 'vitest';
-import { Scene, Mesh, PlaneGeometry, BoxGeometry, SphereGeometry, MeshPhysicalMaterial, Color, Vector3, Matrix3, RenderTarget, FloatType, DataTexture, RepeatWrapping, SRGBColorSpace } from 'three';
+import { Scene, Mesh, InstancedMesh, Matrix4, PlaneGeometry, BoxGeometry, SphereGeometry, MeshPhysicalMaterial, Color, Vector3, Matrix3, RenderTarget, FloatType, DataTexture, RepeatWrapping, SRGBColorSpace } from 'three';
 import { vec3, float } from 'three/tsl';
 import { describeGPU } from './gpu.js';
 import { nodePlatform } from '@/core/node/NodePlatform.js';
@@ -805,6 +805,58 @@ describeGPU( 'a first load', () => {
 		}
 
 	}, 60000 );
+
+} );
+
+describeGPU( 'a TLAS built in a worker', () => {
+
+	it( 'is written into the shared node store, as it is built whole on the page', async () => {
+
+		configurePlatform( { ...nodePlatform(), Worker: SourceWorker } );
+		const app = await openHeadless( { width: 32, height: 32, strict: false } );
+		const scene = () => {
+
+			// 60,000 copies: past the size the TLAS is built off the page.
+			const copies = new InstancedMesh( new BoxGeometry( 0.1, 0.1, 0.1 ), new MeshPhysicalMaterial(), 60000 );
+			for ( let i = 0; i < 60000; i ++ ) copies.setMatrixAt( i, new Matrix4().makeTranslation( ( i % 300 ) * 0.2, Math.floor( i / 300 ) * 0.2, ( i * 7919 % 13 ) * 0.1 ) );
+			return new Scene().add( copies );
+
+		};
+
+		const nodes = () => {
+
+			const sdf = app._sdf, n = sdf.instanceTable.blasBase;
+			return { shared: sdf.bvh.shared, tlas: Array.from( sdf.bvhIndexChunks.copyOf( 0, n ) ), leaves: Array.from( sdf.instanceTable.tlasLeafIndex ) };
+
+		};
+
+		try {
+
+			const worker = vi.spyOn( app._sdf, '_runTLASWorker' );
+			await app.loadObject3D( scene(), 'copies' );
+			expect( worker ).toHaveBeenCalledOnce();
+			expect( ( await worker.mock.results[ 0 ].value ).tlasData ).toBe( null );
+			const inStore = nodes();
+			await app.renderFrames( 1 );
+
+			app._sdf._tlasWorkerFailed = true;
+			await app.loadObject3D( scene(), 'copies' );
+			const whole = nodes();
+			await app.renderFrames( 1 );
+
+			expect( inStore.shared ).toBe( true );
+			expect( inStore.tlas.length ).toBeGreaterThan( 119998 * 16 );
+			expect( inStore.tlas ).toEqual( whole.tlas );
+			expect( inStore.leaves ).toEqual( whole.leaves );
+
+		} finally {
+
+			vi.restoreAllMocks();
+			app.dispose();
+
+		}
+
+	}, 120000 );
 
 } );
 

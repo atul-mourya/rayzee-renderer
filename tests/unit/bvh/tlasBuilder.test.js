@@ -232,6 +232,34 @@ describe( 'TLASBuilder', () => {
 
 		} );
 
+		it( 'writes the same tree into a chunked store, and fills its leaves a chunk at a time', () => {
+
+			let seed = 3;
+			const rnd = () => ( seed = ( seed * 1103515245 + 12345 ) >>> 0 ) / 2 ** 32 * 100;
+			const bounds = Array.from( { length: 3000 }, () => {
+
+				const x = rnd(), y = rnd(), z = rnd();
+				return [ x, y, z, x + 1 + rnd() / 50, y + 1, z + 0.5 ];
+
+			} );
+			const flatTable = makeTable( bounds ), chunkTable = makeTable( bounds );
+			const flat = new TLASBuilder().build( flatTable );
+
+			const aabbs = new Float64Array( 3000 * 6 );
+			chunkTable.writeEntryWorldAABBs( aabbs );
+			const per = 1000;
+			const chunks = Array.from( { length: Math.ceil( flat.nodeCount / per ) }, () => new Float32Array( per * 16 ) );
+			const built = new TLASBuilder().buildStructure( aabbs, 3000, { chunks, perChunk: per } );
+			expect( built ).toEqual( { data: null, nodeCount: flat.nodeCount } );
+			chunks.forEach( ( c, k ) => TLASBuilder.fillLeaves( c, built.nodeCount, chunkTable, k * per, Math.min( built.nodeCount, ( k + 1 ) * per ), k * per ) );
+
+			const joined = new Float32Array( chunks.length * per * 16 );
+			chunks.forEach( ( c, k ) => joined.set( c, k * per * 16 ) );
+			expect( Array.from( bvhIndexView( joined.subarray( 0, flat.nodeCount * 16 ) ) ) ).toEqual( Array.from( bvhIndexView( flat.data ) ) );
+			expect( Array.from( chunkTable.tlasLeafIndex ) ).toEqual( Array.from( flatTable.tlasLeafIndex ) );
+
+		} );
+
 		it( 'reuses its buffers across rebuilds', () => {
 
 			const table = spread( 50 );

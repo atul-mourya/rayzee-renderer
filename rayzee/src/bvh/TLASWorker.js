@@ -14,18 +14,20 @@ const log = createLogger( 'bvh' );
 
 self.onmessage = function ( e ) {
 
-	const { aabbs, count, logLevel } = e.data;
+	const { aabbs, count, logLevel, chunks = null, perChunk = 0 } = e.data;
 	applyWorkerLogLevel( logLevel );
 
 	try {
 
 		const start = performance.now();
-		// A fresh builder per message sizes its buffer exactly, so the result's ArrayBuffer can
-		// be transferred whole rather than copied out of a reused, oversized one.
-		const { data, nodeCount } = new TLASBuilder().buildStructure( new Float64Array( aabbs ), count );
+		// Into the caller's shared chunks when it sends them: nothing to send back. Otherwise a fresh builder per
+		// message sizes its buffer exactly, so the result's ArrayBuffer can be transferred whole.
+		const into = chunks ? { chunks: chunks.map( ( b ) => new Float32Array( b ) ), perChunk } : null;
+		const { data, nodeCount } = new TLASBuilder().buildStructure( new Float64Array( aabbs ), count, into );
 		log.debug( `TLAS ${fmt.n( nodeCount )} nodes in ${fmt.ms( performance.now() - start )}` );
 
-		self.postMessage( { tlasData: data, nodeCount }, [ data.buffer ] );
+		if ( into ) self.postMessage( { tlasData: null, nodeCount } );
+		else self.postMessage( { tlasData: data, nodeCount }, [ data.buffer ] );
 
 	} catch ( error ) {
 

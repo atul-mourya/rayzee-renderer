@@ -1186,6 +1186,14 @@ export class SceneProcessor {
 		this.instanceTable.assignOffsets( TLASBuilder.nodeCountFor( tlasEntries ) );
 		const totalNodes = this.instanceTable.totalNodeCount;
 
+		// Chunked for the same reason triangles are: 64 B a node puts the 2 GB array cap at
+		// 33.4M nodes, which a large instanced scene reaches well before the GPU's 4 GB.
+		// Lazy, and walked in template order so offsets ascend: chunks are allocated as the fill
+		// reaches them and each BLAS is released as it lands, never both fully resident.
+		// Made before the TLAS, which a worker writes into its first chunks.
+		if ( ! spill ) this._checkAssemblyHeadroom( totalNodes );
+		this._setBVHData( ChunkedRecords.lazy( totalNodes, 16, Float32Array, undefined, SHARED_MEMORY_AVAILABLE ) );
+
 		let tlasData = await this._buildTLAS( table );
 		if ( this._streaming && clustered ) {
 
@@ -1205,14 +1213,8 @@ export class SceneProcessor {
 		// Assemble combined buffer: [TLAS][BLAS_0][BLAS_1]...[BLAS_M]
 		this.memory.mark( 'assemble' );
 		const assembleStart = performance.now();
-		// Chunked for the same reason triangles are: 64 B a node puts the 2 GB array cap at
-		// 33.4M nodes, which a large instanced scene reaches well before the GPU's 4 GB.
-		// Lazy, and walked in template order so offsets ascend: chunks are allocated as the fill
-		// reaches them and each BLAS is released as it lands, never both fully resident.
-		if ( ! spill ) this._checkAssemblyHeadroom( totalNodes );
-		this._setBVHData( ChunkedRecords.lazy( totalNodes, 16, Float32Array, undefined, SHARED_MEMORY_AVAILABLE ) );
 		const flushBVH = spill ? await this._beginBVHSpill( spill, table.blasBase ) : null;
-		this.bvh.setRecords( 0, tlasData );
+		if ( tlasData ) this.bvh.setRecords( 0, tlasData );
 		if ( table.groupNodeCount ) this.bvh.setRecords( table.groupNodeStart, table.groupNodeBlock() );
 		// Hundreds of megabytes at millions of placements, and the chunks below need the room
 		// more than a later refit needs the cache.
@@ -2683,10 +2685,23 @@ export class SceneProcessor {
 				const aabbs = clustered ? table.clusterBounds : new Float64Array( n * 6 );
 				if ( ! clustered ) table.writeEntryWorldAABBs( aabbs );
 				updateLoading( { status: 'Building the scene tree...', progress: 73 } );
-				const { tlasData, nodeCount } = await this._runTLASWorker( aabbs, n );
+				// A shared store takes the tree in its own chunks: no buffer of the whole tree, and no copy of it.
+				const store = this.bvh?.shared ? this.bvh : null;
+				const per = store?.recordsPerChunk ?? 0;
+				const chunks = store ? Array.from( { length: Math.ceil( TLASBuilder.nodeCountFor( n ) / per ) }, ( _, k ) => store.chunkFor( k * per ) ) : null;
+				const { tlasData, nodeCount } = await this._runTLASWorker( aabbs, n, chunks && { chunks: chunks.map( ( c ) => c.buffer ), perChunk: per } );
 				for ( let node = 0; node < nodeCount; node += SLICE_RECORDS ) {
 
-					TLASBuilder.fillLeaves( tlasData, nodeCount, table, node, Math.min( nodeCount, node + SLICE_RECORDS ) );
+					const to = Math.min( nodeCount, node + SLICE_RECORDS );
+					if ( ! chunks ) TLASBuilder.fillLeaves( tlasData, nodeCount, table, node, to );
+					else for ( let from = node; from < to; ) {
+
+						const k = ( from / per ) | 0, end = Math.min( to, ( k + 1 ) * per );
+						TLASBuilder.fillLeaves( chunks[ k ], nodeCount, table, from, end, k * per );
+						from = end;
+
+					}
+
 					await this._turn( 'Writing the scene tree', node, nodeCount, 73 );
 
 				}
@@ -2707,7 +2722,7 @@ export class SceneProcessor {
 	}
 
 	/** @private */
-	_runTLASWorker( aabbs, count ) {
+	_runTLASWorker( aabbs, count, into = null ) {
 
 		if ( ! this._tlasWorker ) this._tlasWorker = createWorker( TLASWorker );
 		const worker = this._tlasWorker;
@@ -2734,7 +2749,7 @@ export class SceneProcessor {
 			worker.addEventListener( 'message', done );
 			worker.addEventListener( 'error', failed );
 			worker.postMessage(
-				{ aabbs: aabbs.buffer, count, logLevel: workerLogLevel() },
+				{ aabbs: aabbs.buffer, count, logLevel: workerLogLevel(), ...into },
 				[ aabbs.buffer ]
 			);
 

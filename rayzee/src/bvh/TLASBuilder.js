@@ -110,24 +110,27 @@ export class TLASBuilder {
 	 *
 	 * @param {ArrayLike<number>} aabb - 6 floats per entry (min xyz, max xyz)
 	 * @param {number} n - entry count
-	 * @returns {{ data: Float32Array, nodeCount: number }}
+	 * @param {?{chunks: Float32Array[], perChunk: number}} [into] - write the nodes into these, `perChunk` nodes each
+	 *   (a chunked store's first chunks), rather than one buffer of them all
+	 * @returns {{ data: ?Float32Array, nodeCount: number }} `data` null when written `into`
 	 */
-	buildStructure( aabb, n ) {
+	buildStructure( aabb, n, into = null ) {
 
 		const nodeCount = TLASBuilder.nodeCountFor( n );
 		if ( n === 0 ) return { data: new Float32Array( 0 ), nodeCount: 0 };
 		assertBVHIndexFits( nodeCount, 'TLAS node count' );
 
 		const required = nodeCount * FLOATS_PER_NODE;
-		if ( required > this._flatBufferCapacity ) {
+		if ( ! into && required > this._flatBufferCapacity ) {
 
 			this._flatBuffer = new Float32Array( required );
 			this._flatBufferCapacity = required;
 
 		}
 
-		const data = this._flatBuffer;
-		const idx = bvhIndexView( data ); // index fields are u32 bit patterns, never float values
+		const chunks = into ? into.chunks : [ this._flatBuffer ];
+		const per = into ? into.perChunk : nodeCount;
+		const indexChunks = chunks.map( ( c ) => bvhIndexView( c ) ); // index fields are u32 bit patterns, never float values
 
 		if ( ! this._order || this._order.length < n ) this._order = new Int32Array( n );
 		const order = this._order;
@@ -145,10 +148,11 @@ export class TLASBuilder {
 		for ( ;; ) {
 
 			const count = end - start;
+			const c = ( nodeIndex / per ) | 0;
+			const data = chunks[ c ], idx = indexChunks[ c ], o = ( nodeIndex - c * per ) * FLOATS_PER_NODE;
 
 			if ( count === 1 ) {
 
-				const o = nodeIndex * FLOATS_PER_NODE;
 				idx[ o ] = 0;
 				idx[ o + 1 ] = order[ start ];
 				data[ o + 2 ] = 0;
@@ -161,7 +165,6 @@ export class TLASBuilder {
 				const leftIndex = nodeIndex + 1;
 				const rightIndex = leftIndex + ( leftCount * 2 - 1 );
 
-				const o = nodeIndex * FLOATS_PER_NODE;
 				data[ o ] = bb[ 0 ]; data[ o + 1 ] = bb[ 1 ]; data[ o + 2 ] = bb[ 2 ]; idx[ o + 3 ] = leftIndex;
 				data[ o + 4 ] = bb[ 3 ]; data[ o + 5 ] = bb[ 4 ]; data[ o + 6 ] = bb[ 5 ]; idx[ o + 7 ] = rightIndex;
 				data[ o + 8 ] = bb[ 6 ]; data[ o + 9 ] = bb[ 7 ]; data[ o + 10 ] = bb[ 8 ]; data[ o + 11 ] = 0;
@@ -193,7 +196,7 @@ export class TLASBuilder {
 
 		}
 
-		return { data: data.subarray( 0, required ), nodeCount };
+		return { data: into ? null : this._flatBuffer.subarray( 0, required ), nodeCount };
 
 	}
 
@@ -228,14 +231,14 @@ export class TLASBuilder {
 	/**
 	 * Fill in each leaf's BLAS pointer, visibility and world-to-object matrix, and record where
 	 * the leaf landed. One O(n) pass, so it stays on the main thread while the SAH tree does not;
-	 * nodes `[from, to)` only, if given.
+	 * nodes `[from, to)` only, if given. `data` may be one chunk of the tree, holding nodes from `base` on.
 	 *
 	 * A node is 16 floats and the BLAS pointer needs 4, so the affine inverse fits in the
 	 * remaining 12: the ray moves into object space with no second binding, which matters
 	 * because Shade is already at the 10 storage buffers Metal allows. The inverse is derived
 	 * here rather than stored: a column of it costs 64 bytes a placement.
 	 */
-	static fillLeaves( data, nodeCount, table, from = 0, to = nodeCount ) {
+	static fillLeaves( data, nodeCount, table, from = 0, to = nodeCount, base = 0 ) {
 
 		const idx = bvhIndexView( data );
 
@@ -244,7 +247,7 @@ export class TLASBuilder {
 			// Built over clusters: each leaf holds one, its copies' transforms in records (table.writeRecord).
 			for ( let node = from; node < to; node ++ ) {
 
-				const o = node * FLOATS_PER_NODE;
+				const o = ( node - base ) * FLOATS_PER_NODE;
 				if ( idx[ o + 3 ] === BVH_LEAF_MARKERS.BLAS_POINTER_LEAF ) table.writeClusterLeaf( data, idx, o, idx[ o + 1 ], table.clusterWorld, node );
 
 			}
@@ -255,7 +258,7 @@ export class TLASBuilder {
 
 		for ( let node = from; node < to; node ++ ) {
 
-			const o = node * FLOATS_PER_NODE;
+			const o = ( node - base ) * FLOATS_PER_NODE;
 			if ( idx[ o + 3 ] !== BVH_LEAF_MARKERS.BLAS_POINTER_LEAF ) continue;
 
 			const e = idx[ o + 1 ] & TLAS_PLACEMENT_MASK;
