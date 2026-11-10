@@ -37,6 +37,9 @@ const imageCache = new Map();
 const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes cache for 4K images
 let lastFetchTime = 0;
 
+// Renders are saved from the Render tab, while this list is closed: its cache must not outlive them.
+window.addEventListener( 'render-saved', () => imageCache.delete( 'renders' ) );
+
 // Custom hook for handling images data and selection with caching
 const useResultsData = () => {
 
