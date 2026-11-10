@@ -52,6 +52,8 @@ async function captureThumbnail( app ) {
 
 	try {
 
+		// Reading the canvas waits for the GPU on the page's thread, which a large scene's first frames hold for seconds.
+		await app.renderer?.backend?.device?.queue?.onSubmittedWorkDone();
 		const canvas = app.getCanvas();
 		if ( ! canvas?.width ) return null;
 		const bitmap = await createImageBitmap( canvas );

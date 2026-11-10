@@ -22,7 +22,7 @@ import { openStorage } from '@/core/addons/storage/OpenStorage.js';
 import { fileIdentity, folderIdentity, identityKey } from '@/core/storage/FileIdentity.js';
 import { localFolder } from '@/core/loaders/ArchiveFormats.js';
 import { ensureAppAreas } from '@/lib/storage';
-import { SessionKeeper, listSessions, readSession, restoreSession, openSource, syncModelParam } from '@/lib/session';
+import { SessionKeeper, captureSession, listSessions, readSession, restoreSession, openSource, syncModelParam } from '@/lib/session';
 import { snapshotPanels, restorePanels } from '@/lib/panelState';
 import { readProject, PROJECT_FORMAT } from '@/lib/project';
 import { zipInto } from '@/lib/zipSink';
@@ -289,6 +289,22 @@ describe( 'sessions', () => {
 
 		expect( await resolve( { kind: 'texture', source: identityKey( identity ) } ) ).toBeNull();
 		expect( pickFile ).not.toHaveBeenCalled();
+
+	} );
+
+	it( 'reads the canvas for a thumbnail only once the GPU has finished what it was sent', async () => {
+
+		let finish;
+		const app = fakeApp( null );
+		app.renderer = { backend: { device: { queue: { onSubmittedWorkDone: () => new Promise( r => ( finish = r ) ) } } } };
+		app.getCanvas = vi.fn( () => null );
+
+		const capture = captureSession( app );
+		await Promise.resolve();
+		expect( app.getCanvas ).not.toHaveBeenCalled();
+		finish();
+		await capture;
+		expect( app.getCanvas ).toHaveBeenCalledTimes( 1 );
 
 	} );
 
