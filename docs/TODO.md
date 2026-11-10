@@ -7,12 +7,12 @@
 -   Fast compilation on windows devices
 -   make bvh an independent library — built as the `rayzee-bvh` package on the night of 2026-11-05 (branch
     `night/bvh-package`), not committed
-- gemini ai image workflow needs improve user experience: audit and proposal written 2026-11-10
-  (docs/internal/specs/results-ai-edit-ux.md), nothing built. Worst: after viewing v3, Generate edits the original render
 - claude design: redesign all ui component used in the application to create a custom design system
 - scrolling and panning behaviour on final render page needs to be have exactly like how its behaving on results tab
 - explore which aspects of the engine can be moved to rust based webassembly to maximise the performance gain and minimize the browser related bottlenecks
 - can headless render in hdr?
+- scroll and pan performance in on in results tab is too slow. If limited by dom manipulator, can we do HTLM-in-canvas api recently introduced as a new browser feature?
+- moana island scene usd version takes 5 mins to load and crashes in the end
 
 ### MVP
 - [ ] Tools and filters features are missing from results page. Requirements, specification and system design (including
