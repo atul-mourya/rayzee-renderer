@@ -15,7 +15,7 @@ import { computeInstanceBoundingBoxes } from '../scene/GeometryExtractor.js';
 import { getPlatform, hasImageDecoder, timeSlicer, withHostWorker } from '../Platform.js';
 import { loadPlatformImage, platformImagesPlugin, missingImageDecoderPlugin, browserImagesPlugin } from './PlatformImageLoader.js';
 import { diffuseTransmissionPlugin } from './GLTFDiffuseTransmission.js';
-import { decodersOnDemand } from './GLTFDecoders.js';
+import { decodersOnDemand, glbInPlace } from './GLTFDecoders.js';
 import { extractSceneMetadata, withSceneAspect } from './SceneMetadata.js';
 import { ISSUE_CODES } from '../EngineIssues.js';
 import { ENGINE_DEFAULTS } from '../EngineDefaults.js';
@@ -158,14 +158,23 @@ function standInForSplit( source ) {
 
 /**
  * three builds a glTF as one chain of promise steps, which never gives the page a turn: past 40 ms, the next dependency
- * waits for one. Every step waiting meanwhile shares that turn.
+ * waits for one, and so does handing a finished one on: most of the work is in the steps three chains onto a result.
+ * Whatever waited asks again when its turn comes, so what waited on one turn is spread over as many as its work needs.
+ * The first to ask after a turn always goes on.
  */
 export function slicedParsePlugin( parser ) {
 
 	const slice = timeSlicer( 40 );
 	const getDependency = parser.getDependency.bind( parser );
-	let turn = null;
-	parser.getDependency = ( type, index ) => {
+	let turn = null, first = true;
+	const wait = () => {
+
+		if ( first ) {
+
+			first = false;
+			return null;
+
+		}
 
 		if ( ! turn ) {
 
@@ -173,14 +182,19 @@ export function slicedParsePlugin( parser ) {
 			turn?.then( () => {
 
 				turn = null;
+				first = true;
 
 			} );
 
 		}
 
-		return turn ? turn.then( () => getDependency( type, index ) ) : getDependency( type, index );
+		return turn;
 
 	};
+
+	const deliver = ( value ) => wait()?.then( () => deliver( value ) ) ?? value;
+	const run = ( type, index ) => wait()?.then( () => run( type, index ) ) ?? getDependency( type, index ).then( deliver );
+	parser.getDependency = run;
 
 	return { name: 'RAYZEE_sliced_parse' };
 
@@ -927,7 +941,7 @@ export class AssetLoader extends EventDispatcher {
 	// worker pools. Callers must invoke _disposeGLTFLoader() to terminate them.
 	async createGLTFLoader() {
 
-		const loader = decodersOnDemand( new GLTFLoader( this._loadingManager ), this.renderer );
+		const loader = glbInPlace( decodersOnDemand( new GLTFLoader( this._loadingManager ), this.renderer ) );
 		const onImageFailure = ( where, error ) => this._reportImageFailure( where, error );
 		if ( getPlatform().decodeImage ) loader.register( ( parser ) => platformImagesPlugin( parser, onImageFailure ) );
 		else if ( typeof createImageBitmap === 'function' ) loader.register( ( parser ) => browserImagesPlugin( parser, onImageFailure ) );

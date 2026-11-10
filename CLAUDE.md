@@ -884,11 +884,14 @@ shows only Auto Exposure (Follow View: Gently / More / Fully = strength 0.3 / 0.
    images (`CORE_FORMATS`); every other format is a descriptor registered with `assetLoader.registerFormat()`
    (`addons/formats.js` — the `rayzee/addons/formats` add-on; `PathTracerApp` registers `allFormats`), read
    through one shared path (`_loadModelWithFormat`). glTF's Draco, KTX2 and meshopt decoders are imported per file:
-   `decodersOnDemand` (`GLTFDecoders.js`) wraps `loader.parse` and searches the JSON for the extension names first.
+   `decodersOnDemand` (`GLTFDecoders.js`) wraps `loader.parse` and searches the JSON for the extension names first;
+   `glbInPlace` hands three a .glb's JSON parsed and each buffer view sliced from the file (three copies the whole
+   binary chunk first, then each view out of it).
    An archive's inner models go through the same registry; pbrt's EXR maps use the archive importer's own `WorkerEXRLoader`
    (`_exrLoader`), registered or not. On the core-browser example the host's main chunk went 577 → 534 KB gzip and the
    seven model-loader chunks are no longer emitted. ⚠️ three builds a glTF as one promise chain, which never yields:
-   `slicedParsePlugin` gives the page a turn every 40 ms; a load extracts with `extractSliced`, not `extract()`.
+   `slicedParsePlugin` gives the page a turn every 40 ms, before a dependency starts and before its result is handed on
+   (most of three's work is in what it chains onto a result); a load extracts with `extractSliced`, not `extract()`.
 2. **GeometryExtractor** converts meshes to the 20-lane triangle records, baking single-use and emissive geometry to world space and leaving shared geometry in object space; records per-mesh `meshTriangleRanges`. It never rewrites a host's own geometry (`userData.__rayzeeExternal` subtrees are left alone), and anything skinned or morphed is given triangles of its own so a refit cannot pose every copy at once.
 3. **SceneProcessor** builds two-level BVH (TLAS/BLAS): per-mesh BLAS via `BVHBuilder` (parallel for large meshes via `Promise.all`; a pool worker builds and reorders a mesh in place in the shared triangle store when it sits in one chunk, `inPlace`), then `TLASBuilder` builds SAH tree over mesh AABBs, then assembles combined buffer `[TLAS | BLAS_0 | BLAS_1 | ...]`. A mesh past `SPLIT_MESH_TRIANGLES` (2M) is built as spatial pieces (`bvh/SplitBLAS.js`): its records are sorted in place into pieces of ≤ 512k by halving at the centroid median of the longest axis, each piece is built by a pool worker, and the halving becomes the nodes that join them. It holds the mesh once, in the store — one build across every core held a second copy plus 44 B a triangle of scratch. Images bit-identical, frame time unchanged (22M ocean + mountain, three views, within 3 %). ⚠️ The joined BLAS travels as parts (`nodeParts`), never one array: a 610 MB request failed an 80M build with memory to spare. ⚠️ Pivots are sampled with a fixed seed: first/middle/last took a thousand passes on a terrain grid's repeating rows.
 4. **TextureCreator** generates GPU textures for materials (runs in parallel with BVH build)

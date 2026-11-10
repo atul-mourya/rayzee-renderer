@@ -62,6 +62,47 @@ describe( 'glTF parse in slices', () => {
 
 	} );
 
+	it( 'spreads the steps that waited on one turn over as many turns as their work needs', async () => {
+
+		let now = 0, task = 0;
+		vi.spyOn( performance, 'now' ).mockImplementation( () => now );
+		// A turn is a message: counted as it is delivered.
+		vi.stubGlobal( 'MessageChannel', class {
+
+			constructor() {
+
+				const port1 = { onmessage: null, close() {} };
+				this.port1 = port1;
+				this.port2 = { postMessage: () => setTimeout( () => {
+
+					task ++;
+					port1.onmessage();
+
+				}, 0 ) };
+
+			}
+
+		} );
+
+		const perTask = new Map();
+		const parser = { getDependency: ( _, index ) => {
+
+			now += 10;
+			perTask.set( task, ( perTask.get( task ) ?? 0 ) + 1 );
+			return Promise.resolve( index );
+
+		} };
+		slicedParsePlugin( parser );
+		const got = await Promise.all( Array.from( { length: 100 }, ( _, i ) => parser.getDependency( 'node', i ) ) );
+		vi.restoreAllMocks();
+		vi.unstubAllGlobals();
+
+		expect( got ).toEqual( Array.from( { length: 100 }, ( _, i ) => i ) );
+		expect( Math.max( ...perTask.values() ) ).toBeLessThanOrEqual( 5 );
+		expect( perTask.size ).toBeGreaterThanOrEqual( 20 );
+
+	} );
+
 	it( 'takes no turn inside its budget', async () => {
 
 		vi.spyOn( performance, 'now' ).mockReturnValue( 0 );
