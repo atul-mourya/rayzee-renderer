@@ -186,7 +186,7 @@ function handleAssemble( data ) {
 
 function handleFullBuild( data ) {
 
-	const { triangleData, triangleByteOffset, triangleByteLength, depth, reportProgress, reinsertionOptimization, sharedReorderBuffer, maxLeafSize, numBins, maxBins, minBins, foldLeaves: fold } = data;
+	const { triangleData, triangleByteOffset, triangleByteLength, depth, reportProgress, reinsertionOptimization, sharedReorderBuffer, inPlace, maxLeafSize, numBins, maxBins, minBins, foldLeaves: fold } = data;
 	const builder = new BVHBuilder();
 	// Honor the build params forwarded from SceneProcessor (previously ignored → default leaf 8).
 	if ( maxLeafSize !== undefined ) builder.maxLeafSize = maxLeafSize;
@@ -212,9 +212,10 @@ function handleFullBuild( data ) {
 			? new Uint32Array( triangleData, triangleByteOffset, triangleByteLength / 4 )
 			: new Uint32Array( triangleData );
 
-		const reorderTarget = sharedReorderBuffer
-			? new Uint32Array( sharedReorderBuffer )
-			: null;
+		// In place: the records are the caller's shared store, reordered where they sit.
+		const reorderTarget = inPlace ? inputTriangles
+			: sharedReorderBuffer ? new Uint32Array( sharedReorderBuffer )
+				: null;
 
 		const bvhRoot = builder.buildSync( inputTriangles, depth, progressCallback, reorderTarget );
 
@@ -226,7 +227,7 @@ function handleFullBuild( data ) {
 
 		const originalToBvh = builder.originalToBvhMap || null;
 
-		if ( sharedReorderBuffer ) {
+		if ( reorderTarget ) {
 
 			const transferables = [ bvhData.buffer ];
 			if ( originalToBvh ) transferables.push( originalToBvh.buffer );

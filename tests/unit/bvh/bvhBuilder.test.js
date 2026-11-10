@@ -605,6 +605,34 @@ describe( 'BVHBuilder', () => {
 
 		} );
 
+		it( 'reorders the input in place when it is the target, record for record as into a new array', () => {
+
+			const tris = [];
+			let seed = 7;
+			const rnd = () => ( seed = ( seed * 1103515245 + 12345 ) >>> 0 ) / 2 ** 32 * 20;
+			for ( let i = 0; i < 3000; i ++ ) {
+
+				const x = rnd(), y = rnd(), z = rnd();
+				tris.push( [ x, y, z, x + 0.3, y, z, x, y + 0.3, z + 0.1 ] );
+
+			}
+
+			const data = makeTriData( tris );
+			for ( let i = 0; i < tris.length; i ++ ) data[ i * FPT + 19 ] = i;
+			const copied = builder.flattenBVH( builder.buildSync( data.slice() ) );
+			const expected = builder.reorderedTriangleData;
+
+			const shared = new Uint32Array( new SharedArrayBuffer( data.byteLength + 8 * FPT * 4 ), 8 * FPT * 4, data.length );
+			shared.set( data );
+			const inPlace = builder.flattenBVH( builder.buildSync( shared, 30, null, shared ) );
+
+			expect( builder.reorderedTriangleData ).toBe( shared );
+			expect( [ ...shared ] ).toEqual( [ ...expected ] );
+			expect( [ ...inPlace ] ).toEqual( [ ...copied ] );
+			expect( new Set( shared.filter( ( _, i ) => i % FPT === 19 ) ).size ).toBe( tris.length );
+
+		} );
+
 	} );
 
 	// ── originalToBvhMap ─────────────────────────────────────────────────

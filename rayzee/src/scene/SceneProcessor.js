@@ -1714,7 +1714,9 @@ export class SceneProcessor {
 			running ++;
 			try {
 
-				const meshTriData = this.triangles.copyOf( range.start, range.count );
+				// A range in one shared chunk is built and reordered where it sits; any other is copied out and back.
+				const inPlace = this.triangles.shared && this.triangles.isContiguous( range.start, range.count );
+				const meshTriData = inPlace ? this.triangles.slice( range.start, range.count ) : this.triangles.copyOf( range.start, range.count );
 
 				const triCount = range.count;
 
@@ -1727,6 +1729,7 @@ export class SceneProcessor {
 					depth: opts.depth,
 					reportProgress: false,
 					sharedReorderBuffer: null,
+					inPlace,
 					reinsertionOptimization: opts.reinsertionOptimization,
 					maxLeafSize: opts.maxLeafSize,
 					foldLeaves: opts.foldLeaves,
@@ -1734,7 +1737,7 @@ export class SceneProcessor {
 					maxBins: opts.maxBins,
 					minBins: opts.minBins,
 					logLevel: opts.logLevel,
-				}, [ meshTriData.buffer ] );
+				}, inPlace ? [] : [ meshTriData.buffer ] );
 
 			} catch ( error ) {
 

@@ -22,6 +22,34 @@ export function setBVHWorkerFactory( factory ) {
 
 const FPT = TRIANGLE_DATA_LAYOUT.FLOATS_PER_TRIANGLE;
 
+/** Record i takes record order[ i ], in place: each cycle is followed with one record held aside. */
+function permuteRecords( records, order, lanes ) {
+
+	const held = new records.constructor( lanes );
+	const done = new Uint8Array( order.length );
+	for ( let j = 0; j < order.length; j ++ ) {
+
+		if ( done[ j ] ) continue;
+		done[ j ] = 1;
+		if ( order[ j ] === j ) continue;
+
+		held.set( records.subarray( j * lanes, j * lanes + lanes ) );
+		let k = j;
+		for ( let s = order[ k ]; s !== j; k = s, s = order[ k ] ) {
+
+			records.copyWithin( k * lanes, s * lanes, s * lanes + lanes );
+			done[ s ] = 1;
+
+		}
+
+		records.set( held, k * lanes );
+
+	}
+
+	return records;
+
+}
+
 // The record buffer is uint; positions are f32 in it. Views share the memory, no copy.
 const floatView = ( data ) => data instanceof Float32Array
 	? data : new Float32Array( data.buffer, data.byteOffset, data.length );
@@ -583,11 +611,12 @@ export class BVHBuilder {
 		this.applySAOrdering( root );
 		this.splitStats.saOrderTime = performance.now() - saOrderStart;
 
-		// Phase 6: Create reordered triangle data from final index order
+		// Phase 6: Create reordered triangle data from final index order; a target that is the input reorders it in place
 		const reorderStart = performance.now();
 		const triSrc = this.triangles;
-		const reordered = reorderTarget || new triSrc.constructor( n * FPT );
-		for ( let i = 0; i < n; i ++ ) {
+		let reordered = reorderTarget || new triSrc.constructor( n * FPT );
+		if ( reordered === triSrc ) reordered = permuteRecords( triSrc, this.indices, FPT );
+		else for ( let i = 0; i < n; i ++ ) {
 
 			const srcOff = this.indices[ i ] * FPT;
 			const dstOff = i * FPT;
