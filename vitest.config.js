@@ -49,6 +49,7 @@ export default defineConfig( {
 				'rayzee/src/materials/TexturesWorker.js',
 				'rayzee/src/materials/PackWorker.js',
 				'rayzee/src/environment/CDFWorker.js',
+				'rayzee/src/loaders/EXRWorker.js',
 				'rayzee/src/viewer/picture/AIUpscalerWorker.js',
 
 				// ── GPU-dependent: TSL shaders (require WebGPU runtime) ──

@@ -201,7 +201,8 @@ saying the environment was left converted.
   recent ones). The live view is left as it is. Only the EXR's header is read first (`rayzee` attribute); its pixels are
   decoded only when it will be shown, and three flips its rows on the GPU as it uploads them. Against the live HDR
   canvas of the test interior (2048², 30 samples): mean 0.03 %, worst pixel 3 %, highlights to 9.3× white; shown in
-  0.3–0.45 s at 2048², almost all of it decoding the EXR on the main thread. Not shown, with a reason, when the screen
+  0.3–0.45 s at 2048², almost all of it decoding the EXR — in a worker (`decodeEXR`), so the page does not stop for it
+  (it stopped 0.24–0.27 s at 2048² when the decode ran on the main thread). Not shown, with a reason, when the screen
   shows no HDR, the file predates the record, its config is not the one loaded, or a later `show()` took over; the
   page then shows its 8-bit picture.
   - The panel's edits go after the view (`PictureView.setGrade`; `pictureGrade` in `app/src/lib/ImageProcessor.js`),

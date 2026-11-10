@@ -76,9 +76,11 @@ export class PictureView {
 		const version = this._color.hdrVersionOf( details.color.view );
 		if ( ! version.table ) return { shown: false, reason: version.reason };
 
-		const [ { EXRLoader }, pixels ] = await Promise.all( [ import( 'three/examples/jsm/loaders/EXRLoader.js' ), bytes() ] );
+		const [ { decodeEXR }, pixels ] = await Promise.all( [ import( '../../loaders/EXRDecode.js' ), bytes() ] );
 		if ( ticket !== this._ticket ) return superseded;
-		this._draw( new EXRLoader().setDataType( HalfFloatType ).parse( pixels.buffer ), details, version.table );
+		const exr = await decodeEXR( pixels.buffer, { type: HalfFloatType } );
+		if ( ticket !== this._ticket ) return superseded;
+		this._draw( exr, details, version.table );
 		return { shown: true };
 
 	}

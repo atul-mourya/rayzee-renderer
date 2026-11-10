@@ -264,8 +264,8 @@ export const exrFormat = {
 	name: 'EXR (OpenEXR)', label: 'EXR', type: 'environment', extensions: [ 'exr' ],
 	async createLoader( manager ) {
 
-		const { EXRLoader } = await import( 'three/addons/loaders/EXRLoader.js' );
-		return new EXRLoader( manager ).setDataType( FloatType );
+		const { WorkerEXRLoader } = await import( '../loaders/EXRDecode.js' );
+		return new WorkerEXRLoader( manager ).setDataType( FloatType );
 
 	},
 };

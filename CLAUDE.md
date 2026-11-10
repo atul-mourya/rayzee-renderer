@@ -197,12 +197,15 @@ TSL modules using `Fn()`, `If()`, `Loop()`, `.toVar()`:
 
 ### Multi-Threading Architecture (workers beside the code that starts them)
 Critical for maintaining 60fps during heavy computations. BVH and TLAS workers are in `bvh/`, the texture ones in
-`materials/`, `CDFWorker` in `environment/`, `AIUpscalerWorker` in `viewer/picture/`, `StorageWorker` in `addons/storage/`:
+`materials/`, `CDFWorker` in `environment/`, `EXRWorker` in `loaders/`, `AIUpscalerWorker` in `viewer/picture/`, `StorageWorker` in
+`addons/storage/`:
 - **`BVHWorker.js`**: Off-main-thread BVH construction using binned SAH splitting and reinsertion
 - **`TexturesWorker.js`**: Batch texture processing with memory-optimized chunking
 - **`BVHSubtreeWorker.js`**: builds subtrees of one large mesh's BVH in parallel (`ParallelBVHBuilder.js`)
 - **`TLASWorker.js`**, **`PackWorker.js`** (texture packing without a canvas, in Node), **`AIUpscalerWorker.js`** (viewer)
 - **`CDFWorker.js`**: CDF computation for environment importance sampling (HDRIs and the simple skies; the physical sky builds its own on the GPU)
+- **`EXRWorker.js`**: three's EXR decode, for every EXR (sky, archive map, saved render): `decodeEXR` / `WorkerEXRLoader` in
+  `loaders/EXRDecode.js`, imported on first use, up to 4 workers a burst
 - **`BVHRefitWorker.js`**: O(N) bottom-up BVH AABB refit for animated geometry (SharedArrayBuffer protocol)
 
 ### Animation & Transform System (`rayzee/src/viewer/animation/`, `viewer/overlays/`)
@@ -882,7 +885,7 @@ shows only Auto Exposure (Follow View: Gently / More / Fully = strength 0.3 / 0.
    (`addons/formats.js` — the `rayzee/addons/formats` add-on; `PathTracerApp` registers `allFormats`), read
    through one shared path (`_loadModelWithFormat`). glTF's Draco, KTX2 and meshopt decoders are imported per file:
    `decodersOnDemand` (`GLTFDecoders.js`) wraps `loader.parse` and searches the JSON for the extension names first.
-   An archive's inner models go through the same registry; pbrt's EXR maps use the archive importer's own EXRLoader
+   An archive's inner models go through the same registry; pbrt's EXR maps use the archive importer's own `WorkerEXRLoader`
    (`_exrLoader`), registered or not. On the core-browser example the host's main chunk went 577 → 534 KB gzip and the
    seven model-loader chunks are no longer emitted.
 2. **GeometryExtractor** converts meshes to the 20-lane triangle records, baking single-use and emissive geometry to world space and leaving shared geometry in object space; records per-mesh `meshTriangleRanges`. It never rewrites a host's own geometry (`userData.__rayzeeExternal` subtrees are left alone), and anything skinned or morphed is given triangles of its own so a refit cannot pose every copy at once.

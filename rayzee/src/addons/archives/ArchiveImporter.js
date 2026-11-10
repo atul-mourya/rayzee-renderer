@@ -9,7 +9,6 @@
 
 import { FloatType, EquirectangularReflectionMapping, Texture, SRGBColorSpace, NoColorSpace, RepeatWrapping, LoadingManager, Group, Box3, MeshPhysicalMaterial, DataTexture, DoubleSide } from 'three';
 import { HDRLoader } from 'three/addons/loaders/HDRLoader.js';
-import { EXRLoader } from 'three/addons/loaders/EXRLoader.js';
 import { strFromU8 } from 'three/addons/libs/fflate.module.js';
 import {
 	detectArchiveKind, readTarGz, elementFilter, isSceneFileElement, listArchiveElements, openTar, indexTarHeaders, openFolder } from './ArchiveReader.js';
@@ -1007,7 +1006,7 @@ export class ArchiveImporter {
 		const url = ext === 'pfm' ? null : URL.createObjectURL( blob );
 		try {
 
-			const texture = url ? await this.loader.loadEnvironmentByExtension( url, ext, { loader: ext === 'exr' ? this._exrLoader() : null, quiet: true } ) : pfmTexture( bytes );
+			const texture = url ? await this.loader.loadEnvironmentByExtension( url, ext, { loader: ext === 'exr' ? await this._exrLoader() : null, quiet: true } ) : pfmTexture( bytes );
 			texture.mapping = EquirectangularReflectionMapping;
 			setEnvironmentSource( texture, `bytes:${await sampleHash( blob )}` );
 			texture.userData[ ARCHIVE_PATH ] = fname;
@@ -1170,9 +1169,11 @@ export class ArchiveImporter {
 	 * @returns {Promise<import('three').Texture>}
 	 */
 	// pbrt scenes carry EXR maps whether or not the host registered the EXR format.
-	_exrLoader() {
+	async _exrLoader() {
 
-		return this.loader.loaderCache.exr ??= new EXRLoader().setDataType( FloatType );
+		if ( this.loader.loaderCache.exr ) return this.loader.loaderCache.exr;
+		const { WorkerEXRLoader } = await import( '../../loaders/EXRDecode.js' );
+		return this.loader.loaderCache.exr ??= new WorkerEXRLoader().setDataType( FloatType );
 
 	}
 
@@ -1195,7 +1196,7 @@ export class ArchiveImporter {
 
 			const loader = ext === 'hdr'
 				? ( this.loader.loaderCache.hdr || ( this.loader.loaderCache.hdr = new HDRLoader().setDataType( FloatType ) ) )
-				: this._exrLoader();
+				: await this._exrLoader();
 			tex = await this._loadViaObjectURL( loader, bytes );
 			// HDR/EXR maps are linear — leave colorSpace as the loader set it.
 
