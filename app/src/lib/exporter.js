@@ -51,6 +51,12 @@ export const holdsLight = format => format === 'exr' || format === 'hdr';
 export const takesGainMap = format => format === 'jpeg' || format === 'heic' || format === 'avif';
 export const isLossy = format => format === 'jpeg' || format === 'webp' || format === 'heic' || format === 'avif';
 export const isFrameSequence = format => format === 'png' || format === 'exr';
+/**
+ * Whether the AI upscaler's larger picture can be saved instead of the render: its 8-bit pixels, under an HDR photo's
+ * gain map too. `still` says whether HEIC and AVIF can hold it ({ heic, avif }; false past the encoder's size, where the
+ * render is written).
+ */
+export const canSaveUpscaled = ( { format, bitDepth }, info, still = {} ) => !! info?.upscaled && ! holdsLight( format ) && ! ( format === 'png' && bitDepth === 16 ) && still[ format ] !== false;
 
 export function readVideoSettings() {
 

@@ -242,7 +242,7 @@ It works on the core too, and headless.
 | `format` | What the file holds |
 |---|---|
 | `'png'` (`bitDepth: 8` or `16`), `'jpeg'`, `'webp'` | the picture the canvas shows: exposure, view and denoising applied; at 8 bits, JPEG and WebP, the AI upscaler's picture while one shows (`upscaled: false` skips it) |
-| `'heic'`, `'avif'` | the same picture, written by the browser's video encoder |
+| `'heic'`, `'avif'` | the same picture, the upscaler's included, written by the browser's video encoder |
 | `'exr'` (`precision: 'half'` or `'float'`), `'hdr'` (Radiance) | the light itself, before exposure and view, in the working space or `colorSpace`; with `asShown: true`, the light the screen gives off for the picture, so any viewer shows it as the screen does |
 
 ```js
@@ -255,7 +255,9 @@ engine.exportInfo();   // what can be written now: { width, height, upscaled, hd
 - **HDR photos.** `gainMap: true` on `'jpeg'`, `'heic'` or `'avif'` adds a gain map — a second, small picture that
   says how much brighter each part of the HDR version is (ISO 21496-1; Ultra HDR in a JPEG). Photo viewers that read gain
   maps show the file in HDR, others the normal picture. It needs the screen showing HDR
-  (`engine.color.setHdrOutput(true)` on an HDR display; `exportInfo().hdr`).
+  (`engine.color.setHdrOutput(true)` on an HDR display; `exportInfo().hdr`). With the AI upscaler's picture showing,
+  the file holds that picture and a gain map at the render's size, which viewers scale to it. `encodeGainMapJPEG` and
+  `encodeStill` take the same as `picture: { data, width, height }` beside the render-size `sdr` and `hdr`.
 - **EXR layers.** `albedo` and `normal` are the denoisers' guide images, so they exist only while a denoiser is on;
   `depth` is measured when asked for. A layer that cannot be written records `output.pass_unavailable`.
 - **Where each works.** JPEG, WebP, HEIC and AVIF need a browser (its canvas or video encoder); PNG, EXR and HDR work in
@@ -266,9 +268,11 @@ engine.exportInfo();   // what can be written now: { width, height, upscaled, hd
 - **Showing a saved EXR again.** `await engine.createPictureView(canvas)` (the viewer, `PathTracerApp`) gives a
   picture view on a canvas of your own; `await view.show(exrBlob)` draws the raw EXR exactly as an HDR screen showed it,
   through the same view, exposure and local exposure, and returns `{ shown, reason }` (`reason`: the screen shows no HDR,
-  the file has no such details, its colour config is not the one loaded, or a later `show()` took over). It reads the
-  file's header first and decodes the pixels only of a file it shows. `view.setGrade(fn)` adds your own edit after
-  the view, a TSL function of the shown colour; `view.redraw()` after its uniforms change; `view.dispose()`.
+  the file has no such details, its picture was another one shown over the render (`'overlay'`: an AI upscale or neural
+  pass, recorded as `getProvenance().display.overlay`), its colour config is not the one loaded, or a later `show()` took
+  over). It reads the file's header first and decodes the pixels only of a file it shows. `view.setGrade(fn)` adds your
+  own edit after the view, a TSL function of the shown colour; `view.redraw()` after its uniforms change;
+  `view.dispose()`.
 
 The writers are also a module of their own, `rayzee/encoders`, for pixels a host already has. It is part of the
 package, not an add-on: nothing to install, and importing it loads nothing else (9 KB compressed).

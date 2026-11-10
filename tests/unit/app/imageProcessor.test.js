@@ -31,7 +31,7 @@ vi.mock( 'three', async importOriginal => ( {
 } ) );
 
 import { LinearFilter } from 'three';
-import { ImageProcessorComposer } from '@/lib/ImageProcessor';
+import { ImageProcessorComposer, hdrShowsPicture } from '@/lib/ImageProcessor';
 
 describe( 'ImageProcessorComposer', () => {
 
@@ -133,6 +133,20 @@ describe( 'ImageProcessorComposer', () => {
 		expect( renderers[ 0 ].dispose ).toHaveBeenCalledTimes( 1 );
 		passes.forEach( dispose => expect( dispose ).toHaveBeenCalledTimes( 1 ) );
 		expect( processor.composer ).toBeNull();
+
+	} );
+
+} );
+
+describe( 'hdrShowsPicture', () => {
+
+	it( 'lets the saved light stand in only for a picture of its size, never an upscaled one', () => {
+
+		expect( hdrShowsPicture( { width: 960, height: 540 }, { width: 960, height: 540 } ) ).toBe( true );
+		expect( hdrShowsPicture( { width: 960, height: 540 }, { width: 3840, height: 2160 } ) ).toBe( false );
+		expect( hdrShowsPicture( { width: 960, height: 540 }, { width: 960, height: 541 } ) ).toBe( false );
+		expect( hdrShowsPicture( false, { width: 960, height: 540 } ) ).toBe( false );
+		expect( hdrShowsPicture( { width: 960, height: 540 }, null ) ).toBe( false );
 
 	} );
 

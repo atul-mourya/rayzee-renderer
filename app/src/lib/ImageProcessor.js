@@ -285,6 +285,9 @@ export class ImageProcessorComposer {
 
 }
 
+/** The saved light stands in for the picture only at its size: an upscaled save keeps it at the render's size. */
+export const hdrShowsPicture = ( hdr, picture ) => !! hdr && !! picture && hdr.width === picture.width && hdr.height === picture.height;
+
 /**
  * The same edits as {@link ImageProcessorComposer}, on a saved render's HDR picture after its view
  * (`PictureView.setGrade`): identical up to white, colours brighter than white carried along (hue turns the colour scaled

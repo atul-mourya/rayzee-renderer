@@ -8,6 +8,8 @@ import { whiteBalanceMatrix } from '@/core/color/WhiteBalance.js';
 
 const gpu = vi.hoisted( () => ( { mappers: [], depth: null } ) );
 const encoded = vi.hoisted( () => [] );
+// The most pixels the stubbed HEIC / AVIF encoder takes.
+const still = vi.hoisted( () => ( { limit: Infinity } ) );
 
 vi.mock( '@/core/output/ToneMapGPU.js', () => ( {
 	PackedToneMapper: class {
@@ -73,6 +75,7 @@ vi.mock( '@/core/output/ImageEncoders.js', async ( importOriginal ) => {
 		encodeWithCanvas: spy( 'canvas' ),
 		encodeStill: spy( 'still' ),
 		encodeGainMapJPEG: spy( 'gainMapJPEG' ),
+		canEncodeStill: async ( format, width, height ) => width * height <= still.limit,
 	};
 
 } );
@@ -130,6 +133,7 @@ function withCanvasTransform( app, { shows = true } = {} ) {
 afterEach( () => {
 
 	encoded.length = 0;
+	still.limit = Infinity;
 	gpu.mappers.length = 0;
 	gpu.depth = null;
 	vi.unstubAllGlobals();
@@ -459,6 +463,59 @@ describe( 'exportImage', () => {
 		expect( hdr ).toEqual( new Float32Array( 8 ).fill( 3 ) );
 		expect( sdr ).toBeInstanceOf( Uint8ClampedArray );
 		expect( text.Software ).toBe( `Rayzee ${VERSION}` );
+
+	} );
+
+	it( 'puts the upscaler\'s picture over the render\'s gain map in an HDR photo, and writes it alone in a plain HEIC', async () => {
+
+		const app = withCanvasTransform( makeApp() );
+		const image = { data: new Uint8ClampedArray( 4 * 2 * 4 ).fill( 9 ), colorSpace: 'srgb' };
+		const ctx = { getContextAttributes: () => ( { colorSpace: 'srgb' } ), getImageData: vi.fn( () => image ) };
+		app._displayCanvas = () => ( { width: 4, height: 2, getContext: () => ctx } );
+
+		for ( const [ format, encoder ] of [[ 'jpeg', 'gainMapJPEG' ], [ 'heic', 'still' ], [ 'avif', 'still' ]] ) {
+
+			const file = await app.exportImage( { format, gainMap: true } );
+			expect( file ).toMatchObject( { width: 4, height: 2, source: 'upscaled' } );
+			const args = last( encoder );
+			expect( [ args.width, args.height, args.sdr.length, args.hdr.length ] ).toEqual( [ 2, 1, 8, 8 ] );
+			expect( args.picture ).toMatchObject( { data: image.data, width: 4, height: 2 } );
+
+		}
+
+		const plain = await app.exportImage( { format: 'heic' } );
+		expect( plain ).toMatchObject( { width: 4, height: 2, source: 'upscaled' } );
+		expect( last( 'still' ) ).toMatchObject( { format: 'heic', sdr: image.data, width: 4, height: 2 } );
+		expect( last( 'still' ).hdr ?? null ).toBeNull();
+
+		await app.exportImage( { format: 'jpeg', gainMap: true, upscaled: false } );
+		expect( last( 'gainMapJPEG' ) ).toMatchObject( { width: 2, height: 1, picture: null } );
+
+	} );
+
+	it( 'reads the upscaler\'s picture in the gain map\'s colour space, and writes the render where the encoder cannot take it', async () => {
+
+		const app = withCanvasTransform( makeApp() );
+		app.color.canvasColorSpace = 'display-p3';
+		const image = { data: new Uint8ClampedArray( 4 * 2 * 4 ), colorSpace: 'display-p3' };
+		const ctx = { getContextAttributes: () => ( { colorSpace: 'srgb' } ), getImageData: vi.fn( () => image ) };
+		app._displayCanvas = () => ( { width: 4, height: 2, getContext: () => ctx } );
+
+		const file = await app.exportImage( { format: 'jpeg', gainMap: true } );
+		expect( ctx.getImageData ).toHaveBeenLastCalledWith( 0, 0, 4, 2, { colorSpace: 'display-p3' } );
+		expect( last( 'gainMapJPEG' ) ).toMatchObject( { colorSpace: 'display-p3', picture: { width: 4, height: 2 } } );
+		expect( file ).toMatchObject( { width: 4, height: 2, colorSpace: 'display-p3', source: 'upscaled' } );
+
+		still.limit = 4;
+		const render = await app.exportImage( { format: 'heic', gainMap: true } );
+		expect( last( 'still' ) ).toMatchObject( { width: 2, height: 1, picture: null } );
+		expect( render ).toMatchObject( { width: 2, height: 1 } );
+		const plain = await app.exportImage( { format: 'avif' } );
+		expect( last( 'still' ) ).toMatchObject( { width: 2, height: 1 } );
+		expect( plain.source ).not.toBe( 'upscaled' );
+
+		// JPEG has no such limit.
+		expect( await app.exportImage( { format: 'jpeg', gainMap: true } ) ).toMatchObject( { width: 4, source: 'upscaled' } );
 
 	} );
 

@@ -67,11 +67,15 @@ describe( 'getProvenance', () => {
 	it( 'says what the picture was shown at, so a saved copy of its light can be shown again', () => {
 
 		const app = new PathTracerApp( null );
-		expect( app.getProvenance().display ).toEqual( { exposure: null, backdrop: null, backdropExposure: null } );
+		expect( app.getProvenance().display ).toEqual( { exposure: null, backdrop: null, backdropExposure: null, overlay: null } );
 
 		app.renderer = { toneMappingExposure: 2.5 };
 		app.stages.compositor = { backdropExposure: 1 };
 		expect( app.getProvenance().display ).toMatchObject( { exposure: 2.5, backdropExposure: 1 } );
+
+		// A picture over the render (an AI upscale or neural pass): its light is not that picture.
+		app._displayCanvas = () => ( { width: 820, height: 1024 } );
+		expect( app.getProvenance().display.overlay ).toEqual( { width: 820, height: 1024 } );
 
 	} );
 

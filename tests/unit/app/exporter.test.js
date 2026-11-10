@@ -12,7 +12,7 @@ vi.mock( 'rayzee/encoders', async importOriginal => ( { ...await importOriginal(
 import { encodeEXR } from '@/core/output/ImageEncoders.js';
 import { setApp } from '@/lib/appProxy';
 import {
-	videoBitrate, holdsLight, takesGainMap, isLossy, isFrameSequence, readVideoSettings, fileStem, downloadBlob,
+	videoBitrate, holdsLight, takesGainMap, isLossy, isFrameSequence, canSaveUpscaled, readVideoSettings, fileStem, downloadBlob,
 	exportPicture, exportSavedRender, canPickFolder, frameName, openFrameSink, DEFAULT_VIDEO, VIDEO_SETTINGS_KEY,
 } from '@/lib/exporter';
 
@@ -62,6 +62,21 @@ describe( 'export choices', () => {
 		expect( formats.filter( takesGainMap ) ).toEqual( [ 'jpeg', 'heic', 'avif' ] );
 		expect( formats.filter( isLossy ) ).toEqual( [ 'jpeg', 'webp', 'heic', 'avif' ] );
 		expect( [ 'mp4', 'webm', 'png', 'exr' ].filter( isFrameSequence ) ).toEqual( [ 'png', 'exr' ] );
+
+	} );
+
+	it( 'offers the upscaled picture for every 8-bit picture, HDR photos included, never for light', () => {
+
+		const info = { upscaled: { width: 8, height: 4 }, hdr: true };
+		const formats = [ 'png', 'jpeg', 'webp', 'heic', 'avif', 'exr', 'hdr' ];
+		expect( formats.filter( format => canSaveUpscaled( { format, bitDepth: 8 }, info ) ) ).toEqual( [ 'png', 'jpeg', 'webp', 'heic', 'avif' ] );
+		expect( canSaveUpscaled( { format: 'png', bitDepth: 16 }, info ) ).toBe( false );
+		expect( canSaveUpscaled( { format: 'jpeg', bitDepth: 8 }, { upscaled: null, hdr: true } ) ).toBe( false );
+		expect( canSaveUpscaled( { format: 'jpeg', bitDepth: 8 }, null ) ).toBe( false );
+
+		// Past what the video encoder takes (an 8K HEIC), the render is written: not offered.
+		const still = { heic: false, avif: true };
+		expect( [ 'heic', 'avif', 'jpeg' ].filter( format => canSaveUpscaled( { format, bitDepth: 8 }, info, still ) ) ).toEqual( [ 'avif', 'jpeg' ] );
 
 	} );
 

@@ -19,10 +19,11 @@ function asFloat32( data ) {
 
 }
 
-function canvasPixels( canvas ) {
+// Read in its own colour space, or in `colorSpace` (the browser converts).
+function canvasPixels( canvas, colorSpace = null ) {
 
 	const ctx = canvas.getContext( '2d' );
-	const colorSpace = ctx.getContextAttributes?.()?.colorSpace ?? 'srgb';
+	colorSpace ??= ctx.getContextAttributes?.()?.colorSpace ?? 'srgb';
 	const image = ctx.getImageData( 0, 0, canvas.width, canvas.height, { colorSpace } );
 	return { data: image.data, width: canvas.width, height: canvas.height, displayColorSpace: image.colorSpace ?? colorSpace, source: 'upscaled' };
 
@@ -226,10 +227,23 @@ export async function exportImage( app, { format = 'png', bitDepth = 8, quality 
 	if ( heif || ( format === 'jpeg' && gainMap ) ) {
 
 		if ( gainMap && ! app.stages.compositor?.showsCanvasTransform ) throw new Error( 'exportImage: an HDR photo needs the screen showing HDR (color.setHdrOutput)' );
+		const shown = upscaled ? app._displayCanvas() : null;
+		// Past what the encoder takes (an 8K HEIC), the render is written.
+		const fits = shown && ( ! heif || await encoders.canEncodeStill( format, shown.width, shown.height ) );
+		if ( shown && ! fits ) log.warn( `exportImage: ${format} cannot hold the ${shown.width}×${shown.height} upscaled picture here; writing the render` );
+		if ( fits && ! gainMap ) {
+
+			const picture = canvasPixels( shown );
+			return file( await encoders.encodeStill( { format, sdr: picture.data, width: picture.width, height: picture.height, colorSpace: picture.displayColorSpace, quality } ), picture );
+
+		}
+
+		// The upscaled picture over the render's gain map, read in the pair's colour space: viewers scale a smaller map.
 		const hdr = gainMap ? asFloat32( ( await readShown( app, { source, preserveAlpha: false } ) ).data ) : null;
 		const read = await app.renderToBuffer( { colorSpace: 'srgb', source } );
-		const image = { sdr: read.data, hdr, width: read.width, height: read.height, colorSpace: read.displayColorSpace, quality };
-		return file( heif ? await encoders.encodeStill( { ...image, format } ) : await encoders.encodeGainMapJPEG( { ...image, text } ), read );
+		const picture = fits ? canvasPixels( shown, read.displayColorSpace ) : null;
+		const image = { sdr: read.data, hdr, width: read.width, height: read.height, colorSpace: read.displayColorSpace, quality, picture };
+		return file( heif ? await encoders.encodeStill( { ...image, format } ) : await encoders.encodeGainMapJPEG( { ...image, text } ), picture ?? read );
 
 	}
 

@@ -16,7 +16,7 @@ import { useColorStatus, colorManagement, ensureDefaultConfig } from '@/lib/colo
 import { exportSpaceOptions, workingSpaceLabel } from '@/lib/colorLabels';
 import {
 	PICTURE_FORMATS, VIDEO_FORMATS, LAYERS, DEFAULT_PICTURE, PICTURE_SETTINGS_KEY,
-	holdsLight, takesGainMap, isLossy, isFrameSequence, exportPicture, exportSavedRender, canPickFolder, videoBitrate,
+	holdsLight, takesGainMap, isLossy, isFrameSequence, canSaveUpscaled, exportPicture, exportSavedRender, canPickFolder, videoBitrate,
 } from '@/lib/exporter';
 import { pickFramesFolder } from '@/lib/folders';
 import { getAIVersionFile } from '@/lib/database';
@@ -47,6 +47,30 @@ function useFormats( open ) {
 	}, [ open ] );
 
 	return PICTURE_FORMATS.map( f => ( still[ f.value ] === false ? { ...f, disabled: true, hint: 'this browser cannot write it' } : f ) );
+
+}
+
+/** Whether HEIC and AVIF can hold the upscaled picture: past the encoder's size (an 8K HEIC) the render is written. */
+function useUpscaledStill( upscaled ) {
+
+	const [ fits, setFits ] = useState( {} );
+	const width = upscaled?.width, height = upscaled?.height;
+	useEffect( () => {
+
+		if ( ! width ) return;
+		let live = true;
+		import( 'rayzee/encoders' )
+			.then( ( { canEncodeStill } ) => Promise.all( [ canEncodeStill( 'heic', width, height ), canEncodeStill( 'avif', width, height ) ] ) )
+			.then( ( [ heic, avif ] ) => live && setFits( { heic, avif } ) );
+		return () => {
+
+			live = false;
+
+		};
+
+	}, [ width, height ] );
+
+	return fits;
 
 }
 
@@ -201,7 +225,8 @@ function describe( settings, info ) {
 function LivePicture( { settings, update, info, formats } ) {
 
 	const { format } = settings;
-	const upscalable = info?.upscaled && ( format === 'webp' || ( format === 'png' && settings.bitDepth !== 16 ) || ( format === 'jpeg' && ! ( settings.hdr && info.hdr ) ) );
+	const still = useUpscaledStill( info?.upscaled );
+	const upscalable = canSaveUpscaled( settings, info, still );
 	const size = upscalable && settings.upscaled ? info.upscaled : info;
 
 	return (

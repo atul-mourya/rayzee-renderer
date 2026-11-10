@@ -7,7 +7,7 @@ import { useToast } from '@/hooks/use-toast';
 import { useStore, useAIStore } from '@/store';
 import { fitArea } from '@/lib/aiEdit';
 import { AreaLayer, CompareSwitch, JobChip, SplitHandle, VersionStrip } from './AIOverlay';
-import { ImageProcessorComposer, pictureGrade } from '@/lib/ImageProcessor';
+import { ImageProcessorComposer, pictureGrade, hdrShowsPicture } from '@/lib/ImageProcessor';
 import ViewportToolbar from './ViewportToolbar';
 import { updateRender, getRenderHDR } from '@/lib/database';
 import { getApp } from '@/lib/appProxy';
@@ -67,6 +67,7 @@ const ResultsViewport = forwardRef( function ResultsViewport( props, ref ) {
 	// Dynamic canvas size based on loaded image dimensions
 	const [ actualCanvasWidth, setActualCanvasWidth ] = useState( 512 );
 	const [ actualCanvasHeight, setActualCanvasHeight ] = useState( 512 );
+	const [ pictureSize, setPictureSize ] = useState( null );
 	const [ imageLoadState, setImageLoadState ] = useState( { loaded: false, error: false } );
 	const [ isImageDrawn, setIsImageDrawn ] = useState( false );
 	const [ viewingOriginal, setViewingOriginal ] = useState( false );
@@ -300,6 +301,7 @@ const ResultsViewport = forwardRef( function ResultsViewport( props, ref ) {
 				// to avoid disrupting its WebGL context
 				originalCanvas.width = img.width;
 				originalCanvas.height = img.height;
+				setPictureSize( { width: img.width, height: img.height } );
 
 				// Calculate display dimensions (capped for on-screen display)
 				const maxDim = 1024;
@@ -452,7 +454,8 @@ const ResultsViewport = forwardRef( function ResultsViewport( props, ref ) {
 
 			}
 
-			if ( ! cancelled ) setHdrShown( result.shown );
+			// Its size as drawn (pixel ratio 1): an upscaled save keeps its light at the render's size.
+			if ( ! cancelled ) setHdrShown( result.shown && { width: hdrCanvasRef.current.width, height: hdrCanvasRef.current.height } );
 
 		} )().catch( error => console.warn( 'The render\'s HDR copy could not be shown:', error ) );
 
@@ -480,7 +483,7 @@ const ResultsViewport = forwardRef( function ResultsViewport( props, ref ) {
 
 	}, [ hdrShown, imageProcessing, viewingOriginal, grade ] );
 
-	const showHDR = hdrShown && imageLoadState.loaded && ! showingVersion;
+	const showHDR = hdrShowsPicture( hdrShown, pictureSize ) && imageLoadState.loaded && ! showingVersion;
 
 	// Long press handling for original/edited view toggling
 	const startLongPress = useCallback( () => {

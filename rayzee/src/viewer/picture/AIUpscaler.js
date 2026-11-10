@@ -331,9 +331,11 @@ export class AIUpscaler extends EventDispatcher {
 				console.error( 'AI Upscaler: Upscaling error:', error );
 				this.dispatchEvent( { type: 'error', error } );
 
-				// Restore canvas and input visibility on non-abort failure
+				// Restore canvas and input visibility on non-abort failure. The render shows again, not the overlay's copy of
+				// it: a save or export would read that copy as the picture (`_displayCanvas`).
 				this._restoreBackup();
 				this.input.style.opacity = '1';
+				this.output.style.display = 'none';
 
 				this.dispatchEvent( { type: 'resolution_changed', width: this._baseWidth, height: this._baseHeight } );
 

@@ -47,7 +47,8 @@ export class PictureView {
 	}
 
 	/**
-	 * Shows a saved render's EXR. Not shown, with `reason`: 'hdr-off' (the screen shows no HDR), 'not-recorded' (a file
+	 * Shows a saved render's EXR. Not shown, with `reason`: 'hdr-off' (the screen shows no HDR), 'overlay' (another
+	 * picture was shown over this light: an AI upscale or neural pass, which the light is not), 'not-recorded' (a file
 	 * from before its exposure was recorded), 'needs-config' / 'other-config' (its colour config is not the one loaded),
 	 * 'no-hdr-version', 'bake-failed', or 'superseded' by a later `show()`. Only a file it shows is decoded.
 	 * @param {Blob|ArrayBuffer} file
@@ -71,6 +72,7 @@ export class PictureView {
 
 		if ( ticket !== this._ticket ) return superseded;
 		if ( ! details?.display || ! details.color?.view ) return { shown: false, reason: 'not-recorded' };
+		if ( details.display.overlay ) return { shown: false, reason: 'overlay' };
 		const version = this._color.hdrVersionOf( details.color.view );
 		if ( ! version.table ) return { shown: false, reason: version.reason };
 

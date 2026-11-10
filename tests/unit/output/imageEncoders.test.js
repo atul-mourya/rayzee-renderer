@@ -5,7 +5,7 @@ import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
 import { FloatType } from 'three';
 import {
 	encodePNG, encodeEXR, encodeHDR, crc32, displayP3Profile, primariesToXYZ, canEncodeWithCanvas, encodeWithCanvas, standardChromaticities,
-	isoMetadata, jpegWithGainMap, heifFile, canEncodeStill, prepareStill, encodeGainMapJPEG,
+	isoMetadata, jpegWithGainMap, heifFile, canEncodeStill, prepareStill, encodeGainMapJPEG, encodeStill,
 } from '@/core/output/ImageEncoders.js';
 
 const bytesOf = async blob => new Uint8Array( await blob.arrayBuffer() );
@@ -481,6 +481,143 @@ describe( 'gain maps', () => {
 			const range = /hdrgm:GainMapMin="([^"]+)" hdrgm:GainMapMax="([^"]+)"/.exec( broken.slice( broken.lastIndexOf( '\xFF\xD8' ) ) ).slice( 1 ).map( Number );
 			expect( range.every( Number.isFinite ) ).toBe( true );
 			expect( range[ 1 ] ).toBeCloseTo( max, 5 );
+
+		} finally {
+
+			vi.unstubAllGlobals();
+
+		}
+
+	} );
+
+	it( 'writes a larger picture over the gain map it was handed the pair for, the map at the pair\'s size', async () => {
+
+		const drawn = [];
+		vi.stubGlobal( 'ImageData', class {
+
+			constructor( data, width, height ) {
+
+				Object.assign( this, { data, width, height } );
+
+			}
+
+		} );
+		vi.stubGlobal( 'OffscreenCanvas', class {
+
+			constructor( width, height ) {
+
+				this.size = [ width, height ];
+
+			}
+
+			getContext() {
+
+				return { putImageData: image => drawn.push( { size: this.size, image: [ image.width, image.height ], data: Uint8ClampedArray.from( image.data ) } ) };
+
+			}
+
+			async convertToBlob() {
+
+				return new Blob( [ fakeJPEG( [ drawn.length ] ) ], { type: 'image/jpeg' } );
+
+			}
+
+		} );
+
+		try {
+
+			const sdr = new Uint8ClampedArray( 2 * 1 * 4 ).fill( 128 ), hdr = new Float32Array( 2 * 1 * 4 ).fill( 2 );
+			const picture = { data: new Uint8ClampedArray( 4 * 2 * 4 ).fill( 77 ), width: 4, height: 2 };
+			const file = new TextDecoder( 'latin1' ).decode( await bytesOf( await encodeGainMapJPEG( { sdr, hdr, width: 2, height: 1, picture } ) ) );
+			expect( drawn.map( d => [ ...d.size, ...d.image ] ) ).toEqual( [[ 4, 2, 4, 2 ], [ 2, 1, 2, 1 ]] );
+			expect( drawn[ 0 ].data ).toEqual( picture.data );
+			expect( drawn[ 1 ].data[ 0 ] ).toBeGreaterThan( 0 );
+			expect( file.slice( file.lastIndexOf( '\xFF\xD8' ) ) ).toContain( 'hdrgm:GainMapMax' );
+
+		} finally {
+
+			vi.unstubAllGlobals();
+
+		}
+
+	} );
+
+	it( 'encodes a HEIF picture at its own size and its smaller gain map at the pair\'s', async () => {
+
+		const frames = [];
+		class StubEncoder {
+
+			static isConfigSupported = async () => ( { supported: true } );
+			constructor( { output } ) {
+
+				this.output = output;
+				this.state = 'unconfigured';
+
+			}
+
+			configure( config ) {
+
+				this.config = config;
+				this.state = 'configured';
+
+			}
+
+			encode( frame ) {
+
+				frames.push( { coded: [ frame.codedWidth, frame.codedHeight ], config: [ this.config.width, this.config.height ], first: frame.data[ 0 ] } );
+				this.output( { byteLength: 2, copyTo: d => d.set( [ frames.length, 0 ] ) }, { decoderConfig: { description: new Uint8Array( [ 5 ] ), colorSpace: { matrix: 'bt709', fullRange: true } } } );
+
+			}
+
+			async flush() {}
+			close() {
+
+				this.state = 'closed';
+
+			}
+
+		}
+
+		class StubFrame {
+
+			constructor( data, init ) {
+
+				Object.assign( this, init, { data } );
+
+			}
+
+			close() {}
+
+		}
+
+		vi.stubGlobal( 'VideoEncoder', StubEncoder );
+		vi.stubGlobal( 'VideoFrame', StubFrame );
+		try {
+
+			const sdr = new Uint8ClampedArray( 2 * 2 * 4 ).fill( 128 ), hdr = new Float32Array( 2 * 2 * 4 ).fill( 2 );
+			const picture = { data: new Uint8ClampedArray( 8 * 8 * 4 ).fill( 77 ), width: 8, height: 8 };
+			const file = new Uint8Array( await ( await encodeStill( { format: 'heic', sdr, hdr, width: 2, height: 2, picture } ) ).arrayBuffer() );
+			expect( frames.map( f => [ ...f.coded, ...f.config ] ) ).toEqual( [[ 8, 8, 8, 8 ], [ 2, 2, 2, 2 ]] );
+			expect( frames[ 0 ].first ).toBe( 77 );
+
+			const { properties, associations } = itemProperties( boxes( boxes( file ).meta.body, 4 ) );
+			const ispe = properties.flatMap( ( p, i ) => ( p.type === 'ispe' ? [[ i + 1, new DataView( p.body.buffer, p.body.byteOffset ).getUint32( 4 ), new DataView( p.body.buffer, p.body.byteOffset ).getUint32( 8 ) ]] : [] ) );
+			expect( ispe ).toEqual( [[ 1, 8, 8 ], [ 8, 2, 2 ]] );
+			expect( associations ).toEqual( [[ 1, [ 1, 2, 3 | 0x80, 4 ]], [ 2, [ 1, 5 ]], [ 3, [ 8, 2, 6 | 0x80, 7 ]]] );
+
+			frames.length = 0;
+			await encodeStill( { format: 'heic', sdr, width: 2, height: 2, picture } );
+			expect( frames.map( f => f.coded ) ).toEqual( [[ 8, 8 ]] );
+
+			// HEVC drops a 3 × 3 map's odd column and row; the 6 × 6 picture drops as much, scaled, to stay 2× it.
+			frames.length = 0;
+			const odd = new Uint8ClampedArray( 3 * 3 * 4 ).fill( 128 ), oddHDR = new Float32Array( 3 * 3 * 4 ).fill( 2 );
+			const big = { data: new Uint8ClampedArray( 6 * 6 * 4 ).fill( 77 ), width: 6, height: 6 };
+			const trimmed = new Uint8Array( await ( await encodeStill( { format: 'heic', sdr: odd, hdr: oddHDR, width: 3, height: 3, picture: big } ) ).arrayBuffer() );
+			expect( frames.map( f => [ ...f.coded, ...f.config ] ) ).toEqual( [[ 6, 6, 4, 4 ], [ 3, 3, 2, 2 ]] );
+			const sizes = itemProperties( boxes( boxes( trimmed ).meta.body, 4 ) ).properties.filter( p => p.type === 'ispe' )
+				.map( p => [ new DataView( p.body.buffer, p.body.byteOffset ).getUint32( 4 ), new DataView( p.body.buffer, p.body.byteOffset ).getUint32( 8 ) ] );
+			expect( sizes ).toEqual( [[ 4, 4 ], [ 2, 2 ]] );
 
 		} finally {
 

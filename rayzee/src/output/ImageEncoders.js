@@ -969,12 +969,16 @@ function multiPicture( primarySize, gainMapSize, gainMapOffset ) {
  * @param {'srgb'|'display-p3'} [image.colorSpace='srgb']
  * @param {number} [image.quality=0.92]
  * @param {Object<string, string>} [image.text]
+ * @param {?{data: Uint8ClampedArray, width: number, height: number}} [image.picture] - the SDR picture to write in place
+ *   of `sdr`, in `colorSpace`, larger (an upscaled one); the gain map keeps `sdr`'s size, and viewers scale it to
+ *   the picture
  * @returns {Promise<Blob>}
  */
-export async function encodeGainMapJPEG( { sdr, hdr, width, height, colorSpace = 'srgb', quality = 0.92, text = {} } ) {
+export async function encodeGainMapJPEG( { sdr, hdr, width, height, colorSpace = 'srgb', quality = 0.92, text = {}, picture = null } ) {
 
 	const gain = await gainMapPixels( sdr, hdr, width * height );
-	const base = new Uint8Array( await ( await encodeWithCanvas( { data: sdr, width, height, colorSpace, format: 'jpeg', quality, text } ) ).arrayBuffer() );
+	const shown = picture ?? { data: sdr, width, height };
+	const base = new Uint8Array( await ( await encodeWithCanvas( { data: shown.data, width: shown.width, height: shown.height, colorSpace, format: 'jpeg', quality, text } ) ).arrayBuffer() );
 	const map = new Uint8Array( await ( await encodeWithCanvas( { data: gain.map, width, height, format: 'jpeg', quality: 0.95 } ) ).arrayBuffer() );
 	return jpegWithGainMap( base, map, gain );
 
@@ -1150,10 +1154,10 @@ function concat( parts ) {
 
 }
 
-async function encodeFrame( format, rgba, width, height, quality ) {
+// `size` is the part encoded, from the top left: the whole frame, less HEVC's odd column and row.
+async function encodeFrame( format, rgba, width, height, quality, size = stillSize( format, width, height ) ) {
 
 	const spec = STILL_CODECS[ format ];
-	const size = stillSize( format, width, height );
 	const codec = spec.codec( size.width, size.height );
 	const chunks = [];
 	let config = null, failure = null;
@@ -1247,7 +1251,10 @@ export function heifFile( format, { base, primaries, gainMap = null, toneMap = n
 			box( format === 'heic' ? 'hvcC' : 'av1C', gainMap.record ),
 			nclx( 2, 2, gainMap.matrix, gainMap.fullRange ),
 		);
-		associations.push( [ 2, [ 1, 5 ]], [ 3, [ 1, 2, 6 | 0x80, 7 ]] );
+		// A smaller gain map (under an upscaled picture) has its own size; the tone-mapped item has the picture's.
+		const sized = gainMap.width === base.width && gainMap.height === base.height;
+		if ( ! sized ) properties.push( fullBox( 'ispe', 0, 0, u32( gainMap.width ), u32( gainMap.height ) ) );
+		associations.push( [ 2, [ 1, 5 ]], [ 3, [ sized ? 1 : 8, 2, 6 | 0x80, 7 ]] );
 
 	}
 
@@ -1293,13 +1300,20 @@ export function heifFile( format, { base, primaries, gainMap = null, toneMap = n
  * @param {number} image.height
  * @param {'srgb'|'display-p3'} [image.colorSpace='srgb']
  * @param {number} [image.quality=0.92]
+ * @param {?{data: Uint8ClampedArray, width: number, height: number}} [image.picture] - the SDR picture to write in place
+ *   of `sdr`, in `colorSpace`, larger (an upscaled one); the gain map keeps `sdr`'s size, and viewers scale it to
+ *   the picture
  * @returns {Promise<Blob>}
  */
-export async function encodeStill( { format, sdr, hdr = null, width, height, colorSpace = 'srgb', quality = 0.92 } ) {
+export async function encodeStill( { format, sdr, hdr = null, width, height, colorSpace = 'srgb', quality = 0.92, picture = null } ) {
 
-	if ( ! await canEncodeStill( format, width, height ) ) throw new Error( `${format} needs a video encoder this platform lacks; save as png, jpeg or exr` );
+	const shown = picture ?? { data: sdr, width, height };
+	if ( ! await canEncodeStill( format, shown.width, shown.height ) ) throw new Error( `${format} needs a video encoder this platform lacks; save as png, jpeg or exr` );
 	const primaries = colorSpace === 'display-p3' ? 12 : 1;
-	const base = await encodeFrame( format, sdr, width, height, quality );
+	// A larger picture drops what HEVC drops of the gain map, scaled, so the two still line up.
+	const mapSize = stillSize( format, width, height );
+	const visible = hdr && picture ? stillSize( format, Math.round( shown.width * mapSize.width / width ), Math.round( shown.height * mapSize.height / height ) ) : undefined;
+	const base = await encodeFrame( format, shown.data, shown.width, shown.height, quality, visible );
 	if ( ! hdr ) return heifFile( format, { base, primaries } );
 
 	const gain = await gainMapPixels( sdr, hdr, width * height );

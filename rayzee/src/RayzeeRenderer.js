@@ -2000,6 +2000,8 @@ export class RayzeeRenderer extends EventDispatcher {
 	 */
 	getProvenance() {
 
+		const overlay = this._displayCanvas?.() ?? null;
+
 		const stage = this.stages.pathTracer;
 		const color = this.color?.status();
 
@@ -2026,11 +2028,13 @@ export class RayzeeRenderer extends EventDispatcher {
 				view: color.activeView ?? color.activeTransform?.id ?? null,
 				context: color.context,
 			} : null,
-			// What the picture was shown at, auto exposure included, and a solid backdrop held apart from it.
+			// What the picture was shown at, auto exposure included, and a solid backdrop held apart from it; `overlay`, the
+			// size of a picture shown over the render (an AI upscale or neural pass), which its light is not.
 			display: {
 				exposure: this.renderer?.toneMappingExposure ?? null,
 				backdrop: this.pipeline?.context?.getState( 'pathtracer:backdrop' ) ?? null,
 				backdropExposure: this.stages?.compositor?.backdropExposure ?? null,
+				overlay: overlay ? { width: overlay.width, height: overlay.height } : null,
 			},
 			scene: this.sceneSource,
 			settings: this.settings.getEffective(),

@@ -49,7 +49,18 @@ Public renderer methods for offline rendering and reproducible output — on `Ra
   all three as ISO gain maps and CoreImage's `expandToHDR` matches the app's HDR picture within 3–4 % (compression).
   The map's 8 bits round to nearest once: decoded as a viewer decodes it, before compression, the HDR picture is back
   within half a step of the map's range (`imageEncoders.test.js`); a non-finite HDR value keeps the SDR one's light; `+ 0.5` into its clamped array had rounded twice, a whole step up as often
-  as not (fixed 2026-11-08).
+  as not (fixed 2026-11-08). With the upscaler's picture showing (`upscaled`), that picture is the base and the gain map
+  stays at the render's size, from the render's SDR and HDR pair (`picture` on both encoders); ISO 21496-1 lets a map be
+  smaller, and `heifFile` then gives it an `ispe` of its own (the tmap item keeps the picture's). Before 2026-11-10 an
+  HDR photo, and every HEIC and AVIF, ignored the upscaler. The picture is read in the pair's colour space (the
+  upscaler's canvas is sRGB, a P3 screen's readback P3); HEVC drops the map's odd column and row and the picture as much,
+  scaled, so they still line up; past what the encoder takes (`canEncodeStill` at the picture's size) the render is
+  written, as before. macOS 26 reads all three with the 410×512 map under an
+  820×1024 picture, its HDR pixels above white 1.26–1.29 % against 1.32 % for the render-size file. The Results page
+  shows a save's EXR as its HDR picture only when that light was the picture: provenance records a picture shown over the
+  render (`display.overlay`, the upscaler's or a neural pass's size) and `PictureView.show` answers `'overlay'` for it,
+  so the save's own picture shows; for saves from before that record, only at the saved picture's size
+  (`hdrShowsPicture`).
   ⚠️ Chrome (macOS) starts its first hardware video encoder of a browser launch in ~5 s, HEVC or H.264 alike, then in
   ~2 ms (Apple's own: 60 ms); an encoder asked for meanwhile waits only for the rest, and nothing stalls. The Export window
   starts one on open (`prepareStill( 'heic' )`, 64×64, nothing encoded): first HDR HEIC 4.9 s → 0.12 s. Writers in

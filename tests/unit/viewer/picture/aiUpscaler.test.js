@@ -48,3 +48,33 @@ describe( 'AIUpscaler time left', () => {
 	} );
 
 } );
+
+describe( 'AIUpscaler failing', () => {
+
+	it( 'shows the render again, not its copy on the overlay, which a save would take for the picture', async () => {
+
+		const drawn = [];
+		const output = { style: { display: 'none' }, width: 0, height: 0, getContext: () => ( { drawImage: ( ...args ) => drawn.push( args ) } ) };
+		const input = { style: { opacity: '1' } };
+		const upscaler = new AIUpscaler( output, { domElement: input } );
+		upscaler.enabled = true;
+		upscaler._createBackup = ( source ) => void ( upscaler._backupCanvas = { width: source.width, height: source.height } );
+		upscaler._ensureSession = async () => {
+
+			throw new Error( 'the model could not be downloaded' );
+
+		};
+
+		const errors = [];
+		upscaler.addEventListener( 'error', e => errors.push( e.error.message ) );
+		vi.spyOn( console, 'error' ).mockImplementation( () => {} );
+
+		expect( await upscaler.execute( { width: 4, height: 2, data: new Uint8ClampedArray( 32 ) } ) ).toBe( false );
+		expect( errors ).toEqual( [ 'the model could not be downloaded' ] );
+		expect( [ output.style.display, input.style.opacity ] ).toEqual( [ 'none', '1' ] );
+		// It was shown while the model loaded.
+		expect( drawn.length ).toBeGreaterThan( 0 );
+
+	} );
+
+} );
