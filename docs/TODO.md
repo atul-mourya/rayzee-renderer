@@ -3,18 +3,50 @@
 ## Bugs
 - remove all hacks on rectarealight parsing and treat all the incoming serailized data. getting difference between placeholder arealight vs arealight coming with usd files
 -  the Moana lava rocks render bright red. The scene file itself sets them to red, and their real colour comes from a texture format (Ptex) the pbrt loader doesn't read yet.
+   → Ptex is read since 04f857f4 (2026-11-11, pbrt and USD); recheck the lava rocks in the app
 -  dont reload the same model using query param. instead provide a save button with autosave option. on reload load the default. users can open using file menu
 -   Fast compilation on windows devices
 -   make bvh an independent library — built as the `rayzee-bvh` package on the night of 2026-11-05 (branch
     `night/bvh-package`), not committed
 - claude design: redesign all ui component used in the application to create a custom design system
 - Rust/WebAssembly: only the BLAS build gains clearly (2.9–4× measured on its core, of which a JS-only layout change
-  gives 1.3–1.8×). Study, ranking and pilot plan in docs/internal/specs/wasm-candidates.md; nothing ported
-- can headless render in hdr?
-- a final render keeps ~4 frames queued on the GPU (410–480 ms to drain at 1638×2048): the page draws at 8 fps
-  behind it, and a pan starts ~0.4 s late (tracing pauses while the view pans or zooms). Cap frames in flight at 2,
-  then `bench:ab` the cost
-- moana island scene usd version takes 5 mins to load and crashes in the end
+  gives 1.3–1.8×). Study, ranking and pilot plan in docs/internal/specs/wasm-candidates.md
+  → BLAS SAH + Morton sort ported (4c42ef1b, rayzee/wasm/bvh); follow-ups below
+  → 2026-11-11: no crash; untextured loaded 199 s (first frame 210 s), with its textures folder 238 s (260 s); phases
+  below
+- do we need separate stats graph monitor for denoised renders?
+- compare api of rayzee headless and pbrt. assess what can we learn and make it better
+- Dedicated docsify documentation for both rayzee as and app and as an engine
+
+### Follow-ups from the Rust/WebAssembly night (2026-11-11)
+- [x] Reinsertion in Rust: done, with SA ordering and flatten (0f74e1a2; BLAS another −24…−49 %). The port also found
+  the core's quickselect ordering a leaf's triangles unlike JS (fixed, 7548d0dd)
+- [ ] The bench corpus never runs a BLAS post-pass (its meshes are under the 1,000 triangles reinsertion starts at):
+  a render-time A/B on real models in the bench (`bench:ab --model …`), as the probe that caught it did
+- [ ] `bench:load -- --chrome` with the WebAssembly BLAS: done against 1f605fe7 (blas crown −74 %, classroom −70 %,
+  zero-day −55 %, 24155522 −39 %); watercolor / transparent-machines and Safari / Firefox still unmeasured
+- [x] CI has no Rust toolchain: `bvhCoreWasm.test.js` fails when the generated module's source hash is stale (8c2c6430)
+- [ ] Moana island phases (Chrome, textured): USD read 30 s, USD build 50 s, extraction + BLAS 57 s, placing and
+  measuring copies 11 s, grouping 12 s, top-level tree 12 s, writing the tree 8 s, assembling 10 s, copy records
+  13 s, upload + compact 23–32 s
+- [ ] USD read/build: the profile is flat (no function over 5 %, garbage collection 20 %); cut allocation, move crate
+  decoding (LZ4, int decode) into workers. pbrt build: zero-day 1.7 s, hibiscus 2.6 s
+- [ ] Placing copies, writing the tree (`fillLeaves`) and copy records run on the main thread over 51M copies:
+  workers over the shared arrays
+- [ ] Upload + compact (27 s on the island): corners 15.3 s and the 4-wide trees 11.0 s, each two passes (count, pack)
+  over records the page reads back from disk one piece at a time (8.9 GB of triangles, 5.5 GB of tree, per pass);
+  workers busy a fraction of it. One pass, or faster reads, is the lever
+- [ ] Top-level tree and copy grouping in WebAssembly would copy 600 MB+ into wasm memory at the island's peak:
+  only worth it with the big stores living in a shared WebAssembly.Memory
+- [ ] Geometry extraction off the main thread (52–77 ns a triangle now; 111M on the island)
+- [ ] Textured island: preflight 8,811 MB against the 9,216 MB line; Ptex's per-face vertices add ~870 MB of geometry
+- [ ] Ptex: float Ptex (displacement) becomes its mean; a pbrt scene with Ptex is not stored as a graph;
+  triangle-mesh Ptex is approximate
+- [ ] A 2–7 s main-thread stall right after the textured island loads, in some runs (heavy swap); not found
+- [x] `_patchTriangleBitsForMaterial`: by material runs, and the upload too (4384e1ee)
+- [x] `npm run lint` ignores the git-ignored `docs/internal/` (3e086db6)
+- [x] The Ptex port slowed every pbrt build (PLY face ids walked for scenes without Ptex): fixed, 30b1cbc1
+- [x] Packing a huge scene failed on one worker's out-of-memory: jobs retried with fewer at once, cdbd4a72
 
 ### MVP
 - [ ] Tools and filters features are missing from results page. Requirements, specification and system design (including
