@@ -1194,6 +1194,7 @@ describe( 'BVHBuilder in WebAssembly', () => {
 			[ scatter( 400 ), b => b.setMortonConfig( { threshold: 16 } ) ],
 			[ makeTriData( Array.from( { length: 40 }, () => atX( 5, - 1, 1 ) ) ), b => ( b.maxLeafSize = 2 ) ],
 			[ scatter( 64 ), b => Object.assign( b, { maxLeafSize: 2, traversalCost: 1e9 } ) ],
+			[ scatter( 4000 ), b => Object.assign( b, { maxLeafSize: 4, traversalCost: 1e9 } ) ],
 			[ scatter( 64 ), b => {
 
 				b.maxLeafSize = 2; b.traversalCost = 1e9; b.setFallbackConfig( { objectMedian: false } );

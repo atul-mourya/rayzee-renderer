@@ -703,9 +703,11 @@ unsafe fn quickselect(start: usize, end: usize, k: usize, axis: usize) {
 	let mut hi = end as isize - 1;
 	while lo < hi {
 		let mid = ((lo + hi) as usize >> 1) as isize;
-		if at(lo) > at(mid) { swap(lo, mid); }
-		if at(lo) > at(hi) { swap(lo, hi); }
-		if at(mid) > at(hi) { swap(mid, hi); }
+		// The three values as read before any swap, as the JS compares them.
+		let (v_lo, v_mid, v_hi) = (at(lo), at(mid), at(hi));
+		if v_lo > v_mid { swap(lo, mid); }
+		if v_lo > v_hi { swap(lo, hi); }
+		if v_mid > v_hi { swap(mid, hi); }
 		let pivot = at(mid);
 		let mut i = lo;
 		let mut j = hi;
