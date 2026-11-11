@@ -52,9 +52,9 @@ import { PATHS, PERF } from './config.js';
  * @param {number} [samples] - measurements to take; defaults to PERF.measureSamples
  * @returns {Promise<{ scene: string, loadMs: number, computeMsPerSample: Object, raw: number[], workload: ?Object }>}
  */
-export async function measureScene( bench, sceneId, samples = PERF.measureSamples ) {
+export async function measureScene( bench, sceneId, samples = PERF.measureSamples, model = null ) {
 
-	const load = await bench.loadScene( sceneId );
+	const load = model ? await bench.loadModelScene( model.url, model.camera, model.env ) : await bench.loadScene( sceneId );
 
 	// Asserted per scene, after the load: loadScene re-asserts deterministic mode, and a
 	// regression there would silently put us back in the pinned configuration this function
@@ -211,10 +211,11 @@ async function measureDenoise( bench, log ) {
  * @param {function(string): void} [options.log]
  * @returns {Promise<{ measurements: Array<Object>, absentFromBase: string[] }>}
  */
-export async function runPerfInterleaved( baseBench, headBench, { only, log = () => {} } = {} ) {
+export async function runPerfInterleaved( baseBench, headBench, { only, models = null, log = () => {} } = {} ) {
 
-	const headScenes = await selectScenes( headBench, only );
-	const baseIds = new Set( ( await baseBench.scenes() ).map( ( s ) => s.id ) );
+	// Models (`bench:ab --model`) are loaded by URL on each side's server, in place of the corpus.
+	const headScenes = models ? models.map( ( model ) => ( { id: `model:${model.url}`, model } ) ) : await selectScenes( headBench, only );
+	const baseIds = new Set( models ? headScenes.map( ( s ) => s.id ) : ( await baseBench.scenes() ).map( ( s ) => s.id ) );
 
 	// Scenes added since the base ref cannot be compared. Measuring them anyway would cost
 	// minutes and still produce no verdict, so they are dropped here and reported by the caller.
@@ -265,7 +266,7 @@ export async function runPerfInterleaved( baseBench, headBench, { only, log = ()
 					// Same tab state for both sides: without it the tab opened second read up to ~13 %
 					// slower on identical code.
 					await bench.bringToFront();
-					const result = await measureScene( bench, scene.id, PERF.abMeasureSamples );
+					const result = await measureScene( bench, scene.id, PERF.abMeasureSamples, scene.model );
 					rounds[ label ].push( result.computeMsPerSample.median );
 					workloads[ label ] = result.workload;
 					line.push( `${label} ${result.computeMsPerSample.median.toFixed( 2 )}` );

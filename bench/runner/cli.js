@@ -417,6 +417,16 @@ async function commandAB( baseRef, flags ) {
 	const only = flags.only ? String( flags.only ).split( ',' ) : undefined;
 	const verbose = !! flags.verbose;
 	const headRef = typeof flags.head === 'string' ? flags.head : null;
+	// --model /models/a.glb,/models/b.zip: real models (app/public/models, git-ignored) instead of the corpus;
+	// --camera picks each one's camera (default 1, its first authored one), --env its sky.
+	const models = flags.model ? String( flags.model ).split( ',' ).map( ( url ) => {
+
+		if ( ! /\.(glb|gltf)$/i.test( url ) ) throw new Error( `bench:ab --model takes glTF models by URL (/models/name.glb), not ${url}` );
+		return url;
+
+	} ).map( ( url ) => ( {
+		url, camera: flags.camera !== undefined ? Number( flags.camera ) : 1, env: flags.env ? String( flags.env ) : 'procedural',
+	} ) ) : null;
 
 	const worktrees = [];
 	const servers = [];
@@ -441,6 +451,7 @@ async function commandAB( baseRef, flags ) {
 			await exec( 'git', [ 'worktree', 'add', '--detach', worktree, ref ], { cwd: PATHS.repoRoot } );
 			worktrees.push( worktree );
 			await installPackages( worktree );
+			if ( models ) await fs.symlink( path.join( PATHS.repoRoot, 'app', 'public', 'models' ), path.join( worktree, 'app', 'public', 'models' ), 'dir' );
 			return worktree;
 
 		};
@@ -501,7 +512,7 @@ async function commandAB( baseRef, flags ) {
 		}
 
 		const { measurements, absentFromBase } = await runPerfInterleaved(
-			baseHarness.bench, headHarness.bench, { only, log }
+			baseHarness.bench, headHarness.bench, { only, models, log }
 		);
 
 		const comparison = comparePerf( measurements );

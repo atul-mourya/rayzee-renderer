@@ -26,7 +26,7 @@ npm run bench:upscale      # GPU tone map against the CPU one, then the AI upsca
 npm run bench:memory
 npm run bench:perf
 npm run bench:kernels      # per-kernel GPU time (--only <scene>; --shipping, --env, --model for real content)
-npm run bench:ab -- main    # gate perf against another git ref (`-- <base> --head <ref>` for two refs)
+npm run bench:ab -- main    # gate perf against another git ref (`-- <base> --head <ref>` for two refs; `--model /models/x.glb` for real models)
 npm run bench:release      # the newest release tag against the one before it, logged for the trend
 npm run bench:trend        # results/trend.html: the perf and A/B logs, one chart a scene
 npm run bench:load         # real models loaded by phase in Node (-- --chrome: in Chrome); -- --ab main, or --base-dir <checkout>, to gate

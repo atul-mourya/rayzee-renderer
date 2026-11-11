@@ -259,6 +259,12 @@ Perf runs with the **production dispatch heuristics active** (`setPerfMode`), un
 
 To gate, use `npm run bench:ab -- <ref>`. It checks the base ref out into a git worktree, serves both trees at once, drives both from **one browser**, and measures each scene in three alternating rounds per side. A worktree locking the packages this install has links to it; one locking others (a ref from before a dependency upgrade) gets an APFS clone of it with those packages from their lockfile tarballs, integrity checked (`installPackages`): v11.16.1 on three r186 failed to boot on r187's install.
 
+**Real models: `bench:ab -- <ref> --model /models/a.glb,/models/b.glb`** measures those glTF files (served from the
+git-ignored `app/public/models`, linked into the base worktree) instead of the corpus, each from its first authored
+camera (`--camera`, `--env` to change). The corpus's meshes are mostly under 1,000 triangles, so a change to how large
+BLASes are built never shows there: turning BVH reinsertion off read 53 scenes unchanged (78cab2ff), while on
+24155522 and crown it had made frames 0.6–1 % faster (a76a4289). pbrt and USD archives do not load by URL here.
+
 > **Bidirectional scenes are measured one side at a time.** Both sides holding a bidirectional scene's extra buffers
 > (~0.5 GB each) lost the WebGPU device on an Apple M-series machine (`caustic-bidirectional`). Before measuring a
 > scene whose integrator is not `'path'`, `bench:ab` releases the other side's scene and integrator buffers
