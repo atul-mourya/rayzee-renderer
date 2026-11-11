@@ -23,6 +23,8 @@ import CompactWorker from './CompactWorker.js?worker&inline';
 // `stage.compactJobSize` lowers it, for tests to force many jobs.
 const JOB_RECORDS = 1 << 19;
 const READ_STEP = 4 << 20;
+const OUT_OF_MEMORY = /allocation failed|out of memory/i;
+const JOB_RETRIES = 3;
 const LANES = TRIANGLE_DATA_LAYOUT.FLOATS_PER_TRIANGLE;
 const log = createLogger( 'pathtracer' );
 
@@ -115,15 +117,16 @@ function jobPool() {
  * Runs `jobs` across the pool, a lane a worker, handing each result to `onResult` (which may upload) before the next;
  * `times` adds up the phase's wall time and its jobs' read, work and upload times.
  */
-async function mapJobs( pool, jobs, onResult, times = null ) {
+export async function mapJobs( pool, jobs, onResult, times = null ) {
 
-	let next = 0, failed = null;
+	let next = 0, failed = null, running = pool.size;
+	const retries = [], tries = new Map();
+	const take = () => retries.shift() ?? ( next < jobs.length ? jobs[ next ++ ] : null );
 	const startedAt = performance.now();
 	const lane = async () => {
 
-		while ( next < jobs.length && ! failed ) {
+		for ( let job = take(); job && ! failed; job = take() ) {
 
-			const job = jobs[ next ++ ];
 			try {
 
 				const result = await pool.run( job );
@@ -140,11 +143,33 @@ async function mapJobs( pool, jobs, onResult, times = null ) {
 
 			} catch ( error ) {
 
-				failed ??= error;
+				// Out of memory in a worker or here: the job runs again with one fewer at once, down to one.
+				const attempt = ( tries.get( job ) ?? 0 ) + 1;
+				if ( ! OUT_OF_MEMORY.test( String( error?.message ) ) || attempt > JOB_RETRIES ) {
+
+					failed ??= error;
+					continue;
+
+				}
+
+				tries.set( job, attempt );
+				retries.push( job );
+				log.warn( `compact layout: a job ran out of memory, retried with ${Math.max( 1, running - 1 )} at once` );
+				// Another lane still running takes it up after its own job; the last one waits for the collector.
+				if ( running > 1 ) {
+
+					running --;
+					return;
+
+				}
+
+				await new Promise( ( resolve ) => setTimeout( resolve, 200 ) );
 
 			}
 
 		}
+
+		running --;
 
 	};
 
