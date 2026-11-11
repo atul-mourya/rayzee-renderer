@@ -35,6 +35,7 @@ import { packMaterial } from '@/core/materials/MaterialPacking.js';
 import { GeometryExtractor, MATERIAL_VALUE_SOURCE } from '@/core/scene/GeometryExtractor.js';
 import { TextureCreator } from '@/core/materials/TextureCreator.js';
 import { MaterialDataManager } from '@/core/materials/MaterialDataManager.js';
+import { ChunkedRecords } from '@/core/memory/ChunkedRecords.js';
 import { SceneProcessor } from '@/core/scene/SceneProcessor.js';
 import { setWorkingMatrix } from '@/core/color/WorkingMatrix.js';
 
@@ -509,6 +510,32 @@ describe( 'MaterialDataManager', () => {
 		expect( side() ).toEqual( [ 2, 2 ] );
 		manager.updateMaterialProperty( 0, 'transmission', 0 );
 		expect( side() ).toEqual( [ 2, 2 ] );
+
+	} );
+
+	it( 'patches and uploads only the edited material\'s triangles, finding them once', () => {
+
+		// Three materials in runs across chunks of 4 records: 0 0 1 1 1 2 | 2 0 1 …
+		const layout = [ 0, 0, 1, 1, 1, 2, 2, 0, 1, 1, 2, 0, 0, 0, 1, 2 ];
+		const records = new ChunkedRecords( layout.length, T.FLOATS_PER_TRIANGLE, Uint32Array, 4 * T.FLOATS_PER_TRIANGLE * 4 );
+		layout.forEach( ( m, i ) => ( records.chunkFor( i )[ records.baseOf( i ) + T.MATERIAL_FLAGS_OFFSET ] = m ) );
+		const manager = managerWith( new GeometryExtractor() );
+		manager.setMaterialData( new Float32Array( F * 3 ) );
+		manager.callbacks.getTriangleData = () => ( { records, count: layout.length } );
+		const uploads = [];
+		manager.callbacks.onTriangleDataChanged = ( runs ) => uploads.push( runs );
+		const reads = vi.spyOn( records, 'chunkFor' );
+
+		const side = ( i ) => ( records.chunkFor( i )[ records.baseOf( i ) + T.MATERIAL_FLAGS_OFFSET ] >>> TRI_SIDE_SHIFT ) & 3;
+		manager.updateMaterialProperty( 1, 'side', DoubleSide );
+		expect( layout.map( ( m, i ) => side( i ) ) ).toEqual( layout.map( ( m ) => ( m === 1 ? 2 : 0 ) ) );
+		expect( uploads ).toEqual( [[[ 2, 3 ], [ 8, 2 ], [ 14, 1 ]]] );
+
+		reads.mockClear();
+		manager.updateMaterialProperty( 2, 'side', DoubleSide );
+		expect( reads ).toHaveBeenCalledTimes( 4 );
+		expect( uploads[ 1 ] ).toEqual( [[ 5, 2 ], [ 10, 1 ], [ 15, 1 ]] );
+		expect( layout.map( ( m, i ) => side( i ) ) ).toEqual( layout.map( ( m ) => ( m === 0 ? 0 : 2 ) ) );
 
 	} );
 

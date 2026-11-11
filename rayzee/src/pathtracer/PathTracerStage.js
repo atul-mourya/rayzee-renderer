@@ -29,6 +29,8 @@ import { createLogger, fmt } from '../Logger.js';
 
 // Triangles converted per staging pass: 256K is 12 + 8 MB of staging, kept for the stage's life.
 const TRIANGLE_UPLOAD_SLICE = 1 << 18;
+// Records a material edit uploads apart: closer runs go up as one write.
+const TRIANGLE_UPLOAD_GAP = 1 << 12;
 
 // Texture array layers sent per drained upload: four 2K maps.
 const TEXTURE_UPLOAD_SLICE_BYTES = 64 * 2 ** 20;
@@ -197,9 +199,18 @@ export class PathTracerStage extends RenderStage {
 			records: this._triangleRecords,
 			count: this.triangleCount,
 		} );
-		this.materialData.callbacks.onTriangleDataChanged = () => {
+		this.materialData.callbacks.onTriangleDataChanged = ( runs = null ) => {
 
-			if ( this.triangleShadeAttr ) this._uploadTriangles( 0, this._triangleRecordCount, { geo: false } );
+			if ( ! this.triangleShadeAttr ) return;
+			if ( ! runs ) return this._uploadTriangles( 0, this._triangleRecordCount, { geo: false } );
+			for ( let r = 0; r < runs.length; ) {
+
+				const start = runs[ r ][ 0 ];
+				let end = start + runs[ r ][ 1 ];
+				for ( r ++; r < runs.length && runs[ r ][ 0 ] - end < TRIANGLE_UPLOAD_GAP; r ++ ) end = Math.max( end, runs[ r ][ 0 ] + runs[ r ][ 1 ] );
+				this._uploadTriangles( start, end - start, { geo: false } );
+
+			}
 
 		};
 

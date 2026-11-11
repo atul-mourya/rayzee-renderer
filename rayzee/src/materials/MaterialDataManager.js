@@ -826,7 +826,7 @@ export class MaterialDataManager {
 
 	}
 
-	/** Sets the `mask` bits of the material's triangles' flags to `bits`. @private */
+	/** Sets the `mask` bits of the material's triangles' flags to `bits`, and uploads only their records. @private */
 	_patchTriangleBitsForMaterial( materialIndex, mask, bits ) {
 
 		const triInfo = this.callbacks.getTriangleData?.();
@@ -836,26 +836,66 @@ export class MaterialDataManager {
 		const triCount = triInfo?.count | 0;
 		if ( ( ! flat && ! records ) || triCount === 0 ) return;
 
+		const runs = this._materialRuns( records, flat, triCount ).of( materialIndex );
 		const stride = T.FLOATS_PER_TRIANGLE;
-		let patched = 0;
-		for ( let i = 0; i < triCount; i ++ ) {
+		for ( const [ start, count ] of runs ) {
 
-			const triData = records ? records.chunkFor( i ) : flat;
-			const base = records ? records.baseOf( i ) : i * stride;
-			if ( ( triData[ base + TRI_FLAGS_OFFSET ] & TRI_MATERIAL_MASK ) === materialIndex ) {
+			for ( let i = start, end = start + count; i < end; i ++ ) {
 
-				triData[ base + TRI_FLAGS_OFFSET ] = ( ( triData[ base + TRI_FLAGS_OFFSET ] & ~ mask ) | bits ) >>> 0;
-				patched ++;
+				const triData = records ? records.chunkFor( i ) : flat;
+				const at = ( records ? records.baseOf( i ) : i * stride ) + TRI_FLAGS_OFFSET;
+				triData[ at ] = ( ( triData[ at ] & ~ mask ) | bits ) >>> 0;
 
 			}
 
 		}
 
-		if ( patched > 0 && this.callbacks.onTriangleDataChanged ) {
+		if ( runs.length > 0 ) this.callbacks.onTriangleDataChanged?.( runs );
 
-			this.callbacks.onTriangleDataChanged();
+	}
+
+	/**
+	 * Where each material's triangles sit, as runs of records: read once from the flags lane, again only for other
+	 * triangle data (an edit rewrites side and shadow bits, never the material index).
+	 * @private
+	 */
+	_materialRuns( records, flat, count ) {
+
+		const cached = this._runs;
+		if ( cached && cached.records === records && cached.flat === flat && cached.count === count ) return cached;
+
+		const starts = [], counts = [], materials = [];
+		const stride = T.FLOATS_PER_TRIANGLE;
+		let material = - 1;
+		for ( let i = 0; i < count; i ++ ) {
+
+			const triData = records ? records.chunkFor( i ) : flat;
+			const m = triData[ ( records ? records.baseOf( i ) : i * stride ) + TRI_FLAGS_OFFSET ] & TRI_MATERIAL_MASK;
+			if ( m === material ) {
+
+				counts[ counts.length - 1 ] ++;
+				continue;
+
+			}
+
+			material = m;
+			starts.push( i );
+			counts.push( 1 );
+			materials.push( m );
 
 		}
+
+		const byMaterial = new Map();
+		for ( let r = 0; r < starts.length; r ++ ) {
+
+			let list = byMaterial.get( materials[ r ] );
+			if ( ! list ) byMaterial.set( materials[ r ], list = [] );
+			list.push( [ starts[ r ], counts[ r ] ] );
+
+		}
+
+		this._runs = { records, flat, count, of: ( m ) => byMaterial.get( m ) ?? [] };
+		return this._runs;
 
 	}
 
