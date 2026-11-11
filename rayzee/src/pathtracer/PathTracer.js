@@ -1851,6 +1851,17 @@ export class PathTracer extends PathTracerStage {
 		const texNodes = this.shaderBuilder.getSceneTextureNodes();
 		if ( ! texNodes ) return;
 
+		// A compact load's corners arrive after its triangle buffers (buildClusteredCorners): with neither a geo store
+		// nor clusters the load is between the two, or its packing failed, and a kernel built now reads a null buffer.
+		const tri = this.triangleStorageNode;
+		if ( tri && ! tri.geo && ! tri.clustered ) {
+
+			this._kernelBuildPending = true;
+			this._wavefrontReady = false;
+			return;
+
+		}
+
 		// A fresh build binds the current lightStorageAttr — any pending realloc is covered, and any build asked for.
 		this._kernelBuildPending = false;
 		this._lightBufferRealloc = false;

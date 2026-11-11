@@ -136,6 +136,43 @@ describeGPU( 'a scene loaded in the compact layout', () => {
 
 	}, 120000 );
 
+	it( 'builds no kernels between a compact load\'s triangles and their corners', async () => {
+
+		const stage = app.stages.pathTracer;
+		const build = stage.buildClusteredCorners;
+		let between = null;
+		stage.buildClusteredCorners = function ( ...args ) {
+
+			try {
+
+				stage._buildWavefrontKernels();
+				between = { ready: stage.kernelsReady, pending: stage._kernelBuildPending };
+
+			} catch ( error ) {
+
+				between = { error: error.message };
+
+			}
+
+			return build.apply( this, args );
+
+		};
+
+		try {
+
+			await load( true );
+
+		} finally {
+
+			delete stage.buildClusteredCorners;
+
+		}
+
+		expect( between ).toEqual( { ready: false, pending: true } );
+		await render();
+
+	}, 120000 );
+
 	it( 'loads the next scene plain again', async () => {
 
 		await load( true );
