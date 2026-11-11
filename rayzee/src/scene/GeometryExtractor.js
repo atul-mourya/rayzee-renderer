@@ -252,6 +252,8 @@ function linearDir( v, e ) {
 
 }
 
+const meshTriangles = ( g ) => Math.ceil( ( g.index ? g.index.count : ( g.attributes.position?.count ?? 0 ) ) / 3 );
+
 /** An attribute read straight from its array, as `_vertexReader`'s fast case reads it. */
 function plainAttribute( attribute, itemSize, exact = 0 ) {
 
@@ -497,6 +499,15 @@ export class GeometryExtractor {
 			while ( stack.length ) {
 
 				const node = stack.pop();
+				// A mesh this large waits first, so the host can let built records go before it lands on top of them.
+				const ahead = node.isMesh && node.geometry ? meshTriangles( node.geometry ) : 0;
+				if ( ahead >= yieldEvery ) {
+
+					yielded = this.currentTriangleIndex;
+					await pause( this.currentTriangleIndex, ahead );
+
+				}
+
 				this._visit( node );
 				if ( node.children ) for ( let i = node.children.length - 1; i >= 0; i -- ) stack.push( node.children[ i ] );
 				if ( this.currentTriangleIndex - yielded >= yieldEvery ) {

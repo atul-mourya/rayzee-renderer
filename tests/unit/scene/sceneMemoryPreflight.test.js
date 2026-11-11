@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { SceneProcessor } from '@/core/scene/SceneProcessor.js';
 import { IssueLog, ISSUE_CODES } from '@/core/EngineIssues.js';
-import { SAFE_SCENE_BYTES, MAX_SCENE_BYTES } from '@/core/memory/HostMemory.js';
+import { SAFE_SCENE_BYTES, MAX_SCENE_BYTES, estimateSceneBytes, spillingPeakBytes } from '@/core/memory/HostMemory.js';
 
 const MB = 1024 * 1024;
 
@@ -99,6 +99,35 @@ describe( 'SceneProcessor memory preflight', () => {
 
 		const sp = processor( RUNGS.at40M );
 		expect( sp._preflightMemory( null ).maxBytes ).toBe( MAX_SCENE_BYTES );
+
+	} );
+
+	it( 'holds a streamed scene\'s largest mesh beside the cap, not on top of it, with its split workers\' pieces', () => {
+
+		// The Moana island's shape: 118M triangles, 51M placements, one mesh of 15M.
+		const island = { triangles: 118e6, placements: 51e6, meshes: 71266, geometryBytes: 3306 * MB, instanceBytes: 2437 * MB };
+		const largest = 15e6;
+		const sp = processor( island, { maxSceneBytes: Infinity } );
+		sp._streaming = true;
+		const object = { traverse: ( visit ) => visit( { isMesh: true, geometry: { index: { count: largest * 3 }, attributes: {} } } ) };
+		const report = sp._preflightMemory( object );
+
+		const held = largest * 80 + 64 * MB; // its records and the chunk being filled, past the 1 GB cap
+		const pieces = 8 * ( 1 << 19 ) * 200;
+		expect( report.estimate.total ).toBe( spillingPeakBytes( estimateSceneBytes( island ), island.placements, held + pieces ) );
+		// The cap and the mesh together, as it was counted before, is three quarters of a gigabyte more.
+		const stacked = spillingPeakBytes( estimateSceneBytes( island ), island.placements, 1024 * MB + largest * 124 );
+		expect( stacked - report.estimate.total ).toBeGreaterThan( 700 * MB );
+
+	} );
+
+	it( 'counts a pause step and a mesh past the cap where every mesh is small', () => {
+
+		const sp = processor( RUNGS.at40M, { maxSceneBytes: Infinity } );
+		sp._streaming = true;
+		const object = { traverse: ( visit ) => visit( { isMesh: true, geometry: { index: null, attributes: { position: { count: 3e5 } } } } ) };
+		const resident = 1024 * MB + ( ( 1 << 20 ) + 1e5 ) * 80 + 1e5 * 44;
+		expect( sp._preflightMemory( object ).estimate.total ).toBe( spillingPeakBytes( estimateSceneBytes( RUNGS.at40M ), RUNGS.at40M.placements, resident ) );
 
 	} );
 

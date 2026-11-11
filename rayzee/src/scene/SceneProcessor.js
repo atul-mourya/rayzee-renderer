@@ -40,6 +40,9 @@ const LARGE_MESH_TRIANGLES = 200000;
 // Past this a mesh is built as spatial pieces of at most SPLIT_PIECE_TRIANGLES, joined into one BLAS.
 const SPLIT_MESH_TRIANGLES = 2_000_000;
 const SPLIT_PIECE_TRIANGLES = 1 << 19;
+const SPLIT_WORKERS = 8;
+// A piece's build in its worker: its records if copied, the core's references and nodes, the JS tree and its flat form.
+const SPLIT_PIECE_BUILD_BYTES = 200;
 // Past this many stored triangles, small leaves are folded into their parents: the BVH halves,
 // at up to 4 % of traversal time, so only a scene whose BVH nears 2 GB pays it.
 const FOLD_LEAVES_TRIANGLES = 40_000_000;
@@ -48,6 +51,8 @@ const FOLD_LEAVES_TRIANGLES = 40_000_000;
 const CLUSTER_MIN_ENTRIES = 1_000_000;
 // A streamed build's extraction waits while more triangle records than this are in memory.
 const STREAM_RESIDENT_BYTES = 1024 ** 3;
+// The streaming extractor's pause step (extractStreaming's yieldEvery).
+const STREAM_YIELD_TRIANGLES = 1 << 20;
 // Less three.js geometry than this comes back at the end of a spilling build: left on disk it costs picking and the
 // selection outline, and 24155522.glb's 140 MB was not worth that.
 const GEOMETRY_ON_DISK_BYTES = 1024 ** 3;
@@ -293,11 +298,17 @@ export class SceneProcessor {
 		const maxBytes = this.config.maxSceneBytes ?? MAX_SCENE_BYTES;
 		const survey = this.geometryExtractor.surveyScene( object );
 		const estimate = estimateSceneBytes( survey );
-		// Streamed, the triangles held are the resident cap plus the largest mesh in the parallel builder — its copy
-		// and 44 B a triangle of scratch, the store's own chunks for it let go meanwhile — and the peak is one phase.
+		// Streamed, the records held are the cap plus what lands between two pauses (a million triangles and a mesh), or
+		// the largest mesh's, which waits for the rest to go, beside the chunk being filled; then its build's scratch
+		// (44 B a triangle in the parallel builder, or a piece per split worker). The peak is one phase.
 		if ( this._streaming ) {
 
-			const resident = STREAM_RESIDENT_BYTES + largestMeshTriangles( object ) * ( TRIANGLE_DATA_LAYOUT.FLOATS_PER_TRIANGLE * 4 + 44 );
+			const largest = largestMeshTriangles( object ), record = TRIANGLE_DATA_LAYOUT.FLOATS_PER_TRIANGLE * 4;
+			const held = Math.max( STREAM_RESIDENT_BYTES + ( STREAM_YIELD_TRIANGLES + Math.min( largest, STREAM_YIELD_TRIANGLES ) ) * record, largest * record + DEFAULT_CHUNK_BYTES );
+			const scratch = largest > SPLIT_MESH_TRIANGLES
+				? Math.min( Math.ceil( largest / SPLIT_PIECE_TRIANGLES ), SPLIT_WORKERS ) * SPLIT_PIECE_TRIANGLES * SPLIT_PIECE_BUILD_BYTES
+				: largest * 44;
+			const resident = held + scratch;
 			estimate.total = spillingPeakBytes( estimate, survey.placements, Math.min( estimate.triangles, resident ) );
 
 		} else if ( this._progressive ) {
@@ -818,7 +829,7 @@ export class SceneProcessor {
 
 				releaseGeometry: geometry ? g => geometry.add( g ) : null,
 
-				pause: async ( written ) => {
+				pause: async ( written, ahead = 0 ) => {
 
 					advance( written );
 					if ( geometry?.queuedBytes > GEOMETRY_QUEUE_BYTES ) await geometry.written();
@@ -826,7 +837,8 @@ export class SceneProcessor {
 					await new Promise( r => setTimeout( r, 0 ) );
 					// A timer, not the spill chain: an already-settled promise would spin this loop in
 					// microtasks and keep out the worker messages it is waiting for.
-					while ( tri.byteLength > STREAM_RESIDENT_BYTES && ( pool.pending > 0 || largePending > 0 ) && ! state.error && ! pool.error ) {
+					const aheadBytes = ahead * tri.lanesPerRecord * 4;
+					while ( tri.byteLength + aheadBytes > STREAM_RESIDENT_BYTES && ( pool.pending > 0 || largePending > 0 ) && ! state.error && ! pool.error ) {
 
 						await Promise.race( [ built(), new Promise( r => setTimeout( r, 50 ) ) ] );
 
@@ -1390,7 +1402,7 @@ export class SceneProcessor {
 
 		const tri = this.triangles;
 		const { order, pieces, tree } = await partitionRange( tri, range.start, range.count, SPLIT_PIECE_TRIANGLES, { pause: () => new Promise( r => setTimeout( r, 0 ) ) } );
-		const pool = this._blasPool( workerOpts, null, null, Math.min( hardwareThreads(), 8 ) );
+		const pool = this._blasPool( workerOpts, null, null, Math.min( hardwareThreads(), SPLIT_WORKERS ) );
 		pieces.forEach( ( p, k ) => pool.submit( { m: k, range: { start: range.start + p.start, count: p.count } } ) );
 
 		const built = [];

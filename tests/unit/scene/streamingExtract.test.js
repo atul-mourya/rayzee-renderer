@@ -185,4 +185,27 @@ describe( 'GeometryExtractor.extractSliced', () => {
 
 	} );
 
+	it( 'pauses before a mesh of a pause step or more, naming its triangles, before any of its records land', async () => {
+
+		const group = new Group();
+		const plain = new MeshStandardMaterial();
+		const small = new Mesh( new BoxGeometry(), plain );
+		const big = new Mesh( new SphereGeometry( 1, 16, 8 ), plain );
+		group.add( small, big );
+		group.updateMatrixWorld( true );
+		const bigTriangles = big.geometry.index.count / 3;
+
+		const events = [];
+		await new GeometryExtractor().extractStreaming( group, {
+			onRange: ( m, range ) => events.push( [ 'range', range.start, range.count ] ),
+			pause: async ( written, ahead = 0 ) => void events.push( [ 'pause', written, ahead ] ),
+			yieldEvery: 100,
+		} );
+
+		const at = events.findIndex( ( e ) => e[ 0 ] === 'range' && e[ 2 ] === bigTriangles );
+		expect( events[ at - 1 ] ).toEqual( [ 'pause', 12, bigTriangles ] );
+		expect( events.filter( ( e ) => e[ 0 ] === 'pause' && e[ 2 ] > 0 ) ).toHaveLength( 1 );
+
+	} );
+
 } );
