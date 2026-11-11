@@ -1919,7 +1919,7 @@ export class PBRTSceneBuilder {
 		const indices = param( params, 'indices' )?.value;
 		if ( indices && indices.length ) geo.setIndex( indexAttribute( indices ) );
 		const faces = param( params, 'faceIndices' )?.value;
-		if ( faces?.length ) this._faceIndices.set( geo, Int32Array.from( faces ) );
+		if ( faces?.length ) this._faceIndices.set( geo, faces );
 		// USD's Ptex meshes: which corner of its face each triangle corner is (USDScene ptexTriangulate).
 		const corners = param( params, 'ptexCorners' )?.value;
 		if ( corners?.length ) this._ptexCorners.set( geo, corners );

@@ -501,13 +501,15 @@ export async function loadPBRTScene( args ) {
 	// Cached against the RESOLVED entry, not the spelling used, so a file is decoded once and
 	// its source bytes can go — isCoral's 8,596 .ply files are 2.3 GB of the load.
 	const plyCache = new Map();
+	// A PLY's face ids are read only for a scene with a Ptex texture: the walk over its faces costs every other scene.
+	const usesPtex = [ ...ir.namedTextures.values() ].some( ( def ) => def.class === 'ptex' );
 	const decodePly = async ( rec ) => {
 
 		const bytes = await vfs.read( rec );
 		if ( ! bytes ) return null;
 		vfs.release( rec );
 		const geometry = plyParser( sliceBuf( bytes ) );
-		const faces = plyFaceIndices( bytes );
+		const faces = usesPtex ? plyFaceIndices( bytes ) : null;
 		if ( faces ) geometry.userData.faceIndices = faces;
 		return geometry;
 
