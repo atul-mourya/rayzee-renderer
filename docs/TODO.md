@@ -21,8 +21,8 @@
 ### Follow-ups from the Rust/WebAssembly night (2026-11-11)
 - [x] Reinsertion in Rust: done, with SA ordering and flatten (0f74e1a2; BLAS another −24…−49 %). The port also found
   the core's quickselect ordering a leaf's triangles unlike JS (fixed, 7548d0dd)
-- [ ] The bench corpus never runs a BLAS post-pass (its meshes are under the 1,000 triangles reinsertion starts at):
-  a render-time A/B on real models in the bench (`bench:ab --model …`), as the probe that caught it did
+- [x] The bench corpus never runs a BLAS post-pass (its meshes are under the 1,000 triangles reinsertion starts at):
+  `bench:ab --model …` gates render time on real glTF models (683112d1; reinsertion A/B logged, 86e9e173)
 - [ ] `bench:load -- --chrome` with the WebAssembly BLAS: done against 1f605fe7 (blas crown −74 %, classroom −70 %,
   zero-day −55 %, 24155522 −39 %); watercolor / transparent-machines and Safari / Firefox still unmeasured
 - [x] CI has no Rust toolchain: `bvhCoreWasm.test.js` fails when the generated module's source hash is stale (8c2c6430)
@@ -35,10 +35,22 @@
   workers over the shared arrays
 - [ ] Upload + compact (27 s on the island): corners 15.3 s and the 4-wide trees 11.0 s, each two passes (count, pack)
   over records the page reads back from disk one piece at a time (8.9 GB of triangles, 5.5 GB of tree, per pass);
-  workers busy a fraction of it. One pass, or faster reads, is the lever
+  workers busy a fraction of it. One pass, or faster reads, is the lever. One pass is not cheap: the pack writes absolute
+  corner rows, so it needs every earlier job's count, and the GPU buffer is sized from the counts — holding the packed
+  output instead (2.8 GB on the island) or sizing for the worst case (3 corners a triangle) costs memory at the peak
 - [ ] Top-level tree and copy grouping in WebAssembly would copy 600 MB+ into wasm memory at the island's peak:
   only worth it with the big stores living in a shared WebAssembly.Memory
-- [ ] Geometry extraction off the main thread (52–77 ns a triangle now; 111M on the island)
+- [ ] Geometry extraction off the main thread (52–77 ns a triangle now; 111M on the island). The island's extraction
+  phase (66 s profiled in Chrome): 57 % idle (waiting on BLAS workers), the giant-mesh split ~20 % (made 2× faster,
+  4c232157), the fill 4.3 %, `transferable` copies for the storage worker 3.6 %, triangle uploads 3.2 %
+- [ ] Meshes of 200k–2M triangles in the BLAS pool instead of one at a time through the parallel builder: no clear
+  change on five models (moana-mountain blas −15 %, crown +12 % inside its noise); untried on the island
+- [x] Textures took the page's time in Chrome: each decoded image was copied there before going to its worker
+  (~190 ms on 24155522.glb). Handed over instead, the worker copying it (f2ba93a6): scene 896 → 725 ms, sponza 247 → 176
+- [ ] Textures still on the page in Chrome (24155522.glb): writing the 716 MB of layers to the GPU ~200 ms
+  (`writeTextureLayers`), the triangle and tree uploads ~150 ms. Starting textures before the geometry extraction
+  (they need only the materials, `extractMaterialsOnly`) was tried twice: no gain in Chrome, the overlap slowing
+  extraction as much as it saved
 - [ ] Textured island: preflight 8,811 MB against the 9,216 MB line; Ptex's per-face vertices add ~870 MB of geometry
 - [ ] Ptex: float Ptex (displacement) becomes its mean; a pbrt scene with Ptex is not stored as a graph;
   triangle-mesh Ptex is approximate
