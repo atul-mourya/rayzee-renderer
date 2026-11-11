@@ -859,6 +859,13 @@ export class MaterialDataManager {
 	 * triangle data (an edit rewrites side and shadow bits, never the material index).
 	 * @private
 	 */
+	/** Lets go of the run index, which holds the triangle records it was taken from. */
+	releaseRuns() {
+
+		this._runs = null;
+
+	}
+
 	_materialRuns( records, flat, count ) {
 
 		const cached = this._runs;

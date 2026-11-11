@@ -906,6 +906,18 @@ export class PathTracerStage extends RenderStage {
 
 	}
 
+	/** Drops the CPU records edits read (triangles, tree, instance table); the GPU buffers stay drawn. */
+	releaseSceneData() {
+
+		this._triangleRecords = null;
+		this._triangleFlat = null;
+		this._bvhRecords = null;
+		this._binaryFlat = null;
+		this._instanceTable = null;
+		this.materialData.releaseRuns();
+
+	}
+
 	/** The binary tree as one array, when it is not chunked: what edits write, whatever layout the GPU has. */
 	get cpuTree() {
 

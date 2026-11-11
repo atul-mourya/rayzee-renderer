@@ -224,6 +224,8 @@ export async function loadWithSceneRebuild( app, loadFn, eventPayload, source = 
 	if ( app._loadingInProgress ) throw busyError( app, 'PathTracerApp' );
 
 	app._loadingInProgress = true;
+	// Kept through the parse, a 40M-triangle scene and its reload's geometry ran the tab out of memory.
+	releaseSceneData( app );
 	// The previous scene's sky width must not narrow this one's while it loads.
 	if ( app.assetLoader ) app.assetLoader.maxEnvironmentWidth = app._memorySpill === true ? SPILL_ENVIRONMENT_WIDTH : 0;
 
@@ -275,6 +277,14 @@ export async function loadWithSceneRebuild( app, loadFn, eventPayload, source = 
 
 }
 
+/** The scene's CPU data, before a replace load parses or after one failed; what it drew stays on the GPU. */
+function releaseSceneData( app ) {
+
+	app._sdf?.releaseSceneData?.();
+	app.stages?.pathTracer?.releaseSceneData?.();
+
+}
+
 /**
  * Put the engine back to an empty scene after a load failed part-way. The failure itself is
  * rethrown for the host to report; this only makes sure what is on screen matches it.
@@ -285,6 +295,8 @@ export function discardFailedLoad( app ) {
 
 	try {
 
+		// What the failed build made is no use, and it held the next load's memory.
+		releaseSceneData( app );
 		app._clearAppendedModels();
 		app.assetLoader?.releaseTargetModel();
 		app._dropDisplay();

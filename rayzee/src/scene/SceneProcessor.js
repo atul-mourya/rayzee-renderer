@@ -1989,10 +1989,20 @@ export class SceneProcessor {
 	}
 
 	/**
+	 * Lets go of the scene's CPU data while what it drew stays on the GPU: a replace load does it before it parses, or
+	 * the old scene and the new one's parse are in memory together. Textures stay too, the stage binds them.
+	 */
+	releaseSceneData() {
+
+		if ( ! this.isProcessing ) this._reset( { keepTextures: true } );
+
+	}
+
+	/**
      * Reset all data before processing a new scene
      * @private
      */
-	_reset() {
+	_reset( { keepTextures = false } = {} ) {
 
 		this._geometryVersion = ( this._geometryVersion ?? 0 ) + 1;
 		this._disposeSpill();
@@ -2003,9 +2013,11 @@ export class SceneProcessor {
 		this._spilledAfterLoad = false;
 
 		// First dispose any existing resources
-		this._disposeTextures();
+		if ( ! keepTextures ) this._disposeTextures();
 
 		// Reset all containers
+		this.meshes = [];
+		this.geometryExtractor?.resetArrays();
 		this.triangles = [];
 		this._setTriangleData( null );
 		this.triangleCount = 0;

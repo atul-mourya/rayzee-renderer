@@ -1363,7 +1363,8 @@ export class RayzeeRenderer extends EventDispatcher {
 	 *
 	 * @param {Float32Array|function(number, number): Float32Array} newPositions - (ax,ay,az, bx,by,bz, cx,cy,cz) per triangle, world space
 	 * @param {Float32Array|function(number, number): Float32Array} [newNormals] - Optional smooth normals, same two shapes. If omitted, face normals are computed from positions.
-	 * @returns {Promise<{ refitTimeMs: number }>}
+	 * @returns {Promise<?{ refitTimeMs: number }>} null while a replace load has let go of the scene (it does before
+	 *   it parses)
 	 */
 	refitBVH( newPositions, newNormals ) {
 
@@ -1379,7 +1380,7 @@ export class RayzeeRenderer extends EventDispatcher {
 	 * @param {Float32Array|function(number, number): Float32Array} newPositions - the same two shapes
 	 *   {@link refitBVH} takes; only the affected meshes are asked for
 	 * @param {Float32Array|function(number, number): Float32Array} [newNormals] - Optional smooth normals
-	 * @returns {{ refitTimeMs: number }}
+	 * @returns {?{ refitTimeMs: number }} null while a replace load has let go of the scene
 	 */
 	refitBLASes( affectedMeshIndices, newPositions, newNormals ) {
 
@@ -1396,7 +1397,8 @@ export class RayzeeRenderer extends EventDispatcher {
 	 * drags along any other object sharing the same geometry.
 	 *
 	 * @param {number[]} meshIndices - indices into {@link sceneMeshes}
-	 * @returns {?{ refitTimeMs: number, placements: number }} null when the move waits for a spilled scene's data
+	 * @returns {?{ refitTimeMs: number, placements: number }} null when the move waits for a spilled scene's data, or
+	 *   while a replace load has let go of the scene
 	 */
 	updateMeshTransforms( meshIndices ) {
 

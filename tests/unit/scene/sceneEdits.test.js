@@ -38,6 +38,7 @@ function makeApp( { sdf = {}, pathTracer = {} } = {} ) {
 		_sdf: {
 			triangles: 'triangle store',
 			bvh: 'bvh store',
+			instanceTable: {},
 			...sdf,
 		},
 	};
@@ -75,6 +76,20 @@ describe( 'refitting geometry', () => {
 			[ 'bvh', 'bvh store', [[ 0, 16 ]]],
 			[ 'reset', false, { motion: true } ],
 		] );
+
+	} );
+
+	it( 'does nothing while a replace load has let go of the scene', async () => {
+
+		const app = makeApp( { sdf: { instanceTable: null, refitBVH: vi.fn(), refitBLASes: vi.fn(), updateMeshTransforms: vi.fn() } } );
+
+		await expect( SceneEdits.refitBVH( app, 'positions' ) ).resolves.toBeNull();
+		expect( SceneEdits.refitBLASes( app, [ 0 ], 'positions' ) ).toBeNull();
+		expect( SceneEdits.updateMeshTransforms( app, [ 0 ] ) ).toBeNull();
+		expect( app._sdf.refitBVH ).not.toHaveBeenCalled();
+		expect( app._sdf.refitBLASes ).not.toHaveBeenCalled();
+		expect( app._sdf.updateMeshTransforms ).not.toHaveBeenCalled();
+		expect( app.calls ).toEqual( [] );
 
 	} );
 

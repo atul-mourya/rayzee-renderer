@@ -106,6 +106,28 @@ describe( 'a replace-load', () => {
 
 	} );
 
+	it( 'lets go of the scene it replaces before reading the new file, and of a failed build after', async () => {
+
+		const order = [];
+		const app = makeApp( { _sdf: { releaseSceneData: () => order.push( 'scene' ) } } );
+		app.stages.pathTracer.releaseSceneData = () => order.push( 'stage' );
+		app.assetLoader.loadModel = vi.fn( async () => void order.push( 'read' ) );
+
+		await app.loadModel( 'https://x.test/chair.glb' );
+		expect( order ).toEqual( [ 'scene', 'stage', 'read' ] );
+
+		order.length = 0;
+		app.loadSceneData = vi.fn( async () => {
+
+			order.push( 'build' );
+			throw new RangeError( 'Array buffer allocation failed' );
+
+		} );
+		await expect( app.loadModel( 'https://x.test/chair.glb' ) ).rejects.toThrow( RangeError );
+		expect( order ).toEqual( [ 'scene', 'stage', 'read', 'build', 'scene', 'stage' ] );
+
+	} );
+
 	it( 'drops the models appended to the previous scene', async () => {
 
 		const app = makeApp();

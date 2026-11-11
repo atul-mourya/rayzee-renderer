@@ -11,8 +11,12 @@ function assertDeformable( app, what ) {
 
 }
 
+// A replace load lets go of the scene's CPU data before it parses: geometry edits wait for the new scene.
+const sceneHeld = ( app ) => !! app._sdf?.instanceTable;
+
 export async function refitBVH( app, newPositions, newNormals ) {
 
+	if ( ! sceneHeld( app ) ) return null;
 	assertDeformable( app, 'refitBVH' );
 	await app.ensureSceneResident();
 	const { triRanges, bvhRanges, ...result } = await app._sdf.refitBVH( newPositions, newNormals );
@@ -27,6 +31,7 @@ export async function refitBVH( app, newPositions, newNormals ) {
 
 export function refitBLASes( app, affectedMeshIndices, newPositions, newNormals ) {
 
+	if ( ! sceneHeld( app ) ) return null;
 	assertDeformable( app, 'refitBLASes' );
 	if ( app._sdf?.spilled ) throw new Error( 'refitBLASes: the scene is spilled to disk — await app.ensureSceneResident() first' );
 	const result = app._sdf.refitBLASes( affectedMeshIndices, newPositions, newNormals );
@@ -54,6 +59,7 @@ export function refitBLASes( app, affectedMeshIndices, newPositions, newNormals 
 
 export function updateMeshTransforms( app, meshIndices ) {
 
+	if ( ! sceneHeld( app ) ) return null;
 	// A spilled scene's matrix lists, TLAS or copy records are on disk: the move lands once they are back.
 	if ( app._sdf?.needsPageInForMove( meshIndices ) ) {
 

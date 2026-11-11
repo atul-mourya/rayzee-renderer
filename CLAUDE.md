@@ -922,6 +922,12 @@ other load owns the status). ⚠️ Only the scene build used to: a failure in t
 overlay spinning on its last step with the File menu blocked. Drag-and-drop still resets the overlay in
 its own `finally`, so a failed drop shows only the console.
 
+⚠️ A replace load lets go of the old scene's CPU data before it parses, and a failed one of its own
+(`releaseSceneData` in `loaders/SceneLoading.js`: the processor's stores, the extractor's, the stage's records);
+the GPU keeps drawing the old scene, and geometry edits return null meanwhile. Released only at the next build, a
+40M-triangle pbrt zip's reload ran the tab out of memory (`Array buffer allocation failed`). A new CPU reference to
+scene data goes in both releases.
+
 ### Folders, archives, pbrt and USD
 Full notes: [docs/design/SCENE_IMPORT.md](docs/design/SCENE_IMPORT.md) — folder loading, partial archive loads, pbrt (budgets, parse
 memory, lights, shapes, templates, materials, formats) and USD (layers, composition, translation, parts, budgets, the

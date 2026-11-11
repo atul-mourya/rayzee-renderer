@@ -425,6 +425,10 @@ vertices needlessly, and drags along any other object sharing the same geometry.
 `{ refitTimeMs, placements }`, or `null` on a `memorySpill` scene whose matrices or tree are on disk:
 the move then lands once they are read back.
 
+While a replace load is running (`engine.isLoading`), all three return `null` and change nothing: the load lets go
+of the old scene's CPU data before it parses the new file, so the two are never in memory together. The old
+scene stays on screen meanwhile.
+
 Instanced meshes sharing one `instanceMatrix` under the same transform are traced as one object, so moving one
 moves the others. Instanced siblings in a group whose lists are equal (each part of a glTF node with
 `EXT_mesh_gpu_instancing`) count as one too: the engine makes them share the first one's attribute, so a
