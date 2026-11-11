@@ -7,7 +7,7 @@ import reactRefresh from 'eslint-plugin-react-refresh';
 // console.log(mdcs)
 export default [
 	// mdcs,
-	{ ignores: [ 'node_modules', '**/dist', 'coverage', '.claude', '.agents', '.cdn-upload', 'app/public' ] },
+	{ ignores: [ 'node_modules', '**/dist', 'coverage', '.claude', '.agents', '.cdn-upload', 'app/public', 'docs/internal' ] },
 	{
 		files: [ '**/*.{js,jsx}' ],
 		languageOptions: {
