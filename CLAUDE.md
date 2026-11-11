@@ -200,10 +200,11 @@ TSL modules using `Fn()`, `If()`, `Loop()`, `.toVar()`:
 Critical for maintaining 60fps during heavy computations. BVH and TLAS workers are in `bvh/`, the texture ones in
 `materials/`, `CDFWorker` in `environment/`, `EXRWorker` in `loaders/`, `AIUpscalerWorker` in `viewer/picture/`, `StorageWorker` in
 `addons/storage/`:
-- **`BVHWorker.js`**: Off-main-thread BVH construction using binned SAH splitting and reinsertion. The SAH build and
-  Morton sort run in WebAssembly (`rayzee/wasm/bvh`, Rust; `npm run build:wasm` writes `bvh/BVHCoreWasm.js`): the page
-  compiles it once (`bvhCoreReady()`) and posts it with each job, and it builds the JS build's tree bit for bit, which
-  stays the fallback. ⚠️ A change to the SAH in `BVHBuilder.js` is made in `lib.rs` too, or the two trees part.
+- **`BVHWorker.js`**: Off-main-thread BVH construction using binned SAH splitting and reinsertion. The SAH build, Morton
+  sort, reinsertion, child ordering and flattening run in WebAssembly (`rayzee/wasm/bvh`, Rust; `npm run build:wasm`
+  writes `bvh/BVHCoreWasm.js`; `buildFlat` / `buildRangeFlat`): the page compiles it once (`bvhCoreReady()`) and posts it
+  with each job, and it builds the JS build's flat tree bit for bit, which stays the fallback. ⚠️ A change to the SAH in
+  `BVHBuilder.js` or to `ReinsertionOptimizer.js` is made in `lib.rs` / `tree.rs` too, or the two trees part.
 - **`TexturesWorker.js`**: Batch texture processing with memory-optimized chunking
 - **`BVHSubtreeWorker.js`**: builds subtrees of one large mesh's BVH in parallel (`ParallelBVHBuilder.js`)
 - **`TLASWorker.js`**, **`PackWorker.js`** (texture packing without a canvas, in Node), **`AIUpscalerWorker.js`** (viewer)

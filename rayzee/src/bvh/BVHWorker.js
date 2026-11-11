@@ -218,13 +218,8 @@ function handleFullBuild( data ) {
 			: sharedReorderBuffer ? new Uint32Array( sharedReorderBuffer )
 				: null;
 
-		const bvhRoot = builder.buildSync( inputTriangles, depth, progressCallback, reorderTarget );
-
-		const flattenStart = performance.now();
-		const flat = builder.flattenBVH( bvhRoot );
+		const flat = builder.buildFlat( inputTriangles, depth, progressCallback, reorderTarget );
 		const bvhData = fold ? foldLeaves( flat ) : flat;
-		const flattenTime = performance.now() - flattenStart;
-		log.debug( `flatten ${fmt.ms( flattenTime )} (${fmt.mb( bvhData.byteLength )})` );
 
 		const originalToBvh = builder.originalToBvhMap || null;
 

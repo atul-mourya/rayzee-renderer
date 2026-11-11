@@ -3,10 +3,13 @@
 //! arithmetic in the same order, the same comparisons (NaN included) and the same swaps.
 //!
 //! One instance builds once. The host writes `count` references at `reserve()`'s offset, calls
-//! `build()`, then reads the nodes (pre-order, 8 u32 each) and the references in their new order.
+//! `build()`, then reads the nodes (pre-order, 8 u32 each) and the references in their new order;
+//! or calls `finish()` (tree.rs) for the flat tree `flattenBVH` writes.
 
 #![no_std]
 #![allow(static_mut_refs, clippy::missing_safety_doc)]
+
+mod tree;
 
 use core::arch::wasm32::{self, f32x4_extract_lane, f32x4_pmax, f32x4_pmin, f32x4_splat, v128};
 use core::ptr::{read_unaligned, write_unaligned};
@@ -34,8 +37,8 @@ struct Ref {
 
 const REF_BYTES: usize = 40;
 /// A node: box (6 f32), then `a`, `b`: inner `right, INNER`, leaf `offset, count`, frontier `task, FRONTIER`.
-const NODE_U32: usize = 8;
-const INNER: u32 = 0xFFFF_FFFF;
+pub(crate) const NODE_U32: usize = 8;
+pub(crate) const INNER: u32 = 0xFFFF_FFFF;
 const FRONTIER: u32 = 0xFFFF_FFFE;
 /// A frontier task: start, end, depth, box (6 f32).
 const TASK_U32: usize = 9;
@@ -68,17 +71,18 @@ static mut CFG: Config = Config {
 };
 
 static mut REFS: *mut Ref = core::ptr::null_mut();
-static mut NODES: *mut u32 = core::ptr::null_mut();
-static mut NODE_CAP: usize = 0;
-static mut NODE_COUNT: usize = 0;
+pub(crate) static mut NODES: *mut u32 = core::ptr::null_mut();
+pub(crate) static mut NODE_CAP: usize = 0;
+pub(crate) static mut NODE_COUNT: usize = 0;
 static mut OUT_OF_MEMORY: bool = false;
 static mut PENDING: u32 = 0;
 
 static mut TASKS: [u32; TASK_U32 * MAX_TASKS] = [0; TASK_U32 * MAX_TASKS];
 static mut TASK_COUNT: usize = 0;
 
-/// sahSplits, objectMedianSplits, spatialMedianSplits, failedSplits, totalSplitAttempts, avgBinsUsed.
-static mut STATS: [f64; 6] = [0.0; 6];
+/// sahSplits, objectMedianSplits, spatialMedianSplits, failedSplits, totalSplitAttempts, avgBinsUsed,
+/// reinsertionsApplied, reinsertionIterations.
+pub(crate) static mut STATS: [f64; 8] = [0.0; 8];
 
 static mut BIN_COUNT: [[u32; MAX_BINS]; 3] = [[0; MAX_BINS]; 3];
 // Boxes are 4 lanes, x y z and one ignored: `pmin( box, v )` is `v < box ? v : box`, the scalar test lane by lane.
@@ -91,7 +95,7 @@ static mut RIGHT_COUNT: [u32; MAX_BINS] = [0; MAX_BINS];
 static mut RIGHT_MIN: [[f32; 4]; MAX_BINS] = [[0.0; 4]; MAX_BINS];
 static mut RIGHT_MAX: [[f32; 4]; MAX_BINS] = [[0.0; 4]; MAX_BINS];
 
-fn ensure(end: usize) -> bool {
+pub(crate) fn ensure(end: usize) -> bool {
 	let have = wasm32::memory_size(0) * 65536;
 	if end <= have {
 		return true;

@@ -539,8 +539,7 @@ export class BVHBuilder {
 	 */
 	_buildSyncAndFlatten( triangles, depth, progressCallback ) {
 
-		const root = this.buildSync( triangles, depth, progressCallback );
-		const flat = this.flattenBVH( root );
+		const flat = this.buildFlat( triangles, depth, progressCallback );
 		const bvhData = this.foldLeaves ? foldLeaves( flat ) : flat;
 		// Return reordered triangles if available (avoids 362MB copy)
 		const reorderedTriangles = this.reorderedTriangleData || null;
@@ -551,76 +550,62 @@ export class BVHBuilder {
 
 	buildSync( triangles, depth = 30, progressCallback = null, reorderTarget = null ) {
 
-		const buildStartTime = performance.now();
-
-		// Reset state
-		this.totalNodes = 0;
-		this.processedTriangles = 0;
-		this.triangles = triangles;
-		this.totalTriangles = triangles.byteLength / ( FPT * 4 );
-		this.lastProgressUpdate = performance.now();
-
-		this.splitStats = {
-			sahSplits: 0,
-			objectMedianSplits: 0,
-			spatialMedianSplits: 0,
-			failedSplits: 0,
-			avgBinsUsed: 0,
-			totalSplitAttempts: 0,
-			mortonSortTime: 0,
-			totalBuildTime: 0,
-			reinsertionOptimizationTime: 0,
-			reinsertionsApplied: 0,
-			reinsertionIterations: 0,
-			saOrderTime: 0,
-			// Granular phase timings
-			initTime: 0,
-			sahBuildTime: 0,
-			reorderTime: 0
-		};
-
+		const started = this._beginBuild( triangles );
 		const n = this.totalTriangles;
-		this.indices = new Uint32Array( n );
 
 		// Phases 1–3: init, Morton sort, SAH
 		const root = this._buildSyncInCore( n, depth, progressCallback ) ?? this._buildSyncInJS( n, depth, progressCallback );
 
 		// Phase 4: Reinsertion optimization (Meister & Bittner)
-		if ( this.enableReinsertionOptimization && this.totalTriangles > 1000 ) {
-
-			const reinsertionOptimizer = new ReinsertionOptimizer( this.traversalCost, this.intersectionCost );
-			reinsertionOptimizer.setBatchSizeRatio( this.reinsertionBatchSizeRatio );
-			reinsertionOptimizer.setMaxIterations( this.reinsertionMaxIterations );
-
-			const reinsertCallback = progressCallback ? ( status ) => {
-
-				progressCallback( status );
-
-			} : null;
-
-			try {
-
-				reinsertionOptimizer.optimizeBVH( root, reinsertCallback );
-
-			} catch ( error ) {
-
-				log.error( 'reinsertion optimizer failed:', error );
-
-			}
-
-			const reinsertStats = reinsertionOptimizer.getStatistics();
-			this.splitStats.reinsertionOptimizationTime = reinsertStats.timeMs;
-			this.splitStats.reinsertionsApplied = reinsertStats.reinsertionsApplied;
-			this.splitStats.reinsertionIterations = reinsertStats.iterations;
-
-		}
+		if ( this.enableReinsertionOptimization && n > 1000 ) this._reinsert( root, this._reinsertionConfig(), progressCallback );
 
 		// Phase 5: Surface-area child ordering (DFS cache locality)
 		const saOrderStart = performance.now();
 		this.applySAOrdering( root );
 		this.splitStats.saOrderTime = performance.now() - saOrderStart;
 
-		// Phase 6: Create reordered triangle data from final index order; a target that is the input reorders it in place
+		this._finishBuild( started, reorderTarget, progressCallback );
+		return root;
+
+	}
+
+	/**
+	 * `buildSync` and `flattenBVH` in one. In the core the tree is reinserted, ordered and flattened there and never
+	 * becomes JS objects; elsewhere it is `flattenBVH( buildSync( … ) )`.
+	 * @returns {Float32Array} the flat BVH (16 floats a node)
+	 */
+	buildFlat( triangles, depth = 30, progressCallback = null, reorderTarget = null ) {
+
+		const started = this._beginBuild( triangles );
+		const flat = this._buildFlatInCore( this.totalTriangles, depth, progressCallback );
+		if ( ! flat ) return this.flattenBVH( this.buildSync( triangles, depth, progressCallback, reorderTarget ) );
+		this._finishBuild( started, reorderTarget, progressCallback );
+		return flat;
+
+	}
+
+	/** @private */
+	_beginBuild( triangles ) {
+
+		this.totalNodes = 0;
+		this.processedTriangles = 0;
+		this.triangles = triangles;
+		this.totalTriangles = triangles.byteLength / ( FPT * 4 );
+		this.lastProgressUpdate = performance.now();
+		this.splitStats = {
+			sahSplits: 0, objectMedianSplits: 0, spatialMedianSplits: 0, failedSplits: 0, avgBinsUsed: 0,
+			totalSplitAttempts: 0, mortonSortTime: 0, totalBuildTime: 0, reinsertionOptimizationTime: 0,
+			reinsertionsApplied: 0, reinsertionIterations: 0, saOrderTime: 0, initTime: 0, sahBuildTime: 0, reorderTime: 0
+		};
+		this.indices = new Uint32Array( this.totalTriangles );
+		return performance.now();
+
+	}
+
+	/** Phase 6: the records in the final order (in place when the target is the input) and the inverse map. @private */
+	_finishBuild( started, reorderTarget, progressCallback ) {
+
+		const n = this.totalTriangles;
 		const reorderStart = performance.now();
 		const triSrc = this.triangles;
 		let reordered = reorderTarget || new triSrc.constructor( n * FPT );
@@ -628,45 +613,64 @@ export class BVHBuilder {
 		else for ( let i = 0; i < n; i ++ ) {
 
 			const srcOff = this.indices[ i ] * FPT;
-			const dstOff = i * FPT;
-			reordered.set( triSrc.subarray( srcOff, srcOff + FPT ), dstOff );
+			reordered.set( triSrc.subarray( srcOff, srcOff + FPT ), i * FPT );
 
 		}
 
 		this.reorderedTriangleData = reordered;
 
-		// Phase 6b: Build inverse index map for BVH refit
-		// originalToBvh[originalTriIdx] = bvhOrderIdx
+		// originalToBvh[ originalTriIdx ] = bvhOrderIdx, for refits
 		const originalToBvh = new Uint32Array( n );
-		for ( let i = 0; i < n; i ++ ) {
-
-			originalToBvh[ this.indices[ i ] ] = i;
-
-		}
-
+		for ( let i = 0; i < n; i ++ ) originalToBvh[ this.indices[ i ] ] = i;
 		this.originalToBvhMap = originalToBvh;
 
 		this.splitStats.reorderTime = performance.now() - reorderStart;
+		this.splitStats.totalBuildTime = performance.now() - started;
 
-		this.splitStats.totalBuildTime = performance.now() - buildStartTime;
-
-		const total = this.splitStats.totalBuildTime;
 		const s = this.splitStats;
 		log.debug(
-			`${fmt.n( n )} tris → ${fmt.n( this.totalNodes )} nodes in ${fmt.ms( total )}` +
+			`${fmt.n( n )} tris → ${fmt.n( this.totalNodes )} nodes in ${fmt.ms( s.totalBuildTime )}` +
 			` | SAH ${s.sahSplits} objMed ${s.objectMedianSplits} spatMed ${s.spatialMedianSplits} failed ${s.failedSplits}` +
 			( s.reinsertionsApplied ? ` | reinsertions ${s.reinsertionsApplied}` : '' )
 		);
 
 		progressCallback && progressCallback( 100 );
 
-		// Free flat arrays (no longer needed)
 		this.centroids = null;
 		this.bMin = null;
 		this.bMax = null;
 		this.mortonCodes = null;
 
-		return root;
+	}
+
+	/** @private */
+	_reinsertionConfig() {
+
+		return { enabled: true, batchSizeRatio: this.reinsertionBatchSizeRatio, maxIterations: this.reinsertionMaxIterations };
+
+	}
+
+	/** Reinsertion in JS, with `config`'s batch ratio and passes where given. @private */
+	_reinsert( root, config, progressCallback = null ) {
+
+		const optimizer = new ReinsertionOptimizer( this.traversalCost, this.intersectionCost );
+		if ( config.batchSizeRatio ) optimizer.setBatchSizeRatio( config.batchSizeRatio );
+		if ( config.maxIterations ) optimizer.setMaxIterations( config.maxIterations );
+
+		try {
+
+			optimizer.optimizeBVH( root, progressCallback ? ( status ) => progressCallback( status ) : null );
+
+		} catch ( error ) {
+
+			log.error( 'reinsertion optimizer failed:', error );
+
+		}
+
+		const r = optimizer.getStatistics();
+		this.splitStats.reinsertionOptimizationTime = r.timeMs;
+		this.splitStats.reinsertionsApplied = r.reinsertionsApplied;
+		this.splitStats.reinsertionIterations = r.iterations;
 
 	}
 
@@ -690,8 +694,8 @@ export class BVHBuilder {
 
 	}
 
-	/** Phases 1–3 in the core; null where it cannot run. @private */
-	_buildSyncInCore( n, depth, progressCallback ) {
+	/** Phases 1–3 in the core (with `flat`, through reinsertion and flattening too); null where it cannot run. @private */
+	_buildSyncInCore( n, depth, progressCallback, flat = false ) {
 
 		const opened = this._openCore( n, progressCallback );
 		if ( ! opened ) return null;
@@ -712,10 +716,13 @@ export class BVHBuilder {
 			}
 
 			const sahStart = performance.now();
-			const root = this._runCore( core, at, 0, n, depth, NO_FRONTIER, null );
+			const reinsert = this.enableReinsertionOptimization && n > 1000 ? this._reinsertionConfig() : null;
+			const built = flat
+				? this._runCoreFlat( core, at, 0, n, depth, null, reinsert )
+				: this._runCore( core, at, 0, n, depth, NO_FRONTIER, null );
 			this.splitStats.sahBuildTime = performance.now() - sahStart;
-			if ( ! root ) this.processedTriangles = 0;
-			return root;
+			if ( ! built ) this.processedTriangles = 0;
+			return built;
 
 		} catch ( error ) {
 
@@ -757,6 +764,48 @@ export class BVHBuilder {
 		return Number.isFinite( frontierDepth )
 			? this.buildNodeRecursiveToDepth( start, end, depth, frontierDepth, progressCallback, ...b )
 			: this.buildNodeRecursive( start, end, depth, progressCallback, ...b );
+
+	}
+
+	/** @private */
+	_buildFlatInCore( n, depth, progressCallback ) {
+
+		return this._buildSyncInCore( n, depth, progressCallback, true );
+
+	}
+
+	/**
+	 * `buildRange` without a frontier, then reinsertion (`reinsertion.enabled`, past 1,000 triangles), child ordering
+	 * and `flattenBVH`: all in the core where it runs.
+	 * @returns {Float32Array} the flat subtree, its child indices from 0
+	 */
+	buildRangeFlat( start, end, depth, progressCallback, bounds = null, reinsertion = null ) {
+
+		const count = end - start;
+		const reinsert = reinsertion?.enabled && count > 1000 ? reinsertion : null;
+		const before = this.processedTriangles;
+		const opened = count > 0 ? this._openCore( count, progressCallback ) : null;
+		if ( opened ) {
+
+			try {
+
+				this._gatherRefs( opened.core, opened.at, start, count );
+				const flat = this._runCoreFlat( opened.core, opened.at, start, count, depth, bounds, reinsert );
+				if ( flat ) return flat;
+
+			} catch ( error ) {
+
+				log.debug( 'WebAssembly BVH build failed, building in JavaScript:', error );
+
+			}
+
+		}
+
+		this.processedTriangles = before;
+		const root = this.buildNodeRecursive( start, end, depth, progressCallback, ...( bounds ?? [] ) );
+		if ( reinsert ) this._reinsert( root, reinsert );
+		this.applySAOrdering( root );
+		return this.flattenBVH( root );
 
 	}
 
@@ -833,20 +882,46 @@ export class BVHBuilder {
 
 	}
 
-	/** Builds the core's references as `indices[ start, start + count )`; the root, or null out of memory. @private */
-	_runCore( core, at, start, count, depth, frontierDepth, bounds ) {
+	/** Builds the core's references as `indices[ start, start + count )`; the node count, or −1 out of memory. @private */
+	_coreBuild( core, at, start, count, depth, frontierDepth, bounds ) {
 
 		const b = bounds ?? NO_BOX;
 		const flags = ( this.enableObjectMedianFallback ? 1 : 0 ) | ( this.enableSpatialMedianFallback ? 2 : 0 );
 		const nodeCount = core.build( count, depth, frontierDepth, this.maxLeafSize, this.minBins, this.maxBins,
 			this.traversalCost, this.intersectionCost, flags, bounds ? 1 : 0, b[ 0 ], b[ 1 ], b[ 2 ], b[ 3 ], b[ 4 ], b[ 5 ] );
+		if ( nodeCount < 0 ) return - 1;
+
+		const refs = new Uint32Array( core.memory.buffer, at, count * REF_LANES );
+		const idx = this.indices;
+		for ( let i = 0; i < count; i ++ ) idx[ start + i ] = refs[ i * REF_LANES + 9 ];
+		this._addCoreStats( core );
+		this.totalNodes += nodeCount;
+		return nodeCount;
+
+	}
+
+	/** @private */
+	_addCoreStats( core ) {
+
+		const st = new Float64Array( core.memory.buffer, core.stats(), 8 );
+		const s = this.splitStats;
+		const attempts = s.totalSplitAttempts + st[ 4 ];
+		if ( attempts ) s.avgBinsUsed = ( s.avgBinsUsed * s.totalSplitAttempts + st[ 5 ] * st[ 4 ] ) / attempts;
+		s.sahSplits += st[ 0 ];
+		s.objectMedianSplits += st[ 1 ];
+		s.spatialMedianSplits += st[ 2 ];
+		s.failedSplits += st[ 3 ];
+		s.totalSplitAttempts = attempts;
+
+	}
+
+	/** `_coreBuild`, then the nodes as BVHNode objects (frontier tasks into `frontierTasks`); null out of memory. @private */
+	_runCore( core, at, start, count, depth, frontierDepth, bounds ) {
+
+		const nodeCount = this._coreBuild( core, at, start, count, depth, frontierDepth, bounds );
 		if ( nodeCount < 0 ) return null;
 
 		const mem = core.memory.buffer;
-		const refs = new Uint32Array( mem, at, count * REF_LANES );
-		const idx = this.indices;
-		for ( let i = 0; i < count; i ++ ) idx[ start + i ] = refs[ i * REF_LANES + 9 ];
-
 		const taskBase = this.frontierTasks ? this.frontierTasks.length : 0;
 		const taskCount = core.task_count();
 		if ( taskCount ) {
@@ -902,18 +977,28 @@ export class BVHBuilder {
 
 		}
 
-		const st = new Float64Array( mem, core.stats(), 6 );
-		const s = this.splitStats;
-		const attempts = s.totalSplitAttempts + st[ 4 ];
-		if ( attempts ) s.avgBinsUsed = ( s.avgBinsUsed * s.totalSplitAttempts + st[ 5 ] * st[ 4 ] ) / attempts;
-		s.sahSplits += st[ 0 ];
-		s.objectMedianSplits += st[ 1 ];
-		s.spatialMedianSplits += st[ 2 ];
-		s.failedSplits += st[ 3 ];
-		s.totalSplitAttempts = attempts;
-		this.totalNodes += nodeCount;
-
 		return nodes[ 0 ];
+
+	}
+
+	/** `_coreBuild`, then reinsertion (`reinsert` config, or none), ordering and the flat tree; null out of memory. @private */
+	_runCoreFlat( core, at, start, count, depth, bounds, reinsert ) {
+
+		const nodeCount = this._coreBuild( core, at, start, count, depth, NO_FRONTIER, bounds );
+		if ( nodeCount < 0 ) return null;
+		assertBVHIndexFits( nodeCount, 'BLAS node count' );
+
+		const finishStart = performance.now();
+		const ratio = Math.max( 0.005, Math.min( 0.1, reinsert?.batchSizeRatio || 0.02 ) );
+		const passes = reinsert ? Math.max( 1, Math.min( 5, reinsert.maxIterations || 2 ) ) : 0;
+		const flatAt = core.finish( passes, ratio, start );
+		if ( ! flatAt ) return null;
+
+		const st = new Float64Array( core.memory.buffer, core.stats(), 8 );
+		this.splitStats.reinsertionsApplied = st[ 6 ];
+		this.splitStats.reinsertionIterations = st[ 7 ];
+		this.splitStats.reinsertionOptimizationTime = performance.now() - finishStart;
+		return new Float32Array( core.memory.buffer, flatAt, nodeCount * 16 ).slice();
 
 	}
 

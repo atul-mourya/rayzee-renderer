@@ -1,5 +1,4 @@
 import { BVHBuilder, setBVHCore } from './BVHBuilder.js';
-import { ReinsertionOptimizer } from './ReinsertionOptimizer.js';
 
 self.onmessage = function ( e ) {
 
@@ -62,35 +61,10 @@ self.onmessage = function ( e ) {
 
 			const startTime = performance.now();
 
-			// Build subtree using precomputed shared data
-			const root = builder.buildRange( task.start, task.end, task.depth, Infinity, progressCallback, [
+			// The subtree, reinserted and ordered, flat (local indices from 0)
+			const flatData = builder.buildRangeFlat( task.start, task.end, task.depth, progressCallback, [
 				task.preMinX, task.preMinY, task.preMinZ, task.preMaxX, task.preMaxY, task.preMaxZ
-			] );
-
-			// Reinsertion optimization on subtree
-			if ( reinsertionConfig && reinsertionConfig.enabled && ( task.end - task.start ) > 1000 ) {
-
-				const reinsertionOptimizer = new ReinsertionOptimizer( builder.traversalCost, builder.intersectionCost );
-				if ( reinsertionConfig.batchSizeRatio ) reinsertionOptimizer.setBatchSizeRatio( reinsertionConfig.batchSizeRatio );
-				if ( reinsertionConfig.maxIterations ) reinsertionOptimizer.setMaxIterations( reinsertionConfig.maxIterations );
-
-				try {
-
-					reinsertionOptimizer.optimizeBVH( root, null );
-
-				} catch ( err ) {
-
-					console.error( `[BVHSubtreeWorker] Reinsertion error:`, err );
-
-				}
-
-			}
-
-			// Surface-area child ordering (DFS cache locality)
-			builder.applySAOrdering( root );
-
-			// Flatten subtree (local indices starting from 0)
-			const flatData = builder.flattenBVH( root );
+			], reinsertionConfig );
 			const nodeCount = flatData.length / 16;
 
 			const buildTime = performance.now() - startTime;
