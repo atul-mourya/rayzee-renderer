@@ -943,6 +943,12 @@ Moana island measurements), and what Blender's glTF exporter loses of a scene's 
   instancers to the budgets (`USDSceneReader.fit`), and meshes are never thinned. MaterialX networks (`outputs:mtlx:surface`)
   are read in `USDScene.js` (OpenPBR, Standard Surface, glTF PBR, BSDF graphs; values fold to constant / texture + gain +
   UV matrix); three's MaterialXLoader is not used — it builds TSL materials the path tracer cannot run.
+- **Ptex** (`addons/archives/pbrt/Ptex.js`): pbrt's `ptex` textures and USD's `PxrPtexture` are planned onto shared
+  4096² pages at build start (`_preparePtex`, `ptexMemory` 1 GiB; 0 = each map's mean) and written when packed
+  (`PtexPages`, a `setImageReader` each): a face a rectangle with a one-texel border from its neighbours, every face halved
+  alike to fit, read from the matching stored level; meshes' uvs moved onto their faces' rectangles (pbrt `faceIndices` /
+  PLY `face_indices`; USD by Ptex face, its points shared until built), split a page. ⚠️ Pages are one `Source` under a
+  texture a file: the extractor and the stored graph must count them once.
 - **Parameters it does not honour** are reported as pbrt's `ReportUnused` does: a lookup through `param()` (or `pFloat` /
   `pString` / `pBool` / `resolveSpectrum`, which use it) marks a parameter used, and `ParamUsage` counts each translated
   directive's unmarked or `approximated()` parameters per `directive type: name`, recorded once as

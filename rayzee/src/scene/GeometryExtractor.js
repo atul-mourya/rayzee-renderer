@@ -285,7 +285,7 @@ function determinant3( e ) {
 
 /**
  * Whether any material under `object` holds a texture, so the GPU needs the triangles' texture coordinates. A scene
- * with none (Moana's USD: its Ptex is baked into colours) is uploaded without them.
+ * with none (Moana's USD loaded with `ptexMemory: 0`: its Ptex as colours) is uploaded without them.
  */
 export function usesTextureCoordinates( object ) {
 

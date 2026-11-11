@@ -218,6 +218,41 @@ subtree per element, and the whole thing rarely fits: Moana is 29 GB unpacked.
   `dots` and `directionmix` are not supported. ⚠️ `material.clone()` drops the engine's own
   properties (diffuse transmission, subsurface): use `cloneMaterial`. Bump `PBRT_BUILD_REVISION` with any of this, or a
   stored graph of the old build comes back.
+- **Ptex** (`pbrt/Ptex.js`, `PtexWorker.js`): Disney's per-face textures — every face of a mesh has its own texels, found
+  by its face id and its own (u, v). The reader follows the reference library (wdas/ptex `PtexIO.h`, `PtexReader.cpp`):
+  header, face table with adjacency, each face's mean (the constant block), level table; blocks zipped a channel at a
+  time, uint8/uint16 as running differences, half and float as stored; tiled and large faces. The engine reads one
+  texture a map, so `_preparePtex` lays every spectrum `ptex` texture of the scene (pbrt's, and USD's `PxrPtexture` /
+  `HwPtexTexture_1` as named ones) onto shared square pages (`ptexMemory`, default 1 GiB, of 4096² RGBA8 pages, sRGB),
+  planned at build start (headers and face tables only) and written when the texture packer first asks for each
+  (`PtexPages`, a `setImageReader` per page), so they never sit beside the parse; once packed they let their pixels go
+  and a later pack (a material rebuild) writes them again, each file once into all its pages:
+  each face a rectangle inside a one-texel border copied from the neighbour across each edge (resampled to its length;
+  at a mesh's edge its own texels, black or the opposite edge as the file's border mode says; corners the mean of the
+  two beside them), so bilinear filtering crosses face edges much as Ptex's filters do. To fit, every face's sides are
+  halved `reduction` times (a constant face kept at 2 × 2 or less), each read from the stored reduction level that matches
+  and box-filtered only for what is left, in runs of the file read once (`readPtexBlocks`), so the island's 39 G-texel
+  dunes are never inflated at full size. Files share pages, a texture each over the page's one `Source` (the extractor and
+  the stored graph count it once); a file larger than a page takes pages of its own and its meshes are split, one a page.
+  Workers (`PtexWorker`, cores − 1, gone a second after the last page) write files straight into SharedArrayBuffer
+  pages; without them, the main thread. ⚠️ `ImageData` refuses shared memory: `_rawPixelsToBitmap` copies such pixels.
+  A triangle's face id is pbrt's `faceIndices`, or a PLY's `face_indices` (`plyFaceIndices`: three's PLYLoader drops
+  it), its uv the face's own (pbrt's triangle default without one); `ptexUV` moves each corner into its face's rectangle,
+  copying a vertex two faces share; a USD mesh comes with shared points and a byte a triangle corner saying which corner
+  of its face it is, and gets each face's own four vertices only as the builder builds it (`quadsUV`), normals then at
+  16 bits. Read at once for all meshes, those vertices took the island's USD read from 8.0 to 10.7 GB and lost Chrome's
+  tab; now its peak is 8.2 GB against 8.0 without Ptex (Node, cones, all parts), the built geometry 4.4 GB against
+  3.4. Colour: pbrt's `encoding` (`gamma 2.2` by default, as pbrt-v4: value^2.2), stored
+  sRGB-encoded; `scale` is the material's tint. A `float` ptex, a file not found and `ptexMemory: 0` give the mean
+  (missing files are one warning). Triangle meshes are approximate: a cell is the mean of its two triangles' texels and
+  takes no neighbours. Whole USD island (colour: 3,621 files, 2.58M faces, 44 G texels): 16 pages at reduction 4,
+  213M texels; every face's texels on the page within 4/255 of the file's own mean; in Node (45M-triangle budget) the
+  island loads in 61 s with them (its pages written and packed in 14 s beside a 23 s BVH build). The whole island in Chrome on a 24 GB Mac did not load with or without Ptex on
+  2026-11-01 (12 GB already swapped); lava rocks and a mountain did, 12.8 s, pages written and packed in 5.8 s. A stored
+  pbrt graph is not kept for a scene with Ptex: its pages have no pixels when the graph is encoded. No reference library was built for
+  checks: tests write files laid out as `PtexWriter.cpp` writes them (`tests/unit/addons/archives/pbrt/ptexFixture.js`),
+  and real files are held to their stored face means. pbrt-v4's island names its Ptex (`../textures/...`) but ships
+  without it: put the USD package's `textures/` beside `pbrt-v4/`.
 - **Parameters it does not honour.** As pbrt's `ReportUnused`: a parameter is used when it is looked up through
   `param()` (`PBRTParser.js`; the `p*` helpers and `resolveSpectrum` go through it), and `ParamUsage` counts, for each
   directive translated, the parameters nothing looked up and those a translator marks `approximated()` — a texture's
@@ -287,9 +322,14 @@ USDLoader. Each layer is read only when composition reaches it (`USDFiles` over 
   under a coat, its own normal map (`geometry_coat_normal`, `coat_normal`, `clearcoat_normal`; a coat height map is dropped).
   A texture mixed with a colour keeps its larger part; hue shifts of a texture and procedural nodes (noise, ramps) are
   dropped — each said once. three's MaterialXLoader is not used: it reads `.mtlx` documents, translates only
-  standard_surface / gltf_pbr / open_pbr (not Blender's BSDF graphs), and builds TSL materials the path tracer cannot run. Ptex is not read: a
-  Ptex input becomes the mesh's mean displayColor, where Moana bakes its Ptex, on an 8-bit grid so meshes share materials
-  (the engine has no vertex colour). Cameras from apertures (vertical FOV; authored ones are the camera's `userData.aspect`:
+  standard_surface / gltf_pbr / open_pbr (not Blender's BSDF graphs), and builds TSL materials the path tracer cannot run. Ptex
+  (`PxrPtexture`, `HwPtexTexture_1`; a `UsdUVTexture` naming a `.ptx`) becomes a named pbrt `ptex` texture with the
+  exponent of the `PxrColorCorrect` it passes through (Moana: gamma 0.4545, so value^2.2), laid onto the pages as pbrt's
+  are; a mesh bound to it is triangulated a Ptex face at a time (`ptexTriangulate`: a quad one face, any other polygon
+  one a corner — its corner, the midpoints beside it and its centre, OpenSubdiv's sub-faces — numbered over every face,
+  holes included), its normals the mesh's own or smooth over its shared points as before. Curves and points bound to it,
+  or a Ptex file not in the folder, take the mesh's mean displayColor, where Moana bakes its Ptex, on an 8-bit grid so
+  meshes share materials (the engine has no vertex colour). Cameras from apertures (vertical FOV; authored ones are the camera's `userData.aspect`:
   Blender writes the render size's shape there, Moana its 2.39:1), the RenderSettings the stage names (else the only one)
   as `sceneMetadata.render` (size, shape with `pixelAspectRatio`; its camera first, conformed by
   `aspectRatioConformPolicy`; renderer namespaces such as `ri:` are not read), an authored `clippingRange` as the clip start

@@ -326,6 +326,34 @@ describe( 'SceneGraphCodec', () => {
 
 	} );
 
+	it( 'stores an image under many textures once (Ptex pages) and gives it back shared', async () => {
+
+		const root = new Group();
+		const page = new DataTexture( new Uint8Array( 4 * 4 * 4 ).fill( 7 ), 4, 4 );
+		const position = new BufferAttribute( new Float32Array( 9 ), 3 );
+		const meshes = [ 0, 1, 2 ].map( () => {
+
+			const geometry = new BufferGeometry();
+			geometry.setAttribute( 'position', position );
+			return new Mesh( geometry, new MeshPhysicalMaterial( { map: page.clone() } ) );
+
+		} );
+		root.add( ...meshes );
+
+		const encoded = encodeSceneGraph( root );
+		// The page and the shared positions, each once.
+		expect( encoded.sections ).toHaveLength( 2 );
+		const data = new Uint8Array( encoded.byteLength );
+		for ( const { offset, array } of encoded.sections ) data.set( new Uint8Array( array.buffer, array.byteOffset, array.byteLength ), offset );
+		const decoded = await decodeSceneGraph( JSON.parse( JSON.stringify( encoded.manifest ) ), new Blob( [ data ] ), { loadTexture: async () => null } );
+		const maps = decoded.root.children.map( ( mesh ) => mesh.material.map );
+		expect( new Set( maps.map( ( map ) => map.uuid ) ).size ).toBe( 3 );
+		expect( maps[ 1 ].source ).toBe( maps[ 0 ].source );
+		expect( maps[ 2 ].source ).toBe( maps[ 0 ].source );
+		expect( Array.from( maps[ 2 ].image.data.subarray( 0, 4 ) ) ).toEqual( [ 7, 7, 7, 7 ] );
+
+	} );
+
 	it( 'refuses what it does not know rather than store it wrongly', () => {
 
 		const { root } = buildScene();

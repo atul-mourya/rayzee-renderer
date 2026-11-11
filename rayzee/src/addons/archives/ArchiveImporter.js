@@ -850,6 +850,7 @@ export class ArchiveImporter {
 			animation: options.animation, maxTriangles: options.maxTriangles, maxPlacements: options.maxPlacements,
 			mergeShapesAbove: options.mergeShapesAbove, curveSteps: options.curveSteps, curveSides: options.curveSides,
 			curveTolerance: options.curveTolerance, instanceIncludes: options.instanceIncludes,
+			ptexMemory: options.ptexMemory,
 		};
 		const graphKey = source?.archiveId
 			? this.loader._keyed( `pbrt:${SCENE_GRAPH_FORMAT}.${PBRT_BUILD_REVISION}:${VERSION}`, `${source.archiveId}|${entryPath ?? ''}|${[ ...( source.elements ?? [] ) ].sort().join( ',' )}|${JSON.stringify( shape )}` )
@@ -861,7 +862,7 @@ export class ArchiveImporter {
 
 		const { group, environment, animations, report, warnings, meshCount, entryPath: loadedEntry, candidates,
 			frames, parseMs, buildMs, triangleCount, placementCount, mergedShapes, skippedForBudget,
-			droppedNoTemplate, parameters } = built;
+			droppedNoTemplate, parameters, ptex } = built;
 		if ( stored ) console.info( `PBRT scene "${loadedEntry}" opened from storage in ${( buildMs / 1000 ).toFixed( 1 )} s, skipping the parse` );
 
 		// Phase breakdown for scaling work; the engine's own build timings live in
@@ -869,7 +870,7 @@ export class ArchiveImporter {
 		this.lastPBRTStats = {
 			parseMs, buildMs, loaderMs: performance.now() - pbrtStart,
 			triangleCount, placementCount, mergedShapes, skippedForBudget, droppedNoTemplate, meshCount,
-			frames: frames?.length ?? 1
+			frames: frames?.length ?? 1, ptex: ptex ?? null
 		};
 
 		// An archive can hold several independent scenes (bistro ships three views). Only one is
@@ -1081,12 +1082,21 @@ export class ArchiveImporter {
 
 			},
 			maxTriangles: options.maxTriangles, maxPlacements: options.maxPlacements, mergeShapesAbove: options.mergeShapesAbove,
+			resolvePtex: async path => {
+
+				const entry = entries[ path ];
+				if ( entry instanceof Blob ) return { read: async ( start, end ) => new Uint8Array( await entry.slice( start, end ).arrayBuffer() ) };
+				const bytes = await files.read( path );
+				return bytes && { read: async ( start, end ) => bytes.subarray( start, end ) };
+
+			},
 			curveSteps: options.curveSteps, curveSides: options.curveSides, curveTolerance: options.curveTolerance,
+			ptexMemory: options.ptexMemory,
 		} );
 		this.loader._throwDeferred();
 
 		const { group, environment, render, warnings, triangleCount, placementCount, skippedForBudget, meshCount, parseMs, buildMs, fitNote } = built;
-		this.lastUSDStats = { parseMs, ...built.readTimings, buildMs, loaderMs: performance.now() - start, triangleCount, placementCount, skippedForBudget, meshCount, fitNote };
+		this.lastUSDStats = { parseMs, ...built.readTimings, buildMs, loaderMs: performance.now() - start, triangleCount, placementCount, skippedForBudget, meshCount, fitNote, ptex: built.ptex ?? null };
 		if ( fitNote || skippedForBudget > 0 ) this.loader._issues?.record(
 			ISSUE_CODES.SCENE_MEMORY_BUDGET,
 			fitNote ?? `${skippedForBudget.toLocaleString()} placements past the scene budgets left out`,

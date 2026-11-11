@@ -503,14 +503,14 @@ describe( 'PBRT scene builder', () => {
 		const scene = `
 			WorldBegin
 			AttributeBegin
-				Texture "orphan_Color" "spectrum" "ptex" "string filename" [ "x.ptx" ]
+				Texture "orphan_Color" "spectrum" "marble" "float scale" [ 2 ]
 				Material "diffuse" "texture reflectance" "orphan_Color"
 				Shape "trianglemesh" "point3 P" [ 0 0 0  1 0 0  0 1 0 ] "integer indices" [ 0 1 2 ]
 			AttributeEnd
 		`;
 
 		const { warnings } = await loadPBRTScene( buildArgs( { vfs: { 'scene.pbrt': enc.encode( scene ) } } ) );
-		expect( warnings.some( w => /texture class "ptex" not supported/.test( w ) ) ).toBe( true );
+		expect( warnings.some( w => /texture class "marble" not supported/.test( w ) ) ).toBe( true );
 
 	} );
 

@@ -97,6 +97,7 @@ export async function loadUSDScene( args ) {
 	const builder = new PBRTSceneBuilder( {
 		maxTriangles: args.maxTriangles, maxPlacements: args.maxPlacements, mergeShapesAbove: args.mergeShapesAbove,
 		curveSteps: args.curveSteps, curveSides: args.curveSides, curveTolerance: args.curveTolerance, pause: args.pauseBuild,
+		ptexMemory: args.ptexMemory, ptexPageSize: args.ptexPageSize, resolvePtex: args.resolvePtex,
 	} );
 
 	const parseStart = performance.now();

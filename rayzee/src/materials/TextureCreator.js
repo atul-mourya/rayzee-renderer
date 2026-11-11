@@ -2049,7 +2049,9 @@ export class TextureCreator {
 // Async, so a bad layer rejects into its placeholder instead of throwing through the whole bucket.
 async function _rawPixelsToBitmap( data, width, height ) {
 
-	const clamped = new Uint8ClampedArray( data.buffer, data.byteOffset, data.byteLength );
+	// ImageData refuses shared memory (Ptex pages are written into it by workers): those pixels are copied.
+	const shared = typeof SharedArrayBuffer !== 'undefined' && data.buffer instanceof SharedArrayBuffer;
+	const clamped = shared ? new Uint8ClampedArray( data ) : new Uint8ClampedArray( data.buffer, data.byteOffset, data.byteLength );
 	return createImageBitmap( new ImageData( clamped, width, height ) );
 
 }

@@ -18,6 +18,7 @@ import { freeNow } from './ArrayMemory.js';
 import { PBRTParser, ParamUsage } from './PBRTParser.js';
 import { PBRTSceneBuilder } from './PBRTSceneBuilder.js';
 import { findFrameSequence, FrameSequenceMerger, motionFromShutter, SEQUENCE_FPS } from './PBRTAnimation.js';
+import { plyFaceIndices } from './Ptex.js';
 
 export { PBRTParser } from './PBRTParser.js';
 export { PBRTSceneBuilder, PBRT_BUILD_REVISION, SPILL_TRIANGLE_BUDGET, SPILL_PLACEMENT_BUDGET, texturePixels } from './PBRTSceneBuilder.js';
@@ -112,6 +113,22 @@ export class VirtualFS {
 		const rec = this.findRecord( path );
 		if ( rec && ! rec.bytes && rec.lazy && this.source?.slice && ! this.source.transient ) return this.source.slice( rec.key );
 		return this.read( rec );
+
+	}
+
+	/** A record read a range at a time, `read( start, end )`: sliced where the source can, else from its bytes; null when absent. */
+	async ranged( path ) {
+
+		const rec = this.findRecord( path );
+		if ( rec && ! rec.bytes && rec.lazy && this.source?.slice ) {
+
+			const blob = await this.source.slice( rec.key );
+			return { read: async ( start, end ) => new Uint8Array( await blob.slice( start, end ).arrayBuffer() ) };
+
+		}
+
+		const bytes = await this.read( rec );
+		return bytes && { read: async ( start, end ) => bytes.subarray( start, end ) };
 
 	}
 
@@ -489,7 +506,10 @@ export async function loadPBRTScene( args ) {
 		const bytes = await vfs.read( rec );
 		if ( ! bytes ) return null;
 		vfs.release( rec );
-		return plyParser( sliceBuf( bytes ) );
+		const geometry = plyParser( sliceBuf( bytes ) );
+		const faces = plyFaceIndices( bytes );
+		if ( faces ) geometry.userData.faceIndices = faces;
+		return geometry;
 
 	};
 
@@ -501,8 +521,11 @@ export async function loadPBRTScene( args ) {
 		curveSteps: args.curveSteps,
 		curveSides: args.curveSides,
 		curveTolerance: args.curveTolerance,
+		ptexMemory: args.ptexMemory,
+		ptexPageSize: args.ptexPageSize,
 		pause: args.pause,
 		usage,
+		resolvePtex: ( filename ) => vfs.ranged( filename ),
 		resolvePLY: async ( filename ) => {
 
 			const rec = vfs.findRecord( filename );

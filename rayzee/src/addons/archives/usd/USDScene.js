@@ -291,6 +291,123 @@ function triangulate( mesh, faces ) {
 
 }
 
+/**
+ * A mesh as Ptex numbers its faces: a quad is one face, any other polygon one a corner (its corner, the midpoints
+ * beside it and its centre, in that order: OpenSubdiv's sub-faces, whose points are added). `faceIndices` holds each
+ * triangle's face id and `corners` which corner of its face's quad each triangle corner is; the builder gives each face
+ * vertices of its own as it builds the mesh, so points stay shared until then. Normals that vary by corner take each
+ * face's corners as vertices of their own here.
+ */
+function ptexTriangulate( mesh, faces ) {
+
+	const { points, counts, offsets, fvi, leftHanded, normals } = mesh;
+	const first = new Int32Array( counts.length );
+	for ( let f = 0, id = 0; f < counts.length; f ++ ) {
+
+		first[ f ] = id;
+		id += counts[ f ] === 4 ? 1 : counts[ f ] >= 3 ? counts[ f ] : 0;
+
+	}
+
+	const byCorner = perCorner( normals );
+	let triangles = 0, added = 0;
+	for ( const f of faces ) {
+
+		const n = counts[ f ];
+		if ( n === 4 ) {
+
+			triangles += 2;
+			added += byCorner ? 4 : 0;
+
+		} else if ( n >= 3 ) {
+
+			triangles += 2 * n;
+			added += byCorner ? 2 * n + 1 : n + 1;
+
+		}
+
+	}
+
+	const pointCount = byCorner ? 0 : points.length / 3;
+	const vertexNormals = normals && ! byCorner && normals.values.length === points.length;
+	const P = added ? new Float32Array( ( pointCount + added ) * 3 ) : points;
+	const N = byCorner ? new Float32Array( added * 3 ) : vertexNormals ? ( added ? new Float32Array( P.length ) : normals.values ) : null;
+	if ( added && ! byCorner ) {
+
+		P.set( points );
+		if ( N ) N.set( normals.values );
+
+	}
+
+	const index = new Uint32Array( triangles * 3 ), faceIndices = new Int32Array( triangles ), corners = new Uint8Array( triangles * 3 );
+	let next = pointCount, t = 0;
+	// A new point: the mean of `from` (face corners), with their normals' mean.
+	const point = ( f, from ) => {
+
+		const v = next ++;
+		for ( const k of from ) {
+
+			const c = offsets[ f ] + k, p = fvi[ c ];
+			for ( let i = 0; i < 3; i ++ ) P[ v * 3 + i ] += points[ p * 3 + i ] / from.length;
+			if ( N ) {
+
+				const e = byCorner ? elementAt( normals, f, c, p ) * 3 : p * 3;
+				for ( let i = 0; i < 3; i ++ ) N[ v * 3 + i ] += normals.values[ e + i ];
+
+			}
+
+		}
+
+		if ( N ) {
+
+			const len = Math.hypot( N[ v * 3 ], N[ v * 3 + 1 ], N[ v * 3 + 2 ] );
+			if ( len > 0 ) for ( let i = 0; i < 3; i ++ ) N[ v * 3 + i ] /= len;
+
+		}
+
+		return v;
+
+	};
+
+	// A Ptex face as two triangles over its four vertices.
+	const quad = ( id, v ) => {
+
+		const order = leftHanded ? [ 0, 2, 1, 0, 3, 2 ] : [ 0, 1, 2, 0, 2, 3 ];
+		for ( let k = 0; k < 6; k ++ ) {
+
+			index[ t * 3 + k ] = v[ order[ k ] ];
+			corners[ t * 3 + k ] = order[ k ];
+
+		}
+
+		faceIndices[ t ] = faceIndices[ t + 1 ] = id;
+		t += 2;
+
+	};
+
+	for ( const f of faces ) {
+
+		const n = counts[ f ];
+		if ( n < 3 ) continue;
+		const at = ( k ) => ( byCorner ? point( f, [ k ] ) : fvi[ offsets[ f ] + k ] );
+		if ( n === 4 ) {
+
+			quad( first[ f ], [ at( 0 ), at( 1 ), at( 2 ), at( 3 ) ] );
+			continue;
+
+		}
+
+		const all = Array.from( { length: n }, ( _, k ) => k );
+		const centre = point( f, all );
+		const mid = all.map( ( k ) => point( f, [ k, ( k + 1 ) % n ] ) );
+		for ( let k = 0; k < n; k ++ ) quad( first[ f ] + k, [ at( k ), mid[ k ], centre, mid[ ( k + n - 1 ) % n ] ] );
+
+	}
+
+	return { P, N, index, faceIndices, corners };
+
+}
+
 function geometryArrays( geometry, axis ) {
 
 	if ( axis === 'Z' ) geometry.rotateX( Math.PI / 2 );
@@ -443,6 +560,7 @@ export class USDSceneReader {
 		this._surfaces = new Map();
 		this._colored = new Map();
 		this._wrappers = new Map();
+		this._ptexMaterials = new Map();
 		this._images = new Map();
 		this._handed = new WeakSet();
 		this._warned = new Set();
@@ -910,10 +1028,10 @@ export class USDSceneReader {
 	}
 
 	/** The same specs give the same triangles: a mesh read again under another prim shares its geometry. */
-	geometryKey( prim, uvSet ) {
+	geometryKey( prim, uvSet, ptex = false ) {
 
 		const id = name => this.specId( prim.property( name ) );
-		const uv = uvSet ?? 'st';
+		const uv = ptex ? 'ptex' : uvSet ?? 'st';
 		return [ id( 'points' ), id( 'faceVertexIndices' ), id( 'faceVertexCounts' ), id( 'holeIndices' ), id( 'primvars:normals' ),
 			id( 'normals' ), uv, id( `primvars:${uv}` ), id( `primvars:${uv}:indices` ), prim.value( 'orientation' ) ?? '' ].join( '|' );
 
@@ -927,7 +1045,7 @@ export class USDSceneReader {
 
 	}
 
-	meshParams( prim, faces, uvSet ) {
+	meshParams( prim, faces, uvSet, ptex = false ) {
 
 		const points = prim.value( 'points' );
 		const counts = prim.value( 'faceVertexCounts' );
@@ -945,12 +1063,20 @@ export class USDSceneReader {
 		}
 
 		const normals = primvar( prim, 'normals' ) ?? ( prim.value( 'normals' )?.length ? { values: prim.value( 'normals' ), interpolation: prim.propertyMeta( 'normals', 'interpolation' ) ?? 'vertex', indices: null } : null );
-		const uv = primvar( prim, uvSet ) ?? ( uvSet === 'st' ? primvar( prim, 'uv' ) ?? primvar( prim, 'st0' ) ?? primvar( prim, 'UVMap' ) : null );
-		const built = triangulate( { points, counts, offsets, fvi, leftHanded: prim.value( 'orientation' ) === 'leftHanded', normals, uv }, faces );
+		const uv = ptex ? null : primvar( prim, uvSet ) ?? ( uvSet === 'st' ? primvar( prim, 'uv' ) ?? primvar( prim, 'st0' ) ?? primvar( prim, 'UVMap' ) : null );
+		const mesh = { points, counts, offsets, fvi, leftHanded: prim.value( 'orientation' ) === 'leftHanded', normals, uv };
+		const built = ptex ? ptexTriangulate( mesh, faces ) : triangulate( mesh, faces );
 		if ( built.index.length === 0 ) return null;
 		const params = { P: param( this.own( built.P ), 'point3' ), indices: param( built.index, 'integer' ) };
 		if ( built.N ) params.N = param( this.own( built.N ), 'normal' );
 		if ( built.uv ) params.uv = param( this.own( built.uv ), 'point2' );
+		if ( built.faceIndices ) {
+
+			params.faceIndices = param( built.faceIndices, 'integer' );
+			params.ptexCorners = param( built.corners, 'integer' );
+
+		}
+
 		return params;
 
 	}
@@ -983,8 +1109,8 @@ export class USDSceneReader {
 
 		if ( subsets.length === 0 ) {
 
-			const { material, uvSet } = await this.materialFor( binding, prim );
-			const key = this.geometryKey( prim, uvSet );
+			const { material, uvSet, ptex } = await this.materialFor( binding, prim, true );
+			const key = this.geometryKey( prim, uvSet, ptex );
 			const known = this._geometries.get( key );
 			if ( known ) {
 
@@ -995,7 +1121,7 @@ export class USDSceneReader {
 
 			}
 
-			const params = this.meshParams( prim, null, uvSet );
+			const params = this.meshParams( prim, null, uvSet, ptex );
 			if ( ! params ) return;
 			const shape = this.shape( prim, 'trianglemesh', params, material );
 			this._geometries.set( key, { params, shapes: [ shape ] } );
@@ -1023,8 +1149,8 @@ export class USDSceneReader {
 
 		for ( const group of groups ) {
 
-			const { material, uvSet } = await this.materialFor( group.binding, prim );
-			const params = this.meshParams( prim, group.faces, uvSet );
+			const { material, uvSet, ptex } = await this.materialFor( group.binding, prim, true );
+			const params = this.meshParams( prim, group.faces, uvSet, ptex );
 			if ( params ) out.shape( this.shape( prim, 'trianglemesh', params, material ), matrix );
 
 		}
@@ -1165,16 +1291,23 @@ export class USDSceneReader {
 
 	// ── materials ────────────────────────────────────────────────
 
-	async materialFor( path, prim ) {
+	/** A prim's material; `faces` when the prim is a polygon mesh, which a Ptex map can texture. */
+	async materialFor( path, prim, faces = false ) {
 
 		const surface = path ? await this.surface( path ) : null;
 		let material = surface?.material ?? null;
 		const display = primvar( prim, 'displayColor' );
+		let ptex = false;
 
 		if ( ! material ) {
 
 			const rgb = meanColor( display ) ?? [ 0.18, 0.18, 0.18 ];
 			material = this.colored( null, rgb );
+
+		} else if ( surface.ptex && faces ) {
+
+			material = this.ptexMaterial( material, surface.ptex );
+			ptex = true;
 
 		} else if ( surface.perMesh ) {
 
@@ -1186,7 +1319,25 @@ export class USDSceneReader {
 
 		let wrapper = this._wrappers.get( material );
 		if ( ! wrapper ) this._wrappers.set( material, wrapper = { type: 'usd', material } );
-		return { material: wrapper, uvSet: surface?.uvSet ?? 'st' };
+		return { material: wrapper, uvSet: surface?.uvSet ?? 'st', ptex };
+
+	}
+
+	/**
+	 * The surface's material reading a Ptex file through a named `ptex` texture, which the builder lays onto its pages
+	 * (pbrt's semantics, its encoding the exponent here). One a surface: Moana names one file a material.
+	 */
+	ptexMaterial( material, { path, power } ) {
+
+		let out = this._ptexMaterials.get( material );
+		if ( out ) return out;
+		const name = `usd-ptex:${path}|${JSON.stringify( power )}`;
+		if ( ! this.ir.namedTextures.has( name ) ) this.ir.namedTextures.set( name, { dataType: 'spectrum', class: 'ptex', params: { filename: word( path ) }, power } );
+		out = cloneMaterial( material );
+		out.color.setRGB( 1, 1, 1 );
+		out.userData.ptexTexture = name;
+		this._ptexMaterials.set( material, out );
+		return out;
 
 	}
 
@@ -1284,6 +1435,7 @@ export class USDSceneReader {
 				if ( ! input || ! Array.isArray( gamma ) ) return input;
 				const exponent = gamma.map( g => ( g > 0 ? 1 / g : 1 ) );
 				if ( Array.isArray( input.value ) ) return { value: input.value.map( ( v, c ) => Math.max( v, 0 ) ** exponent[ c ] ) };
+				if ( input.ptex ) return { ...input, ptex: { ...input.ptex, power: Array.isArray( input.ptex.power ) ? input.ptex.power.map( ( p, c ) => p * exponent[ c ] ) : input.ptex.power }, exponent };
 				return { ...input, exponent };
 
 			}
@@ -1291,9 +1443,18 @@ export class USDSceneReader {
 			case 'PxrBlend':
 				return await this.term( prim, 'bottomRGB', hops + 1 ) ?? this.term( prim, 'topRGB', hops + 1 );
 			case 'PxrPtexture':
-			case 'HwPtexTexture_1':
-				// Ptex is not read here; scenes that ship it bake its colours into displayColor (Moana does).
+			case 'HwPtexTexture_1': {
+
+				// RenderMan's reads the file as stored unless told to linearize; Hydra's names its colour space. Without
+				// the file, Moana's baked colours (displayColor).
+				const file = await this.assetInput( prim, id === 'PxrPtexture' ? 'filename' : 'file', hops + 1 );
+				const srgb = id === 'PxrPtexture' ? ( await this.term( prim, 'linearize', hops + 1 ) )?.value === 1 : prim.value( 'inputs:sourceColorSpace' ) !== 'raw';
+				if ( file?.path ) return { ptex: { path: file.path, power: srgb ? 'srgb' : [ 1, 1, 1 ] }, primvar: 'displayColor' };
+				if ( file?.asset ) this.warnOnce( `ptex:${file.asset}`, `USD Ptex file "${file.asset}" not found — the mesh's displayColor used` );
 				return { primvar: 'displayColor' };
+
+			}
+
 			case 'UsdUVTexture': return this.texture( prim, name, hops );
 			case 'UsdPrimvarReader_float':
 			case 'UsdPrimvarReader_float2':
@@ -1338,6 +1499,23 @@ export class USDSceneReader {
 
 	}
 
+	/** An asset input as the file it names, followed through connections to the prim that authored it. */
+	async assetInput( prim, name, hops ) {
+
+		const [ source ] = prim.connections( `inputs:${name}` );
+		if ( source && hops < 32 ) {
+
+			const dot = source.lastIndexOf( '.' );
+			const from = await this.stage.primAt( source.slice( 0, dot ) );
+			const prop = source.slice( dot + 1 );
+			if ( from && prop.startsWith( 'inputs:' ) ) return this.assetInput( from, prop.slice( 7 ), hops + 1 );
+
+		}
+
+		return prim.assetPath( `inputs:${name}` );
+
+	}
+
 	async texture( prim, channel, hops ) {
 
 		const file = prim.assetPath( 'inputs:file' );
@@ -1349,7 +1527,7 @@ export class USDSceneReader {
 
 		}
 
-		if ( PTEX.test( file.path ) ) return { primvar: 'displayColor' };
+		if ( PTEX.test( file.path ) ) return { ptex: { path: file.path, power: prim.value( 'inputs:sourceColorSpace' ) === 'raw' ? [ 1, 1, 1 ] : 'srgb' }, primvar: 'displayColor' };
 		if ( /<udim>/i.test( file.asset ) ) {
 
 			this.warnOnce( 'udim', 'USD UDIM textures are not supported — skipped' );
@@ -1403,7 +1581,13 @@ export class USDSceneReader {
 		if ( ! term ) return;
 		if ( Array.isArray( term.value ) ) mat[ slot ].setRGB( term.value[ 0 ], term.value[ 1 ], term.value[ 2 ] );
 		else if ( typeof term.value === 'number' ) mat[ slot ].setRGB( term.value, term.value, term.value );
-		else if ( term.primvar && slot === 'color' ) surface.perMesh = { primvar: term.primvar, exponent: term.exponent ?? null };
+		else if ( term.ptex && slot === 'color' ) {
+
+			// The baked colours stay as what a prim without faces (curves, points) takes.
+			surface.ptex = term.ptex;
+			surface.perMesh = { primvar: term.primvar, exponent: term.exponent ?? null };
+
+		} else if ( term.primvar && slot === 'color' ) surface.perMesh = { primvar: term.primvar, exponent: term.exponent ?? null };
 		else if ( term.texture && mapSlot ) {
 
 			const map = await this.image( term.texture, term.texture.colorSpace !== 'raw' );

@@ -21,7 +21,7 @@ import {
 	DataTexture, FloatType, RGBAFormat, LinearFilter, EquirectangularReflectionMapping,
 	SRGBColorSpace, NoColorSpace, AnimationClip, VectorKeyframeTrack, QuaternionKeyframeTrack,
 	NumberKeyframeTrack, BooleanKeyframeTrack, DirectionalLight, PointLight, SpotLight, FrontSide, DoubleSide,
-	RepeatWrapping
+	RepeatWrapping, UnsignedByteType
 } from 'three';
 import { blackbodyRGB, buildMaterial, pBool, pFloat, pString, resolveSpectrum, sampledEmissionRGB } from './PBRTMaterials.js';
 import { makeLayer, layerMean, bake, mixOf, srgbToLinear, linearToSRGB, hasAlpha, generateUV, uvKey } from './PBRTTextureBake.js';
@@ -30,10 +30,12 @@ import { approximated, param } from './PBRTParser.js';
 import { octahedralToEquirect } from './EqualAreaOctahedral.js';
 import { tessellateCurve, tessellateCurves, tessellateCurvesAcross } from './PBRTCurves.js';
 import CurveWorker from './CurveWorker.js?worker&inline';
+import PtexWorker from './PtexWorker.js?worker&inline';
+import { readPtexInfo, readPtexBlocks, planPtexPages, writePtexFile, ptexUV, ptexPower, ptexLinear } from './Ptex.js';
 import { createWorker, hardwareThreads, hasWorkers } from '../../../Platform.js';
 import * as M from './PBRTMath.js';
 import { packUnitAttribute, computeInstanceBoundingBoxes } from '../../../scene/GeometryExtractor.js';
-import { holdImages, releaseImages } from '../../../materials/TextureCreator.js';
+import { holdImages, releaseImages, setImageReader } from '../../../materials/TextureCreator.js';
 
 const LAMP_TYPES = new Set( [ 'distant', 'point', 'spot' ] );
 
@@ -126,7 +128,217 @@ const DEFAULT_CURVE_TOLERANCE = 0.05;
 const CURVE_SPLIT_CURVES = 20000;
 
 /** Bumped whenever the same scene files build a different graph, so a stored graph is not reused. */
-export const PBRT_BUILD_REVISION = 35;
+export const PBRT_BUILD_REVISION = 36;
+
+// Ptex pages: all of a scene's Ptex colour maps in this much texture memory at most, on square pages this size.
+const DEFAULT_PTEX_MEMORY = 1024 * 2 ** 20;
+const DEFAULT_PTEX_PAGE_SIZE = 4096;
+// Ptex files read at once while planning, and written ahead of the workers.
+const PTEX_READS = 16;
+
+/**
+ * `size` workers of `Ctor`, a job each at a time: `run( job )` posts what `message( job )` gives ([ data, transfer ]) and
+ * resolves with the reply; null when none start.
+ */
+function workerPool( Ctor, size, message ) {
+
+	const workers = [], idle = [], waiting = [];
+	const send = ( worker, job ) => {
+
+		worker.job = job;
+		worker.postMessage( ...message( job ) );
+
+	};
+
+	try {
+
+		for ( let i = 0; i < size; i ++ ) {
+
+			const worker = createWorker( Ctor );
+			worker.onmessage = ( e ) => {
+
+				const job = worker.job;
+				worker.job = null;
+				if ( e.data.error ) job.reject( new Error( e.data.error ) );
+				else job.resolve( e.data );
+				const queued = waiting.shift();
+				if ( queued ) send( worker, queued );
+				else idle.push( worker );
+
+			};
+
+			worker.onerror = ( e ) => worker.job?.reject( new Error( e.message ?? 'worker failed' ) );
+			workers.push( worker );
+			idle.push( worker );
+
+		}
+
+	} catch {
+
+		workers.forEach( ( w ) => w.terminate() );
+		return null;
+
+	}
+
+	const run = ( job ) => new Promise( ( resolve, reject ) => {
+
+		Object.assign( job, { resolve, reject } );
+		const worker = idle.pop();
+		if ( worker ) send( worker, job );
+		else waiting.push( job );
+
+	} );
+
+	// Jobs still out fail, so whoever waits on them can carry on another way.
+	const close = () => {
+
+		for ( const worker of workers ) {
+
+			worker.terminate();
+			worker.job?.reject( new Error( 'workers closed' ) );
+
+		}
+
+		for ( const job of waiting.splice( 0 ) ) job.reject( new Error( 'workers closed' ) );
+
+	};
+
+	return { size, run, close };
+
+}
+
+/**
+ * A load's Ptex pages, each written when the texture packer first asks for it (setImageReader) rather than during the
+ * build, so pages never sit beside the scene's parse; once packed they let their pixels go, and a later pack writes
+ * them again. Files are written across workers into shared memory where there is some, each once into every page it is
+ * on: the pages it fills before they are asked for wait in `building`.
+ */
+class PtexPages {
+
+	constructor( jobs, size, count ) {
+
+		this.jobs = jobs;
+		this.size = size;
+		this.pool = undefined;
+		this.busy = 0;
+		this.building = new Map(); // page -> { data, written: Map( job -> promise ) }
+		this.textures = Array.from( { length: count }, ( _, i ) => {
+
+			const page = new DataTexture( null, size, size, RGBAFormat, UnsignedByteType );
+			page.colorSpace = SRGBColorSpace;
+			page.name = `ptex_page_${i}`;
+			setImageReader( page, () => this.write( i ), { resident: false } );
+			return page;
+
+		} );
+
+	}
+
+	async write( page ) {
+
+		this.busy ++;
+		try {
+
+			const entry = this._building( page );
+			const jobs = [];
+			this.jobs.forEach( ( job, i ) => job.slots.pages.includes( page ) && jobs.push( i ) );
+			const pool = typeof SharedArrayBuffer !== 'undefined' && this.pool !== null ? this._pool() : null;
+			await eachLimit( jobs, pool ? pool.size + 2 : 1, ( i ) => entry.written.get( i ) ?? this._writeJob( i, pool ) );
+			this.building.delete( page );
+			return { data: entry.data, width: this.size, height: this.size };
+
+		} finally {
+
+			this.busy --;
+			this._idle();
+
+		}
+
+	}
+
+	_building( page ) {
+
+		let entry = this.building.get( page );
+		if ( ! entry ) {
+
+			const bytes = this.size * this.size * 4;
+			const data = new Uint8Array( typeof SharedArrayBuffer !== 'undefined' ? new SharedArrayBuffer( bytes ) : bytes );
+			this.building.set( page, entry = { data, written: new Map() } );
+
+		}
+
+		return entry;
+
+	}
+
+	_writeJob( i, pool ) {
+
+		const { file, slots } = this.jobs[ i ];
+		const pages = [];
+		for ( const q of slots.pages ) pages[ q ] = this._building( q ).data;
+		const written = ( async () => {
+
+			const blocks = await readPtexBlocks( file.info, file.source.read, slots );
+			try {
+
+				if ( pool ) return await pool.run( { info: file.info, blocks, slots, pages, size: this.size, power: file.power } );
+
+			} catch {
+
+				// The blocks went to the worker: read again, and write the rest here.
+				this.pool?.close();
+				this.pool = null;
+				return writePtexFile( file.info, await readPtexBlocks( file.info, file.source.read, slots ), slots, pages, this.size, file.power );
+
+			}
+
+			writePtexFile( file.info, blocks, slots, pages, this.size, file.power );
+
+		} )();
+		for ( const q of slots.pages ) this._building( q ).written.set( i, written );
+		return written;
+
+	}
+
+	_pool() {
+
+		clearTimeout( this.timer );
+		if ( this.pool === undefined ) this.pool = hasWorkers() ? workerPool( PtexWorker, Math.max( 1, hardwareThreads() - 1 ), ( job ) => [
+			{ info: job.info, blocks: job.blocks, slots: job.slots, pages: job.pages, size: job.size, power: job.power }, [ job.blocks.data.buffer ]] ) : null;
+		return this.pool;
+
+	}
+
+	// Workers go a second after the last page.
+	_idle() {
+
+		if ( this.busy > 0 || ! this.pool ) return;
+		this.timer = setTimeout( () => {
+
+			if ( this.busy > 0 ) return;
+			this.pool?.close();
+			this.pool = undefined;
+
+		}, 1000 );
+		this.timer.unref?.();
+
+	}
+
+}
+
+/** `task` over `items`, `limit` at a time. */
+async function eachLimit( items, limit, task ) {
+
+	let next = 0;
+	const lane = async () => {
+
+		while ( next < items.length ) await task( items[ next ++ ] );
+
+	};
+
+	await Promise.all( Array.from( { length: Math.min( limit, items.length ) }, lane ) );
+
+}
 
 function samePlacements( a, b ) {
 
@@ -286,6 +498,16 @@ function withCopies( attribute, sources ) {
 	const out = new array.constructor( ( count + sources.length ) * itemSize );
 	out.set( array.subarray( 0, count * itemSize ) );
 	for ( let i = 0; i < sources.length; i ++ ) for ( let c = 0; c < itemSize; c ++ ) out[ ( count + i ) * itemSize + c ] = array[ sources[ i ] * itemSize + c ];
+	return new BufferAttribute( out, itemSize, attribute.normalized );
+
+}
+
+// An attribute of the vertices `sources` names, in that order.
+function gathered( attribute, sources ) {
+
+	const { array, itemSize } = attribute;
+	const out = new array.constructor( sources.length * itemSize );
+	for ( let i = 0; i < sources.length; i ++ ) for ( let c = 0; c < itemSize; c ++ ) out[ i * itemSize + c ] = array[ sources[ i ] * itemSize + c ];
 	return new BufferAttribute( out, itemSize, attribute.normalized );
 
 }
@@ -688,6 +910,9 @@ export class PBRTSceneBuilder {
 		this.curveSteps = resolvers.curveSteps ?? DEFAULT_CURVE_STEPS;
 		this.curveSides = resolvers.curveSides ?? null;
 		this.curveTolerance = resolvers.curveTolerance ?? DEFAULT_CURVE_TOLERANCE;
+		this.ptexMemory = resolvers.ptexMemory ?? DEFAULT_PTEX_MEMORY;
+		this.ptexPageSize = resolvers.ptexPageSize ?? DEFAULT_PTEX_PAGE_SIZE;
+		this.resolvePtex = resolvers.resolvePtex || ( async () => null );
 		this.resolvePLY = resolvers.resolvePLY || ( async () => null );
 		this.resolveImage = resolvers.resolveImage || ( async () => null );
 		this.resolveEnvironment = resolvers.resolveEnvironment || resolvers.resolveImage || ( async () => null );
@@ -717,6 +942,12 @@ export class PBRTSceneBuilder {
 		this._mappings = new Map(); // texture name -> its textureMapping()
 		this._oneUVSets = new WeakMap(); // material -> itself, or its maps read in one uv set
 		this._uvWarnings = new Set();
+		this._faceIndices = new WeakMap(); // geometry -> its triangles' Ptex face ids
+		this._ptexCorners = new WeakMap(); // geometry -> each triangle corner's corner of its Ptex face
+		this._ptexFiles = new Map(); // filename|encoding -> { info, slots, maps: page -> map }
+		this._ptexMaps = new WeakMap(); // map -> { file, page }
+		this._ptexGeometries = new WeakMap(); // geometry -> Map( file -> [ { geometry, page } ] )
+		this._ptexMaterials = new WeakMap(); // material -> Map( page -> material reading that page )
 
 	}
 
@@ -778,6 +1009,7 @@ export class PBRTSceneBuilder {
 
 		for ( const template of ir.objects.values() ) for ( const shape of template ) if ( shape.type === 'plymesh' ) this._plyHeld.add( pString( shape.params, 'filename', null ) );
 		this._recoveredColors = 0;
+		this._missingPtex = [];
 		this.reportedMeshes = 0;
 		this.triangleCount = 0; // stored triangles — a shared geometry counts once
 		this.placementCount = 0;
@@ -794,6 +1026,7 @@ export class PBRTSceneBuilder {
 		this._shapesDone = 0;
 		this._shapeTotal = ir.shapes.length;
 		for ( const name of ir.instances.keys() ) this._shapeTotal += ir.objects.get( name )?.length ?? 0;
+		await this._preparePtex( ir );
 
 		// Shapes (direct + instanced)
 		for ( let i = 0; i < ir.shapes.length; i ++ ) {
@@ -826,10 +1059,15 @@ export class PBRTSceneBuilder {
 
 			if ( shape.type === 'plymesh' ) this._plyHeld.add( pString( shape.params, 'filename', null ) );
 
-			const mesh = this._meshFromGeometry( shape, this._mappedGeometry( geometry, sharedMaterial, shape.ctm ), sharedMaterial, shape.ctm, `shape_${i}` );
-			if ( ! mesh ) continue;
-			group.add( mesh );
-			if ( shape.motion ) this._animate( mesh, shape.motion );
+			const parts = this._surfaceParts( geometry, sharedMaterial, shape.ctm );
+			for ( let k = 0; k < parts.length; k ++ ) {
+
+				const mesh = this._meshFromGeometry( shape, parts[ k ].geometry, parts[ k ].material, shape.ctm, parts.length > 1 ? `shape_${i}_${k}` : `shape_${i}` );
+				if ( ! mesh ) continue;
+				group.add( mesh );
+				if ( shape.motion ) this._animate( mesh, shape.motion );
+
+			}
 
 		}
 
@@ -873,6 +1111,10 @@ export class PBRTSceneBuilder {
 
 		this._reportUnsupportedLights( ir.lights );
 
+		if ( this._missingPtex.length > 0 ) this.warn(
+			`${this._missingPtex.length} Ptex file(s) not found or unreadable (${this._missingPtex.slice( 0, 3 ).join( ', ' )}${this._missingPtex.length > 3 ? ', …' : ''}) — untextured`
+		);
+
 		if ( this._recoveredColors > 0 ) this.warn(
 			`${this._recoveredColors} unreadable texture(s) fell back to the like-named material's colour`
 		);
@@ -887,6 +1129,7 @@ export class PBRTSceneBuilder {
 			mergedShapes: this.mergedShapes,
 			droppedNoTemplate: this.droppedNoTemplate,
 			skippedForBudget: this.skippedForBudget,
+			ptex: this.ptexStats ?? null,
 			warnings: this.warnings.concat( ir.warnings || [] )
 		};
 
@@ -1033,6 +1276,14 @@ export class PBRTSceneBuilder {
 				let geometry = built;
 
 				const rel = shape.relativeCTM || shape.ctm;
+				const ptex = this._ptexSplit( geometry, sharedMaterial );
+				if ( ptex ) {
+
+					for ( const part of ptex ) place( list, part.geometry, part.material, rel, shape.type, shape.material?.type || 'diffuse', this._accountGeometry( part.geometry ) );
+					continue;
+
+				}
+
 				if ( uvSetOf( sharedMaterial ) ) {
 
 					if ( this._placeMapped( list, shape, geometry, sharedMaterial, rel, group, name ) ) continue;
@@ -1175,9 +1426,12 @@ export class PBRTSceneBuilder {
 				const [ geometry, sharedMaterial ] = await Promise.all( [ this._buildGeometry( shape ), this._getMaterial( shape ) ] );
 				if ( ! geometry ) continue;
 				const rel = shape.relativeCTM || shape.ctm;
-				const mapped = this._mappedGeometry( geometry, sharedMaterial, M.multiply( start, rel ) );
-				const mesh = this._meshFromGeometry( shape, mapped, sharedMaterial, rel, `${node.name}_${s}`, true );
-				if ( mesh ) node.add( mesh );
+				for ( const part of this._surfaceParts( geometry, sharedMaterial, M.multiply( start, rel ) ) ) {
+
+					const mesh = this._meshFromGeometry( shape, part.geometry, part.material, rel, `${node.name}_${s}`, true );
+					if ( mesh ) node.add( mesh );
+
+				}
 
 			}
 
@@ -1383,9 +1637,14 @@ export class PBRTSceneBuilder {
 
 		this.reportedMeshes ++;
 		const world = this.convertHandedness ? M.multiply( FLIP_Z, shape.ctm ) : shape.ctm;
-		const full = this._appendToBatch( this._batches, shape, this._mappedGeometry( geometry, sharedMaterial, shape.ctm ), sharedMaterial, world );
+		for ( const part of this._surfaceParts( geometry, sharedMaterial, shape.ctm ) ) {
+
+			const full = this._appendToBatch( this._batches, shape, part.geometry, part.material, world );
+			if ( full ) this._flushBatch( full, group );
+
+		}
+
 		this._releaseMerged( shape, geometry );
-		if ( full ) this._flushBatch( full, group );
 
 	}
 
@@ -1659,6 +1918,11 @@ export class PBRTSceneBuilder {
 
 		const indices = param( params, 'indices' )?.value;
 		if ( indices && indices.length ) geo.setIndex( indexAttribute( indices ) );
+		const faces = param( params, 'faceIndices' )?.value;
+		if ( faces?.length ) this._faceIndices.set( geo, Int32Array.from( faces ) );
+		// USD's Ptex meshes: which corner of its face each triangle corner is (USDScene ptexTriangulate).
+		const corners = param( params, 'ptexCorners' )?.value;
+		if ( corners?.length ) this._ptexCorners.set( geo, corners );
 
 		if ( ! N ) geo.computeVertexNormals();
 		return geo;
@@ -1780,60 +2044,255 @@ export class PBRTSceneBuilder {
 		this._curvePool = null;
 		if ( ! hasWorkers() ) return null;
 
-		const size = Math.max( 1, hardwareThreads() - 1 );
-		const workers = [], idle = [], waiting = [];
-		let next = 0;
-		const send = ( worker, job ) => {
+		// A run's arrays are its own copies (splitCurveSpec), so they move rather than copy.
+		const pool = workerPool( CurveWorker, Math.max( 1, hardwareThreads() - 1 ), ( { spec, source } ) => [ { spec },
+			[ spec.P, spec.widths, spec.N ].filter( ( a ) => ArrayBuffer.isView( a ) && ! [ source.P, source.widths, source.N ].includes( a ) ).map( ( a ) => a.buffer ) ] );
+		if ( pool ) this._curvePool = { size: pool.size, run: ( spec, source ) => pool.run( { spec, source } ).then( ( { built } ) => built ), close: pool.close };
+		return this._curvePool;
 
-			worker.job = job;
-			// A run's arrays are its own copies (splitCurveSpec), so they move rather than copy.
-			const transfer = [ job.spec.P, job.spec.widths, job.spec.N ].filter( ( a ) => ArrayBuffer.isView( a ) && ! [ job.source.P, job.source.widths, job.source.N ].includes( a ) ).map( ( a ) => a.buffer );
-			worker.postMessage( { id: job.id, spec: job.spec }, transfer );
+	}
 
-		};
+	// ── Ptex ───────────────────────────────────────────────────────
 
-		try {
+	/**
+	 * Every Ptex colour map of the scene at once: each file's header read and its faces planned onto pages within
+	 * `ptexMemory`; the pages are written when they are packed (PtexPages). @private
+	 */
+	async _preparePtex( ir ) {
 
-			for ( let i = 0; i < size; i ++ ) {
+		const wanted = new Map();
+		for ( const def of ir.namedTextures.values() ) {
 
-				const worker = createWorker( CurveWorker );
-				worker.onmessage = ( e ) => {
-
-					const { built, error } = e.data;
-					const job = worker.job;
-					worker.job = null;
-					if ( error ) job.reject( new Error( error ) );
-					else job.resolve( built );
-					const queued = waiting.shift();
-					if ( queued ) send( worker, queued );
-					else idle.push( worker );
-
-				};
-
-				worker.onerror = ( e ) => worker.job?.reject( new Error( e.message ?? 'curve worker failed' ) );
-				workers.push( worker );
-				idle.push( worker );
-
-			}
-
-		} catch {
-
-			workers.forEach( ( w ) => w.terminate() );
-			return null;
+			if ( def.class !== 'ptex' || def.dataType !== 'spectrum' ) continue;
+			const filename = pString( def.params, 'filename', null );
+			const key = filename && this._ptexKey( def );
+			if ( key && ! wanted.has( key ) ) wanted.set( key, { key, filename, power: def.power ?? ptexPower( pString( def.params, 'encoding', 'gamma 2.2' ) ) ?? [ 2.2, 2.2, 2.2 ] } );
 
 		}
 
-		const run = ( spec, source ) => new Promise( ( resolve, reject ) => {
+		// No memory for pages: every Ptex texture is its mean.
+		if ( wanted.size === 0 || ! ( this.ptexMemory > 0 ) ) return;
+		const started = performance.now();
+		const files = [ ...wanted.values() ];
+		await eachLimit( files, PTEX_READS, async ( file ) => {
 
-			const job = { id: next ++, spec, source, resolve, reject };
-			const worker = idle.pop();
-			if ( worker ) send( worker, job );
-			else waiting.push( job );
+			try {
+
+				file.source = await this.resolvePtex( file.filename );
+				file.info = file.source && await readPtexInfo( file.source.read );
+
+			} catch ( error ) {
+
+				this.warn( `Ptex "${file.filename}" could not be read: ${error.message}` );
+
+			}
 
 		} );
 
-		this._curvePool = { size, run, close: () => workers.forEach( ( w ) => w.terminate() ) };
-		return this._curvePool;
+		const read = files.filter( ( file ) => file.info );
+		if ( read.length === 0 ) return;
+		const size = this.ptexPageSize;
+		const plan = planPtexPages( read.map( ( file ) => file.info ), { pageSize: size, maxTexels: this.ptexMemory / 4 } );
+		read.forEach( ( file, i ) => this._ptexFiles.set( file.key, { info: file.info, slots: plan.files[ i ], maps: new Map() } ) );
+		this._ptexPages = new PtexPages( read.map( ( file, i ) => ( { file, slots: plan.files[ i ] } ) ), size, plan.pageCount ).textures;
+		this.ptexStats = { files: read.length, pages: plan.pageCount, pageSize: size, reduction: plan.reduction, texels: plan.texels, ms: performance.now() - started };
+		if ( plan.reduction > 0 ) this.warn( `Ptex: ${read.length} file(s) on ${plan.pageCount} page(s) of ${size}², each face's sides halved ${plan.reduction} time(s) to fit ${Math.round( this.ptexMemory / 2 ** 20 )} MB` );
+
+	}
+
+	/** A Ptex texture's file and encoding, which decide its pages. @private */
+	_ptexKey( def ) {
+
+		const power = def.power ?? ptexPower( pString( def.params, 'encoding', 'gamma 2.2' ) );
+		return `${pString( def.params, 'filename', '' )}|${JSON.stringify( power )}`;
+
+	}
+
+	/**
+	 * pbrt's `ptex` texture: a colour map of its file on the pages, which a mesh's uvs are moved onto (_ptexSplit); as a
+	 * float, or unread, its mean. @private
+	 */
+	async _ptexTexture( name, def ) {
+
+		const filename = pString( def.params, 'filename', null );
+		const encoding = pString( def.params, 'encoding', 'gamma 2.2' );
+		const power = def.power ?? ptexPower( encoding );
+		const scale = pFloat( def.params, 'scale', 1 );
+		if ( ! power ) this.warn( `texture "${name}": encoding "${encoding}" is not read — "gamma 2.2" used` );
+		const file = filename && this._ptexFiles.get( this._ptexKey( def ) );
+		if ( file && def.dataType === 'spectrum' ) return scale === 1 ? { texture: this._ptexMap( file, file.slots.pages[ 0 ] ) } : { texture: this._ptexMap( file, file.slots.pages[ 0 ] ), constant: [ scale, scale, scale ] };
+
+		let info = file?.info ?? null;
+		if ( ! info && filename ) {
+
+			try {
+
+				const source = await this.resolvePtex( filename );
+				info = source && await readPtexInfo( source.read );
+
+			} catch {
+
+				info = null;
+
+			}
+
+		}
+
+		if ( ! info ) {
+
+			// A scene may name thousands that ship apart: one summary line, not a warning each.
+			this._missingPtex.push( filename );
+			const recovered = this._colorFromLikeNamedMaterial( name );
+			if ( recovered ) this._recoveredColors ++;
+			return recovered ? { constant: recovered.rgb } : null;
+
+		}
+
+		const nc = info.channels;
+		const rgb = [ 0, 1, 2 ].map( ( c ) => ptexLinear( info.mean[ nc >= 3 ? c : 0 ], power ?? [ 2.2, 2.2, 2.2 ], c ) * scale );
+		if ( def.dataType !== 'float' ) return { constant: rgb };
+		const v = ( rgb[ 0 ] + rgb[ 1 ] + rgb[ 2 ] ) / 3;
+		return { constant: [ v, v, v ] };
+
+	}
+
+	/** A USD material naming a Ptex texture (USDScene ptexMaterial): its map, or its colour where the file is unread. @private */
+	async _ptexOfUSD( material ) {
+
+		const name = material.userData.ptexTexture;
+		delete material.userData.ptexTexture;
+		const texture = await this._resolveNamedTexture( name );
+		if ( texture?.texture ) material.map = texture.texture;
+		if ( texture?.constant ) material.color.setRGB( texture.constant[ 0 ], texture.constant[ 1 ], texture.constant[ 2 ] );
+
+	}
+
+	/** The map of a Ptex file on one page: a texture of its own over the page's image, so pages are uploaded once. @private */
+	_ptexMap( file, page ) {
+
+		let map = file.maps.get( page );
+		if ( ! map ) {
+
+			map = this._ptexPages[ page ].clone();
+			file.maps.set( page, map );
+			this._ptexMaps.set( map, { file, page } );
+
+		}
+
+		return map;
+
+	}
+
+	/**
+	 * A geometry on a Ptex colour map: its uvs moved onto the pages, a part a page its faces are on, each with the
+	 * material reading that page; null for any other material. A triangle's face id is pbrt's `faceIndices` (or a PLY's
+	 * `face_indices`), 0 without, and its uv the face's own. @private
+	 */
+	_ptexSplit( geometry, material ) {
+
+		const found = material.map && this._ptexMaps.get( material.map );
+		if ( ! found ) return null;
+		const { file } = found;
+		let byFile = this._ptexGeometries.get( geometry );
+		if ( ! byFile ) this._ptexGeometries.set( geometry, byFile = new Map() );
+		let parts = byFile.get( file );
+		if ( ! parts ) byFile.set( file, parts = this._ptexGeometry( geometry, file ) );
+		return parts.map( ( part ) => ( { geometry: part.geometry, material: this._ptexMaterial( material, file, part.page ) } ) );
+
+	}
+
+	/** @private */
+	_ptexGeometry( geometry, file ) {
+
+		const corners = this._ptexCorners.get( geometry ) ?? null;
+		let source = geometry;
+		if ( ! corners && ! source.getAttribute( 'uv' ) ) {
+
+			// pbrt's default triangle uv: ( 0, 0 ), ( 1, 0 ), ( 1, 1 ).
+			source = geometry.index ? geometry.toNonIndexed() : geometry.clone();
+			const uv = new Float32Array( source.getAttribute( 'position' ).count * 2 );
+			for ( let i = 0; i < uv.length; i += 6 ) uv.set( [ 0, 0, 1, 0, 1, 1 ], i );
+			source.setAttribute( 'uv', new BufferAttribute( uv, 2 ) );
+
+		}
+
+		const position = source.getAttribute( 'position' );
+		const triangles = ( source.index ? source.index.count : position.count ) / 3;
+		let faces = this._faceIndices.get( geometry );
+		if ( ! faces || faces.length !== triangles ) {
+
+			if ( faces ) this.warn( `a Ptex-textured mesh has ${faces.length} face ids for ${triangles} triangles — face 0 used for all` );
+			faces = new Int32Array( triangles );
+
+		}
+
+		const mapped = ptexUV( source.index?.array ?? null, source.getAttribute( 'uv' )?.array ?? null, faces, file.slots, this.ptexPageSize, position.count, corners );
+		const attributes = {};
+		for ( const name in source.attributes ) {
+
+			if ( name === 'uv' ) continue;
+			const attribute = source.getAttribute( name );
+			attributes[ name ] = mapped.gather ? gathered( attribute, mapped.gather ) : mapped.copies.length ? withCopies( attribute, mapped.copies ) : attribute;
+
+		}
+
+		attributes.uv = new BufferAttribute( mapped.uv, 2 );
+		if ( attributes.normal && attributes.normal !== source.getAttribute( 'normal' ) ) {
+
+			// Copied for each face's own vertices: at 16 bits from the start, as extraction stores them.
+			const packed = new BufferGeometry().setAttribute( 'normal', attributes.normal );
+			packUnitAttribute( packed, 'normal' );
+			attributes.normal = packed.getAttribute( 'normal' );
+
+		}
+
+		const make = ( index ) => {
+
+			const out = new BufferGeometry();
+			out.name = geometry.name;
+			Object.assign( out.userData, geometry.userData );
+			for ( const name in attributes ) out.setAttribute( name, attributes[ name ] );
+			out.setIndex( new Uint32BufferAttribute( index, 1 ) );
+			return out;
+
+		};
+
+		if ( file.slots.pages.length === 1 ) return [ { geometry: make( mapped.index ), page: file.slots.pages[ 0 ] } ];
+		const counts = new Map();
+		for ( const page of mapped.pages ) counts.set( page, ( counts.get( page ) ?? 0 ) + 1 );
+		return [ ...counts ].map( ( [ page, count ] ) => {
+
+			const index = new Uint32Array( count * 3 );
+			for ( let t = 0, n = 0; t < triangles; t ++ ) if ( mapped.pages[ t ] === page ) index.set( mapped.index.subarray( t * 3, t * 3 + 3 ), 3 * n ++ );
+			return { geometry: make( index ), page };
+
+		} );
+
+	}
+
+	/** `material` reading `file`'s map on `page` rather than its first. @private */
+	_ptexMaterial( material, file, page ) {
+
+		if ( material.map === this._ptexMap( file, page ) ) return material;
+		let byPage = this._ptexMaterials.get( material );
+		if ( ! byPage ) this._ptexMaterials.set( material, byPage = new Map() );
+		let out = byPage.get( page );
+		if ( ! out ) {
+
+			out = cloneMaterial( material );
+			out.map = this._ptexMap( file, page );
+			byPage.set( page, out );
+
+		}
+
+		return out;
+
+	}
+
+	/** A shape's geometry as it is drawn: moved onto Ptex pages (a part a page), else with its position-mapped uvs. @private */
+	_surfaceParts( geometry, material, world ) {
+
+		return this._ptexSplit( geometry, material ) ?? [ { geometry: this._mappedGeometry( geometry, material, world ), material } ];
 
 	}
 
@@ -1967,6 +2426,13 @@ export class PBRTSceneBuilder {
 
 			if ( geo.getAttribute( 'normal' ) ) geo.userData.pbrtNormals = true;
 			else geo.computeVertexNormals();
+			if ( geo.userData.faceIndices ) {
+
+				this._faceIndices.set( geo, geo.userData.faceIndices );
+				delete geo.userData.faceIndices;
+
+			}
+
 			return geo;
 
 		} catch ( e ) {
@@ -2193,6 +2659,7 @@ export class PBRTSceneBuilder {
 
 		const ctx = this._materialContext();
 		const material = await buildMaterial( shape.material, ctx );
+		if ( material.userData.ptexTexture ) await this._ptexOfUSD( material );
 
 		if ( shape.areaLight ) await this._applyAreaLight( material, shape.areaLight, ctx );
 
@@ -2437,6 +2904,10 @@ export class PBRTSceneBuilder {
 		} else if ( def.class === 'mix' ) {
 
 			result = await this._mixTexture( name, def );
+
+		} else if ( def.class === 'ptex' ) {
+
+			result = await this._ptexTexture( name, def );
 
 		} else if ( def.class === 'constant' ) {
 

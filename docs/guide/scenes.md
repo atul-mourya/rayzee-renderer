@@ -90,8 +90,9 @@ A USD scene — a folder or archive whose main model is a `.usd` / `.usda` / `.u
 through the engine's own USD importer, part of the archives add-on: composition (sublayers, references, payloads,
 inherits, specializes, variants), meshes, curves, point instancers, PxrDisneyBsdf / PxrSurface / UsdPreviewSurface
 materials, cameras, lights and the dome light as the environment. Each layer is read only when composition reaches it. A
-`.usdz` stays with three.js's loader (`usdFormat`). Ptex is not read: a Ptex input takes the mesh's mean
-`displayColor`. `sceneSource` is `{ kind: 'local-folder', folder: { name, size, lastModified, sample, files }, key }`
+`.usdz` stays with three.js's loader (`usdFormat`). Ptex colour maps (`PxrPtexture`, and pbrt's `ptex` texture) are
+read when their `.ptx` files are in the folder or archive, within `ptexMemory` (see the options below); without them a
+Ptex input takes the mesh's mean `displayColor`. `sceneSource` is `{ kind: 'local-folder', folder: { name, size, lastModified, sample, files }, key }`
 — `sample` hashes every file's path, size and date, so any change inside the folder changes it — and
 `sceneSourceFolder` hands the files back, as `{ name, files: [{ path, file }] }`.
 
@@ -142,6 +143,7 @@ Per-load options for pbrt and USD scenes:
 | `maxPlacements` | 6M (60M with storage, unless `memorySpill: false`) | the same, for placements |
 | `curveTolerance` | 0.05 | how far a curve segment may stray, × the curve's half-width; curves become strips with adaptive segments. `0` gives the old uniform strips bit for bit |
 | `instanceIncludes` | `true` | a file included again under the same material, with no side effects, is placed as an instance of its first reading instead of being read and stored again |
+| `ptexMemory` | 1 GiB | texture memory for the scene's Ptex colour maps (Disney's per-face textures: pbrt's `ptex` texture, RenderMan's `PxrPtexture`). Every file's faces share 4096 × 4096 pages, each face's sides halved as often as it takes to fit; `0` gives each map its mean colour instead |
 
 45M is the highest rung measured to survive without the spill, which is why the caps rise only where the build can
 spill; the preflight still refuses what cannot fit. With the spill, the whole Moana USD island — 111.6M triangles, 51.0M

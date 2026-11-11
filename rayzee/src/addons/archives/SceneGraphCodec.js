@@ -87,15 +87,21 @@ class SectionWriter {
 
 		this.sections = [];
 		this.length = 0;
+		this.added = new Map();
 
 	}
 
+	// An array held twice (one Ptex page under many textures, attributes two geometries share) is written once.
 	add( array ) {
 
+		const known = this.added.get( array );
+		if ( known ) return known;
 		const offset = Math.ceil( this.length / ALIGN ) * ALIGN;
 		this.sections.push( { offset, array } );
 		this.length = offset + array.byteLength;
-		return { offset, byteLength: array.byteLength, type: array.constructor.name, length: array.length };
+		const record = { offset, byteLength: array.byteLength, type: array.constructor.name, length: array.length };
+		this.added.set( array, record );
+		return record;
 
 	}
 
@@ -456,7 +462,20 @@ export async function decodeSceneGraph( manifest, data, { loadTexture } ) {
 
 		} else {
 
-			texture = new DataTexture( section( record.data.section ), record.data.width, record.data.height );
+			// Textures over one stored image share it, as the build made them.
+			const key = `data|${record.data.section.offset}`;
+			const shared = decoded.get( key );
+			if ( shared ) {
+
+				texture = shared.clone();
+				texture.userData = {};
+
+			} else {
+
+				texture = new DataTexture( section( record.data.section ), record.data.width, record.data.height );
+				decoded.set( key, texture );
+
+			}
 
 		}
 
