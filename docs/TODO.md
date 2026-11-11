@@ -51,6 +51,14 @@
   (`writeTextureLayers`), the triangle and tree uploads ~150 ms. Starting textures before the geometry extraction
   (they need only the materials, `extractMaterialsOnly`) was tried twice: no gain in Chrome, the overlap slowing
   extraction as much as it saved
+- [ ] watercolor's pbrt build (Node 18 s, Chrome 11.9 s): 40 texture bakes take 5.3 s of the page's time (242M texels,
+  ~22 ns each), making their layers 1.2 s, the octahedral environment 1.9 s, .ply parsing 1.0 s. The shape loop waits
+  14.3 s of 18 in Node, strictly one shape at a time (materials 8.5 s with the bakes, geometry 5.8 s). Tried, not kept:
+  hoisting the bakes' sampling and one shape for their terms (−10–15 % of the bakes, bytes identical); prefetching the
+  next 8 shapes' small .ply files (Node build −6 %, Chrome unchanged). The lever is the bakes in workers, which needs
+  their combines (closures over material code) written as data
+- [ ] `bench:load --chrome` on watercolor: ~60 images a load fail to decode (NotReadableError reading the inflated image
+  Blobs) in the bench's fresh Chrome, before f2ba93a6 too; the app in a normal profile loads it with none
 - [ ] Textured island: preflight 8,811 MB against the 9,216 MB line; Ptex's per-face vertices add ~870 MB of geometry
 - [ ] Ptex: float Ptex (displacement) becomes its mean; a pbrt scene with Ptex is not stored as a graph;
   triangle-mesh Ptex is approximate
