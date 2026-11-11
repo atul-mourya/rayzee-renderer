@@ -58,8 +58,14 @@ export async function partitionRange( records, start, count, pieceTriangles, { p
 
 	const tree = split( 0, count );
 	await pause?.();
-	await permuteInPlace( records, start, count, order, pause );
-	return { order, pieces, tree };
+	// Only a record's piece matters: each record moves straight to its piece's next free slot.
+	const piece = new Uint16Array( count );
+	pieces.forEach( ( p, k ) => {
+
+		for ( let j = p.start; j < p.start + p.count; j ++ ) piece[ order[ j ] ] = k;
+
+	} );
+	return { order: await moveToPieces( records, start, count, piece, pieces, pause ), pieces, tree };
 
 }
 
@@ -140,44 +146,53 @@ function selectNth( order, axes, axis, lo, hi, k ) {
 
 }
 
-// Record j takes record order[ j ], following each cycle with one record held aside.
-async function permuteInPlace( records, start, count, order, pause ) {
+/**
+ * Moves each record of [start, start + count) into its piece (`piece[ j ]` of the record at j), in place: every piece
+ * fills from its own next free slot, so memory is read and written in as many streams as there are pieces. Returns
+ * where each record came from, `order[ j ]` for the record now at j.
+ */
+async function moveToPieces( records, start, count, piece, pieces, pause ) {
 
 	const lanes = records.lanesPerRecord;
 	const held = new Uint32Array( lanes );
-	const done = new Uint8Array( count );
+	const order = new Uint32Array( count );
+	for ( let j = 0; j < count; j ++ ) order[ j ] = j;
+	const next = pieces.map( ( p ) => p.start );
 	let moved = 0;
 
-	for ( let j = 0; j < count; j ++ ) {
+	for ( let k = 0; k < pieces.length; k ++ ) {
 
-		if ( done[ j ] ) continue;
-		done[ j ] = 1;
-		if ( order[ j ] === j ) continue;
+		const end = pieces[ k ].start + pieces[ k ].count;
+		while ( next[ k ] < end ) {
 
-		let chunk = records.chunkFor( start + j ), base = records.baseOf( start + j );
-		for ( let l = 0; l < lanes; l ++ ) held[ l ] = chunk[ base + l ];
+			const i = next[ k ];
+			const b = piece[ i ];
+			if ( b === k ) {
 
-		for ( let k = j; ; ) {
-
-			const s = order[ k ];
-			const to = chunk, at = base;
-			if ( s === j ) {
-
-				for ( let l = 0; l < lanes; l ++ ) to[ at + l ] = held[ l ];
-				break;
+				next[ k ] ++;
+				continue;
 
 			}
 
-			chunk = records.chunkFor( start + s );
-			base = records.baseOf( start + s );
-			for ( let l = 0; l < lanes; l ++ ) to[ at + l ] = chunk[ base + l ];
-			done[ s ] = 1;
-			k = s;
+			let j = next[ b ];
+			while ( piece[ j ] === b ) j ++;
+			next[ b ] = j + 1;
+
+			const ci = records.chunkFor( start + i ), bi = records.baseOf( start + i );
+			const cj = records.chunkFor( start + j ), bj = records.baseOf( start + j );
+			for ( let l = 0; l < lanes; l ++ ) held[ l ] = ci[ bi + l ];
+			for ( let l = 0; l < lanes; l ++ ) ci[ bi + l ] = cj[ bj + l ];
+			for ( let l = 0; l < lanes; l ++ ) cj[ bj + l ] = held[ l ];
+			piece[ i ] = piece[ j ];
+			piece[ j ] = b;
+			const o = order[ i ]; order[ i ] = order[ j ]; order[ j ] = o;
 			if ( pause && ( ++ moved & 0xfffff ) === 0 ) await pause();
 
 		}
 
 	}
+
+	return order;
 
 }
 
