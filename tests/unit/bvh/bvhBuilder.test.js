@@ -810,7 +810,7 @@ describe( 'BVHBuilder.build', () => {
 		const worker = fakeWorker();
 		setBVHWorkerFactory( () => worker );
 		const builder = new BVHBuilder();
-		builder.setReinsertionConfig( { enabled: true, batchSizeRatio: 0.05, maxIterations: 3 } );
+		builder.setReinsertionConfig( { batchSizeRatio: 0.05, maxIterations: 3 } );
 		const data = scatter( 4 );
 		const progress = [];
 
@@ -1058,8 +1058,6 @@ describe( 'BVHBuilder splits', () => {
 	it( 'runs the reinsertion pass on a large mesh, passing its progress on, and survives it failing', () => {
 
 		const builder = new BVHBuilder();
-		expect( builder.enableReinsertionOptimization ).toBe( false );
-		builder.setReinsertionConfig( { enabled: true } );
 		builder.useMortonCodes = false;
 		const data = scatter( 1001 );
 		const progress = [];

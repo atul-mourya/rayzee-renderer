@@ -10,8 +10,6 @@
  *      using branch-and-bound pruning.
  *   3. Sort reinsertions by area improvement, apply non-conflicting ones greedily.
  *   4. Repeat for a configurable number of iterations.
- *
- * On this binned-SAH build it buys ~0.04 % tree SAH (3.5M triangles, 2026-08) for ~430 ms of worker time.
  */
 export class ReinsertionOptimizer {
 
