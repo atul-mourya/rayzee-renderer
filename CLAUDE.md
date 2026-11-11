@@ -1061,7 +1061,9 @@ in its browser process: +0.13–0.17 GB there on 24155522 (an archive's are slic
 after a GC (a heap snapshot forces one): main's tab carried ~1 GB of garbage for seconds after a load, and either side
 read up to 0.8 GB high until it ran. ⚠️ Code that reads a material map's pixels holds it first (the pbrt builder's
 `_readPixels`, released when the build ends). ⚠️ An archive unpacked to OPFS (`source.transient`) hands its images over
-as copies: that storage can be evicted once the load lets go of it.
+as copies: that storage can be evicted once the load lets go of it. ⚠️ An image a pack alone holds goes to its worker as
+it is (`takeImage`), and the worker still copies it (drawn uncopied, a few texels moved a level) and makes its thumbnail:
+whichever thread first touches a decoded image pays to prepare it.
 
 **A large bucket is never whole in memory.** Past `PACK_GROUP_BYTES` (256 MB) TextureCreator packs it 256 MB of layers
 at a time and hands each group to its `layerSink` (`textureLayerSink( renderer )` in `PathTracerStage.js`), which writes

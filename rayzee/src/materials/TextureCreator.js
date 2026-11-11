@@ -1021,7 +1021,19 @@ export class TextureCreator {
 				'worker texture processing failed — retrying on the main thread',
 				{ cause: String( error?.message ?? error ) }
 			);
-			const fallback = await this.processOnMainThreadSync( normalized, dims );
+			// Images handed to the worker went with it: this reads them again.
+			await this._holdImages( textures );
+			let fallback;
+			try {
+
+				fallback = await this.processOnMainThreadSync( normalized, dims );
+
+			} finally {
+
+				releaseImages( textures );
+
+			}
+
 			const reencoded = this._harmonizeTransfer( fallback, textures, srgbPool, tally );
 			this._applyColorManagement( fallback, textures, srgbPool, reencoded, tally );
 			return fallback;
@@ -1097,7 +1109,9 @@ export class TextureCreator {
 
 				slots += extra;
 				this.activeWorkers += extra;
-				return this.createDataArrayTextureFromResult( await this._packAcrossWorkers( texturesData, slots, dims, scratch ) );
+				const result = await this._packAcrossWorkers( texturesData, slots, dims, scratch );
+				adoptThumbnails( texturesData, result.thumbnails );
+				return this.createDataArrayTextureFromResult( result );
 
 			}
 
@@ -1145,6 +1159,7 @@ export class TextureCreator {
 
 			} );
 
+			adoptThumbnails( texturesData, result.thumbnails );
 			return this.createDataArrayTextureFromResult( result );
 
 		} finally {
@@ -1195,6 +1210,7 @@ export class TextureCreator {
 		}
 
 		const workers = [];
+		const thumbnails = [];
 
 		try {
 
@@ -1202,7 +1218,14 @@ export class TextureCreator {
 
 				const worker = createWorker( TexturesWorker );
 				workers.push( worker );
-				worker.onmessage = ( { data } ) => ( data.error ? reject( new Error( data.error ) ) : resolve() );
+				worker.onmessage = ( { data } ) => {
+
+					if ( data.thumbnails ) thumbnails.push( ...data.thumbnails );
+					if ( data.error ) reject( new Error( data.error ) );
+					else resolve();
+
+				};
+
 				worker.onerror = ( event ) => reject( new Error( event.message || 'texture worker failed' ) );
 				worker.postMessage( { shared, width, height, layers: part.layers, maxTextureSize: this.maxTextureSize }, part.transfer );
 
@@ -1214,7 +1237,7 @@ export class TextureCreator {
 
 		}
 
-		return { data: new Uint8Array( shared, 0, bytes ), width, height, depth };
+		return { data: new Uint8Array( shared, 0, bytes ), width, height, depth, thumbnails };
 
 	}
 
@@ -1309,6 +1332,8 @@ export class TextureCreator {
 	async prepareTexturesForWorkerDirect( textures ) {
 
 		const texturesData = [];
+		const stubs = [];
+		thumbnailStubs.set( texturesData, stubs );
 		const placeholder = () => ( { data: new Uint8ClampedArray( [ 255, 255, 255, 255 ] ).buffer, width: 1, height: 1, isImageData: true } );
 		// Each copy below runs on this thread, and a bucket's would otherwise run as one task.
 		const slice = timeSlicer();
@@ -1342,15 +1367,26 @@ export class TextureCreator {
 				);
 				if ( canDirect ) {
 
-					const bitmap = await createImageBitmap( texture.image, {
+					// An image this pack alone holds goes as it is, and the worker makes its copy and thumbnail: the first
+					// use of a decoded image prepares it, on whichever thread touches it first.
+					const taken = ! flipY && takeImage( texture );
+					const bitmap = taken?.image ?? await createImageBitmap( texture.image, {
 						imageOrientation: flipY ? 'flipY' : 'none',
 					} );
-					texturesData.push( {
+					const data = {
 						bitmap: bitmap,
 						width: texture.image.width,
 						height: texture.image.height,
 						isDirect: true
-					} );
+					};
+					if ( taken ) {
+
+						data.copy = true;
+						if ( ! taken.stub.thumbnail ) data.thumbnail = { id: stubs.push( taken.stub ) - 1, ...thumbnailSize( bitmap ) };
+
+					}
+
+					texturesData.push( data );
 
 				} else { // Option 2: Efficient canvas-based transfer
 
@@ -2158,6 +2194,40 @@ export async function holdImages( textures, onError = null ) {
 
 }
 
+/**
+ * `texture`'s image for a packer to transfer, when that packer is its only holder: it would be let go after the pack
+ * anyway. The source points at its stub at once, so a later hold reads it again; the packer gives the stub its thumbnail.
+ * @returns {{ image: ImageBitmap, stub: Object }|null}
+ */
+function takeImage( texture ) {
+
+	const source = texture?.source;
+	const entry = source && rereadable.get( source );
+	const image = source?.data;
+	if ( ! entry || entry.users !== 1 || typeof ImageBitmap === 'undefined' || ! ( image instanceof ImageBitmap ) ) return null;
+
+	const stub = entry.stub ??= { width: image.width, height: image.height, data: null, thumbnail: null };
+	source.data = stub;
+	return { image, stub };
+
+}
+
+// prepareTexturesForWorkerDirect's list → the stubs of the images it took, by the thumbnail id the worker hands back.
+const thumbnailStubs = new WeakMap();
+
+function adoptThumbnails( texturesData, thumbnails ) {
+
+	const stubs = thumbnailStubs.get( texturesData );
+	for ( const { id, bitmap } of thumbnails ?? [] ) {
+
+		const stub = stubs?.[ id ];
+		if ( stub && ! stub.thumbnail ) stub.thumbnail = bitmap;
+		else bitmap.close();
+
+	}
+
+}
+
 export function releaseImages( textures ) {
 
 	for ( const [ source, entry ] of rereadableSources( textures ) ) {
@@ -2201,8 +2271,7 @@ async function makeThumbnails() {
 
 		}
 
-		const scale = Math.min( 1, THUMBNAIL_SIZE / Math.max( image.width, image.height ) );
-		createImageBitmap( image, { resizeWidth: Math.max( 1, Math.round( image.width * scale ) ), resizeHeight: Math.max( 1, Math.round( image.height * scale ) ), resizeQuality: 'medium' } )
+		thumbnailOf( image )
 			.then( ( thumbnail ) => {
 
 				stub.thumbnail = thumbnail;
@@ -2213,6 +2282,20 @@ async function makeThumbnails() {
 	}
 
 	thumbnailing = null;
+
+}
+
+function thumbnailSize( image ) {
+
+	const scale = Math.min( 1, THUMBNAIL_SIZE / Math.max( image.width, image.height ) );
+	return { width: Math.max( 1, Math.round( image.width * scale ) ), height: Math.max( 1, Math.round( image.height * scale ) ) };
+
+}
+
+function thumbnailOf( image ) {
+
+	const { width, height } = thumbnailSize( image );
+	return createImageBitmap( image, { resizeWidth: width, resizeHeight: height, resizeQuality: 'medium' } );
 
 }
 

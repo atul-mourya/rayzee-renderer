@@ -3,7 +3,8 @@
  * keep its slot. Dropping it shifted every later texture onto the wrong material.
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { TextureCreator } from '@/core/materials/TextureCreator.js';
+import { DataTexture } from 'three';
+import { TextureCreator, setImageReader, holdImages, releaseImages } from '@/core/materials/TextureCreator.js';
 import { IssueLog } from '@/core/EngineIssues.js';
 
 class FakeBitmap {
@@ -60,6 +61,68 @@ describe( 'TextureCreator — worker preparation keeps every slot', () => {
 
 		const creator = new TextureCreator( { issues: new IssueLog( { strict: true } ) } );
 		await expect( creator.prepareTexturesForWorkerDirect( [ { image: null } ] ) ).rejects.toThrow( /texture.build_failed/ );
+
+	} );
+
+} );
+
+describe( 'TextureCreator — images a pack alone holds go to the worker as they are', () => {
+
+	afterEach( () => vi.unstubAllGlobals() );
+
+	const readable = ( bitmap, { flipY = false } = {} ) => {
+
+		const texture = new DataTexture( null, 1, 1 );
+		texture.image = bitmap;
+		texture.flipY = flipY;
+		const read = vi.fn( async () => new FakeBitmap( bitmap.width, bitmap.height ) );
+		setImageReader( texture, read );
+		return { texture, read };
+
+	};
+
+	it( 'hands over the bitmap for the worker to copy and thumbnail, and reads it again for the next hold', async () => {
+
+		vi.stubGlobal( 'ImageBitmap', FakeBitmap );
+		const copy = vi.fn( async ( source ) => new FakeBitmap( source.width, source.height ) );
+		vi.stubGlobal( 'createImageBitmap', copy );
+
+		const bitmap = new FakeBitmap( 512, 256 );
+		const { texture, read } = readable( bitmap );
+		await holdImages( [ texture ] );
+		const [ prepared ] = await new TextureCreator().prepareTexturesForWorkerDirect( [ texture ] );
+
+		expect( prepared.bitmap ).toBe( bitmap );
+		expect( prepared ).toMatchObject( { copy: true, width: 512, height: 256, thumbnail: { id: 0, width: 128, height: 64 } } );
+		expect( copy ).not.toHaveBeenCalled();
+		expect( texture.image ).toMatchObject( { width: 512, height: 256, data: null } );
+
+		releaseImages( [ texture ] );
+		await holdImages( [ texture ] );
+		expect( read ).toHaveBeenCalledOnce();
+		expect( texture.image ).toBeInstanceOf( FakeBitmap );
+		releaseImages( [ texture ] );
+
+	} );
+
+	it( 'copies a bitmap another pack also holds, and one the copy flips', async () => {
+
+		vi.stubGlobal( 'ImageBitmap', FakeBitmap );
+		const copy = vi.fn( async ( source ) => new FakeBitmap( source.width, source.height ) );
+		vi.stubGlobal( 'createImageBitmap', copy );
+
+		const shared = readable( new FakeBitmap( 8, 8 ) );
+		const flipped = readable( new FakeBitmap( 8, 8 ), { flipY: true } );
+		await holdImages( [ shared.texture, flipped.texture ] );
+		await holdImages( [ shared.texture ] );
+		const prepared = await new TextureCreator().prepareTexturesForWorkerDirect( [ shared.texture, flipped.texture ] );
+
+		expect( copy ).toHaveBeenCalledTimes( 2 );
+		expect( prepared.map( ( p ) => p.copy ?? false ) ).toEqual( [ false, false ] );
+		expect( shared.texture.image ).toBeInstanceOf( FakeBitmap );
+		expect( flipped.texture.image ).toBeInstanceOf( FakeBitmap );
+		releaseImages( [ shared.texture, flipped.texture ] );
+		releaseImages( [ shared.texture ] );
 
 	} );
 

@@ -11,6 +11,17 @@ const MEMORY_LIMITS = {
 
 let stream = null;
 
+// Thumbnails this job was asked for, `{ id, bitmap }`: handed back with its result.
+let thumbnails = [];
+
+function takeThumbnails() {
+
+	const taken = thumbnails;
+	thumbnails = [];
+	return taken;
+
+}
+
 function handleStream( msg ) {
 
 	if ( msg.stream === 'begin' ) {
@@ -81,7 +92,8 @@ self.onmessage = async function ( e ) {
 
 			if ( ! canvas ) initializeWorker( e.data.maxTextureSize );
 			await processIntoShared( e.data );
-			self.postMessage( { done: true } );
+			const taken = takeThumbnails();
+			self.postMessage( { done: true, thumbnails: taken }, taken.map( ( t ) => t.bitmap ) );
 
 		} catch ( error ) {
 
@@ -121,9 +133,10 @@ self.onmessage = async function ( e ) {
 		}
 
 		const result = await processTextures( textures, maxTextureSize, method, dims );
+		const taken = takeThumbnails();
 
 		// Transfer ownership for zero-copy
-		self.postMessage( result, [ result.data ] );
+		self.postMessage( { ...result, thumbnails: taken }, [ result.data, ...taken.map( ( t ) => t.bitmap ) ] );
 
 	} catch ( error ) {
 
@@ -338,8 +351,22 @@ async function processSingleTextureOptimized( textureData, outputData, offset, m
 
 	if ( textureData.isDirect && textureData.bitmap ) {
 
-		// Direct ImageBitmap transfer - no conversion needed!
 		imageBitmap = textureData.bitmap;
+		// The page's own image: copied as the page copies the others, or a few texels differ by a level.
+		if ( textureData.copy ) {
+
+			const { thumbnail } = textureData;
+			if ( thumbnail ) {
+
+				await createImageBitmap( textureData.bitmap, { resizeWidth: thumbnail.width, resizeHeight: thumbnail.height, resizeQuality: 'medium' } )
+					.then( ( bitmap ) => thumbnails.push( { id: thumbnail.id, bitmap } ), () => {} );
+
+			}
+
+			imageBitmap = await createImageBitmap( textureData.bitmap, { imageOrientation: 'none' } );
+			textureData.bitmap.close();
+
+		}
 
 	} else if ( textureData.isImageData && textureData.data ) {
 
