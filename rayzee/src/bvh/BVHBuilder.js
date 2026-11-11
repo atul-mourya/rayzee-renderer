@@ -141,7 +141,7 @@ export class BVHBuilder {
 		};
 
 		// Reinsertion optimization configuration
-		this.enableReinsertionOptimization = true;
+		this.enableReinsertionOptimization = false;
 		this.reinsertionBatchSizeRatio = 0.02;
 		this.reinsertionMaxIterations = 2;
 

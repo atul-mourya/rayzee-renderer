@@ -200,7 +200,7 @@ TSL modules using `Fn()`, `If()`, `Loop()`, `.toVar()`:
 Critical for maintaining 60fps during heavy computations. BVH and TLAS workers are in `bvh/`, the texture ones in
 `materials/`, `CDFWorker` in `environment/`, `EXRWorker` in `loaders/`, `AIUpscalerWorker` in `viewer/picture/`, `StorageWorker` in
 `addons/storage/`:
-- **`BVHWorker.js`**: Off-main-thread BVH construction using binned SAH splitting and reinsertion. The SAH build and
+- **`BVHWorker.js`**: Off-main-thread BVH construction using binned SAH splitting. The SAH build and
   Morton sort run in WebAssembly (`rayzee/wasm/bvh`, Rust; `npm run build:wasm` writes `bvh/BVHCoreWasm.js`): the page
   compiles it once (`bvhCoreReady()`) and posts it with each job, and it builds the JS build's tree bit for bit, which
   stays the fallback. ⚠️ A change to the SAH in `BVHBuilder.js` is made in `lib.rs` too, or the two trees part.
@@ -1184,7 +1184,7 @@ because `controls.update()` re-aims the camera at the target every frame. A held
 2. **App Access**: Always use `getApp()` from `@/lib/appProxy` to access the app instance
 3. **TSL Hot Reload**: TSL shader changes hot-reload normally via Vite
 4. **Worker Data Transfer**: Use transferable objects for large arrays to avoid main thread blocking
-5. **BVH quality**: the builder is binned SAH plus reinsertion. Treelet restructuring was removed (2026-10): on five models it bought ≤0.6 % tree SAH, no measurable render speed, for 2–24× the BLAS build time. Judge any new tree post-pass by render time per sample, not SAH alone
+5. **BVH quality**: the builder is binned SAH; reinsertion is off by default (`setReinsertionConfig( { enabled: true } )`). Treelet restructuring was removed (2026-10): on five models it bought ≤0.6 % tree SAH, no measurable render speed, for 2–24× the BLAS build time. Judge any new tree post-pass by render time per sample, not SAH alone
 6. **Resolution Scaling**: Path tracer resolution independent of UI — use `app.setCanvasSize( width, height )` (pixel dimensions, applied immediately; internal `_applyRenderResize()`). Requested size is clamped by `MAX_STORAGE_TEXTURE_SIZE` (`_isRenderSizeSupported`). Note: `onResize()` (reads `canvas.clientWidth/Height`) is debounced 300ms; `setCanvasSize()` is not.
 7. **React Compiler**: Uses React Compiler plugin — avoid manual memoization patterns that conflict with automatic optimization
 8. **Feature Guards**: Check stage availability before accessing optional stages (e.g., `app.stages.nrd?.enabled`). A bare `RayzeeRenderer` has only `stages.pathTracer` and `stages.compositor`
