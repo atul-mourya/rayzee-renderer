@@ -375,8 +375,14 @@ export class DenoisingManager extends EventDispatcher {
 
 			// A refresh that lands after the live view stopped wanting one would cover what replaced it.
 			const current = ! e.continuous || ( this.continuousDenoise && ! this._cadenceSuspended );
-			if ( this.denoiser?.hasOutput && current ) this._publishOutput();
-			this.dispatchEvent( { type: EngineEvents.DENOISING_END, continuous: !! e.continuous } );
+			const shown = !! ( this.denoiser?.hasOutput && current );
+			if ( shown ) this._publishOutput();
+			this.dispatchEvent( {
+				type: EngineEvents.DENOISING_END,
+				continuous: !! e.continuous,
+				delivered: shown && !! e.delivered,
+				ms: e.ms ?? 0,
+			} );
 
 		};
 

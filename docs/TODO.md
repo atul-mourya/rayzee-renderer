@@ -9,12 +9,6 @@
 -   make bvh an independent library — built as the `rayzee-bvh` package on the night of 2026-11-05 (branch
     `night/bvh-package`), not committed
 - claude design: redesign all ui component used in the application to create a custom design system
-- Rust/WebAssembly: only the BLAS build gains clearly (2.9–4× measured on its core, of which a JS-only layout change
-  gives 1.3–1.8×). Study, ranking and pilot plan in docs/internal/specs/wasm-candidates.md
-  → BLAS SAH + Morton sort ported (4c42ef1b, rayzee/wasm/bvh); follow-ups below
-  → 2026-11-11: no crash; untextured loaded 199 s (first frame 210 s), with its textures folder 238 s (260 s); phases
-  below
-- do we need separate stats graph monitor for denoised renders?
 - compare api of rayzee headless and pbrt. assess what can we learn and make it better
 - Dedicated docsify documentation for both rayzee as and app and as an engine
 

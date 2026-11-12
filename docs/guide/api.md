@@ -20,7 +20,7 @@ engine.addEventListener(EngineEvents.RENDER_COMPLETE, (e) => {
 | `SHADERS_COMPILING` | The path tracer compiles its shaders in the background (`event.compiling` true, then false) — after a model load, a new material layer, a light transport switch. The page stays responsive; the canvas keeps its last frame until they are ready, and `renderFrames()` waits for them |
 | `RENDER_RESET` | Accumulation buffer is reset |
 | `FRAME` | Fires once per `animate()` tick — hook external instrumentation (stats panels, telemetry) here |
-| `DENOISING_START` / `DENOISING_END` | Denoiser runs. `event.continuous` is `true` for a cadence denoise of the still-accumulating image, `false` for the one that ends a render |
+| `DENOISING_START` / `DENOISING_END` | Denoiser runs. `event.continuous` is `true` for a cadence denoise of the still-accumulating image, `false` for the one that ends a render. On `DENOISING_END`, `event.delivered` says whether the run put a new picture on screen (an aborted or superseded run does not) and `event.ms` how long it took |
 | `DENOISER_LOADING` | The denoiser fetches and builds a network (`event.loading` true, then false) — on first use and on a quality change. A denoise asked for meanwhile starts once it is ready |
 | `UPSCALING_START` / `UPSCALING_PROGRESS` / `UPSCALING_END` | AI upscaler runs |
 | `LOADING_UPDATE` / `LOADING_RESET` | Asset loading progress. A failed load ends with `failed: true` and the error as `status`; an archive that asks which parts to load ends with `LOADING_RESET` |

@@ -706,6 +706,8 @@ export class OIDNDenoiser extends EventDispatcher {
 		const runId = ++ this._runId;
 		this.state.abortController = new AbortController();
 		this.state.isDenoising = true;
+		const startTime = performance.now();
+		let delivered = false;
 
 		try {
 
@@ -724,7 +726,8 @@ export class OIDNDenoiser extends EventDispatcher {
 
 			// The GPU path bails out early — no textures yet, no device — by returning false, and
 			// a caller that read that as success published a picture nothing had written to.
-			return await this._executeUNetGPU( continuous ) !== false;
+			delivered = await this._executeUNetGPU( continuous ) !== false;
+			return delivered;
 
 		} catch ( error ) {
 
@@ -751,7 +754,7 @@ export class OIDNDenoiser extends EventDispatcher {
 
 			}
 
-			this.dispatchEvent( { type: 'end', continuous } );
+			this.dispatchEvent( { type: 'end', continuous, delivered, ms: performance.now() - startTime } );
 
 		}
 
