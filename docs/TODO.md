@@ -19,25 +19,18 @@
 - Dedicated docsify documentation for both rayzee as and app and as an engine
 
 ### Follow-ups from the Rust/WebAssembly night (2026-11-11)
-- [x] Reinsertion in Rust: done, with SA ordering and flatten (0f74e1a2; BLAS another −24…−49 %). The port also found
-  the core's quickselect ordering a leaf's triangles unlike JS (fixed, 7548d0dd)
-- [x] The bench corpus never runs a BLAS post-pass (its meshes are under the 1,000 triangles reinsertion starts at):
-  `bench:ab --model …` gates render time on real glTF models (683112d1; reinsertion A/B logged, 86e9e173)
 - [ ] `bench:load -- --chrome` with the WebAssembly BLAS: done against 1f605fe7 (blas crown −74 %, classroom −70 %,
-  zero-day −55 %, 24155522 −39 %); watercolor / transparent-machines and Safari / Firefox still unmeasured
-- [x] CI has no Rust toolchain: `bvhCoreWasm.test.js` fails when the generated module's source hash is stale (8c2c6430)
+  zero-day −55 %, 24155522 −39 %). watercolor: ready 33.0 s cold (pbrtBuild 15.1, textures 8.3), 21.8 s reopened;
+  transparent-machines: load 4.4 s (pbrtBuild 2.65, blas 0.58). Safari / Firefox: no bench driver for them
 - [ ] Moana island phases (Chrome, textured): USD read 30 s, USD build 50 s, extraction + BLAS 57 s, placing and
   measuring copies 11 s, grouping 12 s, top-level tree 12 s, writing the tree 8 s, assembling 10 s, copy records
   13 s, upload + compact 23–32 s
 - [ ] USD read/build: the profile is flat (no function over 5 %, garbage collection 20 %); cut allocation, move crate
   decoding (LZ4, int decode) into workers. pbrt build: zero-day 1.7 s, hibiscus 2.6 s
-- [ ] Placing copies, writing the tree (`fillLeaves`) and copy records run on the main thread over 51M copies:
-  workers over the shared arrays
-- [ ] Upload + compact (27 s on the island): corners 15.3 s and the 4-wide trees 11.0 s, each two passes (count, pack)
-  over records the page reads back from disk one piece at a time (8.9 GB of triangles, 5.5 GB of tree, per pass);
-  workers busy a fraction of it. One pass, or faster reads, is the lever. One pass is not cheap: the pack writes absolute
-  corner rows, so it needs every earlier job's count, and the GPU buffer is sized from the counts — holding the packed
-  output instead (2.8 GB on the island) or sizing for the worst case (3 corners a triangle) costs memory at the peak
+  - 2026-11-12: composition no longer makes a node, a promise and four list-op merges for every name looked up
+    (`siteNode`, `addArcsBelow`, `strength` as an array): isBeach + isCoral in Node allocate 8.8 → 6.8 GB, same scene
+    (fingerprint); read 3.5–3.9 → 3.4–3.5 s, within noise. Decoding is 8 % of the read (`ints`); a scratch buffer for
+    it changed nothing. Left: `triangulate`, `term`, `meshParams` (~1 GB together), and the 25 % in garbage collection
 - [ ] Top-level tree and copy grouping in WebAssembly would copy 600 MB+ into wasm memory at the island's peak:
   only worth it with the big stores living in a shared WebAssembly.Memory
 - [ ] Geometry extraction off the main thread (52–77 ns a triangle now; 111M on the island). The island's extraction
@@ -45,8 +38,6 @@
   4c232157), the fill 4.3 %, `transferable` copies for the storage worker 3.6 %, triangle uploads 3.2 %
 - [ ] Meshes of 200k–2M triangles in the BLAS pool instead of one at a time through the parallel builder: no clear
   change on five models (moana-mountain blas −15 %, crown +12 % inside its noise); untried on the island
-- [x] Textures took the page's time in Chrome: each decoded image was copied there before going to its worker
-  (~190 ms on 24155522.glb). Handed over instead, the worker copying it (f2ba93a6): scene 896 → 725 ms, sponza 247 → 176
 - [ ] Textures still on the page in Chrome (24155522.glb): writing the 716 MB of layers to the GPU ~200 ms
   (`writeTextureLayers`), the triangle and tree uploads ~150 ms. Starting textures before the geometry extraction
   (they need only the materials, `extractMaterialsOnly`) was tried twice: no gain in Chrome, the overlap slowing
@@ -57,16 +48,11 @@
   hoisting the bakes' sampling and one shape for their terms (−10–15 % of the bakes, bytes identical); prefetching the
   next 8 shapes' small .ply files (Node build −6 %, Chrome unchanged). The lever is the bakes in workers, which needs
   their combines (closures over material code) written as data
-- [ ] `bench:load --chrome` on watercolor: ~60 images a load fail to decode (NotReadableError reading the inflated image
-  Blobs) in the bench's fresh Chrome, before f2ba93a6 too; the app in a normal profile loads it with none
-- [ ] Textured island: preflight 8,811 MB against the 9,216 MB line; Ptex's per-face vertices add ~870 MB of geometry
+- [ ] Textured island: preflight 8,811 MB against the 9,216 MB line; Ptex's per-face vertices add ~870 MB of geometry.
+  A load in a tab that had held the island before failed narrowing the sky (`ArrayBuffer.transfer`'s smaller block):
+  the narrowed texels now stay in place when that block cannot be had
 - [ ] Ptex: float Ptex (displacement) becomes its mean; a pbrt scene with Ptex is not stored as a graph;
   triangle-mesh Ptex is approximate
-- [ ] A 2–7 s main-thread stall right after the textured island loads, in some runs (heavy swap); not found
-- [x] `_patchTriangleBitsForMaterial`: by material runs, and the upload too (4384e1ee)
-- [x] `npm run lint` ignores the git-ignored `docs/internal/` (3e086db6)
-- [x] The Ptex port slowed every pbrt build (PLY face ids walked for scenes without Ptex): fixed, 30b1cbc1
-- [x] Packing a huge scene failed on one worker's out-of-memory: jobs retried with fewer at once, cdbd4a72
 
 ### MVP
 - [ ] Tools and filters features are missing from results page. Requirements, specification and system design (including
@@ -160,7 +146,8 @@
 ### Compilation
 
 ### Rendering
-
+- [ ] Explore neural textures: example <https://cornell-neural.utsubo.io/>
+- [ ] Volumetric rendering (heterogeneous: smoke, clouds, VDB) — homogeneous fog is the entry above
 - [ ] Introduce Sequenced HRDIs - https://mattepaint.com/gallery/hdri/skies/
 - [ ] **Fog and light shafts** ROADMAP: "Fog and homogeneous participating media", "Volumetric lighting and shadows";
   - [ ] Follow-ups: fog inside glass; density varying other than with height (noise, VDB); the shadow catcher ignores
@@ -172,7 +159,6 @@
 - [ ] Lens flare
 - [ ] Cone Tracing
 - [ ] Clouds for the physical sky
-- [ ] Volumetric rendering (heterogeneous: smoke, clouds, VDB) — homogeneous fog is the entry above
 - [ ] **Texture filtering (mipmaps + a level per hit)** — explored 2026-10-05 with a throwaway prototype, nothing kept.
   Today the packed texture arrays have no mips (`generateMipmaps = false` in `TextureCreator`) and every lookup reads
   level 0; three r186 builds mips per array layer when asked (one flag, +33 % texture memory).
