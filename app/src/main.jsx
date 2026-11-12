@@ -3,11 +3,12 @@ import { createRoot } from 'react-dom/client';
 import App from './App.jsx';
 import './index.css';
 import { logVersion } from './lib/version';
+import { crossOriginIsolate } from './lib/crossOriginIsolation';
 
 logVersion();
 
-createRoot( document.getElementById( 'root' ) ).render(
+crossOriginIsolate().then( () => createRoot( document.getElementById( 'root' ) ).render(
 	<StrictMode>
 		<App />
 	</StrictMode>,
-);
+) );

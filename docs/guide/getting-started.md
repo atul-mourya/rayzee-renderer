@@ -143,6 +143,21 @@ export default defineConfig({
 });
 ```
 
+## Cross-origin isolation
+
+The engine's workers share memory only in a cross-origin isolated page, one served with:
+
+```
+Cross-Origin-Opener-Policy: same-origin
+Cross-Origin-Embedder-Policy: credentialless
+```
+
+Without them everything still works, but a large mesh builds its BVH on one core rather than several, big texture
+buckets pack on one worker, and pbrt texture bakes run on the main thread. Check `crossOriginIsolated` in the console.
+`credentialless` lets cross-origin images and models load without CORP headers (Chrome/Edge 96+, Firefox 119+; not
+Safari). A host that cannot set headers (GitHub Pages) can add them from a service worker, as the Rayzee app does:
+`app/public/isolation-sw.js`, registered by `app/src/lib/crossOriginIsolation.js`.
+
 ## Configuring Assets (CDN URLs & cache namespace)
 
 By default, the engine loads GLTF Draco/KTX2 decoders, OIDN denoiser weights, ONNX upscaler models, and the onnxruntime-web bundle from upstream CDNs. If you're self-hosting, embedding the engine alongside a different consumer of the same caches, or operating offline, override them **once before constructing `PathTracerApp`**:

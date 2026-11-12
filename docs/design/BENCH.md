@@ -734,9 +734,9 @@ MiB/cycle, and the suite exits 1. A gate that has never been shown to fail is no
 `npm run bench:storage` measures the origin private file system the engine keeps its caches and
 spill in: sync-access-handle and writable writes, `File.slice` reads, random reads, and with
 `--gz archive.tar.gz` the gunzip-to-disk pipeline `.tar.gz` archives are unpacked through. Each runs
-with and without cross-origin isolation, because production (GitHub Pages) is not isolated. It is
-served by a small static server rather than Vite, so those headers are the only difference between
-the two runs.
+with and without cross-origin isolation, because production (GitHub Pages) is isolated only through
+the app's service worker, and not at all in Safari. It is served by a small static server rather than
+Vite, so those headers are the only difference between the two runs.
 
 ```bash
 npm run bench:storage -- --size 2048            # MiB written and read (default 2048)

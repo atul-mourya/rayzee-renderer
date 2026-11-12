@@ -178,6 +178,10 @@ owns it), exports, test layout, docs and comments; how a cleanup is run; the aud
   `container` and is WebM. PNG/EXR frame sequences render through `exportImage()` (`captureFrame: false` on
   `VideoRenderManager`) into a folder from `showDirectoryPicker` — kept by `folders.js`, asked for again at the Resume
   click — or, with no folder access, one zip that cannot be resumed.
+- **Cross-origin isolation in production** (`lib/crossOriginIsolation.js`, `app/public/isolation-sw.js`): GitHub Pages sends
+  no COOP/COEP, so a service worker adds them to the page and same-origin worker scripts; the first visit reloads once
+  and the app renders only after `crossOriginIsolate()` resolves. Chromium and desktop Firefox only (COEP
+  `credentialless`); Safari stays unisolated. The dev server sends the same headers itself.
 
 ### Sub-managers and Path Tracer Classes
 PathTracer delegates to these via composition — external code accesses them directly (e.g., `stage.uniforms.get('maxBounces')`, `stage.materialData.srgbBuckets`, `stage.environment.envParams`). MaterialDataManager lives in `materials/`, EnvironmentManager in `environment/`, TLASBuilder in `bvh/`, InstanceTable in `scene/`, the rest in `pathtracer/`:
