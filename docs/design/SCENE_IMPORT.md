@@ -207,6 +207,10 @@ subtree per element, and the whole thing rarely fits: Moana is 29 GB unpacked.
   layer (`_imageLayer`), and materials whose roughness reads the same layers and values share one bake and one texture,
   which the engine packs once (`_floatMap`'s `id`). zero-day: 23 roughness maps → 13, material textures on the GPU
   414 → 249 MB, `pbrtBuild` 3.99 → 1.84 s in Node and 2.94 → 1.72 s in Chrome; renders byte-identical.
+  A bake of 1M texels or more whose combine is named as data (`combineOf`) runs in row bands across `BakeWorker`s
+  (`_bakeInWorkers`), to the same bytes. A worker keeps what it is sent until it collects garbage, which these seldom
+  do: layers made for one bake (an alpha map, a mix's colours) held 625 MB on watercolor, so the pool closes after a
+  bake that sent one. watercolor `pbrtBuild` 11.78 → 8.77 s in Chrome, 17.42 → 15.55 s in Node, peak memory as before.
   An imagemap's `uscale`/`vscale`/`udelta`/`vdelta` become the texture's repeat/offset. A `planar`/`spherical`/
   `cylindrical` mapping (pbrt-v4 `textures.h`; planar reads `v1`/`v2`/`udelta`/`vdelta`, the others nothing) is a uv set
   generated per shape from its world positions, taken into the space the texture was declared in (`generateUV`): a
@@ -273,6 +277,10 @@ subtree per element, and the whole thing rarely fits: Moana is 29 GB unpacked.
   ZIP64 and UTF-8/latin1 names) — never unzipped whole; `slice( path )` of a stored entry is a
   zero-copy Blob. A `.zip` that is really a gzip (island-pbrtV4) is detected by magic. Archive
   URLs load through the download cache (`loadFile( url )`).
+  ⚠️ Chrome in a fresh profile holds 500 MB of live Blobs and fails reads past it (NotReadableError; `bench:load
+  --chrome` lost 80 of watercolor's images on a second load): a zipped pbrt image is read again from the archive
+  (`_archiveImage`'s `reread`), and a zipped USD keeps its deflated entries packed (`PackedEntry`) until a reader asks.
+  A download loads `transient` (the cache may evict its file), so nothing is read again from it.
 
 - **Extending it.** Take each meaning and default from pbrt-v4's source, never from the scenes at hand: all eleven
   bugs of the kroken pass (2026-10-04) were guessed meanings, and a default read off one file misleads (`textures.cpp`

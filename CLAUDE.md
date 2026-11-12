@@ -369,7 +369,8 @@ On `RayzeeRenderer`, so the core has them too, except `runFinalDenoise()` (the v
   `allowEarlyRetire: true` and compare the returned count against `n`.
 - **`renderToBuffer( { colorSpace, preserveAlpha, source } )`** — pixels without the canvas. `'srgb'` tone-maps on the
   GPU (`PackedToneMapper`); the CPU's `toneMapToRGBA8` is the fallback (`toneMappedOn: 'cpu'`, `output.tonemap_fallback`).
-  `source: 'accumulation'` (default) or `'display'` (what the Compositor resolves, denoised).
+  `source: 'accumulation'` (default) or `'display'` (what the Compositor resolves, denoised). Calls run one at a time:
+  overlapping reads shared the tone mapper's buffers.
 - **`exportImage( { format, bitDepth, … } )`** — PNG, JPEG, WebP, HEIC/AVIF (gain maps), OpenEXR and Radiance HDR.
   Writers in `output/ImageEncoders.js`, published alone as `rayzee/encoders`: never re-export them from `index.js` (that
   put them in every host's startup download). EXR layers: `albedo`/`normal` while aux is on, `depth` from
@@ -395,7 +396,8 @@ On `RayzeeRenderer`, so the core has them too, except `runFinalDenoise()` (the v
   Until it resolves `render()` traces nothing and `readbackWait()` returns the promise; `EngineEvents.SHADERS_COMPILING`
   brackets it; a newer build supersedes (`_kernelGeneration`); the debug kernel is `eager: false`. A stage with a
   compute of its own compiles it the same way and skips its frames meanwhile (`stage.compiling`, NormalDepth); driver
-  loops also await `pipeline.compileWait()`. ⚠️ A BVH walk compiled at its first dispatch held Chrome's GPU process
+  loops also await `pipeline.compileWait()`, which first calls each enabled stage's `startCompile()`. ⚠️ Started
+  inside the frame, the stage skipped that frame: `renderFrames( 1 )` under NRD drew the raw image. ⚠️ A BVH walk compiled at its first dispatch held Chrome's GPU process
   until Chrome killed it on the Moana island (device lost). ⚠️ Time a first frame
   to `queue.onSubmittedWorkDone()`, not to `frameCount`: the old synchronous compile submitted after 0.2 s and the GPU
   finished it after 4 s.
@@ -913,7 +915,7 @@ shows only Auto Exposure (Follow View: Gently / More / Fully = strength 0.3 / 0.
    (most of three's work is in what it chains onto a result); a load extracts with `extractSliced`, not `extract()`,
    which fills a large mesh in steps. Every load step slices with `timeSlicer()` (`Platform.js`), one 30 ms budget.
 2. **GeometryExtractor** converts meshes to the 20-lane triangle records, baking single-use and emissive geometry to world space and leaving shared geometry in object space; records per-mesh `meshTriangleRanges`. It never rewrites a host's own geometry (`userData.__rayzeeExternal` subtrees are left alone), and anything skinned or morphed is given triangles of its own so a refit cannot pose every copy at once.
-3. **SceneProcessor** builds two-level BVH (TLAS/BLAS): per-mesh BLAS via `BVHBuilder` (parallel for large meshes via `Promise.all`; a pool worker builds and reorders a mesh in place in the shared triangle store when it sits in one chunk, `inPlace`), then `TLASBuilder` builds SAH tree over mesh AABBs, then assembles combined buffer `[TLAS | BLAS_0 | BLAS_1 | ...]`. A mesh past `SPLIT_MESH_TRIANGLES` (2M) is built as spatial pieces (`bvh/SplitBLAS.js`): its records are sorted in place into pieces of ≤ 512k by halving at the centroid median of the longest axis, each piece is built by a pool worker, and the halving becomes the nodes that join them. It holds the mesh once, in the store — one build across every core held a second copy plus 44 B a triangle of scratch. Images bit-identical, frame time unchanged (22M ocean + mountain, three views, within 3 %). ⚠️ The joined BLAS travels as parts (`nodeParts`), never one array: a 610 MB request failed an 80M build with memory to spare. ⚠️ Pivots are sampled with a fixed seed: first/middle/last took a thousand passes on a terrain grid's repeating rows.
+3. **SceneProcessor** builds two-level BVH (TLAS/BLAS): per-mesh BLAS via `BVHBuilder` (parallel for large meshes via `Promise.all`; a pool worker builds and reorders a mesh in place in the shared triangle store when it sits in one chunk, `inPlace`, except in the streaming build: a worker keeps a chunk it was handed until it collects garbage, so spilled chunks stayed resident; a build out of memory runs again with one fewer worker), then `TLASBuilder` builds SAH tree over mesh AABBs, then assembles combined buffer `[TLAS | BLAS_0 | BLAS_1 | ...]`. A mesh past `SPLIT_MESH_TRIANGLES` (2M) is built as spatial pieces (`bvh/SplitBLAS.js`): its records are sorted in place into pieces of ≤ 512k by halving at the centroid median of the longest axis, each piece is built by a pool worker, and the halving becomes the nodes that join them. It holds the mesh once, in the store — one build across every core held a second copy plus 44 B a triangle of scratch. Images bit-identical, frame time unchanged (22M ocean + mountain, three views, within 3 %). ⚠️ The joined BLAS travels as parts (`nodeParts`), never one array: a 610 MB request failed an 80M build with memory to spare. ⚠️ Pivots are sampled with a fixed seed: first/middle/last took a thousand passes on a terrain grid's repeating rows.
 4. **TextureCreator** generates GPU textures for materials (runs in parallel with BVH build)
 
 A failed load reports itself through `LOADING_UPDATE { failed: true, status }` from
@@ -970,6 +972,11 @@ Moana island measurements), and what Blender's glTF exporter loses of a scene's 
   transform at ObjectBegin.
 - ⚠️ `material.clone()` drops the engine's own properties (diffuse transmission, subsurface): use `cloneMaterial`.
 - ⚠️ The builder frees a shape's arrays after merging it: hand an array over once (`own()`).
+- ⚠️ Chrome in a fresh profile (and a private window) holds 500 MB of live Blobs; reads past it fail with
+  NotReadableError. Archive images are read again from the archive rather than kept as Blobs, and a zipped USD keeps
+  deflated entries packed (`PackedEntry`), except for a download (`transient`: the cache can evict its file).
+- ⚠️ A pbrt bake of 1M texels or more runs in row bands across `BakeWorker`s, which keep a layer they are sent until
+  they collect garbage: the pool closes after a bake that sent one made for that bake alone.
 
 ### Storage (OPFS) (`rayzee/src/addons/storage/`, `rayzee/src/storage/`)
 Full notes: [docs/design/STORAGE.md](docs/design/STORAGE.md) — areas and the cache budget, the entry protocol, I/O, locks, identity,
