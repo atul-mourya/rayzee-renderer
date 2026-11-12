@@ -20,6 +20,9 @@ const IDENTITY = Float64Array.from( [ 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 
 /** Passed as a placement's matrix when its row already holds it (a pooled build). */
 export const IN_PLACE = Object.freeze( [] );
 
+// Placements a bucket of the run index covers (_adoptRuns): a lookup out of placement order searches one bucket's runs.
+const RUN_BUCKET_SHIFT = 8;
+
 /** Determinant of the upper-left 3x3 at `off`. Negative means the transform mirrors. */
 function determinant3At( m, off ) {
 
@@ -186,9 +189,6 @@ export class InstanceTable {
 		this.sourceMesh = sourcePool && sourcePool.length >= count ? sourcePool : new Int32Array( count );
 		this.tlasLeafIndex = new Int32Array( count ).fill( - 1 ); // set by TLASBuilder
 		this.visible = new Uint8Array( count ).fill( 1 ); // baked into TLAS leaf slot [2]
-		// A mirroring transform reverses triangle winding, so front and back swap in object
-		// space. Traversal needs telling, or single-sided faces cull inside out.
-		this.flipWinding = new Uint8Array( count );
 		// template -> inverse of the pose baked into its triangles, for templates stored in
 		// world space. A move composes the new world matrix against this.
 		this.tplBakeInverse = null;
@@ -233,15 +233,20 @@ export class InstanceTable {
 
 	}
 
-	/** Writes the placement half of an entry. @private */
+	/** Writes the placement half of an entry: an in-place row is not read (51M on the island, every one a cold page). @private */
 	_place( index, template, matrixWorld, matrixOffset ) {
 
 		this.isSet[ index ] = 1;
 		this.sourceMesh[ index ] = template;
-
 		if ( matrixWorld !== IN_PLACE ) this._writeRow( index, matrixWorld ?? IDENTITY, matrixWorld ? matrixOffset : 0 );
-		const o = this.matrixRow( index );
-		this.flipWinding[ index ] = determinant3At( this.rowArray, o ) < 0 ? 1 : 0;
+
+	}
+
+	/** Whether placement `p`'s transform mirrors, which reverses its triangles' winding. */
+	mirrors( p ) {
+
+		const o = this.matrixRow( p );
+		return determinant3At( this.rowArray, o ) < 0;
 
 	}
 
@@ -705,6 +710,18 @@ export class InstanceTable {
 		this._runBase = Float64Array.from( base );
 		this._runOwned = Uint8Array.from( owned );
 		this._lastRun = 0;
+		// The run holding each bucket's first placement: cluster-order lookups otherwise searched all 69k island runs.
+		const runFirst = this._runFirst, runs = runFirst.length - 1;
+		const buckets = new Int32Array( ( Math.max( 0, runFirst[ runs ] ?? 0 ) >> RUN_BUCKET_SHIFT ) + 2 );
+		for ( let b = 0, r = 0; b < buckets.length; b ++ ) {
+
+			const p = b << RUN_BUCKET_SHIFT;
+			while ( r < runs - 1 && runFirst[ r + 1 ] <= p ) r ++;
+			buckets[ b ] = r;
+
+		}
+
+		this._runBuckets = buckets;
 		this.rowArray = this._runArrays[ 0 ]?.array ?? this._runArrays[ 0 ] ?? null;
 
 	}
@@ -715,7 +732,20 @@ export class InstanceTable {
 		const first = this._runFirst;
 		let r = this._lastRun;
 		if ( p >= first[ r ] && p < first[ r + 1 ] ) return r;
-		let lo = 0, hi = first.length - 2;
+		const buckets = this._runBuckets, b = p >> RUN_BUCKET_SHIFT;
+		let lo, hi;
+		if ( b + 1 < buckets.length ) {
+
+			lo = buckets[ b ];
+			hi = buckets[ b + 1 ];
+
+		} else {
+
+			lo = buckets[ buckets.length - 1 ];
+			hi = first.length - 2;
+
+		}
+
 		while ( lo < hi ) {
 
 			const mid = ( lo + hi + 1 ) >> 1;
@@ -1026,7 +1056,7 @@ export class InstanceTable {
 			sharedFrom: owner === i ? null : owner,
 			matrixWorld: this.matrixWorldOf( i ),
 			matrixInverse: this.matrixInverseOf( i ),
-			flipWinding: !! this.flipWinding[ i ],
+			flipWinding: this.mirrors( i ),
 			bvhToOriginal: this.bvhToOriginal.get( t ) || null,
 			visible: !! this.visible[ i ],
 			tlasLeafIndex: this.tlasLeafIndex[ i ],

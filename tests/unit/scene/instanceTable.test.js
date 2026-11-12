@@ -206,7 +206,43 @@ describe( 'InstanceTable', () => {
 				originalToBvhMap: null, bvhData: null, matrixWorld: pool, matrixOffset: 16
 			} );
 			expect( Array.from( table.matrixWorldOf( 1 ) ) ).toEqual( [ 2, 0, 0, 0, 0, 2, 0, 0, 0, 0, 2, 0, 0, 0, 0, 1 ] );
-			expect( table.flipWinding[ 1 ] ).toBe( 0 );
+			expect( table.mirrors( 1 ) ).toBe( false );
+
+		} );
+
+		it( 'finds each placement\'s matrix run in any order, empty and one-copy runs included', () => {
+
+			let seed = 9;
+			const rnd = () => ( seed = ( seed * 16807 ) % 2147483647 ) / 2147483647;
+			const first = [ 0 ], arrayOf = [], base = [], owned = [];
+			const arrays = [ new Float32Array( 0 ) ];
+			for ( let r = 0, p = 0; r < 2000; r ++ ) {
+
+				const len = [ 0, 1, 1, 3, 255, 256, 257, 900 ][ ( rnd() * 8 ) | 0 ];
+				arrayOf.push( r % 3 ); base.push( ( ( rnd() * 1000 ) | 0 ) * 16 ); owned.push( 0 );
+				first.push( p += len );
+
+			}
+
+			const count = first.at( - 1 );
+			const table = new InstanceTable();
+			table.allocate( count, 1, { first, arrays: [ ...arrays, arrays[ 0 ], arrays[ 0 ] ], arrayOf, base, owned } );
+			const runOf = ( p ) => {
+
+				let r = 0;
+				while ( r < first.length - 2 && first[ r + 1 ] <= p ) r ++;
+				return r;
+
+			};
+
+			for ( let i = 0; i < 20600; i ++ ) {
+
+				// Past the end too: the last run, as the full search found it.
+				const p = i < 100 ? count - 1 - i : i < 700 ? count + i - 100 : ( rnd() * count ) | 0;
+				const r = runOf( p );
+				expect( table.matrixRow( p ) ).toBe( base[ r ] + ( p - first[ r ] ) * 16 );
+
+			}
 
 		} );
 
@@ -221,7 +257,7 @@ describe( 'InstanceTable', () => {
 				meshIndex: 0, blasNodeCount: 1, triOffset: 0, triCount: 1,
 				originalToBvhMap: null, bvhData: null, matrixWorld: pool, matrixOffset: 0
 			} );
-			expect( table.flipWinding[ 0 ] ).toBe( 1 );
+			expect( table.mirrors( 0 ) ).toBe( true );
 
 		} );
 
