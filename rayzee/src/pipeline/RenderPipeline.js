@@ -119,10 +119,26 @@ export class RenderPipeline {
 
 	/**
 	 * A promise while an enabled stage compiles in the background and skips its frames, so a loop driving frames
-	 * itself can wait for it; null otherwise.
+	 * itself can wait for it; null otherwise. Starts any compile the next frame would start first (`startCompile()`):
+	 * started by that frame, the frame went without the stage.
 	 * @returns {?Promise<void>}
 	 */
 	compileWait() {
+
+		for ( const stage of this.stages ) {
+
+			if ( ! stage.enabled || ! stage.startCompile ) continue;
+			try {
+
+				stage.startCompile();
+
+			} catch ( error ) {
+
+				this._reportStageFailure( stage.name, 'startCompile', error );
+
+			}
+
+		}
 
 		return this.stages.find( stage => stage.enabled && stage.compiling )?.compiling ?? null;
 

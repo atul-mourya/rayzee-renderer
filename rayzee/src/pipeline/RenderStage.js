@@ -214,6 +214,15 @@ export class RenderStage {
 	}
 
 	/**
+	 * Starts a background compile the next frame would start (setting `compiling`), so a loop waiting on
+	 * `pipeline.compileWait()` waits for it before that frame rather than drawing it without the stage.
+	 * Override if the stage compiles in the background.
+	 */
+	startCompile() {
+		// Override if needed
+	}
+
+	/**
 	 * Reset stage state
 	 * Override if stage needs to reset internal state when scene/camera changes
 	 */

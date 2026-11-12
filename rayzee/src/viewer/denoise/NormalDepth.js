@@ -351,6 +351,12 @@ export class NormalDepth extends RenderStage {
 
 	}
 
+	startCompile() {
+
+		if ( this.enabled && this._syncStorageBuffers() && ! this._computeBuilt ) this._buildCompute();
+
+	}
+
 	render( context ) {
 
 		if ( ! this.enabled ) return;

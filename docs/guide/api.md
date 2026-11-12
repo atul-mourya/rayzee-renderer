@@ -169,6 +169,10 @@ viewer asks for it itself), `'hitDistance'`, or `'emission'` (the emission the c
 while `setEmissionOutput( true )`, read with `getEmission()`; path tracing only). Each is compiled into the path tracer
 only while asked for.
 
+A stage that compiles a compute of its own in the background sets `this.compiling` to the promise and skips its
+frames meanwhile; giving it `startCompile()` (start that compile now, if the next frame would) lets `renderFrames`,
+`renderUntilComplete` and the video export wait for it before drawing a frame without it.
+
 ## All Exports
 
 ```js

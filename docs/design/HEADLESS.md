@@ -116,6 +116,10 @@ Public renderer methods for offline rendering and reproducible output — on `Ra
   builds the WGSL), the new image 4.1 → 4.6 s. ⚠️ The old synchronous first-dispatch compile only looked fast: the
   frame was submitted after 0.2 s and the GPU finished it after 4 s — time a first frame to
   `queue.onSubmittedWorkDone()`, not to `frameCount`.
+  A stage with a compute of its own (NormalDepth) compiles the same way and skips its frames meanwhile
+  (`stage.compiling`); driver loops await `pipeline.compileWait()`, which first calls each enabled stage's `startCompile()`
+  to start a compile the next frame would start. ⚠️ Started by that frame instead, the frame went without the stage:
+  `renderFrames( 1 )` under NRD drew the raw image (the bench's NRD 1-spp rungs read 1.000).
 - **`app.enableGPUTiming( bool )` / `await app.getGPUTimings()`** — real GPU milliseconds from WebGPU
   timestamp queries. `pipeline.getStats()` is **not** a GPU metric: it times command encoding on the
   CPU and stays flat while GPU cost doubles. ⚠️ The `render` part overlaps the compute before it (Apple M-series: 2.0 ms read for

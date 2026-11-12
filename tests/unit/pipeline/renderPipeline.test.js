@@ -70,6 +70,47 @@ describe( 'RenderPipeline', () => {
 
 		} );
 
+		it( 'starts a compile the next frame would start, so that frame waits for it', () => {
+
+			const a = createMockStage( 'a' ), b = createMockStage( 'b' );
+			const compile = Promise.resolve();
+			b.startCompile = function () {
+
+				this.compiling = compile;
+
+			};
+
+			a.enabled = true;
+			b.enabled = false;
+			pipeline.addStage( a );
+			pipeline.addStage( b );
+			expect( pipeline.compileWait() ).toBe( null );
+			expect( b.compiling ).toBe( null );
+
+			b.enabled = true;
+			expect( pipeline.compileWait() ).toBe( compile );
+
+		} );
+
+		it( 'reports a stage whose compile fails to start, and waits on the others', () => {
+
+			const a = createMockStage( 'a' ), b = createMockStage( 'b' );
+			const compile = Promise.resolve();
+			a.startCompile = () => {
+
+				throw new Error( 'no buffers' );
+
+			};
+
+			b.compiling = compile;
+			pipeline.addStage( a );
+			pipeline.addStage( b );
+			const report = vi.spyOn( pipeline, '_reportStageFailure' ).mockImplementation( () => {} );
+			expect( pipeline.compileWait() ).toBe( compile );
+			expect( report ).toHaveBeenCalledWith( 'a', 'startCompile', expect.any( Error ) );
+
+		} );
+
 	} );
 
 	// ── addStage ───────────────────────────────────────────────

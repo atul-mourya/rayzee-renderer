@@ -52,6 +52,30 @@ describe( 'NormalDepth — its pass compiles', () => {
 
 	} );
 
+	it( 'from startCompile(), so the first frame a driver loop draws has it', async () => {
+
+		vi.stubGlobal( 'requestAnimationFrame', () => 0 );
+		const { nd, renderer, context, finish } = stage();
+
+		nd.startCompile();
+		expect( renderer.compileComputeAsync ).toHaveBeenCalledTimes( 1 );
+		expect( nd.compiling ).toBeInstanceOf( Promise );
+		nd.startCompile();
+		expect( renderer.compileComputeAsync ).toHaveBeenCalledTimes( 1 );
+
+		finish();
+		await nd.compiling;
+		nd.render( context );
+		expect( renderer.compute ).toHaveBeenCalledTimes( 1 );
+
+		// Disabled, it builds nothing.
+		const off = stage();
+		off.nd.enabled = false;
+		off.nd.startCompile();
+		expect( off.renderer.compileComputeAsync ).not.toHaveBeenCalled();
+
+	} );
+
 	it( 'at its first dispatch where nothing can compile in the background', () => {
 
 		vi.stubGlobal( 'requestAnimationFrame', undefined );
