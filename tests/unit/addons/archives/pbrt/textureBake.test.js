@@ -4,7 +4,18 @@
  * one-channel map's bytes worked out once a value.
  */
 import { describe, it, expect } from 'vitest';
-import { bake, makeLayer, mixOf, srgbByte, linearToSRGB, srgbToLinear } from '@/core/addons/archives/pbrt/PBRTTextureBake.js';
+import { makeLayer, mixOf, productOf, srgbByte, linearToSRGB, srgbToLinear, planBake, bakeRows, bakeResult, combineOf } from '@/core/addons/archives/pbrt/PBRTTextureBake.js';
+
+// A whole bake on this thread, as the scene builder runs one.
+function bake( terms, combine, options = {} ) {
+
+	const plan = planBake( terms );
+	if ( ! plan ) return null;
+	const data = new Uint8Array( plan.width * plan.height * 4 );
+	bakeRows( plan, combine, options, 0, plan.height, data );
+	return bakeResult( plan, data );
+
+}
 
 let seed = 11;
 const rand = () => ( seed = ( seed * 16807 ) % 2147483647 ) / 2147483647;
@@ -217,6 +228,79 @@ describe( 'the pbrt texture baker', () => {
 		const withAlpha = bake( terms, counted, { perChannel: true, alphaOf: ( [ a ] ) => a[ 0 ] } );
 		expect( calls ).toBe( w * h );
 		expect( withAlpha.data ).toEqual( bake( terms, mixOf, { alphaOf: ( [ a ] ) => a[ 0 ] } ).data );
+
+	} );
+
+} );
+
+describe( 'a bake split into bands of rows (its workers)', () => {
+
+	let seed = 3;
+	const rnd = () => ( seed = ( seed * 16807 ) % 2147483647 ) / 2147483647;
+	const image = ( width, height ) => ( { width, height, data: Uint8Array.from( { length: width * height * 4 }, ( _, i ) => ( i & 3 ) === 3 ? ( rnd() < 0.3 ? rnd() * 256 : 255 ) : rnd() * 256 ) } );
+	const layer = ( w, h, channels, mapping = null ) => makeLayer( image( w, h ), { channels, decode: srgbToLinear, mapping } );
+
+	const cases = [
+		[ 'two images mixed', () => [ { layer: layer( 37, 29, 3 ), clamp: true }, { rgb: [ 0.2, 0.7, 0.1 ], clamp: true }, { layer: layer( 53, 41, 1 ) } ], { op: 'mix' }, {} ],
+		[ 'a product, mapped', () => [ { layer: layer( 40, 31, 3, { su: 2, sv: 1.5, du: 0.1, dv: 0.3 } ) }, { layer: layer( 19, 23, 1 ) } ], { op: 'product' }, {} ],
+		[ 'alpha from a second image', () => [ { layer: layer( 33, 27, 3 ) }, { layer: layer( 21, 17, 1 ) } ], { op: 'first' }, { alphaOf: { op: 'channel', term: 1 } } ],
+		[ 'one colour image, channel by channel (memo)', () => [ { layer: layer( 45, 38, 3 ), clamp: true } ], { op: 'first' }, { perChannel: true } ],
+		[ 'one float image stretched (memo)', () => [ { layer: layer( 39, 33, 1 ) } ], { op: 'stretch', low: 0.05, high: 0.9 }, { linear: true } ],
+		[ 'roughness from two images', () => [ { layer: layer( 30, 26, 1 ) }, { layer: layer( 17, 13, 1 ) } ], { op: 'scalars', fn: 'roughness', count: 2 }, { linear: true } ],
+		[ 'remapped roughness', () => [ { layer: layer( 28, 22, 1 ) } ], { op: 'scalars', fn: 'remapped roughness', count: 1 }, { linear: true } ],
+	];
+
+	for ( const [ name, terms, spec, options ] of cases ) {
+
+		it( `writes the bytes of one pass: ${name}`, () => {
+
+			const plan = planBake( terms() );
+			const opts = { ...options, alphaOf: options.alphaOf ? combineOf( options.alphaOf ) : null };
+			const whole = new Uint8Array( plan.width * plan.height * 4 );
+			bakeRows( plan, combineOf( spec ), opts, 0, plan.height, whole );
+
+			// Each band in a buffer of its own, as a worker bakes it.
+			const banded = new Uint8Array( whole.length );
+			const rows = Math.ceil( plan.height / 5 );
+			for ( let j0 = 0; j0 < plan.height; j0 += rows ) {
+
+				const j1 = Math.min( plan.height, j0 + rows );
+				const band = new Uint8Array( ( j1 - j0 ) * plan.width * 4 );
+				bakeRows( plan, combineOf( spec ), opts, j0, j1, band, j0 );
+				banded.set( band, j0 * plan.width * 4 );
+
+			}
+
+			expect( Buffer.compare( Buffer.from( banded ), Buffer.from( whole ) ) ).toBe( 0 );
+
+		} );
+
+	}
+
+	it( 'names each combine with the arithmetic of the function it stands for', () => {
+
+		const v = () => [ rnd() * 2 - 0.5, rnd(), rnd() * 3 ];
+		for ( let k = 0; k < 200; k ++ ) {
+
+			const values = [ v(), v(), v() ];
+			expect( combineOf( { op: 'mix' } )( values ) ).toEqual( mixOf( values ) );
+			expect( combineOf( { op: 'product' } )( values ) ).toEqual( productOf( values ) );
+			expect( combineOf( { op: 'first' } )( values ) ).toBe( values[ 0 ] );
+			expect( combineOf( { op: 'channel', term: 1 } )( values ) ).toBe( values[ 1 ][ 0 ] );
+			expect( combineOf( { op: 'stretch', low: 0.2, high: 0.7 } )( values ) ).toEqual( values[ 0 ].map( ( x ) => ( x - 0.2 ) / ( 0.7 - 0.2 ) ) );
+			const alpha = ( remap ) => ( r ) => ( remap ? Math.sqrt( Math.max( r, 0 ) ) : Math.max( r, 0 ) );
+			for ( const remap of [ false, true ] ) {
+
+				const scalars = values.map( ( x ) => x[ 0 ] );
+				const expected = Math.sqrt( scalars.reduce( ( sum, r ) => sum + alpha( remap )( r ), 0 ) / scalars.length );
+				expect( combineOf( { op: 'scalars', fn: remap ? 'remapped roughness' : 'roughness', count: 3 } )( values ) ).toEqual( [ expected, expected, expected ] );
+
+			}
+
+		}
+
+		expect( combineOf( { op: 'scalars', fn: 'unknown', count: 1 } ) ).toBeNull();
+		expect( combineOf( { op: 'nothing' } ) ).toBeNull();
 
 	} );
 

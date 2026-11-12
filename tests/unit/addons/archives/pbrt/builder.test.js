@@ -1614,3 +1614,36 @@ describe( 'PBRT scene builder: pbrt-v4 fidelity', () => {
 	} );
 
 } );
+
+describe( 'PBRT scene builder: float maps', () => {
+
+	it( 'bakes a float map once for materials built at the same time', async () => {
+
+		const builder = new PBRTSceneBuilder( { resolvePLY: async () => null } );
+		const layer = { width: 4, height: 4 };
+		builder._paramTerm = async () => ( { layer } );
+		let bakes = 0, finish;
+		builder._bakeFloatMap = () => {
+
+			bakes ++;
+			return new Promise( ( resolve ) => {
+
+				finish = () => resolve( new DataTexture( new Uint8Array( 64 ), 4, 4 ) );
+
+			} );
+
+		};
+
+		const a = builder._floatMap( {}, [ 'roughness' ], 'roughness', 'roughness' );
+		const b = builder._floatMap( {}, [ 'roughness' ], 'roughness', 'roughness' );
+		await new Promise( ( resolve ) => setTimeout( resolve, 0 ) );
+		finish();
+		const [ first, second ] = await Promise.all( [ a, b ] );
+
+		expect( bakes ).toBe( 1 );
+		expect( second ).not.toBe( first );
+		expect( second.source ).toBe( first.source );
+
+	} );
+
+} );

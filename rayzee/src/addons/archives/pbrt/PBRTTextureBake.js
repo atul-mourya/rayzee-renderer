@@ -11,6 +11,15 @@
  */
 
 const MAX_BAKE_SIZE = 4096;
+// A layer this large lives in shared memory, where the bake's workers read it in place.
+const SHARED_LAYER_FLOATS = 1 << 18;
+
+function layerFloats( n ) {
+
+	const shared = n >= SHARED_LAYER_FLOATS && typeof SharedArrayBuffer !== 'undefined' && globalThis.crossOriginIsolated !== false;
+	return shared ? new Float32Array( new SharedArrayBuffer( n * 4 ) ) : new Float32Array( n );
+
+}
 
 export const uvKey = ( uv ) => uv?.key ?? '';
 
@@ -66,7 +75,7 @@ export function makeLayer( pixels, { channels, decode = null, scale = 1, invert 
 
 	const { width, height } = pixels;
 	const stride = pixels.channels ?? 4;
-	const data = new Float32Array( width * height * channels );
+	const data = layerFloats( width * height * channels );
 	const topDown = pixels.topDown !== false;
 	// pbrt's encoding applies to every channel of an 8-bit image, alpha included.
 	const bytes = decode && ( pixels.data instanceof Uint8Array || pixels.data instanceof Uint8ClampedArray );
@@ -173,21 +182,25 @@ function sample( layer, s, t, out ) {
 }
 
 /**
- * Each term is `{ rgb }` (a constant) or `{ layer, tint? }` (an image, times `tint`); `clamp` clamps it to [0, 1]
- * first, as pbrt clamps a colour texture read as an albedo, before anything mixes it. Evaluates
- * `combine( values )` over the texel grid of the largest image among the terms in the first image's uv set, in that
- * image's uv mapping; a term with another mapping is sampled through it, and one in another uv set counts as its mean
- * (`averaged` says how many). The result is sRGB bytes laid out for a DataTexture
- * (bottom row first), clamped to [0, 1] as pbrt clamps an albedo. Null when every term is a constant.
- * @param {Array<{ rgb?: number[], layer?: object, tint?: number[] }>} terms
- * @param {(values: number[][]) => number[]} combine - linear RGB from each term's linear RGB
- * @param {object} [options]
- * @param {(values: number[][]) => number} [options.alphaOf] - the alpha channel, linear; opaque without it
- * @param {boolean} [options.linear=false] - linear bytes, for a data map
- * @param {boolean} [options.perChannel=false] - each output channel follows from the same channel of the inputs alone
- * @returns {{ data: Uint8Array, width: number, height: number, mapping: { su: number, sv: number, du: number, dv: number, uv: object|null }, averaged: number } | null}
+ * A bake's result, `data` its bytes ({@link bakeRows}): sRGB (or linear) bytes laid out for a DataTexture (bottom row
+ * first), the grid's size, the driving image's uv mapping, and how many terms counted as their mean (`averaged`).
+ * @returns {{ data: Uint8Array, width: number, height: number, mapping: { su: number, sv: number, du: number, dv: number, uv: object|null }, averaged: number }}
  */
-export function bake( terms, combine, { alphaOf = null, linear = false, perChannel = false } = {} ) {
+export function bakeResult( { width, height, driver, averaged }, data ) {
+
+	return { data, width, height, mapping: { su: driver.su, sv: driver.sv, du: driver.du, dv: driver.dv, uv: driver.uv ?? null }, averaged };
+
+}
+
+/**
+ * Each term is `{ rgb }` (a constant) or `{ layer, tint? }` (an image, times `tint`); `clamp` clamps it to [0, 1]
+ * first, as pbrt clamps a colour texture read as an albedo, before anything mixes it. The plan is the terms as a bake
+ * reads them (one in another uv set than the first image's counts as its mean), the largest image in that set, whose
+ * texel grid and uv mapping the bake takes (a term with another mapping is sampled through it), and the grid's size;
+ * null when every term is a constant. Plain data, so a worker can take it.
+ * @param {Array<{ rgb?: number[], layer?: object, tint?: number[], clamp?: boolean }>} terms
+ */
+export function planBake( terms ) {
 
 	const set = uvKey( terms.find( ( term ) => term.layer )?.layer.uv );
 	let driver = null, averaged = 0;
@@ -207,9 +220,22 @@ export function bake( terms, combine, { alphaOf = null, linear = false, perChann
 
 	} );
 	if ( ! driver ) return null;
+	return { terms, driver, averaged, width: Math.min( driver.width, MAX_BAKE_SIZE ), height: Math.min( driver.height, MAX_BAKE_SIZE ) };
 
-	const width = Math.min( driver.width, MAX_BAKE_SIZE ), height = Math.min( driver.height, MAX_BAKE_SIZE );
-	const out = new Uint8Array( width * height * 4 );
+}
+
+/**
+ * Rows [ `j0`, `j1` ) of a {@link planBake} plan into `out` (`out` starts at row `outRow`): `combine( values )` at each
+ * texel, clamped to [0, 1] as pbrt clamps an albedo.
+ * @param {object} plan
+ * @param {(values: number[][]) => number[]} combine - linear RGB from each term's linear RGB
+ * @param {object} [options]
+ * @param {(values: number[][]) => number} [options.alphaOf] - the alpha channel, linear; opaque without it
+ * @param {boolean} [options.linear=false] - linear bytes, for a data map
+ * @param {boolean} [options.perChannel=false] - each output channel follows from the same channel of the inputs alone
+ */
+export function bakeRows( { terms, driver, width, height }, combine, { alphaOf = null, linear = false, perChannel = false } = {}, j0, j1, out, outRow = 0 ) {
+
 	const values = terms.map( () => [ 0, 0, 0 ] );
 	// At its own size a texel centre is the texel itself: read, not blended.
 	const whole = width === driver.width && height === driver.height;
@@ -220,10 +246,10 @@ export function bake( terms, combine, { alphaOf = null, linear = false, perChann
 	let memo = alone && driver.channels === 1 ? new TexelMemo( width * height ) : null;
 	let channelMemos = alone && driver.channels === 3 && perChannel && ! alphaOf ? [ 0, 1, 2 ].map( () => new TexelMemo( width * height ) ) : null;
 	const bits = ( memo || channelMemos ) && new Uint32Array( driver.data.buffer, driver.data.byteOffset, driver.data.length );
-	const texels = memo && new Uint32Array( out.buffer );
+	const texels = memo && new Uint32Array( out.buffer, out.byteOffset, out.length >> 2 );
 	const known = [ - 1, - 1, - 1 ];
 
-	for ( let j = 0; j < height; j ++ ) {
+	for ( let j = j0; j < j1; j ++ ) {
 
 		const t = ( j + 0.5 ) / height;
 		const v = ( t - driver.dv ) / driver.sv;
@@ -236,7 +262,7 @@ export function bake( terms, combine, { alphaOf = null, linear = false, perChann
 				const texel = memo.get( key );
 				if ( texel >= 0 ) {
 
-					texels[ j * width + i ] = texel;
+					texels[ ( j - outRow ) * width + i ] = texel;
 					continue;
 
 				}
@@ -251,7 +277,7 @@ export function bake( terms, combine, { alphaOf = null, linear = false, perChann
 				known[ 2 ] = channelMemos[ 2 ].get( bits[ at3 + 2 ] );
 				if ( known[ 0 ] >= 0 && known[ 1 ] >= 0 && known[ 2 ] >= 0 ) {
 
-					const o = ( j * width + i ) * 4;
+					const o = ( ( j - outRow ) * width + i ) * 4;
 					out[ o ] = known[ 0 ]; out[ o + 1 ] = known[ 1 ]; out[ o + 2 ] = known[ 2 ]; out[ o + 3 ] = 255;
 					continue;
 
@@ -288,7 +314,7 @@ export function bake( terms, combine, { alphaOf = null, linear = false, perChann
 			}
 
 			const rgb = combine( values );
-			const o = ( j * width + i ) * 4;
+			const o = ( ( j - outRow ) * width + i ) * 4;
 			for ( let c = 0; c < 3; c ++ ) {
 
 				const v = Math.min( 1, Math.max( 0, rgb[ c ] ) );
@@ -299,7 +325,7 @@ export function bake( terms, combine, { alphaOf = null, linear = false, perChann
 			out[ o + 3 ] = alphaOf ? Math.round( 255 * Math.min( 1, Math.max( 0, alphaOf( values ) ) ) ) : 255;
 			if ( memo ) {
 
-				memo.set( key, texels[ j * width + i ] );
+				memo.set( key, texels[ ( j - outRow ) * width + i ] );
 				// Full: a float image's values seldom repeat, and a lookup that always misses costs more than it saves.
 				if ( memo.room === 0 ) memo = null;
 
@@ -313,8 +339,6 @@ export function bake( terms, combine, { alphaOf = null, linear = false, perChann
 		}
 
 	}
-
-	return { data: out, width, height, mapping: { su: driver.su, sv: driver.sv, du: driver.du, dv: driver.dv, uv: driver.uv ?? null }, averaged };
 
 }
 
@@ -364,6 +388,60 @@ export const mixOf = ( [ a, b, amount ] ) => {
 	return [ a[ 0 ] + ( b[ 0 ] - a[ 0 ] ) * t, a[ 1 ] + ( b[ 1 ] - a[ 1 ] ) * t, a[ 2 ] + ( b[ 2 ] - a[ 2 ] ) * t ];
 
 };
+
+/** pbrt's scale texture: a colour times a float's first channel. */
+export const productOf = ( [ a, f ] ) => [ a[ 0 ] * f[ 0 ], a[ 1 ] * f[ 0 ], a[ 2 ] * f[ 0 ] ];
+
+// A float map's combine over its scalars, by the name its bake is shared under (PBRTMaterials applyRoughness, _heightMap).
+const SCALARS = {
+	roughness: ( values ) => Math.sqrt( values.reduce( ( sum, r ) => sum + Math.max( r, 0 ), 0 ) / values.length ),
+	'remapped roughness': ( values ) => Math.sqrt( values.reduce( ( sum, r ) => sum + Math.sqrt( Math.max( r, 0 ) ), 0 ) / values.length ),
+	height: ( [ height ] ) => height,
+};
+
+/**
+ * A combine named as data (`{ op, … }`), so a worker can run the bake; the same arithmetic, in the same order, as the
+ * function the builder would pass. Null for a name it does not know.
+ */
+export function combineOf( spec ) {
+
+	switch ( spec?.op ) {
+
+		case 'first': return ( [ v ] ) => v;
+		case 'mix': return mixOf;
+		case 'product': return productOf;
+		case 'stretch': {
+
+			const { low, high } = spec;
+			return ( [ h ] ) => h.map( ( v ) => ( v - low ) / ( high - low ) );
+
+		}
+
+		case 'scalars': {
+
+			// One pair of arrays for every texel: bake reads the result before the next.
+			const fn = SCALARS[ spec.fn ];
+			if ( ! fn ) return null;
+			const scalars = new Array( spec.count ), rgb = [ 0, 0, 0 ];
+			return ( values ) => {
+
+				for ( let k = 0; k < scalars.length; k ++ ) scalars[ k ] = values[ k ][ 0 ];
+				rgb[ 0 ] = rgb[ 1 ] = rgb[ 2 ] = fn( scalars );
+				return rgb;
+
+			};
+
+		}
+
+		case 'channel': return ( values ) => values[ spec.term ][ 0 ];
+		default: return null;
+
+	}
+
+}
+
+/** Whether pbrt names this float map's combine (`SCALARS`): what a worker can bake. */
+export const namedScalars = ( id ) => Object.hasOwn( SCALARS, id );
 
 // The coordinate that goes once around the axis: spherical φ is t, cylindrical φ is s.
 const WRAPPED = { spherical: 1, cylindrical: 0 };

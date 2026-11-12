@@ -24,7 +24,8 @@ import {
 	RepeatWrapping, UnsignedByteType
 } from 'three';
 import { blackbodyRGB, buildMaterial, pBool, pFloat, pString, resolveSpectrum, sampledEmissionRGB } from './PBRTMaterials.js';
-import { makeLayer, layerMean, bake, mixOf, srgbToLinear, linearToSRGB, hasAlpha, generateUV, uvKey } from './PBRTTextureBake.js';
+import { makeLayer, layerMean, planBake, bakeRows, bakeResult, combineOf, namedScalars, productOf, mixOf, srgbToLinear, linearToSRGB, hasAlpha, generateUV, uvKey } from './PBRTTextureBake.js';
+import BakeWorker from './BakeWorker.js?worker&inline';
 import { loopSubdivide } from './LoopSubdivision.js';
 import { approximated, param } from './PBRTParser.js';
 import { octahedralToEquirect } from './EqualAreaOctahedral.js';
@@ -36,6 +37,18 @@ import { createWorker, hardwareThreads, hasWorkers } from '../../../Platform.js'
 import * as M from './PBRTMath.js';
 import { packUnitAttribute, computeInstanceBoundingBoxes } from '../../../scene/GeometryExtractor.js';
 import { holdImages, releaseImages, setImageReader } from '../../../materials/TextureCreator.js';
+
+// A bake of this many texels or more, its combine named as data, is split across workers by rows.
+const BAKE_WORKER_TEXELS = 1 << 20;
+const BAKE_COPY_BYTES = 2 << 20;
+
+function bakeHere( plan, combine, options ) {
+
+	const data = new Uint8Array( plan.width * plan.height * 4 );
+	bakeRows( plan, combine, options, 0, plan.height, data );
+	return data;
+
+}
 
 const LAMP_TYPES = new Set( [ 'distant', 'point', 'spot' ] );
 
@@ -935,7 +948,7 @@ export class PBRTSceneBuilder {
 		this._termCache = new Map(); // texture name + channels -> Promise<{rgb}|{layer, tint?}|null>
 		this._layers = new Map(); // an image map's file, encoding, scale, invert and mapping -> its layer
 		this._layerIds = new Map(); // layer -> its number in the keys below
-		this._floatMaps = new Map(); // what a float map computes from which layers and values -> DataTexture|null
+		this._floatMaps = new Map(); // what a float map computes from which layers and values -> Promise<DataTexture|null>
 		this._mediumMaterials = new Map(); // material -> Map(medium name -> material with its attenuation)
 		this._mediumWarnings = new Set();
 		this._alphaMaterials = new Map(); // material -> Map(alpha texture name or #value -> Promise<material>)
@@ -978,6 +991,9 @@ export class PBRTSceneBuilder {
 
 			this._curvePool?.close();
 			this._curvePool = undefined;
+			this._bakePool?.close();
+			// Null: a bake still running after a failed build bakes on the page rather than start a pool nobody closes.
+			this._bakePool = null;
 
 		}
 
@@ -2637,7 +2653,7 @@ export class PBRTSceneBuilder {
 		if ( ! alpha.layer ) return { constant: alpha.rgb[ 0 ] };
 		const color = colorMap ? await this._textureLayer( colorMap, 3 ) : null;
 		if ( colorMap && ! color ) return null;
-		const baked = this._bake( `alpha "${name}"`, [ color ? { layer: color } : { rgb: [ 1, 1, 1 ] }, alpha ], ( [ c ] ) => c, { alphaOf: ( [ , a ] ) => a[ 0 ] } );
+		const baked = await this._bake( `alpha "${name}"`, [ color ? { layer: color } : { rgb: [ 1, 1, 1 ] }, alpha ], { op: 'first' }, { alphaOf: { op: 'channel', term: 1 } } );
 		return baked && bakedTexture( baked );
 
 	}
@@ -3013,12 +3029,90 @@ export class PBRTSceneBuilder {
 
 	}
 
-	/** bake(), reporting the inputs it had to read as their mean. @private */
-	_bake( label, terms, combine, options ) {
+	/**
+	 * A bake (PBRTTextureBake), reporting the inputs it had to read as their mean. `combine` and `alphaOf` are functions, or named as data
+	 * (combineOf): named, a large bake runs across workers. @private
+	 */
+	async _bake( label, terms, combine, { alphaOf = null, linear = false, perChannel = false } = {} ) {
 
-		const baked = bake( terms, combine, options );
-		if ( baked?.averaged ) this.warn( `${label}: ${baked.averaged} input(s) in another uv set than the first image — read as their mean` );
+		const plan = planBake( terms );
+		if ( ! plan ) return null;
+		const named = typeof combine !== 'function' && typeof alphaOf !== 'function';
+		const data = ( named && plan.width * plan.height >= BAKE_WORKER_TEXELS && await this._bakeInWorkers( plan, combine, { alphaOf, linear, perChannel } ) )
+			|| bakeHere( plan, named ? combineOf( combine ) : combine, { alphaOf: alphaOf && ( named ? combineOf( alphaOf ) : alphaOf ), linear, perChannel } );
+		const baked = bakeResult( plan, data );
+		if ( baked.averaged ) this.warn( `${label}: ${baked.averaged} input(s) in another uv set than the first image — read as their mean` );
 		return baked;
+
+	}
+
+	/** A plan's rows in bands across the bake workers, into shared memory; null to bake on this thread instead. @private */
+	async _bakeInWorkers( plan, combine, { alphaOf, linear, perChannel } ) {
+
+		const pool = this._bakeWorkers();
+		// A layer not in shared memory is copied to every worker: only a small one.
+		if ( ! pool || ! plan.terms.every( ( term ) => ! term.layer || term.layer.data.buffer instanceof SharedArrayBuffer || term.layer.data.byteLength <= BAKE_COPY_BYTES ) ) return null;
+
+		// A worker keeps what it is sent until it collects garbage, which these seldom do: a layer made for this bake
+		// alone (an alpha map, a mix's colours) would outlive it there (watercolor: 625 MB at peak). Closing the pool
+		// after such a bake frees it; layers the build keeps anyway cost nothing.
+		const cached = new Set( this._layers.values() );
+		const fresh = [ plan.driver, ...plan.terms.map( ( term ) => term.layer ) ].some( ( l ) => l && l.data.buffer instanceof SharedArrayBuffer && ! cached.has( l ) );
+
+		// Only what bakeRows reads, a layer once however many terms name it.
+		const slim = new Map();
+		const slimOf = ( l ) => slim.get( l ) ?? slim.set( l, { width: l.width, height: l.height, channels: l.channels, data: l.data, su: l.su, sv: l.sv, du: l.du, dv: l.dv } ).get( l );
+		const message = {
+			plan: { terms: plan.terms.map( ( term ) => ( term.layer ? { ...term, layer: slimOf( term.layer ) } : term ) ), driver: slimOf( plan.driver ), width: plan.width, height: plan.height },
+			combine, alpha: alphaOf, linear, perChannel,
+		};
+
+		try {
+
+			// Each band comes back in a buffer of its own, so no output is left shared with the workers.
+			const out = new Uint8Array( plan.width * plan.height * 4 );
+			const rows = Math.ceil( plan.height / pool.size );
+			const bands = [];
+			for ( let j0 = 0; j0 < plan.height; j0 += rows ) {
+
+				const j1 = Math.min( plan.height, j0 + rows );
+				bands.push( pool.run( { message: { ...message, j0, j1 } } ).then( ( { band } ) => out.set( band, j0 * plan.width * 4 ) ) );
+
+			}
+
+			await Promise.all( bands );
+			return out;
+
+		} catch {
+
+			// A worker that failed or a pool closed under it: the page bakes it, to the same bytes. A failed worker is
+			// never idle again, so the pool goes and later bakes stay on the page.
+			pool.close();
+			if ( this._bakePool === pool ) this._bakePool = null;
+			return null;
+
+		} finally {
+
+			// The next large bake starts a new pool (not once the build has ended: then it is null).
+			if ( fresh && this._bakePool === pool ) {
+
+				pool.close();
+				this._bakePool = undefined;
+
+			}
+
+		}
+
+	}
+
+	/** Workers for large bakes (BakeWorker), started the first time one comes; null without. @private */
+	_bakeWorkers() {
+
+		if ( this._bakePool !== undefined ) return this._bakePool;
+		this._bakePool = null;
+		if ( ! hasWorkers() || typeof SharedArrayBuffer === 'undefined' || globalThis.crossOriginIsolated === false ) return null;
+		this._bakePool = workerPool( BakeWorker, Math.max( 1, hardwareThreads() - 1 ), ( job ) => [ job.message ] );
+		return this._bakePool;
 
 	}
 
@@ -3065,7 +3159,7 @@ export class PBRTSceneBuilder {
 		if ( scale > 1 || pBool( def.params, 'invert', false ) || encodingCurve( def.params ) ) {
 
 			const term = await this._bakeTerm( name, 3 );
-			const baked = term?.layer && this._bake( `texture "${name}"`, [ { ...term, clamp: true } ], ( [ v ] ) => v, { perChannel: true } );
+			const baked = term?.layer && await this._bake( `texture "${name}"`, [ { ...term, clamp: true } ], { op: 'first' }, { perChannel: true } );
 			if ( baked ) return { texture: bakedTexture( baked ) };
 			this.warn( `texture "${name}": its scale, invert or encoding could not be baked here — ignored` );
 
@@ -3090,11 +3184,13 @@ export class PBRTSceneBuilder {
 
 		const terms = await Promise.all( keys.map( ( key ) => this._paramTerm( params, key, 1, [ 0, 0, 0 ] ) ) );
 		if ( terms.some( ( term ) => ! term ) ) return null;
-		if ( id === null ) return this._bakeFloatMap( keys, terms, combine );
+		if ( id === null ) return this._bakeFloatMap( keys, terms, combine, id );
 		const key = [ id, ...terms.map( ( term ) => ( term.layer ? `${this._layerId( term.layer )} ${term.tint ?? ''}` : `${term.rgb}` ) ) ].join( '\0' );
-		if ( ! this._floatMaps.has( key ) ) {
+		// The bake's promise is kept, so materials built at once (a mix's two) wait for one bake.
+		const pending = this._floatMaps.get( key );
+		if ( ! pending ) {
 
-			const baked = this._bakeFloatMap( keys, terms, combine );
+			const baked = this._bakeFloatMap( keys, terms, combine, id );
 			this._floatMaps.set( key, baked );
 			return baked;
 
@@ -3102,15 +3198,16 @@ export class PBRTSceneBuilder {
 
 		// A clone per material over one image: packed once (images are keyed by source), and materials stay distinct
 		// (_dedupeMaterial compares maps by texture).
-		return this._floatMaps.get( key )?.clone() ?? null;
+		return ( await pending )?.clone() ?? null;
 
 	}
 
-	_bakeFloatMap( keys, terms, combine ) {
+	/** `id` names what `combine` computes; a name pbrt knows lets a worker bake it (PBRTTextureBake SCALARS). @private */
+	async _bakeFloatMap( keys, terms, combine, id ) {
 
 		// One pair of arrays for every texel: bake reads the result before the next.
 		const scalars = new Array( keys.length ), rgb = [ 0, 0, 0 ];
-		const baked = this._bake( `"${keys.join( '", "' )}"`, terms, ( values ) => {
+		const baked = await this._bake( `"${keys.join( '", "' )}"`, terms, namedScalars( id ) ? { op: 'scalars', fn: id, count: keys.length } : ( values ) => {
 
 			for ( let k = 0; k < scalars.length; k ++ ) scalars[ k ] = values[ k ][ 0 ];
 			rgb[ 0 ] = rgb[ 1 ] = rgb[ 2 ] = combine( scalars );
@@ -3166,7 +3263,7 @@ export class PBRTSceneBuilder {
 		}
 
 		if ( ! ( high > low ) ) return null;
-		const baked = this._bake( `"${key}"`, [ { layer } ], ( [ h ] ) => h.map( ( v ) => ( v - low ) / ( high - low ) ), { linear: true } );
+		const baked = await this._bake( `"${key}"`, [ { layer } ], { op: 'stretch', low, high }, { linear: true } );
 		return baked && { map: bakedTexture( baked, { srgb: false } ), distance: distance * ( high - low ) };
 
 	}
@@ -3187,7 +3284,7 @@ export class PBRTSceneBuilder {
 		}
 
 		const unit = ( rgb ) => rgb.map( ( v ) => Math.min( 1, Math.max( 0, v ) ) );
-		const baked = this._bake( `texture "${name}"`, [ { ...a, clamp: true }, { ...b, clamp: true }, amount ], mixOf, { perChannel: ! amount.layer } );
+		const baked = await this._bake( `texture "${name}"`, [ { ...a, clamp: true }, { ...b, clamp: true }, amount ], { op: 'mix' }, { perChannel: ! amount.layer } );
 		return baked ? { texture: bakedTexture( baked ) } : { constant: mixOf( [ unit( a.rgb ), unit( b.rgb ), amount.rgb ] ) };
 
 	}
@@ -3307,7 +3404,7 @@ export class PBRTSceneBuilder {
 
 		const a = await term( matA ), b = await term( matB );
 		if ( ! a || ! b ) return { mean, texture: null };
-		const baked = this._bake( `mix amount "${amountName}"`, [ a, b, amount ], mixOf, { perChannel: ! amount.layer } );
+		const baked = await this._bake( `mix amount "${amountName}"`, [ a, b, amount ], { op: 'mix' }, { perChannel: ! amount.layer } );
 		return { mean, texture: baked ? bakedTexture( baked ) : null };
 
 	}
@@ -3340,11 +3437,10 @@ export class PBRTSceneBuilder {
 				this._paramTerm( def.params, 'tex', 3, [ 1, 1, 1 ] ),
 				this._paramTerm( def.params, 'scale', 1, [ 1, 1, 1 ] )
 			] );
-			const product = ( [ a, f ] ) => [ a[ 0 ] * f[ 0 ], a[ 1 ] * f[ 0 ], a[ 2 ] * f[ 0 ] ];
 			if ( inner && factor ) {
 
-				const baked = this._bake( `texture "${name}"`, [ { ...inner, clamp: true }, factor ], product, { perChannel: ! factor.layer } );
-				return baked ? { texture: bakedTexture( baked ) } : { constant: product( [ inner.rgb, factor.rgb ] ) };
+				const baked = await this._bake( `texture "${name}"`, [ { ...inner, clamp: true }, factor ], { op: 'product' }, { perChannel: ! factor.layer } );
+				return baked ? { texture: bakedTexture( baked ) } : { constant: productOf( [ inner.rgb, factor.rgb ] ) };
 
 			}
 
