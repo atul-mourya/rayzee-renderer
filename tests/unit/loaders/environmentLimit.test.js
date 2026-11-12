@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { DataTexture, FloatType, RGBAFormat } from 'three';
 import { limitEnvironmentWidth } from '@/core/loaders/AssetLoader.js';
 
@@ -41,6 +41,40 @@ describe( 'limitEnvironmentWidth', () => {
 		expect( [ width, height ] ).toEqual( [ 4, 2 ] );
 		// The last column and row hold one source texel: x = 6, y = 2.
 		expect( data[ ( 1 * 4 + 3 ) * 4 ] ).toBeCloseTo( before[ ( 2 * 7 + 6 ) * 4 ], 5 );
+
+	} );
+
+	it( 'keeps the narrowed texels in place when the smaller block cannot be had', () => {
+
+		const texture = sky( 8, 4 );
+		const expected = sky( 8, 4 );
+		limitEnvironmentWidth( expected, 4 );
+
+		const buffer = texture.image.data.buffer;
+		const transfer = vi.spyOn( buffer, 'transfer' ).mockImplementation( () => {
+
+			throw new RangeError( 'Array buffer allocation failed' );
+
+		} );
+		limitEnvironmentWidth( texture, 4 );
+
+		expect( transfer ).toHaveBeenCalled();
+		const { data, width, height } = texture.image;
+		expect( [ width, height ] ).toEqual( [ 4, 2 ] );
+		expect( data.buffer ).toBe( buffer );
+		expect( Array.from( data ) ).toEqual( Array.from( expected.image.data ) );
+
+	} );
+
+	it( 'still throws what is not a failed allocation', () => {
+
+		const texture = sky( 8, 4 );
+		vi.spyOn( texture.image.data.buffer, 'transfer' ).mockImplementation( () => {
+
+			throw new TypeError( 'detached' );
+
+		} );
+		expect( () => limitEnvironmentWidth( texture, 4 ) ).toThrow( TypeError );
 
 	} );
 

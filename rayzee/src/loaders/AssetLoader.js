@@ -1601,7 +1601,22 @@ export function limitEnvironmentWidth( texture, maxWidth ) {
 
 	const bytes = w * h * 16;
 	const whole = data.byteOffset === 0 && data.byteLength === data.buffer.byteLength && data.buffer.transfer;
-	texture.image = { data: whole ? new Float32Array( data.buffer.transfer( bytes ) ) : data.slice( 0, w * h * 4 ), width: w, height: h };
+	let shrunk;
+	try {
+
+		shrunk = whole ? new Float32Array( data.buffer.transfer( bytes ) ) : data.slice( 0, w * h * 4 );
+
+	} catch ( error ) {
+
+		// A tab near its limit (the textured island after its read) can fail even the smaller block: the narrowed
+		// texels stay where they were written, and the rest of the buffer with them.
+		if ( ! ( error instanceof RangeError ) ) throw error;
+		shrunk = data.subarray( 0, w * h * 4 );
+		log.warn( `environment ${width}×${height} narrowed in place: no room for a ${w}×${h} copy (${error.message})` );
+
+	}
+
+	texture.image = { data: shrunk, width: w, height: h };
 	texture.needsUpdate = true;
 	log.info( `environment ${width}×${height} shrunk to ${w}×${h} (memory spill)` );
 
