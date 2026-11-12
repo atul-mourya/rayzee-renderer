@@ -452,4 +452,59 @@ describe( 'a pbrt texture map from a folder', () => {
 
 	} );
 
+	it( 'keeps nothing of an inflated image it can read again, reading it afresh each time it is held', async () => {
+
+		const decodeImage = vi.fn( async () => ( { data: pixels.slice(), width: 4, height: 2 } ) );
+		configurePlatform( { decodeImage } );
+		try {
+
+			const { importer } = importerWith();
+			const inflated = PNG.slice();
+			const reread = vi.fn( async () => new Blob( [ PNG ] ) );
+			const lazy = await importer._archiveImage( inflated, 'textures/wood.png', reread );
+			expect( lazy.image ).toMatchObject( { width: 4, height: 2, data: null } );
+			expect( reread ).not.toHaveBeenCalled();
+
+			inflated.fill( 0 ); // what the load read is gone: the pixels come from the archive again
+			for ( let k = 1; k <= 2; k ++ ) {
+
+				await holdImages( [ lazy ] );
+				expect( reread ).toHaveBeenCalledTimes( k );
+				expect( Array.from( lazy.image.data ) ).toEqual( Array.from( pixels ) );
+				releaseImages( [ lazy ] );
+
+			}
+
+		} finally {
+
+			configurePlatform( { decodeImage: null } );
+
+		}
+
+	} );
+
+} );
+
+describe( 'an archive downloaded from a URL', () => {
+
+	it( 'loads as transient: the cache can evict or replace its file once the load lets go of it', async () => {
+
+		const loader = Object.create( AssetLoader.prototype );
+		const file = new File( [ 'zip' ], 'scene.zip' );
+		const release = vi.fn();
+		loader.getFileFormat = () => ( { type: 'archive' } );
+		loader.storage = null;
+		loader._downloads = { _storage: null, fetch: async () => ( { file, release } ) };
+		loader._downloadProgress = () => () => {};
+
+		loader._downloadComplete = () => {};
+
+		const load = vi.spyOn( loader, 'loadAssetFromFile' ).mockResolvedValue( 'model' );
+
+		expect( await loader.loadAssetFromUrl( 'https://x.test/scene.zip', { element: 'room' } ) ).toBe( 'model' );
+		expect( load ).toHaveBeenCalledWith( file, { element: 'room', transient: true } );
+		expect( release ).toHaveBeenCalledTimes( 1 );
+
+	} );
+
 } );

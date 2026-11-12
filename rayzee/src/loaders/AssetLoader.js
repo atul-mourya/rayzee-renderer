@@ -696,7 +696,8 @@ export class AssetLoader extends EventDispatcher {
 
 		try {
 
-			return await this.loadAssetFromFile( download.file, loadOptions );
+			// Transient: the cache can evict or replace a download's file once the load lets go of it (or it is memory).
+			return await this.loadAssetFromFile( download.file, { ...loadOptions, transient: true } );
 
 		} catch ( error ) {
 

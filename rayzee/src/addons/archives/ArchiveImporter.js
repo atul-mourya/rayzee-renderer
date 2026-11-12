@@ -36,7 +36,19 @@ const MAIN_MODEL_FILES = [ 'scene.gltf', 'scene.glb', 'model.gltf', 'model.glb',
 
 // An entry is bytes already read, or a Blob read only when a loader asks for it.
 const asBlob = entry => ( entry instanceof Blob ? entry : new Blob( [ entry ], { type: 'application/octet-stream' } ) );
-const bytesOf = async entry => ( entry instanceof Blob ? new Uint8Array( await entry.arrayBuffer() ) : entry );
+/** A compressed archive entry, inflated each time it is read: as a Blob it was inflated up front and held. */
+class PackedEntry {
+
+	constructor( size, read ) {
+
+		this.size = size;
+		this.read = read;
+
+	}
+
+}
+
+const bytesOf = async entry => ( entry instanceof Blob ? new Uint8Array( await entry.arrayBuffer() ) : entry instanceof PackedEntry ? entry.read() : entry );
 const textOf = async entry => ( entry instanceof Blob ? entry.text() : strFromU8( entry ) );
 const joinPath = ( dir, ref ) => {
 
@@ -361,6 +373,8 @@ export class ArchiveImporter {
 	 * @param {number} [options.byteBudget] - cap on retained bytes when no element is chosen.
 	 * @param {number} [options.promptBytes] - size past which a multi-part archive asks which
 	 *   parts to load instead of taking all of them.
+	 * @param {boolean} [options.transient] - the file may not be readable once the load returns (a download: storage the
+	 *   cache can evict or replace, or memory): images keep their own copies rather than read it again.
 	 * @param {number} [options.maxTriangles] - stop past this many STORED triangles.
 	 * @param {number} [options.maxPlacements] - stop past this many instance placements.
 	 * @param {number} [options.mergeShapesAbove] - merge small non-instanced shapes past this count.
@@ -371,7 +385,7 @@ export class ArchiveImporter {
 	 * @param {boolean} [options.instanceIncludes] - place a file included again under the same
 	 *   material as another instance of its first reading (default true).
 	 */
-	async loadArchiveFromFile( file, filename, { pbrtEntry = null, element = null, byteBudget, promptBytes, ...pbrt } = {} ) {
+	async loadArchiveFromFile( file, filename, { pbrtEntry = null, element = null, byteBudget, promptBytes, transient = false, ...pbrt } = {} ) {
 
 		pbrtEntry ??= sceneFileElement( element );
 
@@ -379,7 +393,7 @@ export class ArchiveImporter {
 
 			const kind = detectArchiveKind( await this._readHead( file ) );
 			const archiveId = this.loader.storage ? identityKey( await fileIdentity( file ) ) : null;
-			const lazy = { element, promptBytes, pbrtEntry, pbrt, archiveId };
+			const lazy = { element, promptBytes, pbrtEntry, pbrt, archiveId, transient };
 
 			// A seekable archive is indexed rather than read: entries are pulled out as the scene
 			// asks for them and never all held at once. That is the difference between a 7 GB archive
@@ -481,9 +495,18 @@ export class ArchiveImporter {
 
 		}
 
+		// A USD scene reads its files as composition reaches them: a zip's compressed ones are inflated then, not all
+		// up front into Blobs (past 500 MB of them a fresh Chrome profile refuses to read any).
+		const kept = source.listing.filter( e => e.offset !== undefined );
+		const usd = this._mainModelPath( kept.map( e => e.path ) )?.usd;
 		const entries = Object.create( null );
-		for ( const e of source.listing ) if ( e.offset !== undefined ) entries[ e.path ] = source.entries[ e.path ] ?? await source.slice( e.path );
-		const result = this._mainModelPath( Object.keys( entries ) )?.usd
+		for ( const e of kept ) {
+
+			entries[ e.path ] = source.entries[ e.path ] ?? ( usd && e.packed ? new PackedEntry( e.size, () => source.read( e.path ) ) : await source.slice( e.path ) );
+
+		}
+
+		const result = usd
 			? await this.loadUSDScene( entries, filename, { ...pbrt, element, promptBytes, listing: source.listing, transient: source.transient } )
 			: await this._loadNonPBRTArchive( entries, filename );
 		this.loader._sourceKey = this.loader._keyed( kind, archiveId );
@@ -515,7 +538,7 @@ export class ArchiveImporter {
 
 					const bytes = loader === 'environment' ? await vfs.readPath( path ) : await vfs.readBlob( path );
 					if ( ! bytes ) return null;
-					return loader === 'environment' ? envFromBytes( bytes, path ) : imageFromBytes( bytes, path );
+					return loader === 'environment' ? envFromBytes( bytes, path ) : imageFromBytes( bytes, path, () => vfs.readBlob( path ) );
 
 				},
 			} );
@@ -842,7 +865,10 @@ export class ArchiveImporter {
 		}
 
 		const plyParser = ( buf ) => parseBinaryPLY( buf ) ?? this.loader.loaderCache.ply.parse( buf );
-		const imageFromBytes = ( bytes, fname ) => this._archiveImage( bytes, fname );
+		// Read again only from an archive's own file: an unpacked .tar.gz's storage can be evicted once the load lets go of
+		// it, and an archive held in memory would be kept whole for the scene's life.
+		const rereads = !! source?.slice && ! source.transient;
+		const imageFromBytes = ( bytes, fname, reread ) => this._archiveImage( bytes, fname, rereads ? reread : null );
 		const envFromBytes = ( bytes, fname ) => this._archiveEnvironment( bytes, fname );
 
 		const pbrtStart = performance.now();
@@ -968,17 +994,26 @@ export class ArchiveImporter {
 
 	/**
 	 * A texture map from an archive (`entry`: its bytes or Blob), tagged with its path so a stored scene can read it back.
-	 * Its pixels are decoded from the archive only while the texture arrays are packed. @private
+	 * Its pixels are decoded from the archive only while the texture arrays are packed: through `reread()` when given,
+	 * which keeps nothing of `entry`. A Blob of inflated bytes kept per image passed the 500 MB of blobs a fresh Chrome
+	 * profile holds, and every image past it failed to decode. @private
 	 */
-	async _archiveImage( entry, fname ) {
+	async _archiveImage( entry, fname, reread = null ) {
 
-		const blob = asBlob( entry );
-		const read = async () => ( await this._pbrtTextureFromBytes( new Uint8Array( await blob.arrayBuffer() ), fname ) ).image;
+		const kept = reread ? null : asBlob( entry );
+		const read = async () => {
+
+			const bytes = await bytesOf( kept ?? await reread() );
+			if ( ! bytes ) throw new Error( `${fname} can no longer be read from its archive` );
+			return ( await this._pbrtTextureFromBytes( bytes, fname ) ).image;
+
+		};
+
 		let texture;
 		try {
 
 			const size = imageKind( fname ) === 'drawable' && ( getPlatform().decodeImage || typeof createImageBitmap === 'function' )
-				? imageHeaderSize( new Uint8Array( await blob.slice( 0, IMAGE_HEADER_BYTES ).arrayBuffer() ) )
+				? imageHeaderSize( entry instanceof Blob ? new Uint8Array( await entry.slice( 0, IMAGE_HEADER_BYTES ).arrayBuffer() ) : entry.subarray( 0, IMAGE_HEADER_BYTES ) )
 				: null;
 			if ( size ) {
 
@@ -1071,8 +1106,9 @@ export class ArchiveImporter {
 			pauseBuild: this._buildPause( slice ),
 			resolveImage: async path => {
 
+				const packed = entries[ path ] instanceof PackedEntry ? entries[ path ] : null;
 				const entry = entries[ path ] instanceof Blob && ! options.transient ? entries[ path ] : await files.read( path );
-				return entry ? this._archiveImage( entry, path ) : null;
+				return entry ? this._archiveImage( entry, path, packed && ! options.transient ? packed.read : null ) : null;
 
 			},
 			resolveEnvironment: async path => {
@@ -1084,7 +1120,8 @@ export class ArchiveImporter {
 			maxTriangles: options.maxTriangles, maxPlacements: options.maxPlacements, mergeShapesAbove: options.mergeShapesAbove,
 			resolvePtex: async path => {
 
-				const entry = entries[ path ];
+				// Read by range for the scene's life: a compressed one inflated into a Blob, off the JavaScript heap.
+				const entry = entries[ path ] instanceof PackedEntry ? new Blob( [ await entries[ path ].read() ] ) : entries[ path ];
 				if ( entry instanceof Blob ) return { read: async ( start, end ) => new Uint8Array( await entry.slice( start, end ).arrayBuffer() ) };
 				const bytes = await files.read( path );
 				return bytes && { read: async ( start, end ) => bytes.subarray( start, end ) };

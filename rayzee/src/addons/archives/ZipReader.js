@@ -221,7 +221,7 @@ export async function openZip( blob, { filter = null } = {} ) {
 
 		if ( filter && ! filter( e.name, e.size ) ) return { path: e.name, size: e.size };
 		byPath.set( e.name, e );
-		return { path: e.name, size: e.size, offset: e.local };
+		return { path: e.name, size: e.size, offset: e.local, packed: e.method !== 0 };
 
 	} );
 

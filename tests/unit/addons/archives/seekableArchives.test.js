@@ -240,7 +240,7 @@ describe( 'ZipReader', () => {
 
 		const body = text( 'zip64 body' );
 		const zip = await openZip( blob( makeZip64( 'big/one.bin', body ) ) );
-		expect( zip.listing ).toEqual( [ { path: 'big/one.bin', size: body.length, offset: 0 } ] );
+		expect( zip.listing ).toEqual( [ { path: 'big/one.bin', size: body.length, offset: 0, packed: false } ] );
 		expect( await zip.read( 'big/one.bin' ) ).toEqual( body );
 
 	} );
@@ -260,7 +260,7 @@ describe( 'ZipReader', () => {
 
 		const a = text( 'hello zip64 world, hello again\n'.repeat( 20 ) );
 		const zip = await openZip( blob( INFO_ZIP64 ) );
-		expect( zip.listing ).toEqual( [ { path: 'a.txt', size: 620, offset: 0 }, { path: 'b.bin', size: 12, offset: 0x78 } ] );
+		expect( zip.listing ).toEqual( [ { path: 'a.txt', size: 620, offset: 0, packed: true }, { path: 'b.bin', size: 12, offset: 0x78, packed: false } ] );
 		expect( await zip.read( 'a.txt' ) ).toEqual( a );
 		expect( await zip.read( 'b.bin' ) ).toEqual( text( 'stored bytes' ) );
 		expect( new Uint8Array( await ( await zip.slice( 'a.txt' ) ).arrayBuffer() ) ).toEqual( a );
@@ -274,7 +274,7 @@ describe( 'ZipReader', () => {
 
 		const body = text( 'deflate me '.repeat( 40 ) );
 		const zip = await openZip( blob( makeZip64( 'big/one.bin', body, deflateSync( body ) ) ) );
-		expect( zip.listing ).toEqual( [ { path: 'big/one.bin', size: body.length, offset: 0 } ] );
+		expect( zip.listing ).toEqual( [ { path: 'big/one.bin', size: body.length, offset: 0, packed: true } ] );
 		expect( await zip.read( 'big/one.bin' ) ).toEqual( body );
 
 	} );

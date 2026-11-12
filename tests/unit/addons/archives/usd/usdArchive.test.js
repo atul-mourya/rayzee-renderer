@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
+import { strToU8, zipSync } from 'three/addons/libs/fflate.module.js';
 
 vi.hoisted( () => {
 
@@ -130,6 +131,105 @@ describe( 'a USD scene in a folder', () => {
 		const { importer: archives } = importer();
 		await archives.loadFolder( folderOf( ISLAND ) );
 		expect( archives.lastUSDStats.meshCount ).toBe( 3 );
+
+	} );
+
+} );
+
+describe( 'a USD scene in a zip', () => {
+
+	it( 'inflates each file when the load reaches it, never one the scene does not name', async () => {
+
+		const unused = 'island/usd/unused/big.bin';
+		const files = Object.fromEntries( Object.entries( ISLAND ).map( ( [ path, body ] ) => [ path, strToU8( body ) ] ) );
+		// Noise, so it stays large deflated: its local header sits outside the head and the directory reads.
+		let seed = 1;
+		files[ unused ] = new Uint8Array( 256 << 10 ).map( () => ( seed = ( seed * 16807 ) % 2147483647 ) & 255 );
+		const bytes = zipSync( files );
+		const name = strToU8( unused );
+		let at = - 1;
+		for ( let i = 0; i <= bytes.length - name.length && at < 0; i ++ ) if ( name.every( ( c, k ) => bytes[ i + k ] === c ) ) at = i;
+		expect( at ).toBeGreaterThan( 512 );
+		expect( at ).toBeLessThan( bytes.length - 65 * 1024 );
+
+		const zip = new File( [ bytes ], 'island.zip' );
+		const reads = [];
+		const slice = zip.slice.bind( zip );
+		zip.slice = ( start, end, type ) => {
+
+			reads.push( [ start ?? 0, end ?? zip.size ] );
+			return slice( start, end, type );
+
+		};
+
+		const { importer: archives } = importer();
+		await archives.loadArchiveFromFile( zip, 'island.zip' );
+		expect( archives.lastUSDStats.meshCount ).toBe( 3 );
+		// Its local header (30 bytes, then the first copy of its name) is read only to reach its data.
+		expect( reads.some( ( [ start, end ] ) => start < at && end > at - 30 ) ).toBe( false );
+
+	} );
+
+} );
+
+describe( 'an image of a zipped USD scene', () => {
+
+	const TEXTURED = {
+		'scene.usda': usda( `def Material "mat"
+{
+    token outputs:surface.connect = </mat/s.outputs:surface>
+    def Shader "s"
+    {
+        uniform token info:id = "UsdPreviewSurface"
+        color3f inputs:diffuseColor.connect = </mat/t.outputs:rgb>
+    }
+    def Shader "t"
+    {
+        uniform token info:id = "UsdUVTexture"
+        asset inputs:file = @./wood.png@
+    }
+}
+def Mesh "m"
+{
+    int[] faceVertexCounts = [3]
+    int[] faceVertexIndices = [0, 1, 2]
+    point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+    rel material:binding = </mat>
+}` ),
+		'wood.png': 'not really a png',
+	};
+
+	// Its re-read: from the archive for a file picked from disk, none (a copy kept) for a download.
+	const rereadOf = async options => {
+
+		const zip = new File( [ zipSync( Object.fromEntries( Object.entries( TEXTURED ).map( ( [ p, b ] ) => [ p, strToU8( b ) ] ) ) ) ], 'scene.zip' );
+		const { importer: archives } = importer();
+		const seen = [];
+		archives._archiveImage = async ( entry, path, reread ) => {
+
+			seen.push( { path, reread, bytes: entry.length } );
+			return null;
+
+		};
+
+		await archives.loadArchiveFromFile( zip, 'scene.zip', options );
+		return seen;
+
+	};
+
+	it( 'is read again from the archive it came from', async () => {
+
+		const [ local ] = await rereadOf( {} );
+		expect( local.path ).toBe( 'wood.png' );
+		expect( local.bytes ).toBe( TEXTURED[ 'wood.png' ].length );
+		expect( new TextDecoder().decode( await local.reread() ) ).toBe( TEXTURED[ 'wood.png' ] );
+
+	} );
+
+	it( 'keeps its own copy when the archive may not outlive the load', async () => {
+
+		const [ downloaded ] = await rereadOf( { transient: true } );
+		expect( downloaded.reread ).toBe( null );
 
 	} );
 

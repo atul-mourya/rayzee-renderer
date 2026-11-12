@@ -400,7 +400,8 @@ export async function listEntryPathsFrom( vfs ) {
  * @param {Object<string,Uint8Array>} args.vfs - zip entries (path → bytes)
  * @param {string} [args.entryPath] - top .pbrt; auto-detected if omitted
  * @param {(buf:ArrayBuffer)=>import('three').BufferGeometry} args.plyParser
- * @param {(bytes:Uint8Array|Blob, filename:string)=>Promise<import('three').Texture>} args.imageFromBytes
+ * @param {(bytes:Uint8Array|Blob, filename:string, reread:()=>Promise<Uint8Array|Blob>)=>Promise<import('three').Texture>} args.imageFromBytes -
+ *   `reread()` reads the file again, so the texture need keep none of its bytes
  * @param {(bytes:Uint8Array, filename:string)=>Promise<import('three').Texture>} [args.envFromBytes]
  * @param {boolean} [args.convertHandedness=true]
  * @param {boolean} [args.animation=true] - load a frame sequence (`frame25.pbrt`, `frame35.pbrt`, …)
@@ -540,7 +541,7 @@ export async function loadPBRTScene( args ) {
 
 			const bytes = await vfs.readBlob( filename );
 			if ( ! bytes ) return null;
-			return imageFromBytes( bytes, filename );
+			return imageFromBytes( bytes, filename, () => vfs.readBlob( filename ) );
 
 		},
 		resolveEnvironment: async ( filename ) => {
