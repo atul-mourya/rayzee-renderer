@@ -1167,26 +1167,16 @@ function captureDenoisedPNG( expected = RENDER_SIZE ) {
  */
 async function denoisedNonFinite() {
 
-	let pixels;
-
-	// On when awaitDenoise() ran it. OIDN's picture is a texture no render target owns, so it is
-	// read as a 'display' readback reads it; this checked only NRD and the raw render before.
-	if ( app.denoisingManager?.denoiser?.enabled ) {
-
-		const shown = await app.renderToBuffer( { colorSpace: 'linear', source: 'display' } );
-		if ( shown.source !== 'oidn' ) throw new Error( `__bench.denoisedNonFinite: read '${shown.source}', not OIDN's picture` );
-		pixels = shown.data;
-
-	} else {
-
-		const s = app.stages;
-		const target = ( s.nrd?.enabled && s.nrd.outputTarget )
-			|| s.pathTracer.storageTextures.readTarget;
-
-		const { width, height } = RENDER_SIZE;
-		pixels = await app.renderer.readRenderTargetPixelsAsync( target, 0, 0, width, height, 0 );
-
-	}
+	// What the canvas shows, as a 'display' readback reads it: OIDN's or NRD's picture, else the
+	// accumulation — under NRD only once it has handed the frame back. Reading NRD's outputTarget
+	// threw where NRD had passed every frame through since the raw rung freed it.
+	const nrd = app.stages.nrd;
+	const samples = app.pipeline.context.getState( 'pathtracer:samples' ) ?? app.stages.pathTracer.frameCount;
+	const handedBack = nrd?.enabled && samples + 1 >= nrd.u.handoverFrames.value;
+	const want = app.denoisingManager?.denoiser?.enabled ? [ 'oidn' ] : nrd?.enabled ? ( handedBack ? [ 'nrd', 'accumulation' ] : [ 'nrd' ] ) : [ 'accumulation' ];
+	const shown = await app.renderToBuffer( { colorSpace: 'linear', source: 'display' } );
+	if ( ! want.includes( shown.source ) ) throw new Error( `__bench.denoisedNonFinite: read '${shown.source}', not ${want.join( ' or ' )}` );
+	const pixels = shown.data;
 
 	let nonFinite = 0;
 
