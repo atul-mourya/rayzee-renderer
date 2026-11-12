@@ -433,15 +433,16 @@ function exportDetails( app, format, asShown = false ) {
 
 /**
  * What a `'display'` read shows: the texture a denoiser published, or null for the raw
- * accumulation — recorded as a fallback when a denoiser is in use.
+ * accumulation — recorded as a fallback when a denoiser is in use and published nothing.
  */
 export function displaySource( app, accumulation ) {
 
 	const context = app.pipeline?.context;
 	const found = context && app.stages.compositor?.resolveLightSource( context );
-	if ( found && found.key !== 'pathtracer:color' && found.texture !== accumulation.texture ) {
+	if ( found && found.key !== 'pathtracer:color' ) {
 
-		return { texture: found.texture, source: found.key.split( ':' )[ 0 ] };
+		// A denoiser that handed the frame back publishes the accumulation itself: shown, not a fallback.
+		return found.texture === accumulation.texture ? null : { texture: found.texture, source: found.key.split( ':' )[ 0 ] };
 
 	}
 

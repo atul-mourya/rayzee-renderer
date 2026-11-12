@@ -724,6 +724,11 @@ describe( 'reading what the compositor shows', () => {
 		expect( app._displaySource( accumulation ) ).toBeNull();
 		await expect( app._readDisplaySource( accumulation, 2, 1 ) ).resolves.toMatchObject( { source: 'accumulation' } );
 
+		// A denoiser that handed the frame back (NRD) shows it: no fallback recorded.
+		app._denoiserInUse = () => true;
+		app._displaySource( accumulation );
+		expect( app._issues.list ).toHaveLength( 0 );
+
 	} );
 
 	it( 'keeps one readback pass', () => {
