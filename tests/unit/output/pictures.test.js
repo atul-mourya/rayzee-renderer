@@ -158,6 +158,38 @@ describe( 'renderToBuffer', () => {
 
 	} );
 
+	it( 'reads one picture at a time, a call that fails freeing the next', async () => {
+
+		const app = makeApp();
+		const started = [];
+		const gates = [];
+		app._readPicture = vi.fn( ( target, width, height, options ) => {
+
+			started.push( options.source );
+			return new Promise( ( resolve, reject ) => gates.push( { resolve: () => resolve( { data: new Uint8ClampedArray( width * height * 4 ), displayColorSpace: 'srgb' } ), reject } ) );
+
+		} );
+
+		const first = app.renderToBuffer( { source: 'display' } );
+		const second = app.renderToBuffer( { source: 'accumulation' } );
+		const third = app.renderToBuffer( { source: 'display' } );
+		await new Promise( ( r ) => setTimeout( r, 0 ) );
+		expect( started ).toEqual( [ 'display' ] );
+
+		gates[ 0 ].reject( new Error( 'map aborted' ) );
+		await expect( first ).rejects.toThrow( 'map aborted' );
+		await new Promise( ( r ) => setTimeout( r, 0 ) );
+		expect( started ).toEqual( [ 'display', 'accumulation' ] );
+
+		gates[ 1 ].resolve();
+		await second;
+		await new Promise( ( r ) => setTimeout( r, 0 ) );
+		gates[ 2 ].resolve();
+		expect( ( await third ).colorSpace ).toBe( 'srgb' );
+		expect( started ).toEqual( [ 'display', 'accumulation', 'display' ] );
+
+	} );
+
 	it( 'makes a half-float readback opaque with half-float ones', async () => {
 
 		const half = DataUtils.toHalfFloat( 0.5 );

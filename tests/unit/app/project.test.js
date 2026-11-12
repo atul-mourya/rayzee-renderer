@@ -63,7 +63,7 @@ function fakeApp( storage, { source = null, file = null, folder = null, model = 
 		sceneSourceFolder: folder,
 		sceneModel: { name: model },
 		exportSceneState: () => ( { v: 1, edits: 3 } ),
-		getCanvas: () => ( { width: 640, height: 480 } ),
+		renderToBuffer: async () => ( { data: new Uint8Array( 640 * 480 * 4 ), width: 640, height: 480, displayColorSpace: 'srgb' } ),
 	};
 
 }
@@ -108,7 +108,16 @@ describe( 'projects', () => {
 		const root = await fake.root.getDirectoryHandle( 'rayzee', { create: true } );
 		( { storage } = await openStorage( { namespace: 'rayzee', root, transport: 'inline' } ) );
 		ensureAppAreas( storage );
-		vi.stubGlobal( 'createImageBitmap', async ( canvas ) => ( { width: canvas.width, height: canvas.height, close: () => {} } ) );
+		vi.stubGlobal( 'ImageData', class {
+
+			constructor( data, width, height ) {
+
+				Object.assign( this, { data, width, height } );
+
+			}
+
+		} );
+		vi.stubGlobal( 'createImageBitmap', async ( image, options ) => ( { width: options?.resizeWidth ?? image.width, height: options?.resizeHeight ?? image.height, close: () => {} } ) );
 		vi.stubGlobal( 'OffscreenCanvas', FakeCanvas );
 
 	} );
@@ -223,7 +232,11 @@ describe( 'projects', () => {
 	it( 'saves without a thumbnail when there is no picture', async () => {
 
 		const sink = pickSaveFile();
-		const app = { ...fakeApp( storage, { model: 'Dark' } ), getCanvas: () => null };
+		const app = { ...fakeApp( storage, { model: 'Dark' } ), renderToBuffer: async () => {
+
+			throw new Error( 'renderToBuffer: no render target' );
+
+		} };
 		await saveProject( app );
 
 		expect( ( await readProject( sink.file() ) ).thumb ).toBeNull();

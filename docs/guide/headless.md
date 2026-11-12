@@ -75,6 +75,7 @@ it back with `renderToBuffer( { source: 'display' } )`. Driving it yourself is t
 `denoise: { quality: 'high', tileSize: 2048 }` also picks the model (the default is `'fast'`) and the tile cap: with no
 live view to keep smooth, a larger cap is faster for more GPU memory — 1920×1080 as one tile instead of four took 27 %
 less time on an M5 Pro. A tile never grows past what the GPU can dispatch (~2000² with its border), whatever the cap.
+Calls to `renderToBuffer` run one at a time: a second call waits for the first to finish, failed or not.
 `renderToBuffer` reports the picture it read as `source`, and records `output.source_fallback` when
 `'display'` was asked for, a denoiser is in use, and nothing had published — so a strict host cannot
 ship a noisy image by mistake. Its `'srgb'` bytes are tone-mapped on the GPU — 9 ms at 4096×2160,

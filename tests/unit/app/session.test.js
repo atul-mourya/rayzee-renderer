@@ -292,19 +292,73 @@ describe( 'sessions', () => {
 
 	} );
 
-	it( 'reads the canvas for a thumbnail only once the GPU has finished what it was sent', async () => {
+	it( 'takes the thumbnail from the picture read back on the card, never the canvas', async () => {
 
-		let finish;
 		const app = fakeApp( null );
-		app.renderer = { backend: { device: { queue: { onSubmittedWorkDone: () => new Promise( r => ( finish = r ) ) } } } };
-		app.getCanvas = vi.fn( () => null );
+		const width = 640, height = 360;
+		app.renderToBuffer = vi.fn( async () => ( { data: new Uint8Array( width * height * 4 ).fill( 200 ), width, height, displayColorSpace: 'srgb' } ) );
+		app.getCanvas = vi.fn();
+		const sizes = [];
+		vi.stubGlobal( 'ImageData', class {
 
-		const capture = captureSession( app );
-		await Promise.resolve();
-		expect( app.getCanvas ).not.toHaveBeenCalled();
-		finish();
-		await capture;
-		expect( app.getCanvas ).toHaveBeenCalledTimes( 1 );
+			constructor( data, w, h ) {
+
+				Object.assign( this, { data, width: w, height: h } );
+
+			}
+
+		} );
+		vi.stubGlobal( 'createImageBitmap', vi.fn( async ( image, { resizeWidth, resizeHeight } ) => {
+
+			sizes.push( [ image.width, image.height, resizeWidth, resizeHeight ] );
+			return { width: resizeWidth, height: resizeHeight, close: vi.fn() };
+
+		} ) );
+		vi.stubGlobal( 'OffscreenCanvas', class {
+
+			constructor( w, h ) {
+
+				Object.assign( this, { width: w, height: h } );
+
+			}
+
+			getContext() {
+
+				return { drawImage: vi.fn() };
+
+			}
+
+			async convertToBlob( options ) {
+
+				return new Blob( [ 'webp' ], { type: options.type } );
+
+			}
+
+		} );
+
+		try {
+
+			const { thumb } = await captureSession( app );
+			expect( app.renderToBuffer ).toHaveBeenCalledWith( { colorSpace: 'srgb', source: 'display', preserveAlpha: true } );
+			expect( app.getCanvas ).not.toHaveBeenCalled();
+			expect( sizes ).toEqual( [[ 640, 360, 320, 180 ]] );
+			expect( thumb?.type ).toBe( 'image/webp' );
+
+			// No picture yet, or one of the wrong size: no thumbnail, and no error.
+			app.renderToBuffer = vi.fn( async () => ( { data: new Uint8Array( 8 ), width, height } ) );
+			expect( ( await captureSession( app ) ).thumb ).toBeNull();
+			app.renderToBuffer = vi.fn( async () => {
+
+				throw new Error( 'renderToBuffer: no render target' );
+
+			} );
+			expect( ( await captureSession( app ) ).thumb ).toBeNull();
+
+		} finally {
+
+			vi.unstubAllGlobals();
+
+		}
 
 	} );
 

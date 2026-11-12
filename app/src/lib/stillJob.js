@@ -156,7 +156,7 @@ export class StillCheckpointer {
 
 			const checkpoint = await app.captureRenderCheckpoint();
 			if ( ! checkpoint || this.id !== id ) return false;
-			const { record } = await captureSession( app );
+			const { record } = await captureSession( app, { thumbnail: false } );
 
 			const { color, normalDepth, albedo, m2, streak, frozenMask, auxCount, ...rest } = checkpoint;
 			const arrays = { color, normalDepth, albedo, m2, streak, frozenMask, auxCount };

@@ -52,14 +52,17 @@ async function captureThumbnail( app ) {
 
 	try {
 
-		// Reading the canvas waits for the GPU on the page's thread, which a large scene's first frames hold for seconds.
-		await app.renderer?.backend?.device?.queue?.onSubmittedWorkDone();
-		const canvas = app.getCanvas();
-		if ( ! canvas?.width ) return null;
-		const bitmap = await createImageBitmap( canvas );
-		const scale = Math.min( 1, THUMB_EDGE / Math.max( bitmap.width, bitmap.height ) );
-		const out = new OffscreenCanvas( Math.max( 1, Math.round( bitmap.width * scale ) ), Math.max( 1, Math.round( bitmap.height * scale ) ) );
-		out.getContext( '2d' ).drawImage( bitmap, 0, 0, out.width, out.height );
+		// The shown picture, read back on the card and mapped when it lands: a read of the canvas waited on the page's
+		// thread for every frame queued before it, 10 s right after the Moana island loaded.
+		const picture = await app.renderToBuffer?.( { colorSpace: 'srgb', source: 'display', preserveAlpha: true } );
+		const { data, width, height } = picture ?? {};
+		if ( ! width || ! height || data?.length !== width * height * 4 ) return null;
+		const image = new ImageData( new Uint8ClampedArray( data.buffer, data.byteOffset, data.length ), width, height, { colorSpace: picture.displayColorSpace === 'display-p3' ? 'display-p3' : 'srgb' } );
+		const scale = Math.min( 1, THUMB_EDGE / Math.max( width, height ) );
+		const w = Math.max( 1, Math.round( width * scale ) ), h = Math.max( 1, Math.round( height * scale ) );
+		const bitmap = await createImageBitmap( image, { resizeWidth: w, resizeHeight: h, resizeQuality: 'high' } );
+		const out = new OffscreenCanvas( w, h );
+		out.getContext( '2d', { willReadFrequently: true } ).drawImage( bitmap, 0, 0, w, h );
 		bitmap.close();
 		return await out.convertToBlob( { type: 'image/webp', quality: 0.8 } );
 

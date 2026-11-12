@@ -29,7 +29,16 @@ function canvasPixels( canvas, colorSpace = null ) {
 
 }
 
-export async function renderToBuffer( app, { colorSpace = 'srgb', preserveAlpha = false, source = 'accumulation', bitDepth = 8 } = {} ) {
+export function renderToBuffer( app, options ) {
+
+	// One at a time: overlapping reads shared the tone mapper's buffers, and the second's map aborted the first's.
+	const read = ( app._pictureReads ?? Promise.resolve() ).then( () => readToBuffer( app, options ) );
+	app._pictureReads = read.catch( () => {} );
+	return read;
+
+}
+
+async function readToBuffer( app, { colorSpace = 'srgb', preserveAlpha = false, source = 'accumulation', bitDepth = 8 } = {} ) {
 
 	const named = colorSpace !== 'linear' && colorSpace !== 'srgb';
 	if ( named && ! app.color?.hasConfig ) {
