@@ -598,6 +598,7 @@ export class BVHBuilder {
 			reinsertionsApplied: 0, reinsertionIterations: 0, saOrderTime: 0, initTime: 0, sahBuildTime: 0, reorderTime: 0
 		};
 		this.indices = new Uint32Array( this.totalTriangles );
+		this.recordsMoved = false;
 		return performance.now();
 
 	}
@@ -608,9 +609,15 @@ export class BVHBuilder {
 		const n = this.totalTriangles;
 		const reorderStart = performance.now();
 		const triSrc = this.triangles;
+		// Allocated first: once records move in place, a build that fails can no longer be run again.
+		const originalToBvh = new Uint32Array( n );
 		let reordered = reorderTarget || new triSrc.constructor( n * FPT );
-		if ( reordered === triSrc ) reordered = permuteRecords( triSrc, this.indices, FPT );
-		else for ( let i = 0; i < n; i ++ ) {
+		if ( reordered === triSrc ) {
+
+			this.recordsMoved = true;
+			reordered = permuteRecords( triSrc, this.indices, FPT );
+
+		} else for ( let i = 0; i < n; i ++ ) {
 
 			const srcOff = this.indices[ i ] * FPT;
 			reordered.set( triSrc.subarray( srcOff, srcOff + FPT ), i * FPT );
@@ -620,7 +627,6 @@ export class BVHBuilder {
 		this.reorderedTriangleData = reordered;
 
 		// originalToBvh[ originalTriIdx ] = bvhOrderIdx, for refits
-		const originalToBvh = new Uint32Array( n );
 		for ( let i = 0; i < n; i ++ ) originalToBvh[ this.indices[ i ] ] = i;
 		this.originalToBvhMap = originalToBvh;
 

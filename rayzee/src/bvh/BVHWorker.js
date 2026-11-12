@@ -256,7 +256,7 @@ function handleFullBuild( data ) {
 	} catch ( error ) {
 
 		log.error( 'build failed:', error );
-		self.postMessage( { error: error.message } );
+		self.postMessage( { error: error.message, recordsMoved: builder.recordsMoved } );
 
 	}
 

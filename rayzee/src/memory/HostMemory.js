@@ -91,6 +91,13 @@ export function deviceMemoryGB( stated ) {
 
 }
 
+/** Whether an error is an allocation that failed: a job that hit one may succeed with fewer running beside it. */
+export function isOutOfMemory( error ) {
+
+	return /allocation failed|out of memory/i.test( String( error?.message ?? error ) );
+
+}
+
 /** Headroom a single build step wants over its own size before it is called safe. */
 export const PREFLIGHT_SAFETY = 1.15;
 

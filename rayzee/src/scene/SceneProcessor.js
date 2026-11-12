@@ -5,7 +5,7 @@ import { TLASBuilder } from '../bvh/TLASBuilder.js';
 import { InstanceTable, IN_PLACE } from './InstanceTable.js';
 import { ChunkedRecords, SHARED_MEMORY_AVAILABLE, setChunkObserver, DEFAULT_CHUNK_BYTES } from '../memory/ChunkedRecords.js';
 import {
-	MemoryLedger, estimateSceneBytes, spillingPeakBytes, probeAddressSpace,
+	MemoryLedger, estimateSceneBytes, spillingPeakBytes, probeAddressSpace, isOutOfMemory,
 	PREFLIGHT_MIN_BYTES, PREFLIGHT_SAFETY, SAFE_SCENE_BYTES, MAX_SCENE_BYTES,
 } from '../memory/HostMemory.js';
 import { TextureCreator } from '../materials/TextureCreator.js';
@@ -58,6 +58,8 @@ const STREAM_YIELD_TRIANGLES = 1 << 20;
 const GEOMETRY_ON_DISK_BYTES = 1024 ** 3;
 // Extraction waits while more three.js geometry than this is queued for disk.
 const GEOMETRY_QUEUE_BYTES = 256 * 1024 * 1024;
+// Tries a BLAS build gets when it runs out of memory, each with one fewer worker at once.
+const BLAS_RETRIES = 3;
 
 const log = createLogger( 'scene' );
 
@@ -744,7 +746,9 @@ export class SceneProcessor {
 
 		const templates = new Map();
 		await bvhCoreReady();
-		const workerOpts = this._blasWorkerOpts();
+		// Copied, not built in place: a worker keeps each chunk it is handed until it collects garbage, which these
+		// seldom do, so chunks spilled here stayed resident (the textured island ran out of memory in extraction).
+		const workerOpts = { ...this._blasWorkerOpts(), inPlace: false };
 		let waiters = [];
 		const built = () => new Promise( resolve => waiters.push( resolve ) );
 		const wake = () => {
@@ -1700,7 +1704,7 @@ export class SceneProcessor {
 	/**
 	 * A BLAS worker pool that takes builds while it runs: `submit( { m, range } )` queues one,
 	 * `close()` resolves with every result once the queue has drained. Workers start as work
-	 * arrives, up to the pool size.
+	 * arrives, up to the pool size. `opts.inPlace: false` copies every range out and back.
 	 * @private
 	 */
 	_blasPool( opts, onProgress, onResult = null, poolSize = this.config.maxConcurrentTextureTasks || 4 ) {
@@ -1709,7 +1713,7 @@ export class SceneProcessor {
 		const results = [];
 		const workers = [];
 		const idle = [];
-		let closed = false, running = 0, completed = 0, failure = null;
+		let closed = false, running = 0, completed = 0, failure = null, limit = poolSize;
 		let settle;
 		const done = new Promise( ( resolve, reject ) => settle = { resolve, reject } );
 		done.catch( () => {} );
@@ -1731,6 +1735,27 @@ export class SceneProcessor {
 
 		};
 
+		// Out of memory, here or in a worker: the build runs again with one fewer at once (the worker that failed stops;
+		// the last waits for the collector), up to BLAS_RETRIES times. Records an in-place build already moved cannot.
+		const retry = ( worker, task, error, recordsMoved = false ) => {
+
+			const tries = ( task.tries ?? 0 ) + 1;
+			if ( recordsMoved || tries > BLAS_RETRIES || ! isOutOfMemory( error ) ) return false;
+			task.tries = tries;
+			queue.unshift( task );
+			if ( running > 0 ) {
+
+				worker.terminate();
+				workers.splice( workers.indexOf( worker ), 1 );
+				limit = Math.max( 1, workers.length );
+
+			} else setTimeout( () => failure || dispatch( worker ), 200 );
+
+			log.warn( `BLAS build ran out of memory, retried with ${Math.max( 1, running )} at once` );
+			return true;
+
+		};
+
 		const dispatch = ( worker ) => {
 
 			const task = queue.shift();
@@ -1747,12 +1772,12 @@ export class SceneProcessor {
 			try {
 
 				// A range in one shared chunk is built and reordered where it sits; any other is copied out and back.
-				const inPlace = this.triangles.shared && this.triangles.isContiguous( range.start, range.count );
+				const inPlace = opts.inPlace !== false && this.triangles.shared && this.triangles.isContiguous( range.start, range.count );
 				const meshTriData = inPlace ? this.triangles.slice( range.start, range.count ) : this.triangles.copyOf( range.start, range.count );
 
 				const triCount = range.count;
 
-				worker._currentTask = { m, range };
+				worker._currentTask = task;
 				worker.postMessage( {
 					triangleData: meshTriData.buffer,
 					triangleByteOffset: meshTriData.byteOffset,
@@ -1774,7 +1799,8 @@ export class SceneProcessor {
 
 			} catch ( error ) {
 
-				fail( error );
+				running --;
+				if ( ! retry( worker, task, error ) ) fail( error );
 
 			}
 
@@ -1786,7 +1812,8 @@ export class SceneProcessor {
 
 			if ( data.error ) {
 
-				fail( new Error( data.error ) );
+				running --;
+				if ( ! retry( worker, worker._currentTask, data.error, data.recordsMoved ) ) fail( new Error( data.error ) );
 				return;
 
 			}
@@ -1842,7 +1869,7 @@ export class SceneProcessor {
 				queue.push( task );
 				try {
 
-					const worker = idle.pop() ?? ( workers.length < poolSize ? spawn() : null );
+					const worker = idle.pop() ?? ( workers.length < limit ? spawn() : null );
 					if ( worker ) dispatch( worker );
 
 				} catch ( error ) {

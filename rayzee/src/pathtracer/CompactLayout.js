@@ -17,13 +17,13 @@ import { traversalStackSize, SPILLED_TRAVERSAL_STACK } from '../bvh/TraversalSta
 import { createWorker, hardwareThreads, hasWorkers } from '../Platform.js';
 import { runCompactJob } from './CompactJobs.js';
 import { createLogger } from '../Logger.js';
+import { isOutOfMemory } from '../memory/HostMemory.js';
 import CompactWorker from './CompactWorker.js?worker&inline';
 
 // Records a job: ~40 MB of triangles, ~32 MB of nodes, ~24 MB of copy records, so the workers' copies stay small.
 // `stage.compactJobSize` lowers it, for tests to force many jobs.
 const JOB_RECORDS = 1 << 19;
 const READ_STEP = 4 << 20;
-const OUT_OF_MEMORY = /allocation failed|out of memory/i;
 const JOB_RETRIES = 3;
 const LANES = TRIANGLE_DATA_LAYOUT.FLOATS_PER_TRIANGLE;
 const log = createLogger( 'pathtracer' );
@@ -145,7 +145,7 @@ export async function mapJobs( pool, jobs, onResult, times = null ) {
 
 				// Out of memory in a worker or here: the job runs again with one fewer at once, down to one.
 				const attempt = ( tries.get( job ) ?? 0 ) + 1;
-				if ( ! OUT_OF_MEMORY.test( String( error?.message ) ) || attempt > JOB_RETRIES ) {
+				if ( ! isOutOfMemory( error ) || attempt > JOB_RETRIES ) {
 
 					failed ??= error;
 					continue;

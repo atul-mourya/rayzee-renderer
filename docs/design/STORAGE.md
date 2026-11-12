@@ -136,7 +136,10 @@ turns it off or supplies a host manager; `openHeadless` defaults to off.
   to the storage worker lives until that worker next collects garbage, which it barely does: every
   spilled 64 MB chunk stayed in memory (2.5 GB of them measured), invisible to
   `measureUserAgentSpecificMemory`. `transferable()` copies shared data into a transferred buffer
-  for that reason. Otherwise the spill happens **during the
+  for that reason, and the streaming build hands its BLAS workers copies, never views of the store (`inPlace: false`):
+  workers that built in place kept the chunks they built from, and the textured island failed its extraction twice in
+  the user's Chrome where copies went through. A BLAS build out of memory runs again with one fewer worker at once
+  (`_blasPool`, as compact-layout jobs do). Otherwise the spill happens **during the
   build** (`SceneProcessor._beginProgressiveSpill`): each BLAS goes to scratch as it lands, a triangle
   chunk is uploaded (`PathTracerStage.createChunkUploader`, a GPU buffer allocated after
   extraction) and spilled once every BLAS over it is built, and the combined BVH is assembled from
