@@ -147,10 +147,71 @@ class Node {
 
 }
 
-function* strength( node ) {
+const hasArcs = node => node.specs.some( spec => spec.arcs );
 
-	yield node;
-	for ( const child of node.children ) yield* strength( child );
+/** The sites of `name` under a node's sites, its arcs not yet added; null when there are none (most lookups). */
+function siteNode( parent, name ) {
+
+	let node = null;
+	for ( let k = 0; k < parent.specs.length; k ++ ) {
+
+		const spec = parent.specs[ k ].child( name );
+		if ( spec ) {
+
+			node ??= nodeUnder( parent, name );
+			node.specs.push( spec );
+			node.layers.push( parent.layers[ k ] );
+
+		}
+
+	}
+
+	for ( const sub of parent.children ) {
+
+		const child = siteNode( sub, name );
+		if ( child ) ( node ??= nodeUnder( parent, name ) ).children.push( child );
+
+	}
+
+	return node;
+
+}
+
+function nodeUnder( parent, name ) {
+
+	const node = new Node( parent.stack, childPath( parent.path, name ), parent.map, parent.arc, parent.depth );
+	node.choice = parent.choice;
+	return node;
+
+}
+
+/** A node and everything under it, strongest first. */
+function strength( node, out = [] ) {
+
+	out.push( node );
+	for ( const child of node.children ) strength( child, out );
+	return out;
+
+}
+
+/** The strongest variant selection for `set` in a node's tree. */
+function selectionIn( node, set ) {
+
+	for ( const spec of node.specs ) {
+
+		const choice = spec.variantSelection?.[ set ];
+		if ( choice ) return choice;
+
+	}
+
+	for ( const child of node.children ) {
+
+		const choice = selectionIn( child, set );
+		if ( choice ) return choice;
+
+	}
+
+	return null;
 
 }
 
@@ -494,29 +555,17 @@ export class USDStage {
 
 	async childNode( parent, name, depth, chain ) {
 
-		const node = new Node( parent.stack, childPath( parent.path, name ), parent.map, parent.arc, parent.depth );
-		node.choice = parent.choice;
-		for ( let k = 0; k < parent.specs.length; k ++ ) {
+		const node = siteNode( parent, name );
+		if ( node ) await this.addArcsBelow( node, depth, chain );
+		return node;
 
-			const spec = parent.specs[ k ].child( name );
-			if ( spec ) {
+	}
 
-				node.specs.push( spec );
-				node.layers.push( parent.layers[ k ] );
+	/** Each node's arcs after its children's, as a walk composing each child in turn would add them. */
+	async addArcsBelow( node, depth, chain ) {
 
-			}
-
-		}
-
-		for ( const sub of parent.children ) {
-
-			const child = await this.childNode( sub, name, depth, chain );
-			if ( child ) node.children.push( child );
-
-		}
-
-		if ( node.specs.length ) await this.addArcs( node, depth, chain );
-		return node.specs.length || node.children.length ? node : null;
+		for ( const child of node.children ) if ( child.children.length || hasArcs( child ) ) await this.addArcsBelow( child, depth, chain );
+		if ( hasArcs( node ) ) await this.addArcs( node, depth, chain );
 
 	}
 
@@ -608,8 +657,9 @@ export class USDStage {
 		for ( let changed = true; changed; ) {
 
 			changed = false;
-			for ( const node of [ ...strength( root ) ] ) {
+			for ( const node of strength( root ) ) {
 
+				if ( ! node.specs.some( spec => spec.arcs?.variantSetNames || spec.variantSets ) ) continue;
 				const sets = new Set( composeListOps( node.specs.map( spec => spec.arcs?.variantSetNames ?? null ) ).map( item => item.value ) );
 				for ( const spec of node.specs ) for ( const set of spec.variantSets?.keys() ?? [] ) sets.add( set );
 				for ( const set of sets ) {
@@ -636,7 +686,7 @@ export class USDStage {
 
 					if ( variant.specs.length === 0 ) continue;
 					node.add( variant );
-					await this.addArcs( variant, depth, chain );
+					if ( hasArcs( variant ) ) await this.addArcs( variant, depth, chain );
 					changed = true;
 
 				}
@@ -649,14 +699,7 @@ export class USDStage {
 
 	selection( root, set ) {
 
-		for ( const node of strength( root ) ) for ( const spec of node.specs ) {
-
-			const choice = spec.variantSelection?.[ set ];
-			if ( choice ) return choice;
-
-		}
-
-		return null;
+		return selectionIn( root, set );
 
 	}
 
