@@ -8,32 +8,12 @@
 -   Fast compilation on windows devices
 -   make bvh an independent library — built as the `rayzee-bvh` package on the night of 2026-11-05 (branch
     `night/bvh-package`), not committed
-- claude design: redesign all ui component used in the application to create a custom design system
-  → 2026-11-13: the app's own look on a design system (`feat/design-system`): tokens for every colour and size in
-    `app/src/index.css`, the `?design` reference page, docs/design/DESIGN_SYSTEM.md, tests/unit/app/designTokens.test.js
-  → Audited and fixed the same day: hand-made buttons, chips and copies on the shared parts (one shape each), text at
-    WCAG AA in both themes (dark error red 1.7 → 6.0:1, light labels 3.3 → 5.4:1), every control named, the page
-    complete and loading no engine, PT Sans shipped. Left: `primary` as text on the hover grey reads 4.0:1 in dark and
-    `muted-foreground` there 4.3:1 in light (both shadcn's own); unchanged.
-- compare api of rayzee headless and pbrt. assess what can we learn and make it better
-  → assessed 2026-11-13: built `firstSample` (renderFrames, captureHeadless, provenance),
-  `captureHeadless` `steps` / `onStep` / `reference` → `errors`, `timings`, `compareImages` / `mergeRenders`, and the
-  camera in provenance and saved files, and `sceneRequest` (render what the file asks: size, spp, bounces,
-  integrator, exposure, …); `bench:node -- --only split,scene-request` pass on this Mac. Next: a crop
-  window with the pixel offset in the sampler's seed (on `feat/tiled-output`), m44f `worldToCamera` / `worldToNDC` EXR
-  attributes, a variance layer in the EXR. Assessment: ~/RayzeeScratch/night/2026-11-13/headless-api/ASSESSMENT.md
-  → found on the way (2026-11-13 night): a final render traced its first sample with one
-    bounce and kept it in the average (1/N of the indirect light missing); removed, production now traces exactly as
-    interactive (`bench:node -- --only production`).
-  → `samplerSeed` (pbrt's --seed) built on the night of 2026-11-13: seed 0
-    bit-identical to before, two seeds independent (averaged: 0.701 of one's error; 0.707 ideal)
-  → `render.non_finite_samples` names the lowest pixel struck (`detail.pixel`), as pbrt's CHECK names it: night of
-    2026-11-13
-- Dedicated docsify documentation for both rayzee as and app and as an engine
-  → built on the night of 2026-11-13: a docsify site rooted at `docs/`
-    (`index.html`, `_sidebar.md`, landing `README.md`), a new app guide in `docs/app/` (9 pages, from the app's source),
-    the engine guide and design notes as they are; `npm run docs` serves it, `npm run docs:check` checks every sidebar
-    entry, link, image and anchor. Not deployed yet
+- App colours under WCAG AA's 4.5:1: `primary` as text on the hover grey reads 4.0:1 in dark, `muted-foreground` there
+  4.3:1 in light (both shadcn's own)
+- Headless, from the pbrt comparison: a crop window with the pixel offset in the sampler's seed (on
+  `feat/tiled-output`), m44f `worldToCamera` / `worldToNDC` EXR attributes, a variance layer in the EXR. Assessment:
+  ~/RayzeeScratch/night/2026-11-13/headless-api/ASSESSMENT.md
+- Deploy the docs site (`npm run docs` serves it locally)
 
 ### Follow-ups from the Rust/WebAssembly night (2026-11-11)
 - [ ] `bench:load -- --chrome` with the WebAssembly BLAS: done against 1f605fe7 (blas crown −74 %, classroom −70 %,
@@ -106,8 +86,7 @@
   bidirectional shadow rays (see CLAUDE.md, Bidirectional integrator), and since 2026-11-07 the file's integrator is
   applied. Volumetric Caustic's glass ball renders dark where path tracing lights it; Glass of Water opens bidirectional
   too (path matched or beat it, 60268c36).
-- [ ] **Light radius, what is left** (point and spot lights with a radius, and USD's sphere radius and sun angle, done
-  2026-10-12; see Light radius in `CLAUDE.md`): the bidirectional and VCM integrators still treat them as points; glTF
+- [ ] **Light radius, what is left** (see Light radius in `CLAUDE.md`): the bidirectional and VCM integrators still treat them as points; glTF
   has no field for a radius (`docs/design/SCENE_IMPORT.md` → Lights from Blender's glTF exporter); the app has no control for it. ⚠️ Blender
   writes half its sun angle (10° → `angle` 5) though USD defines the full width, so its suns read half as soft.
 
@@ -152,15 +131,14 @@
 ### Regression bench (`bench/`)
 
 - [ ] PR CI workflow — there is no PR gate at all today, and CI never runs ESLint despite CONTRIBUTING requiring it
-- [ ] CPU-side vitest guards: shader-recompile contract, feature-combo compile smoke (BVH structural invariants done: `tests/unit/bvh/bvhInvariants.test.js`; the memory-spill and BLAS-cache builds are not walked yet)
+- [ ] CPU-side vitest guards: shader-recompile contract, feature-combo compile smoke, BVH invariants for the
+  memory-spill and BLAS-cache builds (`tests/unit/bvh/bvhInvariants.test.js` walks the others)
 - [ ] corpus gap: skeletal/morph animation — needs a committed .glb, which the all-procedural rule cannot supply
 
 
 ### General
 
 - [ ] deno compile for dedicated destop app
-- [x] Introduce Project based workflow
-- [x] Save rendering state in local storage and load on app start
 - [ ] export/import option for settings
 - [ ] transform control redesign
 
@@ -172,8 +150,7 @@
 - [ ] Introduce Sequenced HRDIs - https://mattepaint.com/gallery/hdri/skies/
 - [ ] **Fog and light shafts** ROADMAP: "Fog and homogeneous participating media", "Volumetric lighting and shadows";
   - [ ] Follow-ups: fog inside glass; density varying other than with height (noise, VDB); the shadow catcher ignores
-    fog; the bidirectional integrators render without it (they record `setting.ignored`). Height falloff and emitters
-    lit along each segment are done (2026-10-31, see `docs/design/SHADING.md` → Fog).
+    fog; the bidirectional integrators render without it (they record `setting.ignored`).
   - [ ] A bright speckle remains wherever a bounced ray passes close to a small bright emitter in fog: the segment's
     light from one point of it goes as 1 / (the ray's distance from that point). Drawing the point with the segment in
     view (Cycles' light tree takes a segment) would soften it.
@@ -256,13 +233,7 @@
   medium stack treats an open sheet against pbrt's per-interface orientation.
 - [ ] **Spectra, what is left**: pbrt's illuminant tables other than A and D65 (D50, F1–F12, `illum-acesD60`) and
   spectra read from a file light white (reported); a reflectance given as ( λ, value ) samples reads as its mean grey,
-  and a blackbody one as its hue at 1 (pbrt reflects the curve itself, peaking at 1). Blackbody and sampled emission
-  done 2026-11-08: Planck's law or the samples against CIE 1931, within 0.002 of pbrt-v4's own render (the old curve was
-  up to 0.07 off: kroken's 6500 K sky and lights too yellow, zero-day's 2300 K too red). Named spectra done 2026-11-07:
-  pbrt's seven glasses (`GLASS_ETA`, read like any spectral `eta`; kroken's F11 was 1.5, now 1.78) and seven metals
-  (`METAL_ALBEDO`: normal-incidence reflectance of each one's eta and k through CIE 1931 under D65, Real-Time
-  Rendering's table to 3 digits; brass was grey, TiO2 50 % grey metal where it reflects 24 %, MgO 90 % where it reflects
-  7 %).
+  and a blackbody one as its hue at 1 (pbrt reflects the curve itself, peaking at 1).
 - [ ] **A second infinite light** is dropped; the engine has one environment. Not a loss in watercolor (checked
   2026-11-08): its two are the same image and scale, each limited to one window by `portal` (pbrt's
   `PortalImageInfiniteLight::Le` is 0 outside it), and one environment with the portal ignored lights both windows
@@ -380,14 +351,12 @@ minified + gzip of the three.js loader alone (three is external, so it lands in 
 
 ## Experiments
 
-- [x] explore OpenColorIO OCIO color management
 - [x] Experiment with meshlet — three r187's meshlet pipelines, measured 2026-10-31: not worth it (camera rays are
   2.6–3.2 % of a frame)
 - [ ] Neural-texture-compression <https://syllogi-graphikon.vercel.app/posts/metal-neural-texture-compression/>
 - [ ] Offscreen canvas rendering - <https://threejs.org/manual/#en/offscreencanvas>
 - [ ] Ray-Guiding based on Octahedron Mapping CDF
 - [ ] Full Disney BSDF
-- [x] Efficient Panorama Rendering
 - [ ] RCAS (Robust Contrast Adaptive Sharpening)
 - [ ] Sparse Radiance Cascades
 - [x] Screen-space radiance caching
@@ -397,8 +366,6 @@ minified + gzip of the three.js loader alone (three is external, so it lands in 
 - [x] Bindless texture - True hardware-level bindless isn't available in WebGPU
 - [x] irradiance probes,
 - [ ] SPOM (Silhouette Parallax Occlusion Mapping) ->  more suited for rasterization
-- [x] Photon mapping (vertex merging, `integrator: 'vcm'`)
-- [x] Bidirectional path tracing support — `integrator: 'bidirectional'` (every light: emitters, lamps, the sun, the environment; see CLAUDE.md)
 - [ ] Experiment PLOC for maximum BVH performance scenarios
 - [x] tiered-material-buffer-access generalization - already at its practical optimum
 - [ ] Opacity micro map
@@ -411,7 +378,6 @@ minified + gzip of the three.js loader alone (three is external, so it lands in 
 - [ ] ORCA Tier-3 budgeted sampling (SIGGRAPH '26 Greenberg) — built, measured, parked (its branch, `experiment/orca-tier3-budgeted-sampling`, is no longer here). Neutral quality + 23% slower on 24155522.glb; won −8..−12% at half the rays on glass-transmission only. Resume by restoring survivor-curve dispatch sizing under `budgetOn` — that is the entire 23%
 - [ ] Rerservoir sampling ( only per pixel, not neighboring )
 - [ ] emissive triangles as trianle lights -  do research
-- [x] Chromatic adaptation transform (CAT) — white balance's Bradford (`color/WhiteBalance.js`, 2026-11-08)
 - [ ] Auto white balance
   
 ---
@@ -421,14 +387,13 @@ minified + gzip of the three.js loader alone (three is external, so it lands in 
 - [ ] Explore AI-driven denoising techniques beyond OIDN
 - [ ] <https://upscalerjs.com/models/>
 - [ ] <https://enhance.addy.ie/>
-- [x] NRD - Nvidia Realtime Denoiser (ReBLUR port, `rayzee/src/viewer/denoise/NRD.js`; diffuse/specular signal split still open — see `docs/design/NRD_DENOISER.md`)
+- [ ] NRD: split the diffuse and specular signals (see `docs/design/NRD_DENOISER.md`)
 
 ## AI Upscaler
 
 ### Performance
 
 - [ ] Custom model URL support — let users provide their own ONNX SR model
-- [x] Estimated time remaining based on per-tile timing (`UPSCALING_PROGRESS.secondsLeft`, shown on the app's badge)
 - [ ] FSR 2.x port
 
 ---
