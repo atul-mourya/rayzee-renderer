@@ -556,6 +556,8 @@ export class ArchiveImporter {
 
 		} catch ( error ) {
 
+			// A strict host's throw, not a broken entry: neither re-parse nor drop the stored scene.
+			if ( error instanceof EngineIssueError ) throw error;
 			failure = error;
 			return null;
 

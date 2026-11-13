@@ -141,7 +141,7 @@ const DEFAULT_CURVE_TOLERANCE = 0.05;
 const CURVE_SPLIT_CURVES = 20000;
 
 /** Bumped whenever the same scene files build a different graph, so a stored graph is not reused. */
-export const PBRT_BUILD_REVISION = 36;
+export const PBRT_BUILD_REVISION = 37;
 
 // Ptex pages: all of a scene's Ptex colour maps in this much texture memory at most, on square pages this size.
 const DEFAULT_PTEX_MEMORY = 1024 * 2 ** 20;
@@ -1553,18 +1553,6 @@ export class PBRTSceneBuilder {
 		if ( varies( pos, 3 ) ) tracks.push( new VectorKeyframeTrack( `${name}.position`, motion.times.slice(), pos ) );
 		if ( varies( rot, 4 ) ) tracks.push( new QuaternionKeyframeTrack( `${name}.quaternion`, motion.times.slice(), rot ) );
 		if ( varies( scl, 3 ) ) tracks.push( new VectorKeyframeTrack( `${name}.scale`, motion.times.slice(), scl ) );
-
-	}
-
-	async _buildShapeMesh( shape, ctm, name ) {
-
-		// Geometry parse and material/texture resolution are independent — overlap them.
-		const [ geometry, sharedMaterial ] = await Promise.all( [
-			this._buildGeometry( shape ),
-			this._getMaterial( shape )
-		] );
-		if ( ! geometry ) return null;
-		return this._meshFromGeometry( shape, geometry, sharedMaterial, ctm, name );
 
 	}
 

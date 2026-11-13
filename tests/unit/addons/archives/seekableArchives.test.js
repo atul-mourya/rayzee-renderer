@@ -6,6 +6,8 @@ import { unpackTarGz, loadTarIndex, saveTarIndex } from '@/core/addons/archives/
 import { openStorage } from '@/core/addons/storage/OpenStorage.js';
 import { createFakeOPFS } from '../../../__mocks__/opfs.js';
 import { makeTar, text } from './tarFixture.js';
+import { ArchiveImporter } from '@/core/addons/archives/ArchiveImporter.js';
+import { IssueLog, ISSUE_CODES, EngineIssueError } from '@/core/EngineIssues.js';
 
 const LONG = `deep/${'x'.repeat( 120 )}/mesh.ply`;
 const PAX = `pax/${'y'.repeat( 130 )}.pbrt`;
@@ -404,6 +406,80 @@ describe( 'ArchiveCache', () => {
 		expect( await loadTarIndex( file, storage ) ).toBeNull();
 		expect( await saveTarIndex( file, storage, index ) ).toBe( true );
 		expect( await loadTarIndex( file, storage ) ).toEqual( index );
+
+	} );
+
+	// No storage is Node, a private window, or a full disk: the archive is read in memory instead.
+	it( 'loads a scene from a .tar.gz, unpacked to storage or read in memory without it', async () => {
+
+		const SCENE = 'WorldBegin\nShape "trianglemesh" "point3 P" [ 0 0 0  1 0 0  0 1 0 ] "integer indices" [ 0 1 2 ]\n';
+		const gz = () => new File( [ gzipSync( makeTar( [ { path: 'room/scene.pbrt', body: text( SCENE ) } ] ) ) ], 'room.tar.gz', { lastModified: 3 } );
+
+		const load = async ( from ) => {
+
+			const loader = {
+				storage: from, loaderCache: {}, _issues: new IssueLog(), getFileFormat: () => null, releaseTargetModel() {}, applyEnvironmentToScene() {},
+				onModelLoad: async () => {}, dispatchEvent() {}, _keyed: ( kind, id ) => ( id ? `${kind}::${id}` : null ),
+				_reportImageFailure() {}, _throwDeferred() {},
+			};
+			const archives = new ArchiveImporter( loader );
+			const unpack = archives._unpackGzip.bind( archives );
+			const unpacked = [];
+			archives._unpackGzip = async ( ...args ) => {
+
+				const u = await unpack( ...args );
+				if ( u ) unpacked.push( { cached: u.cached, release: vi.spyOn( u, 'release' ) } );
+				return u;
+
+			};
+
+			const model = await archives.loadArchiveFromFile( gz(), 'room.tar.gz' );
+			let triangles = 0;
+			model.traverse( o => o.isMesh && ( triangles += ( o.geometry.index?.count ?? o.geometry.attributes.position.count ) / 3 ) );
+			return { triangles, unpacked: unpacked.map( u => ( { cached: u.cached, released: u.release.mock.calls.length } ) ) };
+
+		};
+
+		expect( await load( null ) ).toEqual( { triangles: 1, unpacked: [] } );
+
+		await makeStorage();
+		expect( await load( storage ) ).toEqual( { triangles: 1, unpacked: [ { cached: false, released: 1 } ] } );
+		expect( await load( storage ) ).toEqual( { triangles: 1, unpacked: [ { cached: true, released: 1 } ] } );
+		expect( ( await storage.usage() ).areas.archives.entries ).toBe( 1 );
+
+	} );
+
+	// A stored scene that fails to open is dropped and the archive parsed instead; a strict host's throw is no such failure.
+	it( 'parses again past a broken stored scene, but passes a strict host\'s error through and keeps the scene', async () => {
+
+		const open = ( error ) => {
+
+			const issues = new IssueLog();
+			const entry = { json: async () => {
+
+				throw error;
+
+			}, file: async () => null, release: vi.fn() };
+			const area = { open: async () => entry, remove: vi.fn( async () => {} ) };
+			const archives = new ArchiveImporter( { storage: { area: () => area }, _issues: issues } );
+			const warn = vi.spyOn( console, 'warn' ).mockImplementation( () => {} );
+			const result = archives._loadStoredGraph( 'scene-key', null, {} ).finally( () => warn.mockRestore() );
+			return { result, entry, area, issues };
+
+		};
+
+		const broken = open( new SyntaxError( 'Unexpected end of JSON input' ) );
+		await expect( broken.result ).resolves.toBeNull();
+		expect( broken.area.remove ).toHaveBeenCalledWith( 'scene-key' );
+		expect( broken.issues.list.map( i => i.code ) ).toEqual( [ ISSUE_CODES.STORAGE_ENTRY_CORRUPT ] );
+		expect( broken.entry.release ).toHaveBeenCalledOnce();
+
+		const strict = new EngineIssueError( { code: ISSUE_CODES.TEXTURE_BUILD_FAILED, message: 'texture 3 could not be read' } );
+		const refused = open( strict );
+		await expect( refused.result ).rejects.toBe( strict );
+		expect( refused.area.remove ).not.toHaveBeenCalled();
+		expect( refused.issues.list ).toEqual( [] );
+		expect( refused.entry.release ).toHaveBeenCalledOnce();
 
 	} );
 

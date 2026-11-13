@@ -43,6 +43,7 @@ import { PathTracerStage } from '@/core/pathtracer/PathTracerStage.js';
 import { RayzeeRenderer } from '@/core/RayzeeRenderer.js';
 import { StorageParts } from '@/core/shaders/ThreePatches.js';
 import { TRIANGLE_DATA_LAYOUT } from '@/core/scene/BufferLayout.js';
+import { IssueLog, ISSUE_CODES } from '@/core/EngineIssues.js';
 
 const FPT = TRIANGLE_DATA_LAYOUT.FLOATS_PER_TRIANGLE;
 // Meshes past these build as the engine builds one past 200k (across workers) or 2M (in pieces) triangles.
@@ -477,6 +478,34 @@ describe( 'a refit', () => {
 			expect( inspect( sp ).problems ).toEqual( [] );
 
 		}
+
+	} );
+
+	it( 'refuses to deform one copy of a geometry another mesh shares, and records which', async () => {
+
+		// Copies first, so a placement's number is not its mesh's.
+		const mat = new MeshStandardMaterial(), sphere = new SphereGeometry( 1, 16, 12 );
+		const sharing = [[ - 4, 0, 0 ], [ 0, 4, 0 ], [ 4, 0, 0 ]].map( at => placed( new Mesh( sphere, mat ), at ) );
+		const root = new Group().add( instanced( new BoxGeometry(), mat, 4, 10 ), ...sharing );
+		root.updateMatrixWorld( true );
+		const issues = new IssueLog();
+		const sp = await build( root, { issues } );
+		const table = sp.instanceTable;
+		const sharers = sharing.map( p => meshIndex( sp, p ) );
+		expect( sharers.map( m => sp._placementOf( m ) ) ).not.toEqual( sharers );
+		const owner = sharers.find( m => table.isOwner( sp._placementOf( m ) ) );
+		const copies = sharers.filter( m => m !== owner );
+		expect( copies ).toHaveLength( 2 );
+
+		const tris = sp.triangleFloats.slice(), nodes = sp.bvh.slice();
+		const read = vi.fn( mesh => movedPositions( sp, mesh, twist ) );
+		sp.refitBLASes( copies, read );
+
+		expect( read ).not.toHaveBeenCalled();
+		expect( firstDifference( sp.triangleFloats, tris ) ).toBe( - 1 );
+		expect( firstDifference( sp.bvh, nodes ) ).toBe( - 1 );
+		expect( issues.list.filter( i => i.code === ISSUE_CODES.REFIT_SHARED_GEOMETRY ).map( i => i.detail ) )
+			.toEqual( copies.map( m => ( { meshIndex: m, owner } ) ) );
 
 	} );
 

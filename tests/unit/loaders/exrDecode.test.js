@@ -2,7 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { FloatType, HalfFloatType, LoadingManager } from 'three';
 import { EXRLoader } from 'three/addons/loaders/EXRLoader.js';
 
-const created = vi.hoisted( () => ( { count: 0 } ) );
+const created = vi.hoisted( () => ( { count: 0, refuse: false, crash: false, terminated: 0 } ) );
 vi.mock( '@/core/loaders/EXRWorker.js?worker&inline', async () => {
 
 	const { inProcessWorker } = await import( '../bvh/bvhInvariants.js' );
@@ -11,8 +11,23 @@ vi.mock( '@/core/loaders/EXRWorker.js?worker&inline', async () => {
 
 		constructor() {
 
+			if ( created.refuse ) throw new Error( 'no worker here' );
 			super();
 			created.count ++;
+
+		}
+
+		postMessage( data ) {
+
+			if ( ! created.crash ) return super.postMessage( data );
+			created.crash = false;
+			queueMicrotask( () => this.onerror?.( { message: 'worker died', preventDefault() {} } ) );
+
+		}
+
+		terminate() {
+
+			created.terminated ++;
 
 		}
 
@@ -77,6 +92,41 @@ describe( 'decodeEXR', () => {
 
 	} );
 
+	it( 'decodes on this thread when no worker can start', async () => {
+
+		configurePlatform( { Worker: class {} } );
+		created.count = 0;
+		created.refuse = true;
+		try {
+
+			const bytes = await exrBytes();
+			const want = new EXRLoader().setDataType( FloatType ).parse( bytes.slice().buffer );
+			const got = await decodeEXR( bytes.slice().buffer, { type: FloatType } );
+			expect( got.data ).toEqual( want.data );
+			expect( created.count ).toBe( 0 );
+			await expect( decodeEXR( new Uint8Array( 64 ).buffer ) ).rejects.toThrow();
+
+		} finally {
+
+			created.refuse = false;
+
+		}
+
+	} );
+
+	it( 'rejects the file a worker died on, drops that worker, and decodes the next', async () => {
+
+		configurePlatform( { Worker: class {} } );
+		const bytes = await exrBytes();
+		created.crash = true;
+		created.terminated = 0;
+
+		await expect( decodeEXR( bytes.slice().buffer ) ).rejects.toThrow( 'EXR worker failed: worker died' );
+		expect( created.terminated ).toBe( 1 );
+		expect( ( await decodeEXR( bytes.slice().buffer, { type: FloatType } ) ).width ).toBe( width );
+
+	} );
+
 } );
 
 describe( 'WorkerEXRLoader', () => {
@@ -103,6 +153,28 @@ describe( 'WorkerEXRLoader', () => {
 
 		expect( [ texture.image.width, texture.image.height, texture.type, texture.flipY, texture.generateMipmaps ] ).toEqual( [ width, height, FloatType, false, false ] );
 		expect( texture.image.data ).toEqual( want.data );
+		await vi.waitFor( () => expect( done ).toHaveBeenCalledTimes( 1 ) );
+
+	} );
+
+	it( 'hands a file it cannot decode to onError and still lets the manager finish', async () => {
+
+		configurePlatform( { Worker: class {} } );
+		vi.stubGlobal( 'fetch', vi.fn( async () => new Response( new Uint8Array( 64 ) ) ) );
+		vi.stubGlobal( 'ProgressEvent', class {
+
+			constructor( type, init ) {
+
+				Object.assign( this, init, { type } );
+
+			}
+
+		} );
+
+		const done = vi.fn(), failed = vi.fn();
+		const manager = new LoadingManager( done, undefined, failed );
+		await expect( new WorkerEXRLoader( manager ).loadAsync( 'https://example.com/broken.exr' ) ).rejects.toThrow();
+		expect( failed ).toHaveBeenCalledWith( 'https://example.com/broken.exr' );
 		await vi.waitFor( () => expect( done ).toHaveBeenCalledTimes( 1 ) );
 
 	} );

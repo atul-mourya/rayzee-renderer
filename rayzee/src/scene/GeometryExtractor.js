@@ -1310,7 +1310,8 @@ export class GeometryExtractor {
 				// MeshPhongMaterial -> Convert shininess to roughness
 				{
 
-					const shininess = material.shininess || 30;
+					// Ns 0 is the widest a Phong lobe gets, not "unset".
+					const shininess = Number.isFinite( material.shininess ) ? material.shininess : 30;
 					mapped.roughness = Math.sqrt( 2.0 / ( shininess + 2 ) );
 					mapped.metalness = 0.0;
 

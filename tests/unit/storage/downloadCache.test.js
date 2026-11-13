@@ -1,7 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { createFakeOPFS } from '../../__mocks__/opfs.js';
 import { openStorage } from '@/core/addons/storage/OpenStorage.js';
-import { DownloadCache, DOWNLOAD_POLICY, nameFromUrl } from '@/core/storage/DownloadCache.js';
+import { DownloadCache, DOWNLOAD_POLICY, nameFromUrl, fetchFile, sharedDownloads, cachedObjectURL } from '@/core/storage/DownloadCache.js';
+import { sharedByNamespace } from '@/core/storage/StorageAreas.js';
+import { getAssetConfig } from '@/core/AssetConfig.js';
 import { configurePlatform } from '@/core/Platform.js';
 
 function response( body, { status = 200, headers = {} } = {} ) {
@@ -31,6 +33,7 @@ describe( 'DownloadCache', () => {
 			if ( isProbe( options ) ) {
 
 				if ( server.refuse ) throw new TypeError( 'Failed to fetch' );
+				await server.hold;
 				const range = { 'last-modified': server.lastModified, 'content-length': '1', ...( server.exposeRange && { 'content-range': `bytes 0-0/${server.body.length}` } ) };
 				return new Response( server.body.slice( 0, 1 ), { status: 206, headers: range } );
 
@@ -255,6 +258,199 @@ describe( 'DownloadCache', () => {
 		} finally {
 
 			configurePlatform( { readFile: null } );
+
+		}
+
+	} );
+
+	it( 'downloads again when a stored entry lost its data, and lets go of the broken entry', async () => {
+
+		const writer = await storage.area( 'downloads' ).create( 'https://cdn/a.glb' );
+		await writer.commit( { contentType: 'model/gltf-binary' } );
+
+		const cache = new DownloadCache( storage );
+		// Holding the broken entry's shared lock would block the exclusive one the rewrite takes.
+		const got = await Promise.race( [
+			cache.fetch( 'https://cdn/a.glb' ),
+			new Promise( ( r ) => setTimeout( () => r( 'blocked' ), 1000 ) ),
+		] );
+		expect( got ).not.toBe( 'blocked' );
+		expect( got.fromCache ).toBe( false );
+		got.release();
+
+		const again = await cache.fetch( 'https://cdn/a.glb' );
+		expect( again.fromCache ).toBe( true );
+		expect( again.file.size ).toBe( 5 );
+		again.release();
+		expect( gets() ).toBe( 1 );
+
+	} );
+
+	it( 'checks a stale copy once while a check is in flight, and again after it ends', async () => {
+
+		const cache = new DownloadCache( storage );
+		( await cache.fetch( 'https://cdn/a.glb' ) ).release();
+
+		let open;
+		server.hold = new Promise( ( r ) => void ( open = r ) );
+		( await cache.fetch( 'https://cdn/a.glb', { maxAgeMs: 0 } ) ).release();
+		( await cache.fetch( 'https://cdn/a.glb', { maxAgeMs: 0 } ) ).release();
+		expect( probes() ).toBe( 1 );
+
+		const checked = await stamp( 'https://cdn/a.glb' );
+		server.hold = null;
+		open();
+		await settle( async () => ( await stamp( 'https://cdn/a.glb' ) ) > checked );
+
+		( await cache.fetch( 'https://cdn/a.glb', { maxAgeMs: 0 } ) ).release();
+		expect( probes() ).toBe( 2 );
+
+	} );
+
+	it( 'stops reading and cancels the body when aborted mid-download', async () => {
+
+		const cancel = vi.fn();
+		let sent = 0;
+		const body = new ReadableStream( {
+			pull( controller ) {
+
+				controller.enqueue( new Uint8Array( 4 ) );
+				if ( ++ sent === 10 ) controller.close();
+
+			},
+			cancel,
+		} );
+		fetchMock.mockImplementationOnce( async () => new Response( body, { headers: { 'content-length': '40' } } ) );
+
+		const controller = new AbortController();
+		const loading = new DownloadCache( null ).fetch( 'https://cdn/a.glb', {
+			signal: controller.signal,
+			onProgress: ( e ) => e.loaded >= 8 && controller.abort(),
+		} );
+
+		await expect( loading ).rejects.toMatchObject( { name: 'AbortError' } );
+		expect( sent ).toBeLessThan( 10 );
+		expect( cancel ).toHaveBeenCalledOnce();
+
+	} );
+
+	it( 'reads a response without a stream into memory, never into storage', async () => {
+
+		fetchMock.mockImplementationOnce( async () => ( {
+			ok: true,
+			status: 200,
+			headers: new Headers( { 'content-type': 'model/gltf-binary' } ),
+			body: null,
+			arrayBuffer: async () => new Uint8Array( [ 4, 2 ] ).buffer,
+		} ) );
+
+		const got = await new DownloadCache( storage ).fetch( 'https://cdn/a.glb' );
+		expect( [ ...new Uint8Array( await got.file.arrayBuffer() ) ] ).toEqual( [ 4, 2 ] );
+		expect( got.file.type ).toBe( 'model/gltf-binary' );
+		expect( got.fromCache ).toBe( false );
+		expect( await storage.area( 'downloads' ).has( 'https://cdn/a.glb' ) ).toBe( false );
+
+	} );
+
+	it( 'fails loudly when a saved copy cannot be read back, releasing what it opened', async () => {
+
+		const area = storage.area( 'downloads' );
+		const open = area.open.bind( area );
+		const broken = { file: async () => null, release: vi.fn() };
+		const spy = vi.spyOn( area, 'open' ).mockImplementation( ( key, options ) => options?.wait ? broken : open( key, options ) );
+
+		try {
+
+			await expect( new DownloadCache( storage ).fetch( 'https://cdn/a.glb' ) ).rejects.toThrow( /a\.glb vanished right after it was saved/ );
+			expect( broken.release ).toHaveBeenCalledOnce();
+
+			spy.mockImplementation( ( key, options ) => options?.wait ? null : open( key, options ) );
+			await expect( new DownloadCache( storage ).fetch( 'https://cdn/b.glb' ) ).rejects.toThrow( /b\.glb vanished/ );
+
+		} finally {
+
+			spy.mockRestore();
+
+		}
+
+	} );
+
+	it( 'names a URL whose escapes do not decode as a plain download', () => {
+
+		expect( nameFromUrl( 'https://a/b%E0%A4%A.glb' ) ).toBe( 'download' );
+
+	} );
+
+	it( 'fetchFile downloads through the storage it is given', async () => {
+
+		( await fetchFile( 'https://cdn/a.glb', storage ) ).release();
+		expect( await storage.area( 'downloads' ).has( 'https://cdn/a.glb' ) ).toBe( true );
+
+		const memory = await fetchFile( 'https://cdn/b.glb', null );
+		expect( memory.file.size ).toBe( 5 );
+		expect( gets() ).toBe( 2 );
+
+	} );
+
+	it( 'sharedDownloads uses the storage this page opened for the namespace', () => {
+
+		const namespace = getAssetConfig().cacheNamespace;
+		const before = sharedByNamespace.get( namespace );
+
+		try {
+
+			sharedByNamespace.delete( namespace );
+			expect( sharedDownloads()._storage ).toBe( null );
+			sharedByNamespace.set( namespace, { storage } );
+			expect( sharedDownloads()._storage ).toBe( storage );
+
+		} finally {
+
+			if ( before ) sharedByNamespace.set( namespace, before );
+			else sharedByNamespace.delete( namespace );
+
+		}
+
+	} );
+
+	it( 'cachedObjectURL passes non-network URLs and storage-less pages through untouched', async () => {
+
+		const stored = new DownloadCache( storage );
+		for ( const url of [ 'blob:https://app/1', 'data:model/gltf-binary;base64,AA==', '/models/a.glb' ] ) {
+
+			expect( await cachedObjectURL( url, { downloads: stored } ) ).toMatchObject( { url, cached: false } );
+
+		}
+
+		expect( await cachedObjectURL( 'https://cdn/a.glb', { downloads: new DownloadCache( null ) } ) ).toMatchObject( { url: 'https://cdn/a.glb', cached: false } );
+		expect( fetchMock ).not.toHaveBeenCalled();
+
+	} );
+
+	it( 'cachedObjectURL hands out an object URL of the stored copy and frees both on release', async () => {
+
+		const release = vi.fn();
+		const file = new File( [ new Uint8Array( 3 ) ], 'a.glb' );
+		const downloads = { _storage: storage, fetch: vi.fn( async () => ( { file, release } ) ) };
+		const create = vi.spyOn( URL, 'createObjectURL' ).mockReturnValue( 'blob:test/1' );
+		const revoke = vi.spyOn( URL, 'revokeObjectURL' ).mockImplementation( () => {} );
+
+		try {
+
+			const got = await cachedObjectURL( 'HTTPS://cdn/a.glb', { downloads, policy: DOWNLOAD_POLICY.IMMUTABLE } );
+			expect( got ).toMatchObject( { url: 'blob:test/1', cached: true } );
+			expect( downloads.fetch ).toHaveBeenCalledWith( 'HTTPS://cdn/a.glb', { policy: DOWNLOAD_POLICY.IMMUTABLE } );
+			expect( create ).toHaveBeenCalledWith( file );
+			expect( release ).not.toHaveBeenCalled();
+
+			got.release();
+			expect( revoke ).toHaveBeenCalledWith( 'blob:test/1' );
+			expect( release ).toHaveBeenCalledOnce();
+
+		} finally {
+
+			create.mockRestore();
+			revoke.mockRestore();
 
 		}
 

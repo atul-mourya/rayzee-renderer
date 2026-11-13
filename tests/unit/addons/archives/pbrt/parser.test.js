@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { tokenize, TokenType } from '@/core/addons/archives/pbrt/PBRTTokenizer.js';
-import { PBRTParser, parsePBRT } from '@/core/addons/archives/pbrt/PBRTParser.js';
+import { PBRTParser, ParamUsage, parsePBRT } from '@/core/addons/archives/pbrt/PBRTParser.js';
 
 describe( 'PBRT tokenizer', () => {
 
@@ -393,6 +393,147 @@ describe( 'PBRT parser', () => {
 
 	} );
 
+	// pbrt-v2 directives the parser does not know: a type name is not a parameter declarator.
+	it( 'skips an unknown directive\'s type name and values, keeping the directive after it', async () => {
+
+		const usage = new ParamUsage();
+		const ir = await new PBRTParser( { usage } ).parse( `
+			SurfaceIntegrator "path" "integer maxdepth" 5
+			Renderer "sampler"
+			Translate 1 0 0
+			Volume "homogeneous" 1 2 [ 3 4 ] "rgb sigma_a" [ 1 1 1 ]
+			SurfaceIntegrator "directlighting"
+			MotionBegin [ true false ]
+			Filter "gaussian" "float xradius" 2
+			Accelerator "bvh"
+			ColorSpace "aces2065-1"
+			Shape "sphere"
+		` );
+
+		expect( ir.shapes ).toHaveLength( 1 );
+		expect( ir.shapes[ 0 ].ctm[ 12 ] ).toBe( 1 );
+		expect( ir.warnings ).toEqual( [ 'SurfaceIntegrator', 'Renderer', 'Volume', 'MotionBegin' ].map( d => `Unsupported directive ignored: ${d}` ) );
+		expect( Object.keys( usage.finish().unused ) ).toEqual( [ 'Filter gaussian: xradius', 'SurfaceIntegrator: maxdepth', 'Volume: sigma_a' ] );
+
+	} );
+
+	it( 'reads lists that mix numbers with strings and words as plain arrays', async () => {
+
+		const ir = await parsePBRT( `Shape "sphere"
+			"string a" [ 1 2 "x" true ]
+			"string b" [ 1 2 3 4 5 6 7 8 9 10 "y" 11 ]
+			"bool c" [ true false ]
+			"string d" bare` );
+
+		const { a, b, c, d } = ir.shapes[ 0 ].params;
+		expect( a.value ).toEqual( [ 1, 2, 'x', true ] );
+		expect( Array.isArray( b.value ) ).toBe( true );
+		expect( b.value ).toEqual( [ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 'y', 11 ] );
+		expect( c.value ).toEqual( [ true, false ] );
+		expect( d.value ).toEqual( [ 'bare' ] );
+
+	} );
+
+	it( 'says what it expected where a file is malformed', async () => {
+
+		await expect( parsePBRT( 'Shape "sphere" "float r"' ) ).rejects.toThrow( /unexpected EOF in parameter value/ );
+		await expect( parsePBRT( 'Shape "sphere" "float r" ]' ) ).rejects.toThrow( /unexpected token in parameter value: \]/ );
+		await expect( parsePBRT( 'Translate 1 2' ) ).rejects.toThrow( /expected number for .*, got EOF/ );
+		await expect( parsePBRT( 'Translate 1 2 "z"' ) ).rejects.toThrow( /expected number for .*, got z$/ );
+		await expect( parsePBRT( 'Shape 3' ) ).rejects.toThrow( /expected string for .*, got 3$/ );
+		await expect( parsePBRT( '"sphere"' ) ).rejects.toThrow( /expected directive, got string sphere/ );
+		await expect( parsePBRT( 'Include "a.pbrt"' ) ).rejects.toThrow( /Include used but no resolveInclude provided/ );
+
+	} );
+
+	it( 'carries on past a missing include and an unknown ActiveTransform, which warn, and a stray AttributeEnd', async () => {
+
+		const ir = await new PBRTParser( { resolveInclude: () => null } ).parse( `
+			AttributeEnd
+			Translate 1 0 0
+			Include "missing.pbrt"
+			ActiveTransform Sometimes
+			Shape "sphere"
+			WorldEnd
+		` );
+
+		expect( ir.shapes ).toHaveLength( 1 );
+		expect( ir.shapes[ 0 ].ctm[ 12 ] ).toBe( 1 );
+		expect( ir.warnings ).toEqual( [ 'Include target not found: missing.pbrt', 'ActiveTransform "Sometimes" not recognised' ] );
+
+	} );
+
+	it( 'replaces only the start or the end of the transform, as ActiveTransform selects', async () => {
+
+		const ir = await parsePBRT( `
+			Translate 5 0 0
+			ActiveTransform EndTime
+			Identity
+			ActiveTransform All
+			Shape "sphere"
+			ActiveTransform StartTime
+			Transform [ 1 0 0 0  0 1 0 0  0 0 1 0  0 2 0 1 ]
+			ActiveTransform All
+			Shape "sphere"
+		` );
+
+		const t = ( m ) => [ m[ 12 ], m[ 13 ] ];
+		expect( [ t( ir.shapes[ 0 ].ctm ), t( ir.shapes[ 0 ].ctmEnd ) ] ).toEqual( [[ 5, 0 ], [ 0, 0 ]] );
+		expect( [ t( ir.shapes[ 1 ].ctm ), t( ir.shapes[ 1 ].ctmEnd ) ] ).toEqual( [[ 0, 2 ], [ 0, 0 ]] );
+
+	} );
+
+	it( 'warns once that a moving light or template keeps its start transform, and only when it moves', async () => {
+
+		const still = await parsePBRT( 'ActiveTransform EndTime\nTranslate 0 0 0\nActiveTransform All\nLightSource "point"\nObjectBegin "a"\nShape "sphere"\nObjectEnd' );
+		expect( still.warnings ).toEqual( [] );
+
+		const moving = await parsePBRT( `
+			ActiveTransform EndTime
+			Translate 1 0 0
+			ActiveTransform All
+			LightSource "point"
+			LightSource "point"
+			ObjectBegin "a"
+				Shape "sphere"
+				Shape "sphere"
+			ObjectEnd
+		` );
+		expect( moving.lights ).toHaveLength( 2 );
+		expect( moving.warnings ).toEqual( [
+			'animated LightSource transforms are not supported — using the start transform',
+			'animated transforms inside ObjectBegin are not supported — using the start transform',
+		] );
+
+	} );
+
+	it( 'grows a moving template\'s end matrices with its placements', async () => {
+
+		const rest = Array.from( { length: 39 }, ( _, i ) => `AttributeBegin Translate ${i + 1} 0 0 ObjectInstance "a" AttributeEnd` ).join( '\n' );
+		const ir = await parsePBRT( `WorldBegin
+			ObjectBegin "a" Shape "sphere" ObjectEnd
+			AttributeBegin ActiveTransform EndTime Translate 0 3 0 ActiveTransform All ObjectInstance "a" AttributeEnd
+			${rest}` );
+
+		const a = ir.instances.get( 'a' );
+		expect( a.count ).toBe( 40 );
+		expect( a.matricesEnd.length ).toBe( a.matrices.length );
+		expect( a.matricesEnd[ 13 ] ).toBe( 3 );
+		expect( [ 1, 20, 39 ].map( i => a.matricesEnd[ i * 16 + 12 ] ) ).toEqual( [ 1, 20, 39 ] );
+
+	} );
+
+	it( 'accounts each load\'s open directives to that load alone', () => {
+
+		const a = new ParamUsage(), b = new ParamUsage();
+		a.open( { x: { type: 'float', value: [ 1 ] } }, 'Shape sphere' );
+		b.open( { y: { type: 'float', value: [ 1 ] } }, 'Shape disk' );
+
+		expect( a.finish().unused ).toEqual( { 'Shape sphere: x': 1 } );
+		expect( b.finish().unused ).toEqual( { 'Shape disk: y': 1 } );
+
+	} );
+
 
 	it( 'switches a long numeric list to a typed array and keeps a short one plain', async () => {
 
@@ -565,6 +706,31 @@ describe( 'PBRT parser: repeated includes', () => {
 		expect( reads[ 'lamp.pbrt' ] ).toBe( 2 );
 		expect( ir.instances.get( 'tree' ).count ).toBe( 2 );
 		expect( ir.shapes ).toHaveLength( 2 );
+
+	} );
+
+	// Neither the light nor the motion is in the reuse key: placed as a copy of the still first reading, it lost both.
+	it( 'reads a file again when it is next included under an area light or a moving transform', async () => {
+
+		for ( const [ under, check ] of [
+			[ 'AreaLightSource "diffuse"\n', s => !! s.areaLight ],
+			[ 'ActiveTransform EndTime\nTranslate 0 1 0\nActiveTransform All\n', s => s.ctmEnd?.[ 13 ] === 1 ],
+		] ) {
+
+			const { ir, reads } = await parseWith( { 'leaves.pbrt': LEAF }, PREAMBLE + placedAt( 1 ) + under + placedAt( 2 ) + placedAt( 3 ) );
+			expect( reads[ 'leaves.pbrt' ] ).toBe( 3 );
+			expect( ir.shapes.map( check ) ).toEqual( [ false, true, true ] );
+
+		}
+
+	} );
+
+	it( 'keeps a repeated include as shapes where placing it would pass the placement limit', async () => {
+
+		const { ir, reads } = await parseWith( { 'leaves.pbrt': LEAF }, PREAMBLE + placedAt( 1 ) + placedAt( 2 ), { maxPlacements: 1 } );
+		expect( reads[ 'leaves.pbrt' ] ).toBe( 2 );
+		expect( ir.shapes ).toHaveLength( 2 );
+		expect( [ ir.instanceCount, ir.skippedInstances ] ).toEqual( [ 0, 0 ] );
 
 	} );
 

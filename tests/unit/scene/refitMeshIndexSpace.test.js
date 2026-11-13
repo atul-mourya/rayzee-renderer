@@ -127,6 +127,40 @@ describe( 'a mesh index is not a placement index', () => {
 
 	} );
 
+	it( 'hands the worker\'s error to the caller instead of waiting for ever', async () => {
+
+		const sp = makeProcessor();
+		Object.assign( sp, {
+			bvh: new Float32Array( ( 100 + BOX_NODES + SPHERE_NODES ) * FPN ), triangles: {}, _refitSharedBuffers: {}, _updateMeshTrianglePositions() {},
+			_refitWorker: { postMessage() {
+
+				this.onmessage( { data: { type: 'error', error: 'refit worker: out of memory' } } );
+
+			} },
+		} );
+
+		const refit = sp.refitBVH( ( _, triCount ) => new Float32Array( triCount * 9 ) );
+		const late = new Promise( r => setTimeout( () => r( 'still waiting' ), 500 ) );
+		await expect( Promise.race( [ refit, late ] ) ).rejects.toThrow( 'refit worker: out of memory' );
+
+	} );
+
+	it( 'refuses a refit with nothing built or no positions, before starting a worker', async () => {
+
+		const empty = Object.create( SceneProcessor.prototype );
+		await expect( empty.refitBVH( () => null ) ).rejects.toThrow( /No BVH data available/ );
+		expect( empty._refitWorker ).toBeUndefined();
+		expect( () => empty.refitBLASes( [ 0 ], () => null ) ).toThrow( /No TLAS\/BLAS data available/ );
+		expect( () => empty.updateMeshTransforms( [ 0 ] ) ).toThrow( /No TLAS\/BLAS data available/ );
+
+		const sp = makeProcessor();
+		Object.assign( sp, { bvh: new Float32Array( 16 ), triangles: {} } );
+		await expect( sp.refitBVH( null ) ).rejects.toThrow( /positions are required/ );
+		expect( () => sp.refitBLASes( [ 0 ], null ) ).toThrow( /positions are required/ );
+		expect( [ sp._refitWorker, sp._blasRefitter ] ).toEqual( [ undefined, undefined ] );
+
+	} );
+
 	it( 'still resolves a mesh that placed nothing to no placement at all', () => {
 
 		const sp = makeProcessor();

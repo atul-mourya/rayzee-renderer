@@ -1042,7 +1042,8 @@ export class PBRTParser {
 
 			default:
 				this._warnUnknown( name );
-				// Best effort: swallow any trailing parameter list to stay in sync.
+				// Best effort, to stay in sync: its type name and any bare values, then its parameter list.
+				this._skipArguments();
 				this._translate( this._parseParams(), name );
 				break;
 
@@ -1220,10 +1221,15 @@ export class PBRTParser {
 
 	}
 
-	_skipNamedAndParams() {
+	/** Skips up to the next directive or parameter declarator ("type name": two words, where a type name is one). */
+	_skipArguments() {
 
-		if ( this._peek() && this._peek().type === TokenType.STRING ) this._next();
-		this._parseParams();
+		for ( let t = this._peek(); t && ( t.type !== TokenType.WORD || t.value === 'true' || t.value === 'false' ); t = this._peek() ) {
+
+			if ( t.type === TokenType.STRING && /\s/.test( t.value.trim() ) ) return;
+			this._next();
+
+		}
 
 	}
 

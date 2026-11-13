@@ -1164,16 +1164,6 @@ export class InstanceTable {
 	}
 
 	/**
-	 * Compute AABB by scanning triangle positions (fallback for leaf-root BLASes).
-	 * @private
-	 */
-	_computeAABBFromTriangles( template, triangleData, out, off ) {
-
-		aabbOfTriangles( triangleData, this.tplTriOffset[ template ], this.tplTriCount[ template ], out, off );
-
-	}
-
-	/**
 	 * Assign BLAS offsets in the combined BVH buffer. Called once the TLAS node count is known.
 	 * @param {number} tlasNodeCount - Number of nodes in the TLAS
 	 */

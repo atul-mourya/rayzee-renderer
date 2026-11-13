@@ -5,7 +5,7 @@
  */
 import { describe, it, expect, vi } from 'vitest';
 import {
-	Color, Texture, MeshStandardMaterial, MeshPhysicalMaterial, MeshBasicMaterial, MeshPhongMaterial,
+	Color, Texture, MeshStandardMaterial, MeshPhysicalMaterial, MeshBasicMaterial, MeshPhongMaterial, MeshLambertMaterial, MeshToonMaterial, MeshNormalMaterial,
 	DataTexture, Mesh, PlaneGeometry, Scene, FrontSide, BackSide, DoubleSide, Vector2,
 } from 'three';
 
@@ -38,6 +38,8 @@ import { MaterialDataManager } from '@/core/materials/MaterialDataManager.js';
 import { ChunkedRecords } from '@/core/memory/ChunkedRecords.js';
 import { SceneProcessor } from '@/core/scene/SceneProcessor.js';
 import { setWorkingMatrix } from '@/core/color/WorkingMatrix.js';
+import { TEXTURE_CONSTANTS } from '@/core/materials/TextureBuckets.js';
+import { IssueLog, ISSUE_CODES } from '@/core/EngineIssues.js';
 
 const F = M.FLOATS_PER_MATERIAL;
 
@@ -308,6 +310,54 @@ describe( 'createMaterialObject', () => {
 
 		const tinted = phong( new Color( 0.5, 0.25, 0 ) );
 		expect( tinted.specularColor.toArray() ).toEqual( [ 1, 0.5, 0 ] );
+
+	} );
+
+	// An MTL's Ns, an FBX's Shininess: 0 is the widest lobe, not unset.
+	it( 'turns Phong shininess into roughness, 0 the roughest', () => {
+
+		const extractor = new GeometryExtractor();
+		const roughness = ( shininess ) => extractor.createMaterialObject( new MeshPhongMaterial( { shininess } ) ).roughness;
+		expect( roughness( 0 ) ).toBe( 1 );
+		expect( roughness( 30 ) ).toBeCloseTo( 0.25, 6 );
+		expect( roughness( 1000 ) ).toBeCloseTo( Math.sqrt( 2 / 1002 ), 6 );
+		expect( extractor.createMaterialObject( new MeshPhongMaterial() ).roughness ).toBeCloseTo( 0.25, 6 );
+		expect( roughness( NaN ) ).toBeCloseTo( 0.25, 6 ); // MTLLoader's parseFloat of a broken Ns
+
+	} );
+
+	it( 'maps Lambert to plain diffuse, Toon to rough, and an unknown kind to the defaults', () => {
+
+		const extractor = new GeometryExtractor();
+		const made = ( material ) => {
+
+			const m = extractor.createMaterialObject( material );
+			return [ m.roughness, m.metalness, m.specularIntensity ];
+
+		};
+
+		expect( made( new MeshLambertMaterial( { color: 0x336699 } ) ) ).toEqual( [ 1, 0, 0 ] );
+		expect( made( new MeshToonMaterial() ) ).toEqual( [ 0.9, 0, MATERIAL_DEFAULTS.specularIntensity ] );
+		expect( made( new MeshNormalMaterial() ) ).toEqual( [ MATERIAL_DEFAULTS.roughness, MATERIAL_DEFAULTS.metalness, MATERIAL_DEFAULTS.specularIntensity ] );
+		expect( [ new MeshLambertMaterial(), new MeshToonMaterial(), new MeshNormalMaterial() ].map( m => extractor.getMaterialType( m ) ) ).toEqual( [ 'lambert', 'toon', 'unknown' ] );
+
+	} );
+
+	it( 'keeps the first textures of a map type past the limit, drops the rest once, and says so', () => {
+
+		const issues = new IssueLog();
+		const extractor = new GeometryExtractor( { issues } );
+		const maps = [];
+		const texture = ( i ) => Object.assign( new Texture(), { name: `t${i}` } );
+		const all = Array.from( { length: TEXTURE_CONSTANTS.MAX_TEXTURES_LIMIT + 3 }, ( _, i ) => texture( i ) );
+		const indices = all.map( t => extractor.processTexture( t, maps ) );
+
+		expect( maps ).toHaveLength( TEXTURE_CONSTANTS.MAX_TEXTURES_LIMIT );
+		expect( indices.slice( 0, 3 ) ).toEqual( [ 0, 1, 2 ] );
+		expect( indices.slice( - 3 ) ).toEqual( [ - 1, - 1, - 1 ] );
+		expect( extractor.processTexture( all[ 1 ], maps ) ).toBe( 1 );
+		expect( issues.list.filter( i => i.code === ISSUE_CODES.TEXTURE_LIMIT_EXCEEDED ).map( i => i.detail ) )
+			.toEqual( [ { limit: TEXTURE_CONSTANTS.MAX_TEXTURES_LIMIT, firstDropped: `t${TEXTURE_CONSTANTS.MAX_TEXTURES_LIMIT}` } ] );
 
 	} );
 

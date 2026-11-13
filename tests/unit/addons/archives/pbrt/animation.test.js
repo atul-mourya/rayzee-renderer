@@ -182,6 +182,81 @@ describe( 'PBRT frame sequences', () => {
 
 	} );
 
+	// The cases above end at the common prefix and suffix; these reach the diff between them.
+	it( 'pairs as many shapes as any order-keeping pairing can, between any two frames', () => {
+
+		const lcs = ( a, b ) => {
+
+			const row = new Int32Array( b.length + 1 );
+			for ( let i = 0; i < a.length; i ++ ) {
+
+				let diagonal = 0;
+				for ( let j = 0; j < b.length; j ++ ) {
+
+					const up = row[ j + 1 ];
+					row[ j + 1 ] = a[ i ] === b[ j ] ? diagonal + 1 : Math.max( up, row[ j ] );
+					diagonal = up;
+
+				}
+
+			}
+
+			return row[ b.length ];
+
+		};
+
+		let seed = 7;
+		const rand = n => ( seed = ( seed * 16807 ) % 2147483647 ) % n;
+		for ( let trial = 0; trial < 400; trial ++ ) {
+
+			const keys = 2 + rand( 5 );
+			const a = Int32Array.from( { length: rand( 40 ) }, () => rand( keys ) );
+			const b = Int32Array.from( { length: rand( 40 ) }, () => rand( keys ) );
+			const match = alignSequences( a, b );
+
+			let last = - 1, paired = 0;
+			for ( let j = 0; j < b.length; j ++ ) {
+
+				if ( match[ j ] < 0 ) continue;
+				expect( a[ match[ j ] ], `trial ${trial}: b[${j}]` ).toBe( b[ j ] );
+				expect( match[ j ], `trial ${trial}: order at b[${j}]` ).toBeGreaterThan( last );
+				last = match[ j ];
+				paired ++;
+
+			}
+
+			expect( paired, `trial ${trial}: ${a} | ${b}` ).toBe( lcs( a, b ) );
+
+		}
+
+	} );
+
+	it( 'pairs the n-th copy with the n-th past its edit limit, each shape once', () => {
+
+		// 3000 changes in the middle pass the 2048 the diff tries before it gives up.
+		const a = Int32Array.from( { length: 3002 }, ( _, i ) => ( i === 0 ? 1 : i === 3001 ? 2 : 10 + ( i % 3 ) ) );
+		const b = Int32Array.from( { length: 3002 }, ( _, i ) => ( i === 0 ? 1 : i === 3001 ? 2 : 20 + ( i % 2 ) ) );
+		b[ 7 ] = 11;
+		b[ 9 ] = 11;
+		b[ 11 ] = 12;
+		const match = alignSequences( a, b );
+
+		const used = new Set();
+		for ( let j = 0; j < b.length; j ++ ) if ( match[ j ] >= 0 ) {
+
+			expect( a[ match[ j ] ] ).toBe( b[ j ] );
+			expect( used.has( match[ j ] ) ).toBe( false );
+			used.add( match[ j ] );
+
+		}
+
+		const firstOf = key => Array.from( a.keys() ).filter( i => a[ i ] === key );
+		expect( [ match[ 0 ], match[ 3001 ] ] ).toEqual( [ 0, 3001 ] );
+		expect( [ match[ 7 ], match[ 9 ], match[ 11 ] ] ).toEqual( [ firstOf( 11 )[ 0 ], firstOf( 11 )[ 1 ], firstOf( 12 )[ 0 ] ] );
+		expect( used.size ).toBe( 5 );
+
+	} );
+
 	it( 'follows a moving shape, shows arrivals and hides departures', async () => {
 
 		const frame = ( x, extra ) => parse( `

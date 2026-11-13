@@ -21,6 +21,9 @@ folder itself (`SessionDialog` asks only when access lapsed); `.rayzee` projects
 - **OBJ + MTL textures** resolve as written, beside the OBJ and the MTL (`..` and `\` included), in `textures/`,
   `texture/`, `materials/`, then by **whole** file name anywhere — never part of one: a missing map is no texture, not
   a neighbour's. MTLLoader's base path is `''`: it joins without a slash.
+- **Phong materials** (MTL, FBX) take roughness √( 2 / ( shininess + 2 ) ) (`mapLegacyMaterialToPhysical`), so `Ns 0`
+  is roughness 1. Before 2026-11-13 a 0 read as unset (30, roughness 0.25): 14 materials in the 28 `.mtl` files in
+  `~/Downloads` have `Ns 0`, and the six with a highlight (`Ks 0.8`, trigger-rally's Blender cars) shone sharply.
 - **Camera shape**: FBXLoader gives a camera naming no `AspectWidth` / `AspectHeight` the window's (and crashes in Node);
   `fbxFormat` lends it FBX's default 320 × 200, a hair off, during the synchronous parse, so only a named shape becomes
   `userData.aspect`. `colladaFormat` wraps `ColladaComposer.buildCamera` for its parse (clones carry `userData`):
@@ -267,7 +270,10 @@ subtree per element, and the whole thing rarely fits: Moana is 29 GB unpacked.
   each frame of a sequence counts its own Film. `loadPBRTScene` returns it as `parameters`; the importer records one
   `asset.parameters_ignored` warning (`detail.unused`, `detail.approximated`) and one console list, and keeps it with a
   stored scene, so a cached open reports it too. `Option "type name" value` is one parameter (its value had been read as
-  a directive).
+  a directive). An unknown directive warns once and is skipped up to its parameters: its type name and bare values
+  first (a one-word string is a type name, a declarator has two), then the list, counted unused. Before 2026-11-13 the
+  type name was read as a declarator: pbrt-v2's `SurfaceIntegrator "path" "integer maxdepth" 5` threw, and
+  `Renderer "sampler"` took the next directive as its value.
 - **Formats.** `.tar` is indexed by seeking between headers (`indexTarHeaders`, 1 MB windows) and
   read in place. `.tar.gz` / `.tgz` is unpacked once into `archives/` while it is indexed
   (`unpackTarGz`: DecompressionStream → OPFS, 0 GB held; 1.3 GB gz in 6.4 s) and reopened from
