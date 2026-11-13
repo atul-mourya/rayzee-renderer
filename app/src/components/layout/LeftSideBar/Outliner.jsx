@@ -26,8 +26,8 @@ const STYLES = {
 	textMuted: 'text-muted-foreground',
 	border: 'border-border',
 	inputBg: 'bg-muted/50',
-	iconOrange: 'text-orange-500',
-	iconGreen: 'text-emerald-500',
+	iconOrange: 'text-kind-object',
+	iconGreen: 'text-kind-data',
 	iconDefault: 'text-foreground',
 };
 
@@ -403,7 +403,7 @@ const OutlinerHeader = memo( ( { searchTerm, onSearchChange, filters, onFilterCh
 					>
 						<Checkbox
 							checked={allChecked}
-							className="pointer-events-none data-[state=checked]:bg-blue-600 data-[state=checked]:border-blue-600"
+							className="pointer-events-none data-[state=checked]:bg-checked data-[state=checked]:border-checked"
 						/>
 						<span className="text-xs opacity-70">All</span>
 					</DropdownMenuItem>
@@ -421,7 +421,7 @@ const OutlinerHeader = memo( ( { searchTerm, onSearchChange, filters, onFilterCh
 						>
 							<Checkbox
 								checked={filters[ key ]}
-								className="pointer-events-none data-[state=checked]:bg-blue-600 data-[state=checked]:border-blue-600"
+								className="pointer-events-none data-[state=checked]:bg-checked data-[state=checked]:border-checked"
 							/>
 							<span className="text-xs opacity-70">{key}</span>
 						</DropdownMenuItem>

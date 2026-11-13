@@ -525,7 +525,7 @@ const MaterialTab = () => {
 				const v3 = Array.isArray( value ) ? { x: value[ 0 ], y: value[ 1 ], z: value[ 2 ] } : ( value ?? { x: 0, y: 0, z: 0 } );
 				return (
 					<Row className="w-full">
-						<div className="opacity-50 text-xs truncate" title={config.tip}>{config.label}</div>
+						<div className="control-label truncate" title={config.tip}>{config.label}</div>
 						<div className="flex gap-1">
 							<NumberInput value={v3.x} min={config.min} max={config.max} step={config.step} onValueChange={v => onChange( { ...v3, x: v } )} />
 							<NumberInput value={v3.y} min={config.min} max={config.max} step={config.step} onValueChange={v => onChange( { ...v3, y: v } )} />
@@ -538,9 +538,9 @@ const MaterialTab = () => {
 			switch: () => <Switch label={config.label} tip={config.tip} checked={value} onCheckedChange={onChange} />,
 			select: () => (
 				<Row className="w-full">
-					<div className="opacity-50 text-xs truncate" title={config.tip}>{config.label}</div>
+					<div className="control-label truncate" title={config.tip}>{config.label}</div>
 					<Select value={value} onValueChange={onChange}>
-						<SelectTrigger className="max-w-25 h-5 rounded-full">
+						<SelectTrigger size="sm" className="max-w-25">
 							<SelectValue placeholder="Select" />
 						</SelectTrigger>
 						<SelectContent>
@@ -584,7 +584,7 @@ const MaterialTab = () => {
 			case 'vector2':
 				return (
 					<>
-						<div className="opacity-50 text-xs" title={config.tip}>{config.label}</div>
+						<div className="control-label" title={config.tip}>{config.label}</div>
 						<div className="grid grid-cols-[20px_1fr] gap-y-1 items-center">
 							<NumberInput
 								label="X"
@@ -663,11 +663,11 @@ const MaterialTab = () => {
 			</div>
 
 			<Tabs value={activeTab} onValueChange={setActiveTab} className="flex flex-col h-full flex-1 min-h-0">
-				<TabsList className="grid w-full grid-cols-2 h-auto p-0 border flex-shrink-0">
-					<TabsTrigger value="properties" className="text-xs rounded-full">
+				<TabsList variant="pills" className="grid-cols-2 flex-shrink-0">
+					<TabsTrigger value="properties">
 						Properties
 					</TabsTrigger>
-					<TabsTrigger value="textures" className="text-xs rounded-full">
+					<TabsTrigger value="textures">
 						Textures
 					</TabsTrigger>
 				</TabsList>
@@ -864,12 +864,12 @@ const MaterialTab = () => {
 
 						return (
 							<div className="space-y-2">
-								<div className="text-center opacity-50 text-xs" title="Adds an image to an empty slot of this material.">Add Texture</div>
+								<div className="text-center control-hint" title="Adds an image to an empty slot of this material.">Add Texture</div>
 								<div className="flex flex-wrap gap-1 justify-center">
 									{emptySlots.map( ( { name, label } ) => (
 										<button
 											key={name}
-											className="text-[10px] px-2 py-0.5 rounded-full border border-dashed border-primary/40 hover:bg-primary/10 transition-colors disabled:opacity-50 inline-flex items-center gap-0.5"
+											className="text-xxs px-2 py-0.5 rounded-full border border-dashed border-primary/40 hover:bg-primary/10 transition-colors disabled:opacity-50 inline-flex items-center gap-0.5"
 											onClick={() => openTexturePicker( name )}
 											disabled={loadingTexture === name}
 										>

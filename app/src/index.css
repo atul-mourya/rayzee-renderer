@@ -9,9 +9,10 @@
   --radius-md: calc(var(--radius) - 2px);
   --radius-sm: calc(var(--radius) - 4px);
 
-  /* Custom text size - smaller than xs */
-  --text-xxs: 0.625rem;
-  --text-xxs--line-height: calc(0.75 / 0.625);
+  /* Below xs; each keeps the line height it inherits */
+  --text-3xs: 9px;
+  --text-xxs: 10px;
+  --text-2xs: 11px;
 
   --color-background: hsl(var(--background));
   --color-foreground: hsl(var(--foreground));
@@ -47,6 +48,48 @@
   --color-chart-4: hsl(var(--chart-4));
   --color-chart-5: hsl(var(--chart-5));
 
+  --color-scrim: var(--scrim);
+  --color-on-scrim: var(--on-scrim);
+  --color-on-scrim-200: var(--on-scrim-200);
+  --color-on-scrim-300: var(--on-scrim-300);
+  --color-on-scrim-400: var(--on-scrim-400);
+  --color-overlay-accent: var(--overlay-accent);
+  --color-well: var(--well);
+  --color-placeholder: var(--placeholder);
+  --color-placeholder-pulse: var(--placeholder-pulse);
+  --color-handle: var(--handle);
+  --color-on-handle: var(--on-handle);
+  --color-checked: var(--checked);
+  --color-disabled: var(--disabled);
+  --color-highlight: var(--highlight);
+
+  --color-surface-float: var(--surface-float);
+  --color-float-input: var(--float-input);
+  --color-float-border: var(--float-border);
+  --shadow-float: var(--float-shadow);
+
+  --color-success: var(--success);
+  --color-warning-400: var(--warning-400);
+  --color-warning-500: var(--warning-500);
+  --color-danger-50: var(--danger-50);
+  --color-danger-200: var(--danger-200);
+  --color-danger-300: var(--danger-300);
+  --color-danger-400: var(--danger-400);
+  --color-danger-500: var(--danger-500);
+  --color-danger-600: var(--danger-600);
+  --color-favorite: var(--favorite);
+  --color-favorite-outline: var(--favorite-outline);
+  --color-ai-300: var(--ai-300);
+  --color-ai-400: var(--ai-400);
+  --color-ai-500: var(--ai-500);
+  --color-ai-600: var(--ai-600);
+
+  --color-axis-x: var(--axis-x);
+  --color-axis-y: var(--axis-y);
+  --color-axis-z: var(--axis-z);
+  --color-kind-object: var(--kind-object);
+  --color-kind-data: var(--kind-data);
+
   --animate-accordion-down: accordion-down 0.2s ease-out;
   --animate-accordion-up: accordion-up 0.2s ease-out;
 
@@ -66,6 +109,16 @@
       height: 0;
     }
   }
+}
+
+/* A control's name beside it in a panel (Slider, Switch, a select's label…) */
+@utility control-label {
+  @apply text-xs opacity-50;
+}
+
+/* A hint or note under a control or in a dialog */
+@utility control-hint {
+  @apply text-xs opacity-50;
 }
 
 /*
@@ -159,6 +212,51 @@
     --chart-4: 43 74% 66%;
     --chart-5: 27 87% 67%;
 
+    /* Over the render and pictures: the same in both themes */
+    --scrim: #000;
+    --on-scrim: #fff;
+    --on-scrim-200: oklch(92.8% 0.006 264.531);
+    --on-scrim-300: oklch(87.2% 0.01 258.338);
+    --on-scrim-400: oklch(70.7% 0.022 261.325);
+    --overlay-accent: oklch(70.7% 0.165 254.624);
+    --well: #000;
+    --placeholder: oklch(27.8% 0.033 256.848);
+    --placeholder-pulse: oklch(37.3% 0.034 259.733);
+    --handle: #fff;
+    --on-handle: oklch(20.8% 0.042 265.755);
+    --checked: oklch(54.6% 0.245 262.881);
+    --disabled: oklch(70.7% 0.022 261.325);
+    --highlight: oklch(94.5% 0.129 101.54);
+
+    /* A row's popover of expert controls */
+    --surface-float: hsl(210 40% 98%);
+    --float-input: oklch(92.9% 0.013 255.508);
+    --float-border: #fff;
+    --float-shadow: 0 40px 80px -12px rgba(0, 0, 0, 0.6), 0 20px 40px -8px rgba(0, 0, 0, 0.4);
+
+    --success: oklch(76.5% 0.177 163.223);
+    --warning-400: oklch(82.8% 0.189 84.429);
+    --warning-500: oklch(76.9% 0.188 70.08);
+    --danger-50: oklch(97.1% 0.013 17.38);
+    --danger-200: oklch(88.5% 0.062 18.334);
+    --danger-300: oklch(80.8% 0.114 19.571);
+    --danger-400: oklch(70.4% 0.191 22.216);
+    --danger-500: oklch(63.7% 0.237 25.331);
+    --danger-600: oklch(57.7% 0.245 27.325);
+    --favorite: oklch(44.4% 0.177 26.899);
+    --favorite-outline: oklch(70.4% 0.191 22.216);
+    --ai-300: oklch(82.7% 0.119 306.383);
+    --ai-400: oklch(71.4% 0.203 305.504);
+    --ai-500: oklch(62.7% 0.265 303.9);
+    --ai-600: oklch(55.8% 0.288 302.321);
+
+    /* Data, not chrome */
+    --axis-x: oklch(63.7% 0.237 25.331);
+    --axis-y: oklch(72.3% 0.219 149.579);
+    --axis-z: oklch(62.3% 0.214 259.815);
+    --kind-object: oklch(70.5% 0.213 47.604);
+    --kind-data: oklch(69.6% 0.17 162.48);
+
     color-scheme: light;
   }
 
@@ -187,6 +285,48 @@
     --chart-3: 30 80% 55%;
     --chart-4: 280 65% 60%;
     --chart-5: 340 75% 55%;
+
+    --scrim: #000;
+    --on-scrim: #fff;
+    --on-scrim-200: oklch(92.8% 0.006 264.531);
+    --on-scrim-300: oklch(87.2% 0.01 258.338);
+    --on-scrim-400: oklch(70.7% 0.022 261.325);
+    --overlay-accent: oklch(70.7% 0.165 254.624);
+    --well: #000;
+    --placeholder: oklch(27.8% 0.033 256.848);
+    --placeholder-pulse: oklch(37.3% 0.034 259.733);
+    --handle: #fff;
+    --on-handle: oklch(20.8% 0.042 265.755);
+    --checked: oklch(54.6% 0.245 262.881);
+    --disabled: oklch(70.7% 0.022 261.325);
+    --highlight: oklch(47.6% 0.114 61.907);
+
+    --surface-float: oklch(27.9% 0.041 260.031);
+    --float-input: oklch(12.9% 0.042 264.695);
+    --float-border: #fff;
+    --float-shadow: 0 20px 30px 0 rgba(0, 0, 0, 1), 0 40px 60px 0 rgba(0, 0, 0, 1), 0 60px 100px 0 rgba(0, 0, 0, 0.95), 0 80px 140px 0 rgba(0, 0, 0, 0.85);
+
+    --success: oklch(76.5% 0.177 163.223);
+    --warning-400: oklch(82.8% 0.189 84.429);
+    --warning-500: oklch(76.9% 0.188 70.08);
+    --danger-50: oklch(97.1% 0.013 17.38);
+    --danger-200: oklch(88.5% 0.062 18.334);
+    --danger-300: oklch(80.8% 0.114 19.571);
+    --danger-400: oklch(70.4% 0.191 22.216);
+    --danger-500: oklch(63.7% 0.237 25.331);
+    --danger-600: oklch(57.7% 0.245 27.325);
+    --favorite: oklch(44.4% 0.177 26.899);
+    --favorite-outline: oklch(70.4% 0.191 22.216);
+    --ai-300: oklch(82.7% 0.119 306.383);
+    --ai-400: oklch(71.4% 0.203 305.504);
+    --ai-500: oklch(62.7% 0.265 303.9);
+    --ai-600: oklch(55.8% 0.288 302.321);
+
+    --axis-x: oklch(63.7% 0.237 25.331);
+    --axis-y: oklch(72.3% 0.219 149.579);
+    --axis-z: oklch(62.3% 0.214 259.815);
+    --kind-object: oklch(70.5% 0.213 47.604);
+    --kind-data: oklch(69.6% 0.17 162.48);
 
     color-scheme: dark;
   }

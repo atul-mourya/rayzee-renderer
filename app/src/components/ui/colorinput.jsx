@@ -30,7 +30,7 @@ const ColorInput = ( { onChange, className, value, tip, ...props } ) => {
 
 	return (
 		<>
-			<span className="opacity-50 text-xs truncate" title={tip}>{props.label}</span>
+			<span className="control-label truncate" title={tip}>{props.label}</span>
 			<div className={cn( "relative flex h-5 w-full touch-none select-none items-center max-w-32", className )}>
 				<div className="relative h-full w-full grow overflow-hidden rounded-full bg-primary/20">
 					<Input

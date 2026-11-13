@@ -17,8 +17,8 @@ const clock = hours => {
 
 const LabelledSelect = ( { label, tip, value, onValueChange, children } ) => (
 	<Select value={value} onValueChange={onValueChange}>
-		<span className="opacity-50 text-xs truncate" title={tip}>{label}</span>
-		<SelectTrigger className="max-w-32 h-5 rounded-full">
+		<span className="control-label truncate" title={tip}>{label}</span>
+		<SelectTrigger size="sm" className="max-w-32">
 			<SelectValue />
 		</SelectTrigger>
 		<SelectContent>{children}</SelectContent>

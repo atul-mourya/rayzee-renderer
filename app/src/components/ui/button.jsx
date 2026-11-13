@@ -25,6 +25,10 @@ const buttonVariants = cva(
 				sm: "h-8 rounded-md px-3 text-xs",
 				lg: "h-10 rounded-md px-8",
 				icon: "h-9 w-9",
+				// A panel's: a compact action, a round icon button, a pill.
+				xs: "h-6 rounded-md px-3 text-xs",
+				"icon-xs": "h-5 w-5 rounded-full",
+				pill: "h-5 rounded-full px-2 text-xs",
 			},
 		},
 		defaultVariants: {

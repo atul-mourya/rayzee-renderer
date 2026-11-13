@@ -74,7 +74,7 @@ function useUpscaledStill( upscaled ) {
 
 }
 
-const label = ( text, tip ) => <span className="opacity-50 text-xs truncate" title={tip}>{text}</span>;
+const label = ( text, tip ) => <span className="control-label truncate" title={tip}>{text}</span>;
 
 const item = o => <SelectItem key={o.value} value={String( o.value )} hint={o.hint} disabled={o.disabled}>{o.label}</SelectItem>;
 
@@ -209,7 +209,7 @@ function PictureOptions( { settings, update, available, hdr } ) {
 
 }
 
-const summary = ( width, height, what ) => <p className="text-xs opacity-50">{width} × {height} · {what}</p>;
+const summary = ( width, height, what ) => <p className="control-hint">{width} × {height} · {what}</p>;
 
 function describe( settings, info ) {
 
@@ -259,7 +259,7 @@ function SavedPicture( { settings, update, result, source, setSource, formats: a
 			<Choice text="Format" value={format} options={formats} onChange={f => update( { format: f } )} />
 			{! holdsLight( format ) && <Choice text="Picture" value={source} options={sources} onChange={setSource} />}
 			{isLossy( format ) && <Quality value={settings.quality} onChange={quality => update( { quality } )} />}
-			{holdsLight( format ) && <p className="text-xs opacity-50">{format === 'exr' ? 'The full-range copy, as it was saved.' : 'The full-range copy, converted to Radiance HDR.'}</p>}
+			{holdsLight( format ) && <p className="control-hint">{format === 'exr' ? 'The full-range copy, as it was saved.' : 'The full-range copy, converted to Radiance HDR.'}</p>}
 		</div>
 	);
 
@@ -294,7 +294,7 @@ function VideoOptions( { settings, update, info, duration, animates } ) {
 			)}
 			<Choice text="Frame rate" value={fps} options={FRAME_RATES} onChange={v => update( { fps: Number( v ) } )} />
 			{info && summary( info.width, info.height, `${duration.toFixed( 1 )} s, ${count} frames` )}
-			{frames && <p className="text-xs opacity-50">{canPickFolder() ? 'Each frame is saved into a folder you choose.' : 'The frames are saved together as one zip file.'}</p>}
+			{frames && <p className="control-hint">{canPickFolder() ? 'Each frame is saved into a folder you choose.' : 'The frames are saved together as one zip file.'}</p>}
 		</div>
 	);
 

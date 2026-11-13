@@ -39,9 +39,9 @@ const CanvasDimensionControls = ( { disabled = false, resolutionKey = 'resolutio
 
 			{/* Resolution */}
 			<Row>
-				<span className="opacity-50 text-xs truncate" title="The length of the picture's longer side, in pixels. Larger is sharper and slower.">Resolution</span>
+				<span className="control-label truncate" title="The length of the picture's longer side, in pixels. Larger is sharper and slower.">Resolution</span>
 				<Select value={String( currentResolution )} onValueChange={onResolutionChange} disabled={disabled}>
-					<SelectTrigger className="max-w-32 h-5 rounded-full">
+					<SelectTrigger size="sm" className="max-w-32">
 						<SelectValue placeholder="Select resolution" />
 					</SelectTrigger>
 					<SelectContent>
@@ -54,7 +54,7 @@ const CanvasDimensionControls = ( { disabled = false, resolutionKey = 'resolutio
 
 			{/* Computed dimensions display */}
 			<Row>
-				<span className="opacity-50 text-xs truncate" title="The size of the finished picture. Its shape comes from Aspect Ratio in the Camera tab.">Output</span>
+				<span className="control-label truncate" title="The size of the finished picture. Its shape comes from Aspect Ratio in the Camera tab.">Output</span>
 				<span className="text-xs text-muted-foreground">
 					{outputWidth} &times; {outputHeight} ({panorama ? '2:1, 360°' : aspectRatioLabel( aspectRatioPreset, orientation, sceneAspect )})
 				</span>
@@ -62,7 +62,7 @@ const CanvasDimensionControls = ( { disabled = false, resolutionKey = 'resolutio
 
 			{upscaleFactor > 1 && (
 				<Row>
-					<span className="opacity-50 text-[10px] truncate">
+					<span className="opacity-50 text-xxs truncate">
 						upscaled {upscaleFactor}&times; from {canvasWidth} &times; {canvasHeight}
 					</span>
 				</Row>

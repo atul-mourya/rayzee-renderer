@@ -8,20 +8,20 @@
 	<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='9' fill='%2352d1e9'/%3E%3C/svg%3E">
 	<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/docsify@4.13.1/lib/themes/dark.css">
 	<style>
-		/* Dark theme: neutral greys, cyan accent. */
+		/* The app's dark theme (app/src/index.css). */
 		:root {
-			--theme-color: #52d1e9;
-			--bg: #202020;
-			--panel: #161616;
-			--raised: #303030;
-			--line: #353535;
-			--text: #dedede;
-			--muted: #9e9e9e;
-			--heading: #f7f7f7;
+			--theme-color: #3b82f6;
+			--bg: #181b20;
+			--panel: #181b20;
+			--raised: #1e293b;
+			--line: #1e293b;
+			--text: #f8fafc;
+			--muted: #94a3b8;
+			--heading: #f8fafc;
 		}
 		body, .sidebar { background-color: var(--bg); color: var(--text); }
 		.sidebar { background-color: var(--panel); border-right: 1px solid var(--line); }
-		.sidebar-toggle, body.close .sidebar-toggle { background-color: rgba(22, 22, 22, .9); }
+		.sidebar-toggle, body.close .sidebar-toggle { background-color: rgba(24, 27, 32, .9); }
 		.sidebar > h1 a { color: var(--heading); font-weight: 600; letter-spacing: .02em; }
 		.sidebar ul li a { color: var(--text); }
 		.sidebar ul li a:hover { color: var(--theme-color); }
@@ -40,16 +40,16 @@
 		.markdown-section table { display: block; overflow-x: auto; }
 		.markdown-section td, .markdown-section th { border-color: var(--line); }
 		.markdown-section tr { border-top-color: var(--line); }
-		.markdown-section tr:nth-child(2n) { background-color: var(--panel); }
+		.markdown-section tr:nth-child(2n) { background-color: var(--raised); }
 		.markdown-section img { border-radius: 6px; }
 		.markdown-section kbd { border-color: var(--line); background: var(--raised); color: var(--heading); }
-		.markdown-section p.tip { background-color: var(--panel); color: var(--text); }
-		.markdown-section p.tip code { background-color: var(--raised); }
+		.markdown-section p.tip { background-color: var(--raised); color: var(--text); }
+		.markdown-section p.tip code { background-color: var(--bg); }
 		.markdown-section p.warn { background: rgba(238, 177, 84, .1); color: var(--text); }
-		.token.punctuation { color: #8f8f8f; }
+		.token.punctuation { color: var(--muted); }
 		.token.string, .token.attr-value { color: #a5d6a7; }
-		.token.keyword { color: #52d1e9; }
-		.token.comment { color: #727272; }
+		.token.keyword { color: var(--theme-color); }
+		.token.comment { color: #64748b; }
 		input[type=search] { background: var(--raised); border-color: var(--line); color: var(--text); }
 		.search { border-bottom-color: var(--line); }
 		.app-nav a { color: var(--text); }

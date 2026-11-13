@@ -9,6 +9,8 @@
 -   make bvh an independent library — built as the `rayzee-bvh` package on the night of 2026-11-05 (branch
     `night/bvh-package`), not committed
 - claude design: redesign all ui component used in the application to create a custom design system
+  → 2026-11-13: the app's own look on a design system (`feat/design-system`): tokens for every colour and size in
+    `app/src/index.css`, the `?design` reference page, docs/design/DESIGN_SYSTEM.md, tests/unit/app/designTokens.test.js
 - compare api of rayzee headless and pbrt. assess what can we learn and make it better
   → assessed 2026-11-13: built `firstSample` (renderFrames, captureHeadless, provenance),
   `captureHeadless` `steps` / `onStep` / `reference` → `errors`, `timings`, `compareImages` / `mergeRenders`, and the

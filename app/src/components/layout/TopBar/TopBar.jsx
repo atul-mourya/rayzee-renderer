@@ -13,7 +13,7 @@ const ExportDialog = lazy( () => import( './ExportDialog' ) );
 
 // Loading fallback for modal
 const ModalLoadingFallback = () => (
-	<div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center">
+	<div className="fixed inset-0 z-50 bg-scrim/80 flex items-center justify-center">
 		<div className="bg-background rounded-lg p-6 shadow-lg">
 			<div className="flex items-center space-x-3">
 				<div className="animate-spin h-5 w-5 border-2 border-primary border-t-transparent rounded-full"></div>

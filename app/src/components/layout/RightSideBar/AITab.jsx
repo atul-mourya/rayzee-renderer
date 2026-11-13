@@ -15,7 +15,7 @@ import { IDEAS, MAX_REFERENCES, SCOPES, SIZES } from '@/lib/aiEdit';
 const STUDIO_URL = 'https://aistudio.google.com/app/apikey';
 const PILL = 'h-5 gap-1 rounded-full px-2 text-xs font-normal';
 
-const label = ( text, tip ) => <span className="opacity-50 text-xs truncate" title={tip}>{text}</span>;
+const label = ( text, tip ) => <span className="control-label truncate" title={tip}>{text}</span>;
 
 const clock = seconds => `${Math.floor( seconds / 60 )}:${String( Math.floor( seconds % 60 ) ).padStart( 2, '0' )}`;
 
@@ -95,7 +95,7 @@ function KeyForm() {
 				<Label htmlFor="gemini-key" className="text-xs">API Key</Label>
 				<Input id="gemini-key" type="password" autoComplete="off" value={value} onChange={e => setValue( e.target.value )} placeholder="Paste your Gemini API key" aria-invalid={!! error} aria-describedby={error ? 'gemini-key-error' : undefined} />
 				{error && (
-					<p id="gemini-key-error" className="flex gap-1.5 text-xs text-red-300">
+					<p id="gemini-key-error" className="flex gap-1.5 text-xs text-danger-300">
 						<AlertCircle className="h-3.5 w-3.5 shrink-0 mt-0.5" />{messages[ error ] ?? messages.other}
 					</p>
 				)}
@@ -132,8 +132,8 @@ function Notice( { notice, onRetry, id } ) {
 
 	return (
 		<Alert className={`p-3 ${destructive ? 'border-destructive' : ''}`}>
-			{notice.kind === 'quota' ? <Clock className="h-4 w-4 text-amber-400!" /> : <AlertCircle className={`h-4 w-4 ${destructive ? 'text-red-300!' : ''}`} />}
-			<AlertTitle className={`text-xs ${destructive ? 'text-red-300' : ''}`}>{copy[ 0 ]}</AlertTitle>
+			{notice.kind === 'quota' ? <Clock className="h-4 w-4 text-warning-400!" /> : <AlertCircle className={`h-4 w-4 ${destructive ? 'text-danger-300!' : ''}`} />}
+			<AlertTitle className={`text-xs ${destructive ? 'text-danger-300' : ''}`}>{copy[ 0 ]}</AlertTitle>
 			<AlertDescription className="text-xs text-muted-foreground">
 				<p>{copy[ 1 ]}</p>
 				<div className="flex gap-1.5 mt-2">
@@ -161,7 +161,7 @@ function References( { disabled } ) {
 			<div className="flex items-center gap-1.5">
 				{references.map( r => (
 					<div key={r.id} className="relative">
-						<img src={r.url} alt={r.name} title={r.name} className="h-7 w-9 rounded object-cover ring-1 ring-border bg-black" />
+						<img src={r.url} alt={r.name} title={r.name} className="h-7 w-9 rounded object-cover ring-1 ring-border bg-well" />
 						<button type="button" aria-label={`Remove ${r.name}`} onClick={() => removeReference( r.id )} className="absolute -top-1.5 -right-1.5 h-4 w-4 rounded-full bg-background border border-border flex items-center justify-center hover:bg-accent">
 							<X className="h-2.5 w-2.5" />
 						</button>
@@ -235,7 +235,7 @@ function Editor( { render } ) {
 				</div>
 			</div>
 			<div className="space-y-1.5">
-				<label htmlFor="ai-prompt" className="block opacity-50 text-xs">What should change?</label>
+				<label htmlFor="ai-prompt" className="block control-label">What should change?</label>
 				<Textarea id="ai-prompt" ref={promptRef} value={prompt} onChange={e => store.setPrompt( e.target.value )} rows={3}
 					placeholder="Describe the change in your own words" disabled={busy} className="text-sm" />
 			</div>
@@ -244,14 +244,14 @@ function Editor( { render } ) {
 
 			<Row>
 				{label( 'Area', 'Whole picture: Gemini redraws all of it. Part of it: drag a box on the picture, and only that box changes.' )}
-				<ToggleGroup type="single" value={where} onValueChange={v => v && store.setWhere( v )} disabled={busy} className="max-w-44">
-					<ToggleGroupItem value="whole" className="text-xs px-3 h-5">Whole picture</ToggleGroupItem>
-					<ToggleGroupItem value="part" className="text-xs px-3 h-5">Part of it</ToggleGroupItem>
+				<ToggleGroup size="xs" type="single" value={where} onValueChange={v => v && store.setWhere( v )} disabled={busy} className="max-w-44">
+					<ToggleGroupItem value="whole">Whole picture</ToggleGroupItem>
+					<ToggleGroupItem value="part">Part of it</ToggleGroupItem>
 				</ToggleGroup>
 			</Row>
 			{where === 'part' && (
 				<Row>
-					<span className="text-xs text-purple-300">{area ? 'Only the marked area changes.' : 'Drag on the picture to mark the area.'}</span>
+					<span className="text-xs text-ai-300">{area ? 'Only the marked area changes.' : 'Drag on the picture to mark the area.'}</span>
 					{area && ! busy && <Button variant="ghost" className={PILL} onClick={() => store.setArea( id, null )}>Clear</Button>}
 				</Row>
 			)}
@@ -259,7 +259,7 @@ function Editor( { render } ) {
 			<Row>
 				<Select value={scope} onValueChange={store.setScope} disabled={busy}>
 					{label( 'May change', SCOPES.map( s => `${s.label}: ${s.hint}` ).join( '\n' ) )}
-					<SelectTrigger className="max-w-36 h-5 rounded-full"><SelectValue /></SelectTrigger>
+					<SelectTrigger size="sm" className="max-w-36"><SelectValue /></SelectTrigger>
 					<SelectContent>
 						{SCOPES.map( s => <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem> )}
 					</SelectContent>
@@ -269,7 +269,7 @@ function Editor( { render } ) {
 			<Row>
 				<Select value={size} onValueChange={store.setSize} disabled={busy}>
 					{label( 'Size', 'How large a picture Gemini returns, in the render’s shape. 1K is the fastest.' )}
-					<SelectTrigger className="max-w-36 h-5 rounded-full"><SelectValue /></SelectTrigger>
+					<SelectTrigger size="sm" className="max-w-36"><SelectValue /></SelectTrigger>
 					<SelectContent>
 						{SIZES.map( s => <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem> )}
 					</SelectContent>
@@ -326,7 +326,7 @@ function Editing( { render, where } ) {
 
 		return (
 			<div className="flex gap-2.5 items-center">
-				<img src={render.thumb} alt="" className="w-20 h-15 shrink-0 rounded-md object-cover ring-1 ring-border bg-black" />
+				<img src={render.thumb} alt="" className="w-20 h-15 shrink-0 rounded-md object-cover ring-1 ring-border bg-well" />
 				<div className="min-w-0">
 					<p className="text-sm font-medium truncate">Editing: {title}</p>
 					<p className="text-xs text-muted-foreground">{meta}</p>
@@ -338,7 +338,7 @@ function Editing( { render, where } ) {
 
 	const tile = ( key, active, onClick, src, text, tip ) => (
 		<button key={key} type="button" onClick={onClick} aria-pressed={active} title={tip} className="flex flex-col gap-1 shrink-0">
-			<span className={`block w-14 h-10 rounded overflow-hidden bg-black ${active ? 'ring-2 ring-primary' : 'ring-1 ring-border'}`}>
+			<span className={`block w-14 h-10 rounded overflow-hidden bg-well ${active ? 'ring-2 ring-primary' : 'ring-1 ring-border'}`}>
 				{src && <img src={src} alt="" className="w-full h-full object-cover" />}
 			</span>
 			<span className={`text-xs leading-none ${active ? '' : 'opacity-50'}`}>{text}</span>
@@ -352,10 +352,10 @@ function Editing( { render, where } ) {
 				{versions.map( v => tile( v.n, shown === v.n, () => store.show( id, v.n ), v.url, `v${v.n}`, v.prompt ) )}
 				{job && (
 					<div className="flex flex-col gap-1 shrink-0" title={job.prompt}>
-						<span className="w-14 h-10 rounded border border-dashed border-purple-500 flex items-center justify-center">
-							<Loader2 className="h-4 w-4 animate-spin text-purple-400" />
+						<span className="w-14 h-10 rounded border border-dashed border-ai-500 flex items-center justify-center">
+							<Loader2 className="h-4 w-4 animate-spin text-ai-400" />
 						</span>
-						<span className="text-xs leading-none opacity-50">v{job.n}</span>
+						<span className="control-hint leading-none">v{job.n}</span>
 					</div>
 				)}
 			</div>
@@ -377,7 +377,7 @@ function Editing( { render, where } ) {
 					<div className="flex items-center gap-1.5">
 						<p className="text-xs text-muted-foreground truncate flex-1 min-w-0">{meta}</p>
 						{current && (
-							<Button variant="ghost" aria-label={`Delete v${current.n}`} title={`Delete v${current.n}`} className={`${PILL} text-red-300 hover:text-red-200`} onClick={() => setConfirming( current.n )}>
+							<Button variant="ghost" aria-label={`Delete v${current.n}`} title={`Delete v${current.n}`} className={`${PILL} text-danger-300 hover:text-danger-200`} onClick={() => setConfirming( current.n )}>
 								<Trash2 className="h-3 w-3" />
 							</Button>
 						)}

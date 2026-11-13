@@ -32,7 +32,7 @@ const Row = ( { className, children, more, ...props } ) => {
 				<PopoverContent
 					align="end"
 					sideOffset={8}
-					className="w-64 p-3 rounded-lg bg-primary-foreground dark:bg-slate-800 text-foreground border border-white/30 space-y-3 shadow-[0_40px_80px_-12px_rgba(0,0,0,0.6),0_20px_40px_-8px_rgba(0,0,0,0.4)] dark:shadow-[0_20px_30px_0_rgba(0,0,0,1),0_40px_60px_0_rgba(0,0,0,1),0_60px_100px_0_rgba(0,0,0,0.95),0_80px_140px_0_rgba(0,0,0,0.85)] dark:[&_.bg-input]:bg-slate-950 [&_.bg-input]:bg-slate-200"
+					className="w-64 p-3 rounded-lg bg-surface-float text-foreground border border-float-border/30 space-y-3 shadow-float [&_.bg-input]:bg-float-input"
 				>
 					{more}
 				</PopoverContent>

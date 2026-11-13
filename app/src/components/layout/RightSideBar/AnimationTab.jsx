@@ -97,8 +97,8 @@ const AnimationTab = () => {
 								onValueChange={( val ) => handleClipChange( Number( val ) )}
 								disabled={busy}
 							>
-								<span className="opacity-50 text-xs truncate" title="Which of the model's own animations plays.">Animation Clip</span>
-								<SelectTrigger className="max-w-40 h-5 rounded-full">
+								<span className="control-label truncate" title="Which of the model's own animations plays.">Animation Clip</span>
+								<SelectTrigger size="sm" className="max-w-40">
 									<div className="h-full pr-1 inline-flex justify-start items-center">
 										<ListMusic size={12} className="z-10" />
 									</div>
@@ -118,8 +118,8 @@ const AnimationTab = () => {
 						<div className="flex items-center gap-2">
 							<Button
 								variant={isPlaying ? "secondary" : "default"}
-								size="sm"
-								className="flex-1 h-6 text-xs"
+								size="xs"
+								className="flex-1"
 								onClick={isPlaying ? handlePause : handlePlay}
 								disabled={busy}
 							>
@@ -131,8 +131,7 @@ const AnimationTab = () => {
 							</Button>
 							<Button
 								variant="outline"
-								size="sm"
-								className="h-6"
+								size="xs"
 								onClick={handleStop}
 								disabled={busy || ( ! isPlaying && ! isPaused )}
 								aria-label="Stop animation"
@@ -175,7 +174,7 @@ const AnimationTab = () => {
 						</Row>
 					</>
 				) : (
-					<p className="text-xs opacity-50 leading-relaxed">
+					<p className="control-hint leading-relaxed">
 						This model has no animation of its own. You can still make a video by moving the camera along a path of keyframes.
 					</p>
 				)}
@@ -184,7 +183,7 @@ const AnimationTab = () => {
 
 				{/* Camera Keyframes */}
 				<Row>
-					<span className="opacity-50 text-xs truncate inline-flex items-center" title="Saved views the camera glides through, in time order, for a video. Frame a view, add a keyframe, then set the times to pace the move.">
+					<span className="control-label truncate inline-flex items-center" title="Saved views the camera glides through, in time order, for a video. Frame a view, add a keyframe, then set the times to pace the move.">
 						<Route size={12} className="mr-1" />
 						Camera Keyframes
 					</span>
@@ -204,7 +203,7 @@ const AnimationTab = () => {
 					<div className="space-y-1.5">
 						{cameraKeys.map( ( key, i ) => (
 							<div key={key.id} className="flex items-center gap-1.5">
-								<span className="text-xs opacity-50 w-10 shrink-0" title="When the camera reaches this view, in seconds from the start.">Key {i + 1}</span>
+								<span className="control-label w-10 shrink-0" title="When the camera reaches this view, in seconds from the start.">Key {i + 1}</span>
 								<NumberInput
 									min={0}
 									max={3600}
@@ -217,7 +216,7 @@ const AnimationTab = () => {
 								<span className="text-xs opacity-40">s</span>
 								<div className="flex items-center gap-1 ml-auto">
 									{keyActions.map( ( [ Icon, action, title ] ) => (
-										<Button key={title} variant="outline" size="icon" className="h-5 w-5 rounded-full" onClick={() => action( key.id )} disabled={busy} title={title}>
+										<Button key={title} variant="outline" size="icon-xs" onClick={() => action( key.id )} disabled={busy} title={title}>
 											<Icon size={11} />
 										</Button>
 									) )}
@@ -226,7 +225,7 @@ const AnimationTab = () => {
 						) )}
 					</div>
 				) : (
-					<p className="text-xs opacity-50 leading-relaxed">
+					<p className="control-hint leading-relaxed">
 						Frame a view and add a keyframe for each place the camera should pass through. Two or more make a move.
 					</p>
 				)}
@@ -247,8 +246,8 @@ const AnimationTab = () => {
 
 						<Button
 							variant="outline"
-							size="sm"
-							className="w-full h-6 text-xs"
+							size="xs"
+							className="w-full"
 							onClick={isTimelinePlaying ? handleStopTimeline : handlePlayTimeline}
 							disabled={isVideoRendering || isPlaying}
 						>
@@ -297,8 +296,8 @@ const AnimationTab = () => {
 						<Progress value={videoRenderProgress} className="h-1.5" />
 						<Button
 							variant="destructive"
-							size="sm"
-							className="w-full h-6 text-xs"
+							size="xs"
+							className="w-full"
 							onClick={handleCancelVideoRender}
 						>
 							<X size={12} className="mr-1" /> Cancel Render
@@ -307,8 +306,8 @@ const AnimationTab = () => {
 				) : (
 					<Button
 						variant="default"
-						size="sm"
-						className="w-full h-6 text-xs"
+						size="xs"
+						className="w-full"
 						onClick={() => useStore.getState().setExportRequest( { tab: 'video', from: 'live' } )}
 						disabled={! canRender}
 					>
@@ -320,8 +319,8 @@ const AnimationTab = () => {
 					<div className="flex gap-2">
 						<Button
 							variant="outline"
-							size="sm"
-							className="flex-1 h-6 text-xs"
+							size="xs"
+							className="flex-1"
 							onClick={() => useStore.getState().setSessionRequest( { origin: 'video', job: unfinished, record: unfinished.job.session } )}
 							disabled={! unfinished.job.session}
 						>
@@ -329,8 +328,7 @@ const AnimationTab = () => {
 						</Button>
 						<Button
 							variant="ghost"
-							size="sm"
-							className="h-6 text-xs"
+							size="xs"
 							onClick={async () => {
 
 								await unfinished.discard();

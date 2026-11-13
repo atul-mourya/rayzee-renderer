@@ -5,7 +5,7 @@ import { getApp } from '@/lib/appProxy';
 import { cn } from "@/lib/utils";
 
 // Marks the stop condition that actually retired the frame.
-const DoneTick = ( { show } ) => show && <Check className="size-3 text-emerald-400" strokeWidth={3} />;
+const DoneTick = ( { show } ) => show && <Check className="size-3 text-success" strokeWidth={3} />;
 
 // One of the three stop-condition chips: active is the armed/binding look. Omit onClick for a
 // read-only chip — it then drops the clickable affordance rather than only the handler.
@@ -15,8 +15,8 @@ const StatChip = ( { active, onClick, title, children } ) => (
 		title={title}
 		className={cn(
 			"inline-flex items-center gap-1",
-			onClick && "cursor-pointer hover:text-white transition-colors",
-			active && "font-bold text-blue-400"
+			onClick && "cursor-pointer hover:text-on-scrim transition-colors",
+			active && "font-bold text-overlay-accent"
 		)}
 	>
 		{children}
@@ -62,7 +62,7 @@ const EditableValue = ( { value, onCommit } ) => {
 
 		return (
 			<input
-				className="bg-transparent border-b border-white text-white w-12"
+				className="bg-transparent border-b border-on-scrim text-on-scrim w-12"
 				type="number"
 				value={tempValue}
 				onChange={e => setTempValue( e.target.value )}
@@ -77,7 +77,7 @@ const EditableValue = ( { value, onCommit } ) => {
 	return (
 		<span
 			onClick={() => setIsEditing( true )}
-			className="cursor-pointer border-b border-dotted border-white hover:border-blue-400 transition-colors duration-300"
+			className="cursor-pointer border-b border-dotted border-on-scrim hover:border-overlay-accent transition-colors duration-300"
 		>
 			{value}
 		</span>
@@ -177,7 +177,7 @@ const StatsMeter = ( { viewportMode } ) => {
 		<div className="absolute top-2 left-2 max-w-[calc(50%-4.5rem)] text-xs text-foreground bg-background opacity-50 p-1 rounded flex flex-col gap-1">
 			<div className="flex flex-wrap items-center gap-x-1 gap-y-0.5">
 				{sceneStats?.triangleCount > 0 && (
-					<span className="mr-1 whitespace-nowrap">Triangles: <span className="text-white">{sceneStats.triangleCount.toLocaleString()}</span> |</span>
+					<span className="mr-1 whitespace-nowrap">Triangles: <span className="text-on-scrim">{sceneStats.triangleCount.toLocaleString()}</span> |</span>
 				)}
 
 				{/* Time Control */}
@@ -185,7 +185,7 @@ const StatsMeter = ( { viewportMode } ) => {
 					<StatChip active={timeLimited} onClick={() => handleRenderLimitModeChange( 'timeOnly' )}>
 						Time:
 					</StatChip>
-					<span className="text-white">{stats.timeElapsed.toFixed( 2 )}</span>s
+					<span className="text-on-scrim">{stats.timeElapsed.toFixed( 2 )}</span>s
 					{timeLimited && (
 						<> / <EditableValue value={renderTimeLimit} onCommit={handleRenderTimeLimitChange} />s </>
 					)}
@@ -198,7 +198,7 @@ const StatsMeter = ( { viewportMode } ) => {
 					<StatChip active={framesLimited} onClick={() => handleRenderLimitModeChange( 'frames' )}>
 						Frames:
 					</StatChip>
-					<span className="text-white">{stats.samples}</span>
+					<span className="text-on-scrim">{stats.samples}</span>
 					{framesLimited && (
 						<> / <EditableValue value={storeMaxSamples} onCommit={handleMaxSamplesEdit} /> </>
 					)}
@@ -223,14 +223,14 @@ const StatsMeter = ( { viewportMode } ) => {
 			</div>
 
 			<div className="flex items-center gap-1">
-				<span>Memory: <span className="text-white">{formatBytes( stats.memoryUsed )}</span></span>
+				<span>Memory: <span className="text-on-scrim">{formatBytes( stats.memoryUsed )}</span></span>
 				<span className="mx-1">|</span>
-				<span>Peak: <span className="text-white">{formatBytes( stats.memoryPeak )}</span></span>
+				<span>Peak: <span className="text-on-scrim">{formatBytes( stats.memoryPeak )}</span></span>
 			</div>
 
 			{sceneStats?.triangleCount > 0 && (
 				<span title="The model's width × height × depth, as its file gives them. If that is not its real size, set Subject Size in the Camera tab (Depth of Field, Pro).">
-					Size: <span className="text-white">{modelSize}</span> m
+					Size: <span className="text-on-scrim">{modelSize}</span> m
 				</span>
 			)}
 		</div>

@@ -157,10 +157,10 @@ const CameraTab = () => {
 			<Separator className="bg-primary" />
 			<div className="space-y-4 p-4">
 				<Row>
-					<span className="opacity-50 text-xs truncate" title="Which camera you look through. + saves the current view as a new one.">Select Camera</span>
+					<span className="control-label truncate" title="Which camera you look through. + saves the current view as a new one.">Select Camera</span>
 					<div className="flex items-center gap-1">
 						<Select value={selectedCameraIndex.toString()} onValueChange={handleCameraChange}>
-							<SelectTrigger className="w-28 h-5 rounded-full">
+							<SelectTrigger size="sm" className="w-28">
 								<div className="h-full pr-1 inline-flex justify-start items-center">
 									<Camera size={12} className="z-10" />
 								</div>
@@ -174,9 +174,9 @@ const CameraTab = () => {
 						</Select>
 						<Button
 							variant="outline"
-							size="icon"
+							size="icon-xs"
 							onClick={handleAddCamera}
-							className="h-5 w-5 rounded-full shrink-0"
+						 className="shrink-0"
 							title="Add camera from current view"
 						>
 							<Plus size={12} />
@@ -195,9 +195,9 @@ const CameraTab = () => {
 				</Row>
 
 				<Row>
-					<span className="opacity-50 text-xs truncate" title="Perspective sees like an eye. Orthographic keeps sizes the same at any distance, like a floor plan. 360° Panorama sees all around.">Projection</span>
+					<span className="control-label truncate" title="Perspective sees like an eye. Orthographic keeps sizes the same at any distance, like a floor plan. 360° Panorama sees all around.">Projection</span>
 					<Select value={cameraProjection} onValueChange={handleCameraProjectionChange}>
-						<SelectTrigger className="max-w-36 h-5 rounded-full">
+						<SelectTrigger size="sm" className="max-w-36">
 							<div className="h-full pr-1 inline-flex justify-start items-center">
 								<Globe size={12} className="z-10" />
 							</div>
@@ -259,15 +259,15 @@ const CameraTab = () => {
 				</Row>
 
 				<Row>
-					<span className="opacity-50 text-xs truncate" title="Orbit circles the camera around a point. Walk: drag to look around, and use the keys to move.">Navigation</span>
-					<ToggleGroup
+					<span className="control-label truncate" title="Orbit circles the camera around a point. Walk: drag to look around, and use the keys to move.">Navigation</span>
+					<ToggleGroup size="xs"
 						type="single"
 						value={navigationMode}
 						onValueChange={( val ) => val && handleNavigationModeChange( val )}
 						className="max-w-40"
 					>
-						<ToggleGroupItem value="orbit" className="text-xs px-3 h-5">Orbit</ToggleGroupItem>
-						<ToggleGroupItem value="walk" className="text-xs px-3 h-5">Walk</ToggleGroupItem>
+						<ToggleGroupItem value="orbit">Orbit</ToggleGroupItem>
+						<ToggleGroupItem value="walk">Walk</ToggleGroupItem>
 					</ToggleGroup>
 				</Row>
 
@@ -287,7 +287,7 @@ const CameraTab = () => {
 								onValueChange={( values ) => handleWalkSpeedChange( values[ 0 ] )}
 							/>
 						</Row>
-						<p className="text-[10px] opacity-50 leading-relaxed">
+						<p className="text-xxs opacity-50 leading-relaxed">
 							Drag to look · W A S D or arrows to walk · E / Q up and down<br />
 							Hold Shift to go faster, Alt/Option to go slower
 						</p>
@@ -317,22 +317,22 @@ const CameraTab = () => {
 				{enableDOF && (
 					<>
 						<Row>
-							<span className="opacity-50 text-xs truncate" title="Simple: just choose how blurry the background gets. Pro: set the blur like a real camera, by aperture, lens and the model's real size.">Mode</span>
-							<ToggleGroup
+							<span className="control-label truncate" title="Simple: just choose how blurry the background gets. Pro: set the blur like a real camera, by aperture, lens and the model's real size.">Mode</span>
+							<ToggleGroup size="xs"
 								type="single"
 								value={dofMode}
 								onValueChange={( val ) => val && handleDofModeChange( val )}
 								className="max-w-40"
 							>
-								<ToggleGroupItem value="look" className="text-xs px-3 h-5">Simple</ToggleGroupItem>
-								<ToggleGroupItem value="physical" className="text-xs px-3 h-5">Pro</ToggleGroupItem>
+								<ToggleGroupItem value="look">Simple</ToggleGroupItem>
+								<ToggleGroupItem value="physical">Pro</ToggleGroupItem>
 							</ToggleGroup>
 						</Row>
 
 						<Row>
 							<Select value={activePreset} onValueChange={handlePresetChange}>
-								<span className="opacity-50 text-xs truncate" title="A ready-made blur for a kind of shot, such as a portrait or a product. Changing any setting below makes it Custom.">Look</span>
-								<SelectTrigger className="max-w-32 h-5 rounded-full">
+								<span className="control-label truncate" title="A ready-made blur for a kind of shot, such as a portrait or a product. Changing any setting below makes it Custom.">Look</span>
+								<SelectTrigger size="sm" className="max-w-32">
 									<div className="h-full pr-1 inline-flex justify-start items-center">
 										<Camera size={12} className="z-10" />
 									</div>
@@ -344,7 +344,7 @@ const CameraTab = () => {
 										<SelectItem key={key} value={key}>
 											<div>
 												<div className="font-medium">{preset.name}</div>
-												<div className="text-xs opacity-50">{preset.description}</div>
+												<div className="control-hint">{preset.description}</div>
 											</div>
 										</SelectItem>
 									) )}
@@ -372,9 +372,9 @@ const CameraTab = () => {
 						{! simple && (
 							<>
 								<Row>
-									<span className="opacity-50 text-xs truncate" title={`The real length of the model's longest side, its ${longestAxis}. The model is ${realDimensions} m; if that is wrong, type the real length.`}>Subject Size (m)</span>
+									<span className="control-label truncate" title={`The real length of the model's longest side, its ${longestAxis}. The model is ${realDimensions} m; if that is wrong, type the real length.`}>Subject Size (m)</span>
 									<div className="flex items-center gap-1.5">
-										<span className="text-[10px] opacity-40 whitespace-nowrap">longest: {longestAxis}</span>
+										<span className="text-xxs opacity-40 whitespace-nowrap">longest: {longestAxis}</span>
 										<NumberInput
 											min={0.001}
 											step={0.001}
@@ -399,8 +399,8 @@ const CameraTab = () => {
 
 								<Row>
 									<Select value={aperture.toString()} onValueChange={handleApertureChange}>
-										<span className="opacity-50 text-xs truncate" title="The lens opening. A lower number blurs more; a higher one keeps more sharp.">Aperture (f)</span>
-										<SelectTrigger className="max-w-32 h-5 rounded-full">
+										<span className="control-label truncate" title="The lens opening. A lower number blurs more; a higher one keeps more sharp.">Aperture (f)</span>
+										<SelectTrigger size="sm" className="max-w-32">
 											<div className="h-full pr-1 inline-flex justify-start items-center">
 												<Aperture size={12} className="z-10" />
 											</div>
@@ -443,15 +443,14 @@ const CameraTab = () => {
 						)}
 
 						<Row>
-							<span className="opacity-50 text-xs truncate" title="Pick the spot that should be sharp. Focus stays on it as the camera moves.">Focus</span>
+							<span className="control-label truncate" title="Pick the spot that should be sharp. Focus stays on it as the camera moves.">Focus</span>
 							<div className="flex items-center gap-1.5">
 								<Button
 									variant={afPlacingPoint ? "default" : "outline"}
-									size="sm"
+									size="pill"
 									onClick={handleToggleAFPointPlacement}
 									disabled={panorama}
 									title={panorama ? "A panorama holds its focus distance: picking a point needs a perspective camera" : undefined}
-									className="h-5 rounded-full text-xs px-2"
 								>
 									<Crosshair size={12} className="mr-1" />
 									{afPlacingPoint ? "Click viewport..." : "Pick Point"}
@@ -459,9 +458,8 @@ const CameraTab = () => {
 								{! panorama && isAFPointCustom && (
 									<Button
 										variant="outline"
-										size="icon"
+										size="icon-xs"
 										onClick={handleAFResetToCenter}
-										className="h-5 w-5 rounded-full"
 										title="Focus on the centre again"
 									>
 										<RotateCcw size={10} />
@@ -473,7 +471,7 @@ const CameraTab = () => {
 						{! simple && (
 							<>
 								<Row>
-									<span className="opacity-50 text-xs truncate" title="How far the sharp spot is from the camera, as measured by auto-focus.">Focus Distance</span>
+									<span className="control-label truncate" title="How far the sharp spot is from the camera, as measured by auto-focus.">Focus Distance</span>
 									<span className="text-xs tabular-nums opacity-80">{focusMetres} m</span>
 								</Row>
 

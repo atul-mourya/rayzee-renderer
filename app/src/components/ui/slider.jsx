@@ -1,6 +1,28 @@
 import * as React from "react";
 import { cn } from "@/lib/utils";
 
+/**
+ * What a key does to a slider: the value it moves to, `"edit"` to type one (Enter), or null. Arrows step (Shift × 10),
+ * Page Up / Down step × 10, Home and End jump to the slider's ends.
+ */
+export function sliderKeyTarget( key, shift, { value, step, min, max } ) {
+
+	const big = shift ? 10 : 1;
+	switch ( key ) {
+
+		case "ArrowRight": case "ArrowUp": return value + step * big;
+		case "ArrowLeft": case "ArrowDown": return value - step * big;
+		case "PageUp": return value + step * 10;
+		case "PageDown": return value - step * 10;
+		case "Home": return min;
+		case "End": return max;
+		case "Enter": return "edit";
+		default: return null;
+
+	}
+
+}
+
 const Slider = React.forwardRef( ( {
 	className,
 	icon: Icon,
@@ -53,6 +75,7 @@ const Slider = React.forwardRef( ( {
 	const dragDistanceRef = React.useRef( 0 );
 	const lastPointerXRef = React.useRef( 0 );
 	const pointerDownOnValueRef = React.useRef( false );
+	const focusedByPointerRef = React.useRef( false );
 
 	// Get slider width for calculations
 	const [ sliderWidth, setSliderWidth ] = React.useState( 0 );
@@ -121,14 +144,14 @@ const Slider = React.forwardRef( ( {
 
 	}, [ snapPoints, snapThreshold, actualSliderMin, actualSliderMax ] );
 
-	// Clamp and format value
-	const clampValue = React.useCallback( val => {
+	// Clamp and format value; `snap` off for keyboard steps, which a nearby snap point would pull straight back.
+	const clampValue = React.useCallback( ( val, snap = true ) => {
 
 		const numVal = Number( val ) || 0;
 		const bounded = Math.min( Math.max( numVal, min ), max );
 
 		// Try snapping first if snap points are provided
-		if ( snapPoints && snapPoints.length > 0 ) {
+		if ( snap && snapPoints && snapPoints.length > 0 ) {
 
 			const snappedValue = snapToNearestPoint( bounded );
 			// If snapping occurred, return the snapped value
@@ -176,6 +199,7 @@ const Slider = React.forwardRef( ( {
 
 	const handlePointerDown = React.useCallback( e => {
 
+		focusedByPointerRef.current = true;
 		if ( disabled ) return;
 
 		// Track whether pointerdown was on the value display area
@@ -287,9 +311,26 @@ const Slider = React.forwardRef( ( {
 		? Math.max( Math.min( ( currentValue - actualSliderMin ) / ( actualSliderMax - actualSliderMin ), 1 ), 0 ) * 100
 		: 0;
 
+	// Keys only once the keyboard brought focus here: after a click, walk mode's arrows walk.
+	const handleKeyDown = e => {
+
+		if ( disabled || isEditing || focusedByPointerRef.current ) return;
+		const next = sliderKeyTarget( e.key, e.shiftKey, { value: currentValue, step, min: actualSliderMin, max: actualSliderMax } );
+		if ( next === null ) return;
+		e.preventDefault();
+		if ( next === "edit" ) return void setIsEditing( true );
+
+		const clampedValue = clampValue( next, false );
+		setCurrentValue( clampedValue );
+		lastValueRef.current = clampedValue;
+		handleChange( clampedValue );
+		onFinishChange?.( clampedValue );
+
+	};
+
 	return (
 		<>
-			<span className="opacity-50 text-xs truncate" title={tip}>{label}</span>
+			<span className="control-label truncate" title={tip}>{label}</span>
 			<div
 				ref={elem => {
 
@@ -299,6 +340,18 @@ const Slider = React.forwardRef( ( {
 
 				}}
 				tabIndex={0}
+				role="slider"
+				aria-label={typeof label === "string" ? label : undefined}
+				aria-valuemin={actualSliderMin}
+				aria-valuemax={actualSliderMax}
+				aria-valuenow={isNaN( currentValue ) ? undefined : currentValue}
+				aria-disabled={disabled || undefined}
+				onKeyDown={handleKeyDown}
+				onBlur={() => {
+
+					focusedByPointerRef.current = false;
+
+				}}
 				className={cn(
 					"relative flex h-5 w-full touch-none select-none items-center max-w-32 cursor-ew-resize",
 					disabled ? "cursor-not-allowed opacity-50" : "",
@@ -316,7 +369,7 @@ const Slider = React.forwardRef( ( {
 				{actualSliderMax != null && actualSliderMin != null && (
 					<div className="absolute rounded-full w-full h-full overflow-hidden">
 						<div
-							className={cn( "absolute h-full outline-none", disabled ? "bg-gray-400" : "bg-primary" )}
+							className={cn( "absolute h-full outline-none", disabled ? "bg-disabled" : "bg-primary" )}
 							style={{ width: `${progressPercentage}%` }}
 						/>
 					</div>

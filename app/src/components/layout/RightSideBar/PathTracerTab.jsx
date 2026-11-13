@@ -101,8 +101,8 @@ const ConvergenceReadout = ( { showConverged, showTracing } ) => {
 
 	return (
 		<>
-			{barNote && <div className="px-1 text-[10px] leading-4 opacity-40">{barNote}</div>}
-			<div className="px-1 text-[10px] leading-4 opacity-50">{parts.join( ' · ' )}</div>
+			{barNote && <div className="px-1 text-xxs leading-4 opacity-40">{barNote}</div>}
+			<div className="px-1 text-xxs leading-4 opacity-50">{parts.join( ' · ' )}</div>
 		</>
 	);
 
@@ -261,8 +261,8 @@ const PathTracerTab = () => {
 				</Row>
 				<Row>
 					<Select value={integrator} onValueChange={handleIntegratorChange}>
-						<span className="opacity-50 text-xs truncate" title="Path Tracing suits most scenes. Bidirectional is twice as slow, but better for lamp-lit rooms and the bright patterns light makes through glass. Photons also catches those patterns in mirrors and water. Experimental.">Light Transport</span>
-						<SelectTrigger className="max-w-32 h-5 rounded-full">
+						<span className="control-label truncate" title="Path Tracing suits most scenes. Bidirectional is twice as slow, but better for lamp-lit rooms and the bright patterns light makes through glass. Photons also catches those patterns in mirrors and water. Experimental.">Light Transport</span>
+						<SelectTrigger size="sm" className="max-w-32">
 							<SelectValue />
 						</SelectTrigger>
 						<SelectContent>
@@ -290,8 +290,8 @@ const PathTracerTab = () => {
 				{/* Environment Mode Selector */}
 				<Row>
 					<Select value={environmentMode} onValueChange={handleEnvironmentModeChange}>
-						<span className="opacity-50 text-xs truncate" title="What lights the scene from around it: a photo of a real place (HDRI), a sky with a sun, or one flat colour.">Mode</span>
-						<SelectTrigger className="max-w-32 h-5 rounded-full">
+						<span className="control-label truncate" title="What lights the scene from around it: a photo of a real place (HDRI), a sky with a sun, or one flat colour.">Mode</span>
+						<SelectTrigger size="sm" className="max-w-32">
 							<SelectValue />
 						</SelectTrigger>
 						<SelectContent>
@@ -335,9 +335,9 @@ const PathTracerTab = () => {
 				{/* Background backdrop — a single mutually-exclusive mode (env image / solid color /
 				    transparent). Independent of Intensity above, which controls lighting only. */}
 				<Row>
-					<span className="opacity-50 text-xs truncate" title="What shows behind the model: the surroundings, a flat colour, or nothing (see-through). It does not change the lighting.">Background</span>
+					<span className="control-label truncate" title="What shows behind the model: the surroundings, a flat colour, or nothing (see-through). It does not change the lighting.">Background</span>
 					<Select value={backgroundType} onValueChange={handleBackgroundTypeChange}>
-						<SelectTrigger className="max-w-32 h-5 rounded-full">
+						<SelectTrigger size="sm" className="max-w-32">
 							<SelectValue />
 						</SelectTrigger>
 						<SelectContent>
@@ -374,7 +374,7 @@ const PathTracerTab = () => {
 				</Row>
 				{enableGroundCatcher && (
 					<Row className="w-full">
-						<div className="opacity-50 text-xs truncate" title="How high the invisible shadow floor sits.">Catcher Height</div>
+						<div className="control-label truncate" title="How high the invisible shadow floor sits.">Catcher Height</div>
 						<NumberInput min={- 1000} max={1000} step={0.1} value={groundCatcherHeight} onValueChange={handleGroundCatcherHeightChange} />
 					</Row>
 				)}
@@ -410,9 +410,9 @@ const PathTracerTab = () => {
 							<Slider label={"Glow Toward Light"} tip="How much brighter the haze looks when you face the light, as sunbeams do. 0 looks the same from every side." min={0} max={0.9} step={0.01} value={[ fogAnisotropy ]} onValueChange={handleFogAnisotropyChange} />
 						</Row>
 						<Row>
-							<span className="opacity-50 text-xs truncate" title="Where the haze sits: evenly everywhere, thinning toward the top, or as a mist along the ground. The amount stays the same.">Height</span>
+							<span className="control-label truncate" title="Where the haze sits: evenly everywhere, thinning toward the top, or as a mist along the ground. The amount stays the same.">Height</span>
 							<Select value={fogHeight} onValueChange={handleFogHeightChange}>
-								<SelectTrigger className="max-w-32 h-5 rounded-full">
+								<SelectTrigger size="sm" className="max-w-32">
 									<SelectValue />
 								</SelectTrigger>
 								<SelectContent>
@@ -429,8 +429,8 @@ const PathTracerTab = () => {
 			<ControlGroup name="Denoising">
 				<Row>
 					<Select value={denoiserStrategy} onValueChange={handleDenoiserStrategyChange}>
-						<span className="opacity-50 text-xs truncate" title="Removes grain while you work. OIDN (AI) is the cleanest; NRD keeps up better on very large pictures.">Real-Time Denoiser</span>
-						<SelectTrigger className="max-w-32 h-5 rounded-full" >
+						<span className="control-label truncate" title="Removes grain while you work. OIDN (AI) is the cleanest; NRD keeps up better on very large pictures.">Real-Time Denoiser</span>
+						<SelectTrigger size="sm" className="max-w-32" >
 							<SelectValue placeholder="Select strategy" />
 						</SelectTrigger>
 						<SelectContent>
@@ -444,8 +444,8 @@ const PathTracerTab = () => {
 				{denoiserStrategy === 'nrd' && ( <>
 					<Row>
 						<Select value={nrdQualityPreset} onValueChange={handleNrdQualityPresetChange}>
-							<span className="opacity-50 text-xs truncate" title="A ready-made balance between speed and how clean the picture gets.">Quality Preset</span>
-							<SelectTrigger className="max-w-32 h-5 rounded-full" >
+							<span className="control-label truncate" title="A ready-made balance between speed and how clean the picture gets.">Quality Preset</span>
+							<SelectTrigger size="sm" className="max-w-32" >
 								<SelectValue placeholder="Select preset" />
 							</SelectTrigger>
 							<SelectContent>
@@ -469,8 +469,8 @@ const PathTracerTab = () => {
 					</Row>
 					<Row>
 						<Select value={nrdDebugMode.toString()} onValueChange={handleNrdDebugModeChange}>
-							<span className="opacity-50 text-xs truncate" title="Shows what the denoiser sees instead of the picture, for finding problems. Beauty is the normal picture.">Debug View</span>
-							<SelectTrigger className="max-w-32 h-5 rounded-full" >
+							<span className="control-label truncate" title="Shows what the denoiser sees instead of the picture, for finding problems. Beauty is the normal picture.">Debug View</span>
+							<SelectTrigger size="sm" className="max-w-32" >
 								<SelectValue placeholder="Select view" />
 							</SelectTrigger>
 							<SelectContent>
@@ -498,8 +498,8 @@ const PathTracerTab = () => {
 				{( enableOIDN || denoiserStrategy === 'oidn' ) && ( <>
 					<Row>
 						<Select value={oidnQuality} onValueChange={handleOidnQualityChange}>
-							<span className="opacity-50 text-xs truncate" title="How hard the AI clean-up works. High keeps the most detail but is slowest. Fast (clean aux) is as quick as Fast: a bit better on finished renders, worse on grainy ones.">OIDN Quality</span>
-							<SelectTrigger className="max-w-32 h-5 rounded-full" >
+							<span className="control-label truncate" title="How hard the AI clean-up works. High keeps the most detail but is slowest. Fast (clean aux) is as quick as Fast: a bit better on finished renders, worse on grainy ones.">OIDN Quality</span>
+							<SelectTrigger size="sm" className="max-w-32" >
 								<SelectValue placeholder="Select quality" />
 							</SelectTrigger>
 							<SelectContent>
@@ -520,8 +520,8 @@ const PathTracerTab = () => {
 			<ControlGroup name="Advanced">
 				<Row>
 					<Select value={maxTextureSize?.toString()} onValueChange={handleMaxTextureSizeChange}>
-						<span className="opacity-50 text-xs truncate" title="The largest size a material image is kept at. Smaller saves memory and loads faster, but looks less sharp up close.">Max Texture Size</span>
-						<SelectTrigger className="max-w-24 h-5 rounded-full" >
+						<span className="control-label truncate" title="The largest size a material image is kept at. Smaller saves memory and loads faster, but looks less sharp up close.">Max Texture Size</span>
+						<SelectTrigger size="sm" className="max-w-24" >
 							<SelectValue placeholder="Select size" />
 						</SelectTrigger>
 						<SelectContent>
@@ -533,8 +533,8 @@ const PathTracerTab = () => {
 				</Row>
 				<Row>
 					<Select value={String( memorySpill )} onValueChange={handleMemorySpillChange}>
-						<span className="opacity-50 text-xs truncate" title="Stores scenes too big for memory on your disk. Auto does this only when needed. Takes effect on the next load.">Memory Saver</span>
-						<SelectTrigger className="max-w-24 h-5 rounded-full" >
+						<span className="control-label truncate" title="Stores scenes too big for memory on your disk. Auto does this only when needed. Takes effect on the next load.">Memory Saver</span>
+						<SelectTrigger size="sm" className="max-w-24" >
 							<SelectValue />
 						</SelectTrigger>
 						<SelectContent>
@@ -579,8 +579,8 @@ const PathTracerTab = () => {
 					<Separator />
 					<Row>
 						<Select value={debugMode.toString()} onValueChange={handleDebugModeChange}>
-							<span className="opacity-50 text-xs truncate" title="Shows one part of what makes the picture, such as surface direction, distance or colour, to help find problems.">Debug Mode</span>
-							<SelectTrigger className="max-w-32 h-5 rounded-full" >
+							<span className="control-label truncate" title="Shows one part of what makes the picture, such as surface direction, distance or colour, to help find problems.">Debug Mode</span>
+							<SelectTrigger size="sm" className="max-w-32" >
 								<SelectValue placeholder="Select mode" />
 							</SelectTrigger>
 							<SelectContent>
@@ -604,7 +604,7 @@ const PathTracerTab = () => {
 						<Switch label={"Convergence Overlay"} tip="Colours the picture by how clean each part is: red still grainy, yellow nearly done, grey finished." checked={convergenceOverlay} onCheckedChange={handleConvergenceOverlayChange} />
 					</Row>
 					{convergenceOverlay && ( <>
-						<div className="flex flex-wrap gap-x-2 gap-y-0.5 px-1 text-[10px] opacity-60">
+						<div className="flex flex-wrap gap-x-2 gap-y-0.5 px-1 text-xxs opacity-60">
 							{overlayLegend( useAdaptiveSampling ).map( ( [ dot, label ] ) => (
 								<span key={label} className="flex items-center gap-1">
 									<i className={`inline-block size-2 rounded-full ${dot}`} />{label}

@@ -40,7 +40,7 @@ const looksOf = ( config, view ) => looksForView(
 	config.looks, view, [ ...new Set( Object.values( config.views ).flat().map( v => v.name ) ) ], sameToneMapping
 );
 
-const label = ( text, tip ) => <span className="opacity-50 text-xs truncate" title={tip}>{text}</span>;
+const label = ( text, tip ) => <span className="control-label truncate" title={tip}>{text}</span>;
 
 // How far auto exposure follows each view (its strength): a lit room keeps its exposure, or every view is averaged.
 const FOLLOW_OPTIONS = [
@@ -332,7 +332,7 @@ const ColorManagementSection = () => {
 	const workingSpaces = workingSpaceOptions( config, nativeSpace );
 
 	const trigger = ( title, placeholder ) => (
-		<SelectTrigger className="max-w-32 h-5 rounded-full pl-2" title={title}>
+		<SelectTrigger size="sm" className="max-w-32 pl-2" title={title}>
 			<SelectValue placeholder={placeholder} />
 		</SelectTrigger>
 	);
@@ -362,13 +362,13 @@ const ColorManagementSection = () => {
 			/>
 
 			{error && (
-				<div className="px-1 text-[10px] leading-4 text-red-400 flex items-start gap-1">
+				<div className="px-1 text-xxs leading-4 text-danger-400 flex items-start gap-1">
 					<X size={10} className="mt-0.5 shrink-0" /> {error}
 				</div>
 			)}
 
 			<Row>
-				<span className="opacity-50 text-xs shrink-0" title="How the light in the scene is turned into a picture: how bright areas fade to white and how shadows keep their detail.">Tone Mapping</span>
+				<span className="control-label shrink-0" title="How the light in the scene is turned into a picture: how bright areas fade to white and how shadows keep their detail.">Tone Mapping</span>
 				<div className="flex flex-1 items-center justify-end gap-1 min-w-0">
 					{isBusy && <Loader2 size={12} className="animate-spin opacity-60 shrink-0" />}
 					<Select value={viewValue} onValueChange={onView} disabled={isBusy}>
@@ -380,7 +380,7 @@ const ColorManagementSection = () => {
 
 			{config && ( creative.length > 0 || technical.length > 0 ) && (
 				<Row>
-					<span className="opacity-50 text-xs truncate" title="An extra finishing look on top of the tone mapping, such as more contrast or black and white.">Style</span>
+					<span className="control-label truncate" title="An extra finishing look on top of the tone mapping, such as more contrast or black and white.">Style</span>
 					<Select value={status.activeView?.look ?? NONE} onValueChange={onLook} disabled={isBusy}>
 						{trigger( find( [ ...creative, ...technical ], status.activeView?.look )?.description ?? 'Default' )}
 						<SelectContent>
@@ -388,7 +388,7 @@ const ColorManagementSection = () => {
 							{creative.map( item )}
 							{technical.length > 0 && (
 								<SelectGroup>
-									<SelectLabel className="text-[10px] opacity-50">Technical — for camera footage</SelectLabel>
+									<SelectLabel className="text-xxs opacity-50">Technical — for camera footage</SelectLabel>
 									{technical.map( item )}
 								</SelectGroup>
 							)}
@@ -399,14 +399,14 @@ const ColorManagementSection = () => {
 
 			{config && (
 				<Row>
-					<span className="opacity-50 text-xs truncate" title="The kind of screen the picture is meant for. sRGB suits almost every computer screen; HDR is for HDR TVs.">Screen</span>
+					<span className="control-label truncate" title="The kind of screen the picture is meant for. sRGB suits almost every computer screen; HDR is for HDR TVs.">Screen</span>
 					<Select value={activeDisplay ?? ''} onValueChange={onDisplay} disabled={isBusy}>
 						{trigger( activeDisplay, 'Select screen' )}
 						<SelectContent className={hdrDisplays.length > 0 ? 'min-w-[20rem]' : undefined}>
 							<div className={hdrDisplays.length > 0 ? 'grid grid-cols-2 gap-x-1' : undefined}>
 								{displayColumns.map( ( { title, list } ) => (
 									<SelectGroup key={title}>
-										<SelectLabel className="text-[10px] opacity-50 border-b border-border/50 mb-1">{title}</SelectLabel>
+										<SelectLabel className="text-xxs opacity-50 border-b border-border/50 mb-1">{title}</SelectLabel>
 										{list.map( item )}
 									</SelectGroup>
 								) )}
@@ -418,10 +418,10 @@ const ColorManagementSection = () => {
 
 			{hdrScreen && (
 				<Row>
-					<span className="opacity-50 text-xs truncate" title="Lets bright lights and highlights shine brighter than white on this screen, as HDR photos and films do. Saved pictures are not affected.">HDR</span>
+					<span className="control-label truncate" title="Lets bright lights and highlights shine brighter than white on this screen, as HDR photos and films do. Saved pictures are not affected.">HDR</span>
 					<div className="flex items-center gap-1 min-w-0">
 						{hdrOn && status?.hdr?.reason === 'no-hdr-version' && (
-							<span className="text-[10px] opacity-40 truncate" title="This tone mapping has no HDR version. AgX, ACES and Standard have one.">unavailable</span>
+							<span className="text-xxs opacity-40 truncate" title="This tone mapping has no HDR version. AgX, ACES and Standard have one.">unavailable</span>
 						)}
 						<Switch checked={hdrOn} onCheckedChange={onHdr} />
 					</div>
@@ -456,7 +456,7 @@ const ColorManagementSection = () => {
 					<Slider label={'Amount'} tip="How strongly bright areas are brought down." min={0} max={80} step={5} unit="%" value={[ Math.round( ( 1 - localExposureHighlightContrast ) * 100 ) ]} snapPoints={[ 40 ]} onValueChange={v => handleLocalExposureAmountChange( v[ 0 ] / 100 )} />
 				</Row>
 			) : null}>
-				<span className="opacity-50 text-xs truncate" title="Tones down bright windows and sunlit walls, keeping their detail. Applies to the screen and saved pictures.">Balance Highlights</span>
+				<span className="control-label truncate" title="Tones down bright windows and sunlit walls, keeping their detail. Applies to the screen and saved pictures.">Balance Highlights</span>
 				<Switch checked={localExposure} onCheckedChange={handleLocalExposureChange} />
 			</Row>
 
@@ -471,7 +471,7 @@ const ColorManagementSection = () => {
 			>
 				<span>Advanced</span>
 				<span className="flex items-center gap-1 min-w-0">
-					<span className="truncate text-[10px]">{systemSummary}</span>
+					<span className="truncate text-xxs">{systemSummary}</span>
 					<ChevronDown size={12} className={cn( 'shrink-0 transition-transform duration-200', advancedOpen && 'rotate-180' )} />
 				</span>
 			</button>
@@ -479,7 +479,7 @@ const ColorManagementSection = () => {
 			{advancedOpen && (
 				<>
 					<Row>
-						<span className="opacity-50 text-xs shrink-0" title="Where the tone mappings and styles come from. Blender suits almost everything; ACES is the film-industry standard; None uses the built-in ones. Changing it can rebuild the scene.">Color System</span>
+						<span className="control-label shrink-0" title="Where the tone mappings and styles come from. Blender suits almost everything; ACES is the film-industry standard; None uses the built-in ones. Changing it can rebuild the scene.">Color System</span>
 						<Select value={config?.id ?? ( pending ? DEFAULT_OPTION.value : NONE )} onValueChange={onPickConfig} onOpenChange={onOpenConfigs} disabled={isBusy}>
 							{trigger( config ? ( find( configOptions, config.id )?.description ?? config.id ) : 'No colour management' )}
 							<SelectContent>
@@ -497,7 +497,7 @@ const ColorManagementSection = () => {
 
 					{config && workingSpaces.length > 0 && (
 						<Row>
-							<span className="opacity-50 text-xs shrink-0" title="The colours the render works in. Keep Rec.709 unless your project asks for another, such as ACEScg. Changing it rebuilds the scene and changes the look.">Render In</span>
+							<span className="control-label shrink-0" title="The colours the render works in. Keep Rec.709 unless your project asks for another, such as ACEScg. Changing it rebuilds the scene and changes the look.">Render In</span>
 							<Select value={status.workingSpaceAdopted ? status.workingSpace : nativeSpace ?? ''} onValueChange={onWorkingSpace} disabled={isBusy}>
 								{trigger( find( workingSpaces, status.workingSpace )?.description )}
 								<SelectContent>{workingSpaces.map( item )}</SelectContent>
@@ -507,7 +507,7 @@ const ColorManagementSection = () => {
 
 					{( config?.contextVariables ?? [] ).map( v => (
 						<Row key={v.name}>
-							<span className="opacity-50 text-xs truncate" title={`A name the colour system uses to pick a look for each shot. Leave it empty for the default${ v.default ? ` (${v.default})` : '' }.`}>{`$${v.name}`}</span>
+							<span className="control-label truncate" title={`A name the colour system uses to pick a look for each shot. Leave it empty for the default${ v.default ? ` (${v.default})` : '' }.`}>{`$${v.name}`}</span>
 							<Input
 								key={`${config.id}:${v.name}`}
 								className="max-w-32 h-5 rounded-full text-xs px-2"

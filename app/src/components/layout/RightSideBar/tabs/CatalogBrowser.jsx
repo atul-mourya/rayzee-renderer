@@ -195,12 +195,12 @@ const CatalogBrowser = ( { source, notice, variant, onVariantChange, actions, on
 		<div className="flex flex-col h-full w-full">
 
 			{notice && (
-				<p className="px-2 pt-2 text-[10px] leading-tight text-muted-foreground">{notice}</p>
+				<p className="px-2 pt-2 text-xxs leading-tight text-muted-foreground">{notice}</p>
 			)}
 
 			{selectedCategory && (
 				<div className="flex items-center gap-1 px-2 py-1 border-b border-border">
-					<Button variant="ghost" size="sm" className="h-6 px-2 text-xs text-muted-foreground" onClick={handleBack}>
+					<Button variant="ghost" size="xs" className="px-2 text-muted-foreground" onClick={handleBack}>
 						<ArrowLeft size={12} className="mr-1" /> Back
 					</Button>
 					<div className="flex items-center gap-1 ml-auto text-xs text-primary">
@@ -224,8 +224,8 @@ const CatalogBrowser = ( { source, notice, variant, onVariantChange, actions, on
 					{query && (
 						<Button
 							variant="ghost"
-							size="icon"
-							className="absolute right-1 top-1/2 -translate-y-1/2 h-5 w-5 rounded-full"
+							size="icon-xs"
+							className="absolute right-1 top-1/2 -translate-y-1/2"
 							onClick={() => setQuery( '' )}
 							aria-label="Clear search"
 						>
@@ -246,10 +246,10 @@ const CatalogBrowser = ( { source, notice, variant, onVariantChange, actions, on
 			</div>
 
 			{matchingCategories.length > 0 && (
-				<div className="flex flex-wrap items-center gap-1 px-2 pt-2 text-[11px]">
+				<div className="flex flex-wrap items-center gap-1 px-2 pt-2 text-2xs">
 					<span className="text-muted-foreground">Categories:</span>
 					{matchingCategories.map( c => (
-						<Button key={c.slug} variant="outline" size="sm" className="h-5 px-2 rounded-full text-[11px]" onClick={() => openCategory( c )}>
+						<Button key={c.slug} variant="outline" size="pill" className="text-2xs" onClick={() => openCategory( c )}>
 							{c.name}
 						</Button>
 					) )}

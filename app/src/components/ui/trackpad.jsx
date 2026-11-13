@@ -127,7 +127,7 @@ export function Trackpad( { className, points = [], onMove, label, tip, ...props
 
 	return (
 		<>
-			{label && <span className="opacity-50 text-xs truncate" title={tip}>{label}</span>}
+			{label && <span className="control-label truncate" title={tip}>{label}</span>}
 			<div className={cn( "w-full h-full", className )} {...props}>
 				<svg
 					ref={svgRef}

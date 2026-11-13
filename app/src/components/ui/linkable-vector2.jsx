@@ -53,7 +53,7 @@ const LinkableVector2 = ( { label, tip, value, onChange, step = 0.1, min, max } 
 
 	return (
 		<>
-			<div className="opacity-50 text-xs mb-1" title={tip}>{label}</div>
+			<div className="control-label mb-1" title={tip}>{label}</div>
 			<div className="flex items-center gap-1">
 				<div
 					onClick={toggleLink}

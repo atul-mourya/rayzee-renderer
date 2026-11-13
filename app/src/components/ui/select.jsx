@@ -15,11 +15,15 @@ const SelectGroup = SelectPrimitive.Group;
 
 const SelectValue = SelectPrimitive.Value;
 
-const SelectTrigger = React.forwardRef( ( { className, children, ...props }, ref ) => (
+// `sm`: the small pill a panel row uses; pass a width (`max-w-32`), not a height or corners.
+const TRIGGER_SIZES = { default: "", sm: "h-5 rounded-full" };
+
+const SelectTrigger = React.forwardRef( ( { className, children, size = "default", ...props }, ref ) => (
 	<SelectPrimitive.Trigger
 		ref={ref}
 		className={cn(
 			"flex h-9 w-full items-center justify-between whitespace-nowrap rounded-md border border-input bg-transparent px-3 py-2 text-xs shadow-xs ring-offset-background placeholder:text-muted-foreground focus:outline-hidden focus:ring-1 focus:ring-ring disabled:cursor-not-allowed disabled:opacity-50 [&>span]:line-clamp-1",
+			TRIGGER_SIZES[ size ],
 			className
 		)}
 		{...props}>
@@ -102,7 +106,7 @@ const SelectItem = React.forwardRef( ( { className, children, hint, ...props }, 
 		{hint ? (
 			<span className="flex flex-col">
 				<SelectPrimitive.ItemText>{children}</SelectPrimitive.ItemText>
-				<span className="text-[10px] leading-3 opacity-50">{hint}</span>
+				<span className="text-xxs leading-3 opacity-50">{hint}</span>
 			</span>
 		) : (
 			<SelectPrimitive.ItemText>{children}</SelectPrimitive.ItemText>

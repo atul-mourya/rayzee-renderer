@@ -196,8 +196,8 @@ const EnvironmentCatalog = ( { value, onValueChange } ) => {
 			{/* Fixed header with resolution selector */}
 			<div className="flex items-center justify-between p-2 shrink-0">
 				<Select value={selectedResolution} onValueChange={setSelectedResolution}>
-					<span className="opacity-50 text-xs truncate">Resolution</span>
-					<SelectTrigger className="max-w-24 h-5 rounded-full">
+					<span className="control-label truncate">Resolution</span>
+					<SelectTrigger size="sm" className="max-w-24">
 						<SelectValue placeholder="Select resolution" />
 					</SelectTrigger>
 					<SelectContent>

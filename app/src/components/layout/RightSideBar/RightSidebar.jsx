@@ -30,28 +30,28 @@ const InteractiveModeTabs = memo( () => {
 	const setActiveTab = useStore( state => state.setActiveTab );
 	return (
 		<Tabs value={activeTab} onValueChange={setActiveTab} className="flex flex-col h-full w-full">
-			<TabsList className="relative grid w-full grid-cols-6 h-12 p-0">
-				<TabsTrigger value="pathtracer" className="flex flex-col items-center py-2">
+			<TabsList variant="bar" className="grid-cols-6">
+				<TabsTrigger value="pathtracer">
 					<Sliders size={12} />
 					<span className="text-xs mt-1">Tracer</span>
 				</TabsTrigger>
-				<TabsTrigger value="camera" className="flex flex-col items-center py-2">
+				<TabsTrigger value="camera">
 					<Camera size={12} />
 					<span className="text-xs mt-1">Camera</span>
 				</TabsTrigger>
-				<TabsTrigger value="light" className="flex flex-col items-center py-2">
+				<TabsTrigger value="light">
 					<Sun size={12} />
 					<span className="text-xs mt-1">Light</span>
 				</TabsTrigger>
-				<TabsTrigger value="material" className="flex flex-col items-center py-2">
+				<TabsTrigger value="material">
 					<SwatchBook size={12} />
 					<span className="text-xs mt-1">Material</span>
 				</TabsTrigger>
-				<TabsTrigger value="animation" className="flex flex-col items-center py-2">
+				<TabsTrigger value="animation">
 					<Film size={12} />
 					<span className="text-xs mt-1">Anim</span>
 				</TabsTrigger>
-				<TabsTrigger value="assets" className="flex flex-col items-center py-2">
+				<TabsTrigger value="assets">
 					<Box size={12} />
 					<span className="text-xs mt-1">Assets</span>
 				</TabsTrigger>
@@ -109,20 +109,20 @@ FinalRenderModeTabs.displayName = 'FinalRenderModeTabs';
 
 const ResultsModeTabs = memo( () => (
 	<Tabs defaultValue="pathtracer" className="flex flex-col h-full w-full">
-		<TabsList className="relative grid w-full grid-cols-4 h-12 p-0">
-			<TabsTrigger value="pathtracer" className="flex flex-col items-center py-2">
+		<TabsList variant="bar" className="grid-cols-4">
+			<TabsTrigger value="pathtracer">
 				<Sliders size={12} />
 				<span className="text-xs mt-1">Adjust</span>
 			</TabsTrigger>
-			<TabsTrigger value="tool" className="flex flex-col items-center py-2">
+			<TabsTrigger value="tool">
 				<PocketKnife size={12} />
 				<span className="text-xs mt-1">Tool</span>
 			</TabsTrigger>
-			<TabsTrigger value="ai" className="flex flex-col items-center py-2">
+			<TabsTrigger value="ai">
 				<Bot size={12} />
 				<span className="text-xs mt-1">AI</span>
 			</TabsTrigger>
-			<TabsTrigger value="filters" className="flex flex-col items-center py-2">
+			<TabsTrigger value="filters">
 				<Blend size={12} />
 				<span className="text-xs mt-1">Filters</span>
 			</TabsTrigger>

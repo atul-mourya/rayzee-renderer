@@ -102,7 +102,7 @@ const TexturePreview = ( { texture, label, tip, actions, expanded, onToggle } ) 
 
 		return (
 			<div className="w-full h-10 bg-muted/20 rounded border border-dashed border-muted-foreground/20 flex items-center justify-center">
-				<span className="text-[10px] opacity-40">No texture</span>
+				<span className="text-xxs opacity-40">No texture</span>
 			</div>
 		);
 
@@ -148,8 +148,8 @@ const TexturePreview = ( { texture, label, tip, actions, expanded, onToggle } ) 
 					<ChevronRight size={10} className={`shrink-0 opacity-40 transition-transform ${expanded ? 'rotate-90' : ''}`} />
 				)}
 				<div className="min-w-0">
-					{label && <div className="text-[11px] font-medium truncate leading-tight" title={tip}>{label}</div>}
-					{sizeLabel && <div className="text-[10px] opacity-40 leading-tight">{sizeLabel}</div>}
+					{label && <div className="text-2xs font-medium truncate leading-tight" title={tip}>{label}</div>}
+					{sizeLabel && <div className="text-xxs opacity-40 leading-tight">{sizeLabel}</div>}
 				</div>
 			</div>
 

@@ -565,13 +565,13 @@ const LazyImage = memo( ( { src, alt, className, onError, onLoad } ) => {
 	return (
 		<div className="relative w-full h-full">
 			{! imageLoaded && ! imageError && (
-				<div className="absolute inset-0 flex items-center justify-center bg-gray-800">
-					<div className="animate-pulse bg-gray-700 w-8 h-8 rounded"></div>
+				<div className="absolute inset-0 flex items-center justify-center bg-placeholder">
+					<div className="animate-pulse bg-placeholder-pulse w-8 h-8 rounded"></div>
 				</div>
 			)}
 
 			{imageError && (
-				<div className="absolute inset-0 flex items-center justify-center bg-gray-800 text-gray-400 text-xs">
+				<div className="absolute inset-0 flex items-center justify-center bg-placeholder text-on-scrim-400 text-xs">
 					Image Error
 				</div>
 			)}
@@ -623,7 +623,7 @@ const RenderItem = memo( ( {
 			}`}
 			onClick={handleClick}
 		>
-			<div className="relative rounded-t-md overflow-hidden bg-black cursor-pointer group">
+			<div className="relative rounded-t-md overflow-hidden bg-well cursor-pointer group">
 				<div className="aspect-w-16 aspect-h-9 w-full">
 					<LazyImage
 						src={image.thumb ?? image.image}
@@ -653,7 +653,7 @@ const RenderItem = memo( ( {
 						<TooltipProvider>
 							<Tooltip>
 								<TooltipTrigger asChild>
-									<div className="bg-purple-600/90 h-4 pl-0.5 pr-1.5 rounded-full cursor-default flex items-center gap-0.5 text-white text-[11px] font-semibold">
+									<div className="bg-ai-600/90 h-4 pl-0.5 pr-1.5 rounded-full cursor-default flex items-center gap-0.5 text-on-scrim text-2xs font-semibold">
 										<Sparkles size={11} />{versions.length}
 									</div>
 								</TooltipTrigger>
@@ -667,8 +667,8 @@ const RenderItem = memo( ( {
 						</TooltipProvider>
 					)}
 					{job && (
-						<div className="bg-black/80 h-4 pl-1 pr-1.5 rounded-full flex items-center gap-1 text-gray-300 text-[11px]" title="Making an AI version">
-							<Loader2 size={10} className="animate-spin text-purple-400" />v{job.n}
+						<div className="bg-scrim/80 h-4 pl-1 pr-1.5 rounded-full flex items-center gap-1 text-on-scrim-300 text-2xs" title="Making an AI version">
+							<Loader2 size={10} className="animate-spin text-ai-400" />v{job.n}
 						</div>
 					)}
 				</div>

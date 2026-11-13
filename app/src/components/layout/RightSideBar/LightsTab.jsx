@@ -194,7 +194,7 @@ const LibraryPicker = ( { value, onChange, items, title, addTooltip = 'Assign' }
 				className="p-2"
 				style={{ width: GOBO_TILE_PX * 4 + GOBO_GAP_PX * 3 + 16 }}
 			>
-				<div className="mb-2 text-[10px] uppercase tracking-wider text-muted-foreground px-1">{title}</div>
+				<div className="mb-2 text-xxs uppercase tracking-wider text-muted-foreground px-1">{title}</div>
 				<div
 					className="grid grid-cols-4 overflow-y-auto pr-1"
 					style={{ gap: GOBO_GAP_PX, maxHeight: GOBO_GRID_HEIGHT }}
@@ -210,7 +210,7 @@ const LibraryPicker = ( { value, onChange, items, title, addTooltip = 'Assign' }
 						style={{ width: GOBO_TILE_PX, height: GOBO_TILE_PX }}
 					>
 						<X size={18} className="text-muted-foreground" />
-						<span className="text-[9px] text-muted-foreground mt-0.5">None</span>
+						<span className="text-3xs text-muted-foreground mt-0.5">None</span>
 					</button>
 					{items.map( g => (
 						<button
@@ -228,7 +228,7 @@ const LibraryPicker = ( { value, onChange, items, title, addTooltip = 'Assign' }
 								src={thumb( g )}
 								crossOrigin="anonymous"
 								alt={g.label}
-								className="h-full w-full object-cover bg-black"
+								className="h-full w-full object-cover bg-well"
 								draggable={false}
 							/>
 						</button>
@@ -251,7 +251,7 @@ const IESPicker = ( props ) => (
 const GoboControls = ( { light, index, onLightChange, showScale = false } ) => (
 	<>
 		<Row>
-			<span className="opacity-50 text-xs truncate flex items-center gap-1" title="A cut-out pattern over the light, such as window bars or leaves, that shapes its light and shadows."><FilmIcon size={11} /> Gobo Mask</span>
+			<span className="control-label truncate flex items-center gap-1" title="A cut-out pattern over the light, such as window bars or leaves, that shapes its light and shadows."><FilmIcon size={11} /> Gobo Mask</span>
 			<div className="flex items-center gap-1.5">
 				{light.gobo && (
 					<button
@@ -443,7 +443,7 @@ const LightDetailPanel = ( { light, index, onLightChange } ) => {
 					</Row>
 					<GoboControls light={light} index={index} onLightChange={onLightChange} />
 					<Row>
-						<span className="opacity-50 text-xs truncate flex items-center gap-1" title="The beam shape of a real light fixture, as measured by its maker."><Lightbulb size={11} /> IES Profile</span>
+						<span className="control-label truncate flex items-center gap-1" title="The beam shape of a real light fixture, as measured by its maker."><Lightbulb size={11} /> IES Profile</span>
 						<IESPicker
 							value={light.ies || null}
 							onChange={name => onLightChange( index, 'ies', name )}
@@ -465,7 +465,7 @@ const LightDetailPanel = ( { light, index, onLightChange } ) => {
 							</Row>
 							{Number.isFinite( light.fixtureLumens ) && light.fixtureLumens > 0 && (
 								<Row>
-									<span className="opacity-50 text-xs" title="How much light the fixture gives off, as its maker states it.">Fixture Lumens</span>
+									<span className="control-label" title="How much light the fixture gives off, as its maker states it.">Fixture Lumens</span>
 									<span className="text-xs text-muted-foreground">{Math.round( light.fixtureLumens ).toLocaleString()}</span>
 								</Row>
 							)}
@@ -528,9 +528,9 @@ const LightDetailPanel = ( { light, index, onLightChange } ) => {
 			{isArea && (
 				<>
 					<Row>
-						<span className="opacity-50 text-xs truncate" title="The outline of the light: square, rectangle, disk or ellipse.">Shape</span>
+						<span className="control-label truncate" title="The outline of the light: square, rectangle, disk or ellipse.">Shape</span>
 						<Select value={areaShape} onValueChange={value => onLightChange( index, 'shape', value )}>
-							<SelectTrigger className="max-w-32 h-5 rounded-full">
+							<SelectTrigger size="sm" className="max-w-32">
 								<SelectValue />
 							</SelectTrigger>
 							<SelectContent>
@@ -755,7 +755,7 @@ const LightsTab = () => {
 				<span>Lights</span>
 				<div className="flex items-center gap-1.5">
 					{lights.length > 0 && (
-						<span className="text-[10px] opacity-80">{lights.length}</span>
+						<span className="text-xxs opacity-80">{lights.length}</span>
 					)}
 					<DropdownMenu>
 						<DropdownMenuTrigger asChild>

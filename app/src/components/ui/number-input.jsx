@@ -162,7 +162,7 @@ const NumberInput = forwardRef( ( {
 	return (
 		<>
 			{label && (
-				<span className="opacity-50 text-xs truncate" title={tip}>{label}</span>
+				<span className="control-label truncate" title={tip}>{label}</span>
 			)}
 			<div
 				className={cn(

@@ -657,8 +657,8 @@ const ResultsViewport = forwardRef( function ResultsViewport( props, ref ) {
 		>
 			{imageData && ( isHovering || viewingOriginal ) && ! marking && (
 				<div className="absolute top-2 left-1/2 transform -translate-x-1/2 z-20">
-					<div className="px-2 py-1 bg-black/80 rounded-md text-xs text-gray-300 flex items-center gap-1 shadow-md">
-						<Eye size={12} className="text-gray-400" />
+					<div className="px-2 py-1 bg-scrim/80 rounded-md text-xs text-on-scrim-300 flex items-center gap-1 shadow-md">
+						<Eye size={12} className="text-on-scrim-400" />
 						{viewingOriginal ? "Viewing Original" : "Press & Hold to See Original"}
 					</div>
 				</div>
@@ -666,8 +666,8 @@ const ResultsViewport = forwardRef( function ResultsViewport( props, ref ) {
 
 			{showingVersion && compare !== 'version' && (
 				<div className="absolute top-2 left-2 z-20 flex gap-1.5">
-					<span className="px-2 py-1 bg-black/60 rounded-md text-xs text-gray-300">Render</span>
-					<span className="px-2 py-1 bg-purple-600 rounded-md text-xs text-white">v{version.n}</span>
+					<span className="px-2 py-1 bg-scrim/60 rounded-md text-xs text-on-scrim-300">Render</span>
+					<span className="px-2 py-1 bg-ai-600 rounded-md text-xs text-on-scrim">v{version.n}</span>
 				</div>
 			)}
 
@@ -715,7 +715,7 @@ const ResultsViewport = forwardRef( function ResultsViewport( props, ref ) {
 			{/* Render time display */}
 			{imageData && imageData.renderTime && ! viewingOriginal && (
 				<div className={`absolute ${hasChanges ? 'bottom-2 left-12' : 'bottom-2 left-2'} z-20`}>
-					<div className="px-2 py-1 bg-black/60 rounded-md text-xs text-gray-300 flex items-center gap-1">
+					<div className="px-2 py-1 bg-scrim/60 rounded-md text-xs text-on-scrim-300 flex items-center gap-1">
 						⏱ {formatRenderTime( imageData.renderTime )}
 					</div>
 				</div>
@@ -749,7 +749,7 @@ const ResultsViewport = forwardRef( function ResultsViewport( props, ref ) {
 				>
 					{/* Loading indicator for 4K images */}
 					{imageData && ! imageLoadState.loaded && ! imageLoadState.error && (
-						<div className="absolute inset-0 flex items-center justify-center bg-black/80 text-white">
+						<div className="absolute inset-0 flex items-center justify-center bg-scrim/80 text-on-scrim">
 							<div className="flex flex-col items-center space-y-2">
 								<div className="animate-spin h-6 w-6 border-2 border-primary border-t-transparent rounded-full"></div>
 								<p className="text-sm">Loading 4K image...</p>
@@ -759,10 +759,10 @@ const ResultsViewport = forwardRef( function ResultsViewport( props, ref ) {
 
 					{/* Error state for 4K image loading */}
 					{imageData && imageLoadState.error && (
-						<div className="absolute inset-0 flex items-center justify-center bg-black/80 text-white">
+						<div className="absolute inset-0 flex items-center justify-center bg-scrim/80 text-on-scrim">
 							<div className="text-center">
-								<p className="text-sm text-red-400 mb-2">Failed to load 4K image</p>
-								<p className="text-xs text-gray-400">The image may be corrupted or too large</p>
+								<p className="text-sm text-danger-400 mb-2">Failed to load 4K image</p>
+								<p className="text-xs text-on-scrim-400">The image may be corrupted or too large</p>
 							</div>
 						</div>
 					)}
@@ -822,7 +822,7 @@ const ResultsViewport = forwardRef( function ResultsViewport( props, ref ) {
 
 					{/* Message when no image is selected */}
 					{! imageData && (
-						<div className="absolute inset-0 flex items-center justify-center bg-black/60 text-white">
+						<div className="absolute inset-0 flex items-center justify-center bg-scrim/60 text-on-scrim">
 							<p>Select a render from the Results panel</p>
 						</div>
 					)}

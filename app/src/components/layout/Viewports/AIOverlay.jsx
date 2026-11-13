@@ -72,7 +72,7 @@ export function SplitHandle( { split, onChange, label } ) {
 	return (
 		<div ref={ref} className="absolute inset-y-0 z-10 -ml-2.5 w-5 cursor-ew-resize" style={{ left: `${split * 100}%` }}
 			onPointerDown={grab} onPointerMove={move} onMouseDown={stop}>
-			<div className="absolute inset-y-0 left-1/2 -ml-px w-0.5 bg-white pointer-events-none" />
+			<div className="absolute inset-y-0 left-1/2 -ml-px w-0.5 bg-handle pointer-events-none" />
 			<div role="slider" tabIndex={0} aria-label={label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round( split * 100 )}
 				onKeyDown={e => {
 
@@ -80,7 +80,7 @@ export function SplitHandle( { split, onChange, label } ) {
 					if ( e.key === 'ArrowRight' ) onChange( clamp( split + 0.05 ) );
 
 				}}
-				className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 h-8 w-8 rounded-full bg-white text-slate-900 flex items-center justify-center shadow-md focus-visible:outline-2 focus-visible:outline-primary">
+				className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 h-8 w-8 rounded-full bg-handle text-on-handle flex items-center justify-center shadow-md focus-visible:outline-2 focus-visible:outline-primary">
 				<ChevronsLeftRight className="h-4 w-4" />
 			</div>
 		</div>
@@ -145,9 +145,9 @@ export function AreaLayer( { fitted, onChange, editable } ) {
 
 			}}>
 			{shown && (
-				<div aria-label="Area to change" className="absolute border-2 border-dashed border-purple-500 bg-purple-600/10 pointer-events-none"
+				<div aria-label="Area to change" className="absolute border-2 border-dashed border-ai-500 bg-ai-600/10 pointer-events-none"
 					style={{ left: `${shown.x * 100}%`, top: `${shown.y * 100}%`, width: `${shown.w * 100}%`, height: `${shown.h * 100}%` }}>
-					<span className="absolute top-1 left-1 px-2 py-0.5 rounded-md bg-purple-600 text-white text-xs whitespace-nowrap">Area to change</span>
+					<span className="absolute top-1 left-1 px-2 py-0.5 rounded-md bg-ai-600 text-on-scrim text-xs whitespace-nowrap">Area to change</span>
 				</div>
 			)}
 		</div>

@@ -390,7 +390,7 @@ export const ItemsCatalog = ( {
 			// split() puts the captured matches at odd indices
 			return parts.map( ( part, index ) =>
 				index % 2 === 1 ?
-					<mark key={index} className="bg-yellow-200 dark:bg-yellow-800 px-0.5 rounded">{part}</mark> :
+					<mark key={index} className="bg-highlight px-0.5 rounded">{part}</mark> :
 					part
 			);
 
@@ -429,7 +429,7 @@ export const ItemsCatalog = ( {
 	if ( error ) {
 
 		return (
-			<div className="flex items-center justify-center h-64 text-red-500" role="alert">
+			<div className="flex items-center justify-center h-64 text-danger-500" role="alert">
 				<p>{error}</p>
 			</div>
 		);
@@ -487,9 +487,9 @@ export const ItemsCatalog = ( {
 												<h4 className="text-sm font-medium">Recent Searches</h4>
 												<Button
 													variant="ghost"
-													size="sm"
+													size="xs"
 													onClick={clearRecentSearches}
-													className="h-6 px-2 text-xs hover:bg-destructive hover:text-destructive-foreground"
+													className="px-2 hover:bg-destructive hover:text-destructive-foreground"
 													aria-label="Clear all recent searches"
 												>
 													<Trash2 size={12} className="mr-1" />
@@ -533,9 +533,9 @@ export const ItemsCatalog = ( {
 							<Popover>
 								<PopoverTrigger asChild>
 									<Button
-										size="icon"
+										size="icon-xs"
 										variant="outline"
-										className="h-5 w-5 text-xs rounded-full hover:bg-accent bg-primary/20"
+										className="text-xs hover:bg-accent bg-primary/20"
 									>
 										<Filter size={11}/>
 									</Button>
@@ -543,7 +543,7 @@ export const ItemsCatalog = ( {
 								<PopoverContent className="w-[200px] p-0" align="end">
 									<div className="p-1 space-y-1">
 										<Select value={filterType} onValueChange={handleFilterTypeChange}>
-											<SelectTrigger aria-label="Filter type" className="h-5 rounded-full">
+											<SelectTrigger aria-label="Filter type" size="sm">
 												<SelectValue placeholder="Filter by" />
 											</SelectTrigger>
 											<SelectContent>
@@ -554,7 +554,7 @@ export const ItemsCatalog = ( {
 										</Select>
 										{filterType && filterType !== 'all' && (
 											<Select value={filterValue} onValueChange={handleFilterValueChange}>
-												<SelectTrigger aria-label={`Select ${filterType}`} className="h-5 rounded-full">
+												<SelectTrigger aria-label={`Select ${filterType}`} size="sm">
 													<SelectValue placeholder={`Select ${filterType}`} />
 												</SelectTrigger>
 												<SelectContent>
@@ -668,9 +668,9 @@ export const ItemsCatalog = ( {
 														/>
 														{/* Hover actions (e.g. Replace / Add) over a scrim */}
 														{actions && actions.length > 0 && (
-															<div className="absolute inset-0 z-0 flex flex-col items-center justify-center gap-1.5 rounded-lg bg-black/55 opacity-0 transition-opacity duration-150 group-hover/thumb:opacity-100 focus-within:opacity-100">
+															<div className="absolute inset-0 z-0 flex flex-col items-center justify-center gap-1.5 rounded-lg bg-scrim/55 opacity-0 transition-opacity duration-150 group-hover/thumb:opacity-100 focus-within:opacity-100">
 																{busyKey === itemKey ? (
-																	<Loader2 className="h-5 w-5 animate-spin text-white" />
+																	<Loader2 className="h-5 w-5 animate-spin text-on-scrim" />
 																) : (
 																	actions.map( ( action ) => (
 																		<Button
@@ -679,7 +679,7 @@ export const ItemsCatalog = ( {
 																			variant={action.variant || 'secondary'}
 																			disabled={!! busyKey || action.disabled?.( item )}
 																			onClick={( e ) => handleAction( action, item, e )}
-																			className="h-6 min-w-[76px] gap-1 px-3 text-[11px] rounded-full"
+																			className="h-6 min-w-[76px] gap-1 px-3 text-2xs rounded-full"
 																		>
 																			{action.icon}
 																			{action.label}
@@ -692,7 +692,7 @@ export const ItemsCatalog = ( {
 														<Button
 															variant="secondary"
 															size="icon"
-															className="absolute left-[1px] top-[1px] z-10 h-3 w-3 rounded-full bg-white/0 hover:bg-white/0 cursor-pointer"
+															className="absolute left-[1px] top-[1px] z-10 h-3 w-3 rounded-full bg-transparent hover:bg-transparent cursor-pointer"
 															onClick={( e ) => handleFavoriteToggle( item, e )}
 															aria-label={`${isFavorite( catalogType, item.id || item.name ) ? 'Remove from' : 'Add to'} favorites`}
 														>
@@ -700,8 +700,8 @@ export const ItemsCatalog = ( {
 																className={cn(
 																	"h-3 w-3 opacity-60",
 																	isFavorite( catalogType, item.id || item.name )
-																		? "fill-red-800 text-red-800"
-																		: "fill-white text-red-400"
+																		? "fill-favorite text-favorite"
+																		: "fill-on-scrim text-favorite-outline"
 																)}
 															/>
 														</Button>

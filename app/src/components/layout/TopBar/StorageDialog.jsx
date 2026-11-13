@@ -137,7 +137,7 @@ const StorageDialog = ( { isOpen, onClose } ) => {
 										<div className="min-w-0 grow">
 											<div className="flex items-baseline gap-2">
 												<span className="font-medium">{row.label}</span>
-												<span className="text-xs opacity-50">{row.kind === 'user' ? 'your data' : 'cache'}</span>
+												<span className="control-hint">{row.kind === 'user' ? 'your data' : 'cache'}</span>
 											</div>
 											<div className="truncate text-xs opacity-60">{row.hint}</div>
 										</div>

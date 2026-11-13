@@ -39,13 +39,13 @@ const Vector3Component = ( {
 	}, [ vector, onValueChange ] );
 
 	// Define label components with colors
-	const XLabel = () => <div className="text-xs text-red-500">X</div>;
-	const YLabel = () => <div className="text-xs text-green-500">Y</div>;
-	const ZLabel = () => <div className="text-xs text-blue-500">Z</div>;
+	const XLabel = () => <div className="text-xs text-axis-x">X</div>;
+	const YLabel = () => <div className="text-xs text-axis-y">Y</div>;
+	const ZLabel = () => <div className="text-xs text-axis-z">Z</div>;
 
 	return (
 		<>
-			<div className="opacity-50 text-xs truncate" title={tip}>{props.label}</div>
+			<div className="control-label truncate" title={tip}>{props.label}</div>
 			<div className="flex space-x-1.5 items-center justify-between">
 				{/* X component */}
 				<DraggableInput

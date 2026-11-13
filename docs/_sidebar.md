@@ -32,3 +32,4 @@
 - **Contributing**
   - [Regression bench](/design/BENCH.md)
   - [Conventions](/design/CONVENTIONS.md)
+  - [The app's design system](/design/DESIGN_SYSTEM.md)

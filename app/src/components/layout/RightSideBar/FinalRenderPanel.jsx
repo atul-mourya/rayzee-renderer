@@ -34,7 +34,7 @@ const FinalRenderPanel = () => {
 				</Row>
 				{asked && (
 					<Row>
-						<span className="opacity-50 text-xs" title="Not applied: its counts are for a renderer with no denoiser that never stops early. This one stops once the picture is clean, then removes the grain.">The scene&apos;s file asks for {asked}.</span>
+						<span className="control-label" title="Not applied: its counts are for a renderer with no denoiser that never stops early. This one stops once the picture is clean, then removes the grain.">The scene&apos;s file asks for {asked}.</span>
 					</Row>
 				)}
 				<CanvasDimensionControls resolutionKey="finalRenderResolution" />
@@ -49,8 +49,8 @@ const FinalRenderPanel = () => {
 				{( enableOIDN || denoiserStrategy === 'oidn' ) && ( <>
 					<Row>
 						<Select value={oidnQuality} onValueChange={handleOidnQualityChange}>
-							<span className="opacity-50 text-xs truncate" title="How hard the AI clean-up works. High keeps the most detail but is slowest. Fast (clean aux) is as quick as Fast: a bit better on finished renders, worse on grainy ones.">OIDN Quality</span>
-							<SelectTrigger className="max-w-32 h-5 rounded-full" >
+							<span className="control-label truncate" title="How hard the AI clean-up works. High keeps the most detail but is slowest. Fast (clean aux) is as quick as Fast: a bit better on finished renders, worse on grainy ones.">OIDN Quality</span>
+							<SelectTrigger size="sm" className="max-w-32" >
 								<SelectValue placeholder="Select quality" />
 							</SelectTrigger>
 							<SelectContent>

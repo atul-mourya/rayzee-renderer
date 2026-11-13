@@ -148,7 +148,7 @@ const ArchiveElementDialog = () => {
 				</ScrollArea>
 
 				{risky && (
-					<div className="flex items-start gap-2 text-xs text-amber-500 px-1">
+					<div className="flex items-start gap-2 text-xs text-warning-500 px-1">
 						<AlertTriangle className="h-4 w-4 shrink-0 mt-px" />
 						<span>
 							This much at once may run the tab out of memory. It is most likely to fit

@@ -13,7 +13,7 @@ import { AboService } from '@/services/AboService';
 import CatalogBrowser from './CatalogBrowser';
 
 const SKETCHFAB_NOTICE = SketchfabService.getToken() ? null : (
-	<>Browse only — set <code className="text-[10px]">VITE_SKETCHFAB_TOKEN</code> to download models.</>
+	<>Browse only — set <code className="text-xxs">VITE_SKETCHFAB_TOKEN</code> to download models.</>
 );
 
 // CC BY 4.0 asks for the credit, a link to the licence and to say what was changed.
@@ -118,14 +118,14 @@ const ModelsTab = () => {
 				onValueChange={setModelsSource}
 				className="flex flex-col h-full"
 			>
-				<TabsList className="grid w-full grid-cols-3 h-auto p-0 border">
-					<TabsTrigger value="featured" className="text-xs rounded-full">
+				<TabsList variant="pills" className="grid-cols-3">
+					<TabsTrigger value="featured">
 						Featured
 					</TabsTrigger>
-					<TabsTrigger value="sketchfab" className="text-xs rounded-full">
+					<TabsTrigger value="sketchfab">
 						Sketchfab
 					</TabsTrigger>
-					<TabsTrigger value="abo" className="text-xs rounded-full">
+					<TabsTrigger value="abo">
 						Amazon
 					</TabsTrigger>
 				</TabsList>

@@ -73,11 +73,11 @@ const HierarchicalEnvironmentsTab = () => {
 				onValueChange={setActiveSourceTab}
 				className="flex flex-col h-full"
 			>
-				<TabsList className="grid w-full grid-cols-2 h-auto p-0 border">
-					<TabsTrigger value="current" className="text-xs rounded-full">
+				<TabsList variant="pills" className="grid-cols-2">
+					<TabsTrigger value="current">
 						Featured
 					</TabsTrigger>
-					<TabsTrigger value="polyhaven" className="text-xs rounded-full">
+					<TabsTrigger value="polyhaven">
 						PolyHaven
 					</TabsTrigger>
 				</TabsList>

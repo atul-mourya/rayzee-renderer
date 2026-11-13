@@ -19,7 +19,7 @@ const AspectRatioControl = () => {
 
 	return (
 		<Row>
-			<span className="opacity-50 text-xs truncate" title="The picture's shape. The small button beside it swaps wide and tall.">Aspect Ratio</span>
+			<span className="control-label truncate" title="The picture's shape. The small button beside it swaps wide and tall.">Aspect Ratio</span>
 			<div className="flex items-center gap-1">
 				{aspectRatioPreset !== '1:1' && (
 					<button
@@ -34,7 +34,7 @@ const AspectRatioControl = () => {
 					</button>
 				)}
 				<Select value={aspectRatioPreset} onValueChange={handleAspectPresetChange}>
-					<SelectTrigger className="max-w-28 h-5 rounded-full">
+					<SelectTrigger size="sm" className="max-w-28">
 						<SelectValue placeholder="Select ratio" />
 					</SelectTrigger>
 					<SelectContent>

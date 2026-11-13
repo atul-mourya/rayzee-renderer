@@ -9,7 +9,7 @@ const SaveControls = ( { onSave, onDiscard } ) => {
 	return (
 		<div className="absolute top-2 right-2 flex items-center space-x-2">
 			<label
-				className="flex items-center gap-1 bg-black/60 text-xs text-gray-200 px-2 py-1 rounded-full cursor-pointer select-none"
+				className="flex items-center gap-1 bg-scrim/60 text-xs text-on-scrim-200 px-2 py-1 rounded-full cursor-pointer select-none"
 				title="Also keep the full-range (EXR) image, so exposure and tone mapping can change later without rendering again"
 			>
 				<input type="checkbox" className="accent-current" checked={keepHDR} onChange={( e ) => setKeepHDR( e.target.checked )} />

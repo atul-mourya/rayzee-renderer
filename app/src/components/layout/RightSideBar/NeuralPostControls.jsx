@@ -74,7 +74,7 @@ const NeuralPostControls = () => {
 			    reads noise as detail. One line says why, once, for both. */}
 			{! denoised && (
 				<Row>
-					<span className="opacity-50 text-[10px] leading-snug">
+					<span className="opacity-50 text-xxs leading-snug">
 						Turn on Final Denoise (OIDN) to use the AI passes — they need a clean image.
 					</span>
 				</Row>
@@ -89,8 +89,8 @@ const NeuralPostControls = () => {
 			{enableUpscaler && ( <>
 				<Row>
 					<Select value={upscalerScale.toString()} onValueChange={handleUpscalerScaleChange}>
-						<span className="opacity-50 text-xs truncate" title="How many times bigger the final picture is, on each side.">Scale Factor</span>
-						<SelectTrigger className="max-w-24 h-5 rounded-full" >
+						<span className="control-label truncate" title="How many times bigger the final picture is, on each side.">Scale Factor</span>
+						<SelectTrigger size="sm" className="max-w-24" >
 							<SelectValue placeholder="Select scale" />
 						</SelectTrigger>
 						<SelectContent>
@@ -101,8 +101,8 @@ const NeuralPostControls = () => {
 				</Row>
 				<Row>
 					<Select value={upscalerQuality} onValueChange={handleUpscalerQualityChange}>
-						<span className="opacity-50 text-xs truncate" title="How hard the AI works on the enlargement. Quality looks best but takes longest.">Quality</span>
-						<SelectTrigger className="max-w-32 h-5 rounded-full" >
+						<span className="control-label truncate" title="How hard the AI works on the enlargement. Quality looks best but takes longest.">Quality</span>
+						<SelectTrigger size="sm" className="max-w-32" >
 							<SelectValue placeholder="Select quality" />
 						</SelectTrigger>
 						<SelectContent>
@@ -129,7 +129,7 @@ const NeuralPostControls = () => {
 
 			{retouchOn && nrTooBig && (
 				<Row>
-					<span className="opacity-50 text-[10px] leading-snug">
+					<span className="opacity-50 text-xxs leading-snug">
 						Skipped at this size — {canvasWidth} × {canvasHeight} is
 						{' '}{( canvasWidth * canvasHeight / 1e6 ).toFixed( 1 )} MP, above the
 						{' '}{( RETOUCH_MAX_PIXELS / 1e6 ).toFixed( 1 )} MP it survives.

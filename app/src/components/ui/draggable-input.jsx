@@ -165,7 +165,7 @@ const DraggableInput = React.forwardRef( ( {
 
 	return (
 		<>
-			{label && <span className="opacity-50 text-xs truncate">{label}</span>}
+			{label && <span className="control-label truncate">{label}</span>}
 			<div
 				ref={setRefs}
 				className={cn(

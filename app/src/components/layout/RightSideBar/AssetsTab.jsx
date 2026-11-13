@@ -31,17 +31,17 @@ const AssetsTab = () => {
 				onValueChange={setActiveTab}
 				className="flex flex-col h-full w-full"
 			>
-				<TabsList className="relative grid w-full grid-cols-4 h-auto p-0">
-					<TabsTrigger value="models" className="text-xs truncate py-2">
+				<TabsList variant="compact" className="relative grid w-full grid-cols-4 h-auto p-0">
+					<TabsTrigger value="models">
                         Models
 					</TabsTrigger>
-					<TabsTrigger value="materials" className="text-xs truncate py-2">
+					<TabsTrigger value="materials">
                         Materials
 					</TabsTrigger>
-					<TabsTrigger value="environments" className="text-xs truncate py-2">
+					<TabsTrigger value="environments">
                         Env
 					</TabsTrigger>
-					<TabsTrigger value="tests" className="text-xs truncate py-2">
+					<TabsTrigger value="tests">
                         Tests
 					</TabsTrigger>
 				</TabsList>
