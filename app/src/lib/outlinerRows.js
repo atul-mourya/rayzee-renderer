@@ -1,6 +1,34 @@
 // The Outliner's rows are a fixed 28 px (h-7); it mounts only those in view.
 export const ROW_HEIGHT = 28;
 
+/** The icon an Outliner mesh row shows, from its node's `geometry`. */
+export function meshShape( item ) {
+
+	const geometry = item.geometry || '';
+	if ( geometry === 'BoxGeometry' ) return 'box';
+	if ( geometry === 'SphereGeometry' ) return 'sphere';
+	if ( geometry === 'CylinderGeometry' ) return 'cylinder';
+	if ( geometry === 'ConeGeometry' ) return 'cone';
+	return 'mesh';
+
+}
+
+/** A three.js object as an Outliner node. `geometry` is three's type name ('BoxGeometry'), which minifying keeps. */
+export function layerItem( object ) {
+
+	return {
+		name: object.userData?.__rayzeeName || object.name || `${object.type} ${object.id}`,
+		type: object.type,
+		uuid: object.uuid,
+		geometry: object.geometry?.type ?? '',
+		visible: object.visible ?? true,
+		// Top-level loaded models are tagged and can be removed from the scene.
+		removable: !! object.userData?.__rayzeeSceneObject,
+		children: object.children.map( layerItem ),
+	};
+
+}
+
 /** The open tree as one list: a row a node, its children after it while it is open. */
 export function flattenRows( nodes, collapsed, visibleOf, depth = 0, parentHidden = false, out = [] ) {
 

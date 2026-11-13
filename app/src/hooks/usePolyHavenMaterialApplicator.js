@@ -20,7 +20,11 @@ export const usePolyHavenMaterialApplicator = () => {
 
 		if ( ! target ) {
 
-			console.warn( 'No object selected for material application' );
+			toast( {
+				title: "No Object Selected",
+				description: "Please select an object to apply material to",
+				variant: "destructive",
+			} );
 			return;
 
 		}

@@ -7,7 +7,7 @@ import {
 import { useStore } from '@/store';
 import { getApp } from '@/lib/appProxy';
 import { useToast } from '@/hooks/use-toast';
-import { ROW_HEIGHT, flattenRows, scrollToShow, ancestorsOf } from '@/lib/outlinerRows';
+import { ROW_HEIGHT, flattenRows, scrollToShow, ancestorsOf, layerItem, meshShape } from '@/lib/outlinerRows';
 import { cn } from "@/lib/utils";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -45,14 +45,9 @@ const ObjectIcon = memo( ( { object } ) => {
 	// Meshes - Orange (Blender convention, mapped to Tailwind palette)
 	if ( object.type === 'Mesh' ) {
 
-		const geometryType = object.geometry?.constructor?.name || '';
 		const meshClass = cn( baseClass, STYLES.iconOrange );
-
-		if ( geometryType.includes( 'BoxGeometry' ) ) return <Box className={meshClass} />;
-		if ( geometryType.includes( 'SphereGeometry' ) ) return <Circle className={meshClass} />;
-		if ( geometryType.includes( 'CylinderGeometry' ) ) return <Cylinder className={meshClass} />;
-		if ( geometryType.includes( 'ConeGeometry' ) ) return <Triangle className={meshClass} />;
-		return <Shapes className={meshClass} />;
+		const Shape = { box: Box, sphere: Circle, cylinder: Cylinder, cone: Triangle }[ meshShape( object ) ] ?? Shapes;
+		return <Shape className={meshClass} />;
 
 	}
 
@@ -440,16 +435,6 @@ const OutlinerHeader = memo( ( { searchTerm, onSearchChange, filters, onFilterCh
 
 OutlinerHeader.displayName = 'OutlinerHeader';
 
-const createLayerItem = ( object ) => ( {
-	name: object.userData?.__rayzeeName || object.name || `${object.type} ${object.id}`,
-	type: object.type,
-	uuid: object.uuid,
-	geometry: object.geometry?.constructor?.name,
-	visible: object.visible ?? true,
-	// Top-level loaded models are tagged and can be removed from the scene.
-	removable: !! object.userData?.__rayzeeSceneObject,
-	children: object.children.map( createLayerItem ),
-} );
 
 const isVisibleByType = ( layer, filters ) => {
 
@@ -512,7 +497,7 @@ const Outliner = () => {
 		const scene = getApp()?.getScene();
 		if ( ! scene ) return [];
 
-		const sceneGraph = [ createLayerItem( scene ) ];
+		const sceneGraph = [ layerItem( scene ) ];
 
 		if ( sceneGraph.length > 0 && sceneGraph[ 0 ].type === 'Scene' ) {
 

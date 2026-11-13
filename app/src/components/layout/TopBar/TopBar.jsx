@@ -71,7 +71,7 @@ const TopBar = () => {
 	// Handle GitHub redirect
 	const handleGithubRedirection = useCallback( () => {
 
-		window.open( 'https://github.com/atul-mourya/RayTracing', '_blank' );
+		window.open( 'https://github.com/atul-mourya/rayzee-renderer', '_blank' );
 
 	}, [] );
 

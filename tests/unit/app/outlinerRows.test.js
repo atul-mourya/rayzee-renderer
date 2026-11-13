@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { flattenRows, scrollToShow, ancestorsOf, ROW_HEIGHT } from '@/lib/outlinerRows';
+import { BoxGeometry, BufferGeometry, ConeGeometry, CylinderGeometry, Group, Mesh, SphereGeometry } from 'three';
+import { flattenRows, scrollToShow, ancestorsOf, layerItem, meshShape, ROW_HEIGHT } from '@/lib/outlinerRows';
 
 const node = ( uuid, children = [], visible = true ) => ( { uuid, name: uuid, children, visible } );
 const tree = [ node( 'scene', [
@@ -40,6 +41,57 @@ describe( 'the Outliner\'s rows', () => {
 		expect( ancestorsOf( tree, 'a2x' ) ).toEqual( [ 'scene', 'a', 'a2' ] );
 		expect( ancestorsOf( tree, 'scene' ) ).toEqual( [] );
 		expect( ancestorsOf( tree, 'missing' ) ).toBe( null );
+
+	} );
+
+} );
+
+describe( 'layerItem', () => {
+
+	it( 'names each mesh\'s geometry by three\'s type, which a minified build keeps', () => {
+
+		const group = new Group();
+		group.add( new Mesh( new BoxGeometry() ), new Mesh( new SphereGeometry() ), new Mesh( new BufferGeometry() ) );
+		const item = layerItem( group );
+
+		expect( item.geometry ).toBe( '' );
+		expect( item.children.map( c => c.geometry ) ).toEqual( [ 'BoxGeometry', 'SphereGeometry', 'BufferGeometry' ] );
+
+	} );
+
+	it( 'takes the engine\'s name, the object\'s, or its type and id', () => {
+
+		const named = new Group();
+		named.name = 'Chair';
+		named.userData.__rayzeeName = 'Chair (2)';
+		const plain = new Group();
+		plain.name = 'Table';
+		const blank = new Group();
+
+		expect( layerItem( named ).name ).toBe( 'Chair (2)' );
+		expect( layerItem( plain ).name ).toBe( 'Table' );
+		expect( layerItem( blank ).name ).toBe( `Group ${blank.id}` );
+
+	} );
+
+	it( 'marks only loaded models removable', () => {
+
+		const model = new Group();
+		model.userData.__rayzeeSceneObject = true;
+		expect( layerItem( model ).removable ).toBe( true );
+		expect( layerItem( new Group() ).removable ).toBe( false );
+
+	} );
+
+} );
+
+describe( 'meshShape', () => {
+
+	it( 'gives each primitive its own icon, anything else the mesh icon', () => {
+
+		const shapes = [ new BoxGeometry(), new SphereGeometry(), new CylinderGeometry(), new ConeGeometry(), new BufferGeometry() ]
+			.map( g => meshShape( layerItem( new Mesh( g ) ) ) );
+		expect( shapes ).toEqual( [ 'box', 'sphere', 'cylinder', 'cone', 'mesh' ] );
 
 	} );
 

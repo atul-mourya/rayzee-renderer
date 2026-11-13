@@ -13,6 +13,7 @@ import {
 import { useStore, useCameraStore } from '@/store';
 import { getApp } from '@/lib/appProxy';
 import { createLogger } from 'rayzee';
+import { shortcutFor } from '@/lib/keyboardShortcuts';
 
 const log = createLogger( 'app' );
 
@@ -62,46 +63,13 @@ const App = () => {
 
 		const handleKeyDown = ( event ) => {
 
-			// Ignore shortcuts when typing in input fields
-			if ( event.target.tagName === 'INPUT' ||
-				 event.target.tagName === 'TEXTAREA' ||
-				 event.target.contentEditable === 'true' ) {
-
-				return;
-
-			}
-
-			const noModifiers = ! event.ctrlKey && ! event.altKey && ! event.shiftKey && ! event.metaKey;
-
-			// Prevent default behavior only for our specific shortcuts. The gizmo mode has no keys:
-			// letters belong to walk mode.
-			switch ( event.key ) {
-
-				case 'Escape':
-					event.preventDefault();
-					handleDeselect();
-					break;
-
-				case 'r':
-				case 'R':
-					if ( noModifiers ) {
-
-						event.preventDefault();
-						useCameraStore.getState().handleResetCamera();
-
-					}
-
-					break;
-
-				case ' ':
-					event.preventDefault();
-					handleTogglePlayPause();
-					break;
-
-				default:
-					break;
-
-			}
+			// The gizmo mode has no keys: letters belong to walk mode.
+			const action = shortcutFor( event, { appMode: useStore.getState().appMode } );
+			if ( ! action ) return;
+			event.preventDefault();
+			if ( action === 'deselect' ) handleDeselect();
+			else if ( action === 'resetCamera' ) useCameraStore.getState().handleResetCamera();
+			else if ( action === 'playPause' ) handleTogglePlayPause();
 
 		};
 

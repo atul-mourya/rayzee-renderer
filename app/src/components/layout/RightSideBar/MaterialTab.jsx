@@ -89,7 +89,7 @@ const MATERIAL_PROPERTIES = {
 		[ 'dispersion', { type: 'slider', default: 0, min: 0, max: 10, step: 0.01, label: 'Dispersion', tip: 'Splits light into rainbow colours as it passes through, as in a prism or a diamond.' } ],
 	],
 	other: [
-		[ 'side', { type: 'select', default: 0, options: [ { value: 0, label: 'Front', tip: 'Which side of the surface is visible: the front, the back, or both.' }, { value: 1, label: 'Back' }, { value: 2, label: 'Double' } ], label: 'Side' } ],
+		[ 'side', { type: 'select', default: 0, options: [ { value: 0, label: 'Front' }, { value: 1, label: 'Back' }, { value: 2, label: 'Double' } ], label: 'Side', tip: 'Which side of the surface is visible: the front, the back, or both.' } ],
 	]
 };
 

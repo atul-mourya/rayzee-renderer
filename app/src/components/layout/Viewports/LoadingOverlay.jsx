@@ -4,6 +4,9 @@ import { useStore, usePathTracerStore, useAnimationStore } from '@/store';
 import { Progress } from "@/components/ui/progress";
 import { getApp } from '@/lib/appProxy';
 
+// The engine's statuses for the long phases (SceneProcessor: "Building BVH...", "Processing material textures...").
+const HEAVY_PHASE = /Building BVH|Processing material textures/;
+
 // Format a byte count as a compact human-readable string (e.g. "2.3 MB").
 const formatBytes = ( bytes ) => {
 
@@ -169,7 +172,7 @@ const LoadingOverlay = ( {
 					)}
 
 					{/* Show hint during heavy processing phases */}
-					{! failed && loading.status && ( loading.status.includes( 'Building BVH' ) || loading.status.includes( 'Processing Textures' ) ) && (
+					{! failed && loading.status && HEAVY_PHASE.test( loading.status ) && (
 						<p className="text-xs text-muted-foreground -mt-1">
 							{loading.progress < 100
 								? "This may take a while for large models..."
