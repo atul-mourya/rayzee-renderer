@@ -175,8 +175,10 @@ export class SceneProcessor {
 		this.instanceTable = null; // Per-mesh BLAS metadata
 		this._refitWorker = null;
 		this._refitSharedBuffers = null; // SharedArrayBuffer refs for zero-copy refit
-		this._rebuildGeneration = 0; // Monotonic counter to discard stale background rebuilds
-		this._pendingRebuilds = new Map(); // meshIndex → worker
+		this._pendingRebuilds = new Map(); // placement → worker
+		this._waitingRebuilds = new Map(); // placement → { due, onSwap }
+		this._rebuildTimer = null;
+		this._triangleVersions = new Map(); // placement → refits written, so a rebuild of older triangles is dropped
 
 		// Initialize texture references.
 		// Material maps are packed into consolidated size-bucketed arrays (see _bucketTextures):
@@ -2079,6 +2081,7 @@ export class SceneProcessor {
 		this.bvhData = null;
 		this.bvhIndexChunks = null;
 		this.bvhIndex = null;
+		this.cancelBackgroundRebuilds();
 		this._sharedRefitWarned = null;
 		this.instanceTable = null;
 		this.lightBVHNodeData = null;
@@ -2943,9 +2946,9 @@ export class SceneProcessor {
 	}
 
 	/**
-	 * Schedule background BLAS rebuilds for affected meshes.
-	 * Rebuilds optimal SAH BVH in a worker, then swaps into the combined buffer.
-	 * Stale rebuilds (object moved again) are discarded via generation counter.
+	 * Schedule background BLAS rebuilds for affected meshes: each starts once its mesh has gone `REBUILD_QUIET_MS`
+	 * without another refit, at most `hardwareThreads() - 1` at a time, builds a SAH BVH in a worker and swaps it into
+	 * the combined buffer. One whose mesh's triangles were written while it ran is dropped.
 	 *
 	 * @param {number[]} meshIndices - Mesh indices to rebuild
 	 * @param {Function} onSwap - Called after a successful swap (for GPU upload)

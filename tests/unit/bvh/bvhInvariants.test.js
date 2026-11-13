@@ -44,6 +44,8 @@ import { RayzeeRenderer } from '@/core/RayzeeRenderer.js';
 import { StorageParts } from '@/core/shaders/ThreePatches.js';
 import { TRIANGLE_DATA_LAYOUT } from '@/core/scene/BufferLayout.js';
 import { IssueLog, ISSUE_CODES } from '@/core/EngineIssues.js';
+import { configurePlatform } from '@/core/Platform.js';
+import { REBUILD_QUIET_MS } from '@/core/scene/SceneRefit.js';
 
 const FPT = TRIANGLE_DATA_LAYOUT.FLOATS_PER_TRIANGLE;
 // Meshes past these build as the engine builds one past 200k (across workers) or 2M (in pieces) triangles.
@@ -586,11 +588,128 @@ describe( 'a refit', () => {
 			sp.refitBLASes( [ knot ], mesh => movedPositions( sp, mesh, twist ) );
 			let swapped = false;
 			sp.scheduleBackgroundRebuild( [ knot ], () => swapped = true );
-			await vi.waitFor( () => expect( sp._pendingRebuilds.size ).toBe( 0 ), { timeout: 4000, interval: 5 } );
-			expect( swapped ).toBe( true );
+			await vi.waitFor( () => expect( swapped ).toBe( true ), { timeout: 4000, interval: 5 } );
 			expect( inspect( sp ).problems ).toEqual( [] );
 
 		}
+
+	} );
+
+	it( 'waits until its mesh stops changing: refit every frame, nothing starts, and the last one lands', async () => {
+
+		const { root, parts } = scene();
+		const sp = await build( root );
+		const knot = meshIndex( sp, parts.knot );
+		const started = vi.spyOn( sp._pendingRebuilds, 'set' );
+		let swaps = 0;
+
+		for ( let f = 1; f <= 6; f ++ ) {
+
+			sp.refitBLASes( [ knot ], mesh => movedPositions( sp, mesh, v => v.multiplyScalar( 1 + f / 100 ) ) );
+			sp.scheduleBackgroundRebuild( [ knot ], () => swaps ++ );
+			await new Promise( r => setTimeout( r, REBUILD_QUIET_MS / 5 ) );
+
+		}
+
+		expect( started ).not.toHaveBeenCalled();
+		await vi.waitFor( () => expect( swaps ).toBe( 1 ), { timeout: 4000, interval: 5 } );
+		expect( started ).toHaveBeenCalledTimes( 1 );
+		expect( inspect( sp ).problems ).toEqual( [] );
+
+	} );
+
+	it( 'runs one rebuild a thread but one, and the rest as each ends', async () => {
+
+		configurePlatform( { threads: 3 } );
+		try {
+
+			const { root, parts } = scene();
+			const sp = await build( root );
+			const meshes = [ parts.knot, parts.plane, parts.glow, parts.crowd, parts.trunk ].map( p => meshIndex( sp, p ) );
+			const set = sp._pendingRebuilds.set.bind( sp._pendingRebuilds );
+			let most = 0, swaps = 0;
+			sp._pendingRebuilds.set = ( key, worker ) => {
+
+				set( key, worker );
+				most = Math.max( most, sp._pendingRebuilds.size );
+				return sp._pendingRebuilds;
+
+			};
+
+			sp.scheduleBackgroundRebuild( meshes, () => swaps ++ );
+			await vi.waitFor( () => expect( swaps ).toBe( 5 ), { timeout: 4000, interval: 5 } );
+			expect( most ).toBe( 2 );
+			expect( inspect( sp ).problems ).toEqual( [] );
+
+		} finally {
+
+			configurePlatform( { threads: null } );
+
+		}
+
+	} );
+
+	it( 'drops a rebuild whose triangles a refit wrote while it ran, and keeps the refit\'s', async () => {
+
+		const { root, parts } = scene();
+		const sp = await build( root );
+		const knot = meshIndex( sp, parts.knot );
+		const set = sp._pendingRebuilds.set.bind( sp._pendingRebuilds );
+		let started = false, refit = null, swapped = false;
+		sp._pendingRebuilds.set = ( key, worker ) => {
+
+			set( key, worker );
+			started = true;
+			sp.refitBLASes( [ knot ], mesh => movedPositions( sp, mesh, twist ) );
+			refit = sp.triangleFloats.slice();
+			return sp._pendingRebuilds;
+
+		};
+
+		sp.scheduleBackgroundRebuild( [ knot ], () => swapped = true );
+		await vi.waitFor( () => expect( started && sp._pendingRebuilds.size === 0 ).toBe( true ), { timeout: 4000, interval: 5 } );
+		expect( swapped ).toBe( false );
+		expect( firstDifference( sp.triangleFloats, refit ) ).toBe( - 1 );
+		expect( inspect( sp ).problems ).toEqual( [] );
+
+	} );
+
+	it( 'keeps a material edit made while a rebuild ran: the swap takes the store\'s flags, not its copy\'s', async () => {
+
+		const { root, parts } = scene();
+		const sp = await build( root );
+		const knot = meshIndex( sp, parts.knot );
+		const table = sp.instanceTable, p = sp._placementOf( knot );
+		const first = table.triOffsetOf( p ), count = table.triCountOf( p );
+		const flags = () => Array.from( { length: count }, ( _, i ) => sp.triangleData[ ( first + i ) * FPT + TRIANGLE_DATA_LAYOUT.MATERIAL_FLAGS_OFFSET ] );
+		const edited = ( flags()[ 0 ] & ~ ( 3 << 24 ) | 2 << 24 ) >>> 0; // another side, as a side edit writes it
+		const set = sp._pendingRebuilds.set.bind( sp._pendingRebuilds );
+		sp._pendingRebuilds.set = ( key, worker ) => {
+
+			set( key, worker );
+			for ( let i = 0; i < count; i ++ ) sp.triangleData[ ( first + i ) * FPT + TRIANGLE_DATA_LAYOUT.MATERIAL_FLAGS_OFFSET ] = edited;
+			return sp._pendingRebuilds;
+
+		};
+
+		let swapped = false;
+		sp.scheduleBackgroundRebuild( [ knot ], () => swapped = true );
+		await vi.waitFor( () => expect( swapped ).toBe( true ), { timeout: 4000, interval: 5 } );
+		expect( new Set( flags() ) ).toEqual( new Set( [ edited ] ) );
+		expect( inspect( sp ).problems ).toEqual( [] );
+
+	} );
+
+	it( 'starts nothing still waiting once cancelled, as a new scene does', async () => {
+
+		const { root, parts } = scene();
+		const sp = await build( root );
+		const started = vi.spyOn( sp._pendingRebuilds, 'set' );
+		sp.scheduleBackgroundRebuild( [ meshIndex( sp, parts.knot ) ], () => {} );
+		sp.cancelBackgroundRebuilds();
+		await new Promise( r => setTimeout( r, REBUILD_QUIET_MS * 1.5 ) );
+		expect( started ).not.toHaveBeenCalled();
+		expect( sp._rebuildTimer ).toBeNull();
 
 	} );
 

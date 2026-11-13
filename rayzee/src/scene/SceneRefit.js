@@ -1,6 +1,6 @@
 import { Matrix4 } from 'three';
 import { ChunkedRecords } from '../memory/ChunkedRecords.js';
-import { createWorker } from '../Platform.js';
+import { createWorker, hardwareThreads } from '../Platform.js';
 import BVHRefitWorker from '../bvh/BVHRefitWorker.js?worker&inline';
 import { TRIANGLE_DATA_LAYOUT, RECORD_VEC4, TLAS_LEAF_IDENTITY, packNormalOct, BVH_LEAF_MARKERS, TLAS_PLACEMENT_MASK, CLUSTER_FIRST_MASK } from './BufferLayout.js';
 import { BVHRefitter } from '../bvh/BVHRefitter.js';
@@ -642,6 +642,7 @@ export function updateMeshTrianglePositions( processor, i, meshPositions ) {
 	const NC = TRIANGLE_DATA_LAYOUT.NORMAL_C_PACKED_OFFSET;
 	const tri = processor.triangles, triF = processor.triangleFloatChunks;
 	const table = processor.instanceTable;
+	processor._triangleVersions.set( i, ( processor._triangleVersions.get( i ) ?? 0 ) + 1 );
 
 	const bvhToOrig = table.bvhToOriginalOf( i );
 	const triOffset = table.triOffsetOf( i ), triCount = table.triCountOf( i );
@@ -864,89 +865,137 @@ export function refitTLAS( processor, leaves = null ) {
 
 }
 
+/** How long a mesh goes without a refit before its rebuild starts: one started every frame would land stale. */
+export const REBUILD_QUIET_MS = 250;
+
 export function scheduleBackgroundRebuild( processor, meshIndices, onSwap ) {
 
-	if ( ! processor.instanceTable || ! processor.triangles ) return;
+	const table = processor.instanceTable;
+	if ( ! table || ! processor.triangles ) return;
 
-	processor._rebuildGeneration ++;
-	const generation = processor._rebuildGeneration;
-
-	const dispatchRebuild = ( meshIdx, entry, worker ) => {
-
-		const meshTriData = processor.triangles.copyOf( entry.triOffset, entry.triCount );
-
-		processor._pendingRebuilds.set( meshIdx, worker );
-
-		worker.onmessage = ( e ) => {
-
-			const data = e.data;
-			worker.terminate();
-			processor._pendingRebuilds.delete( meshIdx );
-
-			if ( data.error ) {
-
-				log.error( `background BLAS rebuild failed (mesh ${meshIdx}):`, data.error );
-				return;
-
-			}
-
-			// Discard if object was transformed again since this rebuild started
-			if ( generation !== processor._rebuildGeneration ) return;
-
-			processor._swapBLAS( meshIdx, entry, data, onSwap );
-
-		};
-
-		worker.onerror = ( err ) => {
-
-			log.error( `background BLAS rebuild worker failed (mesh ${meshIdx}):`, err );
-			worker.terminate();
-			processor._pendingRebuilds.delete( meshIdx );
-
-		};
-
-		worker.postMessage( {
-			triangleData: meshTriData.buffer,
-			triangleByteOffset: meshTriData.byteOffset,
-			triangleByteLength: meshTriData.byteLength,
-			triangleCount: entry.triCount,
-			depth: processor.config.bvhDepth,
-			// Without these the worker builds at its own defaults (leaf size 8 against the
-			// scene's 4), producing a tree of a different size that the swap below rejects —
-			// so every rebuild was thrown away.
-			maxLeafSize: processor.bvhBuilder.maxLeafSize,
-			foldLeaves: processor._foldLeaves === true,
-			numBins: processor.bvhBuilder.numBins,
-			maxBins: processor.bvhBuilder.maxBins,
-			minBins: processor.bvhBuilder.minBins,
-			reportProgress: false,
-			sharedReorderBuffer: null,
-			bvhCore: bvhCore(),
-			reinsertionOptimization: {
-				enabled: processor.bvhBuilder.enableReinsertionOptimization,
-				batchSizeRatio: processor.bvhBuilder.reinsertionBatchSizeRatio,
-				maxIterations: processor.bvhBuilder.reinsertionMaxIterations
-			},
-		}, [ meshTriData.buffer ] );
-
-	};
-
+	const due = performance.now() + REBUILD_QUIET_MS;
 	for ( const meshIndex of meshIndices ) {
 
 		const placement = processor._placementOf( meshIndex );
-		if ( placement < 0 ) continue;
-		const entry = processor.instanceTable.entryAt( placement );
-		// A placement that borrows another's BLAS must not rebuild it: the work is the
-		// owner's, and two placements would dispatch the same rebuild twice.
-		if ( ! entry || ! processor.instanceTable.isOwner( placement ) ) continue;
+		// Triangles another mesh uses are never refit, so there is nothing to rebuild.
+		if ( placement < 0 || ! table.isSet[ placement ] || ! table.isOwner( placement ) || table.sharesTriangles( placement ) ) continue;
 
-		// Cancel any in-flight rebuild for this mesh
-		const existing = processor._pendingRebuilds.get( placement );
-		if ( existing ) existing.terminate();
-
-		dispatchRebuild( placement, entry, createWorker( BVHWorker ) );
+		// A running rebuild's triangles are stale now.
+		processor._pendingRebuilds.get( placement )?.terminate();
+		processor._pendingRebuilds.delete( placement );
+		processor._waitingRebuilds.set( placement, { due, onSwap } );
 
 	}
+
+	pumpRebuilds( processor );
+
+}
+
+/** Starts every rebuild due, as threads allow (one left for the page), and waits for the next. @private */
+function pumpRebuilds( processor ) {
+
+	clearTimeout( processor._rebuildTimer );
+	processor._rebuildTimer = null;
+	if ( ! processor.instanceTable || ! processor.triangles ) return void processor._waitingRebuilds.clear();
+
+	const now = performance.now(), slots = Math.max( 1, hardwareThreads() - 1 );
+	let next = Infinity;
+	for ( const [ placement, job ] of processor._waitingRebuilds ) {
+
+		if ( job.due > now ) next = Math.min( next, job.due );
+		else if ( processor._pendingRebuilds.size < slots ) {
+
+			processor._waitingRebuilds.delete( placement );
+			startRebuild( processor, placement, job.onSwap );
+
+		}
+
+	}
+
+	// Due rebuilds left waiting for a thread start as a running one ends.
+	if ( next < Infinity ) processor._rebuildTimer = setTimeout( () => pumpRebuilds( processor ), next - now );
+
+}
+
+/** @private */
+function startRebuild( processor, meshIdx, onSwap ) {
+
+	const table = processor.instanceTable;
+	const entry = table.entryAt( meshIdx );
+	if ( ! entry ) return;
+
+	let worker;
+	try {
+
+		worker = createWorker( BVHWorker );
+
+	} catch ( error ) {
+
+		log.warn( `background BLAS rebuild skipped (mesh ${meshIdx}): ${error.message}` );
+		return;
+
+	}
+
+	const meshTriData = processor.triangles.copyOf( entry.triOffset, entry.triCount );
+	const version = processor._triangleVersions.get( meshIdx );
+	processor._pendingRebuilds.set( meshIdx, worker );
+
+	const done = () => {
+
+		worker.terminate();
+		if ( processor._pendingRebuilds.get( meshIdx ) !== worker ) return false;
+		processor._pendingRebuilds.delete( meshIdx );
+		pumpRebuilds( processor );
+		return true;
+
+	};
+
+	worker.onmessage = ( e ) => {
+
+		const data = e.data;
+		if ( ! done() ) return;
+
+		if ( data.error ) {
+
+			log.error( `background BLAS rebuild failed (mesh ${meshIdx}):`, data.error );
+			return;
+
+		}
+
+		// Triangles written since (a refit through the worker), or another scene: swapping would put the old ones back.
+		if ( processor.instanceTable !== table || processor._triangleVersions.get( meshIdx ) !== version ) return;
+
+		processor._swapBLAS( meshIdx, entry, data, onSwap );
+
+	};
+
+	worker.onerror = ( err ) => {
+
+		if ( done() ) log.error( `background BLAS rebuild worker failed (mesh ${meshIdx}):`, err );
+
+	};
+
+	worker.postMessage( {
+		triangleData: meshTriData.buffer,
+		triangleByteOffset: meshTriData.byteOffset,
+		triangleByteLength: meshTriData.byteLength,
+		triangleCount: entry.triCount,
+		depth: processor.config.bvhDepth,
+		// The scene's build settings: a tree built at the worker's defaults would not fit the swap.
+		maxLeafSize: processor.bvhBuilder.maxLeafSize,
+		foldLeaves: processor._foldLeaves === true,
+		numBins: processor.bvhBuilder.numBins,
+		maxBins: processor.bvhBuilder.maxBins,
+		minBins: processor.bvhBuilder.minBins,
+		reportProgress: false,
+		sharedReorderBuffer: null,
+		bvhCore: bvhCore(),
+		reinsertionOptimization: {
+			enabled: processor.bvhBuilder.enableReinsertionOptimization,
+			batchSizeRatio: processor.bvhBuilder.reinsertionBatchSizeRatio,
+			maxIterations: processor.bvhBuilder.reinsertionMaxIterations
+		},
+	}, [ meshTriData.buffer ] );
 
 }
 
@@ -978,6 +1027,21 @@ export function swapBLAS( processor, meshIdx, entry, workerData, onSwap ) {
 	// Write reordered triangles back into global array
 	const reorderedTris = workerData.triangles;
 	if ( reorderedTris ) {
+
+		// The store's flags win: a material edit (side, shadow) made while the rebuild ran is there, not in its copy.
+		if ( workerData.originalToBvh ) {
+
+			const lanes = new Uint32Array( reorderedTris.buffer, reorderedTris.byteOffset, reorderedTris.length );
+			const FPT = TRIANGLE_DATA_LAYOUT.FLOATS_PER_TRIANGLE, F = TRIANGLE_DATA_LAYOUT.MATERIAL_FLAGS_OFFSET;
+			const tri = processor.triangles;
+			for ( let i = 0; i < entry.triCount; i ++ ) {
+
+				const at = entry.triOffset + i;
+				lanes[ workerData.originalToBvh[ i ] * FPT + F ] = tri.chunkFor( at )[ tri.baseOf( at ) + F ];
+
+			}
+
+		}
 
 		processor.triangles.setRecords( entry.triOffset, reorderedTris );
 
@@ -1029,5 +1093,9 @@ export function cancelBackgroundRebuilds( processor ) {
 	}
 
 	processor._pendingRebuilds.clear();
+	processor._waitingRebuilds.clear();
+	clearTimeout( processor._rebuildTimer );
+	processor._rebuildTimer = null;
+	processor._triangleVersions.clear();
 
 }

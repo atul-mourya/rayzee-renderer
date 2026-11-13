@@ -566,8 +566,8 @@ describeGPU( 'the engine headless on Dawn', () => {
 		};
 
 		app.refitBLASes( [ index ], mesh => mesh === index ? positions( 1.5 ) : null );
-		// The background SAH rebuild swaps in with a reset of its own, which would cut a render short.
-		await vi.waitFor( () => expect( app._sdf._pendingRebuilds.size ).toBe( 0 ) );
+		// The rebuild swaps in with a reset of its own, which would cut a render short; it starts once the mesh is quiet.
+		await vi.waitFor( () => expect( app._sdf._waitingRebuilds.size + app._sdf._pendingRebuilds.size ).toBe( 0 ), { timeout: 4000, interval: 10 } );
 		const grown = await render();
 		await app.refitBVH( mesh => mesh === index ? positions( 1 ) : null );
 

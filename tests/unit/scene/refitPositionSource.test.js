@@ -32,6 +32,7 @@ function makeProcessor( chunkBytes ) {
 	sp.triangleFloats = sp.triangleFloatChunks.single;
 	sp.triangleCount = TOTAL_TRIS;
 	sp.expandedTriangleCount = TOTAL_TRIS;
+	sp._triangleVersions = new Map();
 
 	const table = new InstanceTable();
 	table.allocate( MESHES.length, MESHES.length );
