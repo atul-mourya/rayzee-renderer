@@ -503,7 +503,10 @@ Shade uses it while `lightBVHNodeCount > 0` and falls back to the uniform-CDF pa
 ### Techniques
 `samplingTechnique` selects the generator:
 - `0` — PCG (general-purpose)
-- `1` — Halton (per-digit additive scrambling)
+- `1` — Halton (per-digit additive scrambling, each digit's offset from an LCG's high bits: its low bit only alternates,
+  and taken from there every pixel drew one of two base-2 sequences — `tests/gpu/haltonScramble.test.js`; fixing it took
+  spheres-gradient at 64 spp from 0.032 to 0.011 RMSE. Its dimensions still share bases 2 and 3, scrambled apart only:
+  at 64 spp it reads 0.2–0.7 % bright against Sobol's reference)
 - `2` — Sobol (Owen-scrambled), the default
 
 The STBN blue-noise atlases were removed in 9.2.0; no live code path read them.

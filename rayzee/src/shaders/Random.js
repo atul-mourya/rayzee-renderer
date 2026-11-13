@@ -187,10 +187,9 @@ const haltonScrambled = /*@__PURE__*/ wgslFn( `
 			iter += 1;
 			f /= f32( base );
 
-			// Additive permutation per digit: (digit + s_k) mod base
-			// Guaranteed bijection within [0, base) for any s_k
+			// Additive permutation per digit: (digit + s_k) mod base. s_k from the LCG's high bits: its low bit only alternates.
 			var digit = i % base;
-			digit = ( digit + i32( s % u32( base ) ) ) % base;
+			digit = ( digit + i32( ( s >> 16u ) % u32( base ) ) ) % base;
 			result += f * f32( digit );
 			i /= base;
 

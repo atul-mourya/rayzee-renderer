@@ -50,8 +50,7 @@ describeGPU( 'sampler seed', () => {
 			expect( sevenAgain ).toEqual( seven );
 			let same = 0;
 			for ( let i = 0; i < seven.length; i ++ ) if ( seven[ i ] === zero[ i ] ) same ++;
-			// Halton's base-2 scramble has two sequences in all, so two seeds agree often by chance.
-			expect( same / seven.length ).toBeLessThan( technique === 2 ? 0.01 : 0.5 );
+			expect( same / seven.length ).toBeLessThan( 0.01 );
 			for ( let i = 1; i < seven.length; i += 2 ) expect( seven[ i ] >= 0 && seven[ i ] < 1 ).toBe( true );
 
 		} );
