@@ -21,9 +21,12 @@ folder itself (`SessionDialog` asks only when access lapsed); `.rayzee` projects
 - **OBJ + MTL textures** resolve as written, beside the OBJ and the MTL (`..` and `\` included), in `textures/`,
   `texture/`, `materials/`, then by **whole** file name anywhere — never part of one: a missing map is no texture, not
   a neighbour's. MTLLoader's base path is `''`: it joins without a slash.
-- **Phong materials** (MTL, FBX) take roughness √( 2 / ( shininess + 2 ) ) (`mapLegacyMaterialToPhysical`), so `Ns 0`
-  is roughness 1. Before 2026-11-13 a 0 read as unset (30, roughness 0.25): 14 materials in the 28 `.mtl` files in
-  `~/Downloads` have `Ns 0`, and the six with a highlight (`Ks 0.8`, trigger-rally's Blender cars) shone sharply.
+- **Phong materials** (MTL, FBX) take roughness ( 2 / ( shininess + 2 ) )^¼ (`mapLegacyMaterialToPhysical`): the
+  exponent's lobe α is √( 2 / ( n + 2 ) ) (Walter et al. 2007) and α is roughness², so the highlight is about as wide
+  as three.js's Phong draws it (0.76–1.1× at the half-peak angle, Ns 1–1000). Until 2026-11-13 the α itself was the
+  roughness, 3–20× narrower (Ns 30: 0.25, a 2.3° highlight for Phong's 12.3°). `Ns 0` is roughness 1; before
+  2026-11-13 a 0 read as unset (30): 14 materials in the 28 `.mtl` files in `~/Downloads` have `Ns 0`, and the six with
+  a highlight (`Ks 0.8`, trigger-rally's Blender cars) shone sharply.
 - **Camera shape**: FBXLoader gives a camera naming no `AspectWidth` / `AspectHeight` the window's (and crashes in Node);
   `fbxFormat` lends it FBX's default 320 × 200, a hair off, during the synchronous parse, so only a named shape becomes
   `userData.aspect`. `colladaFormat` wraps `ColladaComposer.buildCamera` for its parse (clones carry `userData`):

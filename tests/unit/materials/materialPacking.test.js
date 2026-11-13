@@ -319,10 +319,40 @@ describe( 'createMaterialObject', () => {
 		const extractor = new GeometryExtractor();
 		const roughness = ( shininess ) => extractor.createMaterialObject( new MeshPhongMaterial( { shininess } ) ).roughness;
 		expect( roughness( 0 ) ).toBe( 1 );
-		expect( roughness( 30 ) ).toBeCloseTo( 0.25, 6 );
-		expect( roughness( 1000 ) ).toBeCloseTo( Math.sqrt( 2 / 1002 ), 6 );
-		expect( extractor.createMaterialObject( new MeshPhongMaterial() ).roughness ).toBeCloseTo( 0.25, 6 );
-		expect( roughness( NaN ) ).toBeCloseTo( 0.25, 6 ); // MTLLoader's parseFloat of a broken Ns
+		expect( roughness( 30 ) ).toBeCloseTo( 0.5, 6 );
+		expect( extractor.createMaterialObject( new MeshPhongMaterial() ).roughness ).toBeCloseTo( 0.5, 6 );
+		expect( roughness( NaN ) ).toBeCloseTo( 0.5, 6 ); // MTLLoader's parseFloat of a broken Ns
+
+	} );
+
+	// Where each highlight falls to half its peak: three's Blinn–Phong (N·H)^n against the GGX lobe of the roughness.
+	it( 'gives a Phong material a highlight about as wide as three.js draws it', () => {
+
+		const extractor = new GeometryExtractor();
+		const halfMax = ( falloff ) => {
+
+			let lo = 0, hi = Math.PI / 2;
+			for ( let i = 0; i < 60; i ++ ) {
+
+				const mid = ( lo + hi ) / 2;
+				if ( falloff( mid ) > 0.5 ) lo = mid;
+				else hi = mid;
+
+			}
+
+			return lo;
+
+		};
+
+		for ( const shininess of [ 1, 5, 10, 30, 100, 250, 1000 ] ) {
+
+			const a = extractor.createMaterialObject( new MeshPhongMaterial( { shininess } ) ).roughness ** 2;
+			const phong = halfMax( t => Math.cos( t ) ** shininess );
+			const ggx = halfMax( t => a ** 4 / ( Math.cos( t ) ** 4 * ( a * a + Math.tan( t ) ** 2 ) ** 2 ) );
+			expect( ggx / phong, `Ns ${shininess}` ).toBeGreaterThan( 0.74 );
+			expect( ggx / phong, `Ns ${shininess}` ).toBeLessThan( 1.1 );
+
+		}
 
 	} );
 

@@ -1312,7 +1312,8 @@ export class GeometryExtractor {
 
 					// Ns 0 is the widest a Phong lobe gets, not "unset".
 					const shininess = Number.isFinite( material.shininess ) ? material.shininess : 30;
-					mapped.roughness = Math.sqrt( 2.0 / ( shininess + 2 ) );
+					// √( 2 / ( n + 2 ) ) is the lobe's α (Walter et al. 2007), and α is roughness².
+					mapped.roughness = Math.pow( 2 / ( shininess + 2 ), 0.25 );
 					mapped.metalness = 0.0;
 
 				}
