@@ -650,15 +650,6 @@ export class PathTracer extends PathTracerStage {
 		const frameValue = this.frameCount;
 		const renderMode = this.renderMode.value;
 
-		let originalMaxBounces = null;
-
-		if ( renderMode === 1 && frameValue === 0 ) {
-
-			originalMaxBounces = this.maxBounces.value;
-			this.maxBounces.value = 1;
-
-		}
-
 		this._handleResize();
 		this.resetHistoryOnRenderModeChange( renderMode );
 
@@ -720,8 +711,6 @@ export class PathTracer extends PathTracerStage {
 			this._emitStateEvents();
 			// Don't count interaction-mode (1-SPP feedback) frames toward completion (megakernel parity pathtracer/PathTracer.js:1240) — else a continuous orbit "completes" on noise.
 			if ( ! this.cameraOptimizer?.isInInteractionMode() ) this.frameCount ++;
-
-			if ( originalMaxBounces !== null ) this.maxBounces.value = originalMaxBounces;
 
 			return;
 
@@ -889,7 +878,7 @@ export class PathTracer extends PathTracerStage {
 		km.setIndirect( [ ...this.bounceKernels, 'generateList' ], null );
 
 		if ( this._learnsVisibility ) km.dispatch( 'visibilityFold' );
-		this._maybeReadbackCounters( originalMaxBounces !== null );
+		this._maybeReadbackCounters();
 
 		// Skip the normalDepth/albedo copies when aux is off — the wavefront didn't write them and
 		// no stage reads them; saves two full-res GPU copies/frame in the default interactive path.
@@ -904,8 +893,6 @@ export class PathTracer extends PathTracerStage {
 
 		if ( this._auxGBufferEnabled ) this._auxSamples = auxMixes ? this._auxSamples + 1 : 1;
 		this._auxSeedPending = false;
-
-		if ( originalMaxBounces !== null ) this.maxBounces.value = originalMaxBounces;
 
 	}
 
@@ -1336,7 +1323,7 @@ export class PathTracer extends PathTracerStage {
 
 	/**
 	 * The frame a lockstep readback issued at `frame` applies at, or -1 for none: frame 1's at frame 2, then every
-	 * N frames' N later. Never frame 0's: a final render traces it with one bounce, so its curve sizes nothing.
+	 * N frames' N later. Never frame 0's: lockstep goldens were blessed on this schedule.
 	 */
 	_lockstepDue( frame ) {
 
@@ -1346,8 +1333,7 @@ export class PathTracer extends PathTracerStage {
 	}
 
 	// Async readback of the per-bounce snapshot every N frames; never awaited, so the early-exit uses past-frame data.
-	// `clamped`: this frame traced fewer bounces than the setting (a final render's first frame).
-	_maybeReadbackCounters( clamped = false ) {
+	_maybeReadbackCounters() {
 
 		if ( this._lockstep ) {
 
@@ -1362,8 +1348,7 @@ export class PathTracer extends PathTracerStage {
 		// is restored on exit that stale curve forces curveReliableUpto=1, killing the per-bounce early-exit
 		// and full-sizing the whole loopBound for a few frames (the dramatic FPS drop right when movement
 		// ends, worst at high maxBounces). Prime the counter so the first settled frame re-measures promptly.
-		// A clamped frame is the same case: its curve would replace one measured at the real budget.
-		if ( clamped || this.cameraChanged || this.cameraOptimizer?.isInInteractionMode() ) {
+		if ( this.cameraChanged || this.cameraOptimizer?.isInInteractionMode() ) {
 
 			this._readbackFrameCounter = this._readbackEveryNFrames;
 			return;

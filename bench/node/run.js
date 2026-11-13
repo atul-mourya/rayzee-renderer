@@ -185,6 +185,44 @@ async function denoised() {
 
 if ( ! only || only.includes( 'denoise' ) ) await denoised();
 
+// The production preset traces what the interactive one does, byte for byte.
+async function productionPreset() {
+
+	const stage = app.stages.pathTracer;
+	const id = 'furnace-multibounce';
+
+	try {
+
+		await session.loadScene( id );
+		const shots = [];
+		for ( const mode of [ 0, 1 ] ) {
+
+			stage.setUniform( 'renderMode', mode );
+			await app.renderFrames( 8, { reset: true } );
+			shots.push( Float32Array.from( ( await app.renderToBuffer( { colorSpace: 'linear' } ) ).data ) );
+
+		}
+
+		let differ = 0;
+		for ( let i = 0; i < shots[ 0 ].length; i ++ ) if ( shots[ 0 ][ i ] !== shots[ 1 ][ i ] ) differ ++;
+		if ( differ ) failed ++;
+		console.log( `  ${differ ? RED + 'FAIL' : GREEN + 'pass'}${RESET} ${id} production preset${DIM}  vs interactive at 8 spp: ${differ} of ${shots[ 0 ].length} values differ${RESET}` );
+
+	} catch ( error ) {
+
+		failed ++;
+		console.log( `  ${RED}FAIL${RESET} production preset  ${error.message}` );
+
+	} finally {
+
+		stage.setUniform( 'renderMode', 0 );
+
+	}
+
+}
+
+if ( ! only || only.includes( 'production' ) ) await productionPreset();
+
 // Compressed glTF: three's own Draco and KTX2 loaders start their workers themselves, which works in Node only because
 // the engine lends them NodeWorker for the parse (withHostWorker). Each fixture (bench/tools/make-compressed-fixtures.mjs)
 // renders against its uncompressed twin, so a decoder that runs but decodes wrongly fails too. The decoders are three's

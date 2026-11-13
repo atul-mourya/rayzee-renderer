@@ -452,7 +452,7 @@ The overlay is not a stage. After each frame `animate()` calls the `_renderHelpe
 
 Then the `_afterTrace()` hook runs, and `animate()` calls `_renderHelperOverlay()`. `animate()` skips tracing when `_holdTrace()` says so (the viewer may hold while the view moves and an OIDN denoise is in flight) and stops the loop once the render is complete.
 
-`renderMode` (0 = interactive, 1 = production) still tunes quality — production traces its first frame with one bounce — but neither mode tiles the frame, so no PER_CYCLE stage is skipped.
+`renderMode` (0 = interactive, 1 = production) no longer changes what is traced — production traced its first frame with one bounce, kept in the average, so a finished picture missed 1/N of the light past the first bounce (a 64-spp furnace 1.25 % dark; `bench:node` now holds the two modes byte-identical) — and neither mode tiles the frame, so no PER_CYCLE stage is skipped.
 
 ### Reset
 

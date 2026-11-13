@@ -477,8 +477,7 @@ export class AutoExposure extends RenderStage {
 		} else {
 
 			// Under a still camera the room moves with every reading: the scene changed, or the image reads better as it
-			// fills in. Held at a render's first reading, a final render's 1-bounce frame 0 (0.75 stops dark) became the
-			// room, and the finished image was exposed +2.1 stops where it asked for +1.95.
+			// fills in. Held at the first reading, a dark first frame would set the finished image's exposure.
 			this._roomEV += this._viewEV - before;
 
 		}

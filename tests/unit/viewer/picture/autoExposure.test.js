@@ -336,8 +336,8 @@ describe( 'AutoExposure', () => {
 		stage.update( 0 );
 		expect( stage._targetEV ).toBeCloseTo( blendExposureEV( 2, 2, 0.3 ), 6 );
 
-		// The same image read again as it fills in moves the room with it: a final render's first frame is traced with
-		// one bounce, and a room held at that reading exposed the finished image 2.1 stops up where it asked for 1.95.
+		// The same image read again as it fills in moves the room with it: a room held at a first reading darker than the
+		// finished image (a final render's frame 0 was once one bounce) exposed it 2.1 stops up where it asked for 1.95.
 		state[ 'pathtracer:samples' ] = 2;
 		stage.render( context );
 		await land( KEY + 1 );

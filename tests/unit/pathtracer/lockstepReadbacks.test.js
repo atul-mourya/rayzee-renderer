@@ -85,7 +85,7 @@ function makeStage( { chunkRows = H } = {} ) {
 
 describe( 'lockstep readbacks', () => {
 
-	// Frame 0 of a final render traces one bounce: a curve read there would size nothing that follows.
+	// Lockstep goldens were blessed on this schedule.
 	it( 'issues at frame 1, due at frame 2, then every 4 frames, never at frame 0', () => {
 
 		const { stage, reads } = makeStage();
@@ -103,16 +103,6 @@ describe( 'lockstep readbacks', () => {
 		}
 
 		expect( issued ).toEqual( [ '1→2', '4→8', '8→12' ] );
-
-	} );
-
-	it( 'keeps a free-running curve through a clamped frame and re-measures on the next', () => {
-
-		const { stage, reads } = makeStage();
-		stage._readbackFrameCounter = 0;
-		stage._maybeReadbackCounters( true );
-		expect( reads ).toHaveLength( 0 );
-		expect( stage._readbackFrameCounter ).toBe( 4 ); // primed: the next frame reads
 
 	} );
 
