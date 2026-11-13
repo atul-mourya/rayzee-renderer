@@ -455,3 +455,25 @@ describe( 'TextureCreator — float maps', () => {
 	} );
 
 } );
+
+describe( 'TextureCreator workers', () => {
+
+	it( 'packs on as many workers as the host\'s threads allow, at most 6', () => {
+
+		vi.stubGlobal( 'navigator', { hardwareConcurrency: 12 } );
+		try {
+
+			expect( new TextureCreator().maxConcurrentWorkers ).toBe( 6 );
+			configurePlatform( { threads: 2 } );
+			expect( new TextureCreator().maxConcurrentWorkers ).toBe( 2 );
+
+		} finally {
+
+			configurePlatform( { threads: null } );
+			vi.unstubAllGlobals();
+
+		}
+
+	} );
+
+} );

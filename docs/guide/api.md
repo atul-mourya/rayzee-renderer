@@ -199,7 +199,7 @@ import {
   encodeStill, canEncodeStill, prepareStill,
 } from 'rayzee/encoders';
 
-// Platform services for hosts without a browser (see Running in Node)
+// Platform services for hosts without a browser (see Running in Node); `threads` sizes the worker pools, in any host
 import { configurePlatform, getPlatform } from 'rayzee';
 import { nodePlatform, NodeWorker } from 'rayzee/node';
 

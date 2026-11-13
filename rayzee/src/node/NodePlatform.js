@@ -78,11 +78,12 @@ function copySharedUploads() {
  * @param {Object} [options]
  * @param {( bytes: Uint8Array, mimeType: string ) => Promise<{data: Uint8Array, width: number, height: number}>} [options.decodeImage]
  *   PNG/JPEG/WebP bytes to RGBA8 pixels, top row first. Without it a model's textures cannot load.
+ * @param {?number} [options.threads] - threads each worker pool may use (`configurePlatform`'s `threads`); left as it is when not given
  */
-export function nodePlatform( { decodeImage } = {} ) {
+export function nodePlatform( { decodeImage, threads } = {} ) {
 
 	globalThis.ProgressEvent ??= NodeProgressEvent;
 	copySharedUploads();
-	return { Worker: NodeWorker, decodeImage: decodeImage ?? null, readFile };
+	return { Worker: NodeWorker, decodeImage: decodeImage ?? null, readFile, ...( threads !== undefined && { threads } ) };
 
 }

@@ -16,7 +16,7 @@ describe( 'Platform', () => {
 
 	afterEach( () => {
 
-		configurePlatform( { Worker: null, decodeImage: null } );
+		configurePlatform( { Worker: null, decodeImage: null, threads: null } );
 		vi.unstubAllGlobals();
 
 	} );
@@ -79,6 +79,50 @@ describe( 'Platform', () => {
 
 		vi.stubGlobal( 'navigator', undefined );
 		expect( hardwareThreads() ).toBe( 4 );
+
+	} );
+
+	it( 'counts the host\'s threads in place of the cores, and null as every core', () => {
+
+		vi.stubGlobal( 'navigator', { hardwareConcurrency: 12 } );
+		for ( const threads of [ 1, 3, 16 ] ) {
+
+			configurePlatform( { threads } );
+			expect( hardwareThreads() ).toBe( threads );
+
+		}
+
+		configurePlatform( { threads: null } );
+		expect( hardwareThreads() ).toBe( 12 );
+
+	} );
+
+	it( 'refuses threads that are not a whole number from 1, changing nothing', () => {
+
+		configurePlatform( { threads: 3 } );
+		const decodeImage = async () => ( {} );
+		for ( const threads of [ 0, - 2, 2.5, NaN, '4' ] ) {
+
+			expect( () => configurePlatform( { threads, decodeImage } ), String( threads ) ).toThrow( /threads is a whole number from 1/ );
+
+		}
+
+		expect( [ hardwareThreads(), getPlatform().decodeImage ] ).toEqual( [ 3, null ] );
+
+	} );
+
+	it( 'takes threads through nodePlatform, and leaves them alone when not given', async () => {
+
+		const { nodePlatform } = await import( '@/core/node/NodePlatform.js' );
+		vi.stubGlobal( 'GPUQueue', class {
+
+			writeBuffer() {}
+
+			writeTexture() {}
+
+		} );
+		expect( nodePlatform( { threads: 2 } ).threads ).toBe( 2 );
+		expect( 'threads' in nodePlatform() ).toBe( false );
 
 	} );
 

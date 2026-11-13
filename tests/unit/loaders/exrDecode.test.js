@@ -51,7 +51,7 @@ async function exrBytes() {
 
 afterEach( () => {
 
-	configurePlatform( { Worker: undefined } );
+	configurePlatform( { Worker: undefined, threads: null } );
 	vi.unstubAllGlobals();
 
 } );
@@ -124,6 +124,18 @@ describe( 'decodeEXR', () => {
 		await expect( decodeEXR( bytes.slice().buffer ) ).rejects.toThrow( 'EXR worker failed: worker died' );
 		expect( created.terminated ).toBe( 1 );
 		expect( ( await decodeEXR( bytes.slice().buffer, { type: FloatType } ) ).width ).toBe( width );
+
+	} );
+
+	it( 'keeps a burst to the host\'s thread cap, one core left for the page', async () => {
+
+		vi.stubGlobal( 'navigator', { hardwareConcurrency: 12 } );
+		configurePlatform( { Worker: class {}, threads: 2 } );
+		created.count = 0;
+		const bytes = await exrBytes();
+		const all = await Promise.all( Array.from( { length: 6 }, () => decodeEXR( bytes.slice().buffer, { type: FloatType } ) ) );
+		expect( all.every( r => r.width === width ) ).toBe( true );
+		expect( created.count ).toBe( 1 );
 
 	} );
 

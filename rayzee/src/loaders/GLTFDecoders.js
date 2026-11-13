@@ -1,5 +1,5 @@
 import { getAssetConfig } from '../AssetConfig.js';
-import { nextTask } from '../Platform.js';
+import { hardwareThreads, nextTask } from '../Platform.js';
 
 const DRACO = 'KHR_draco_mesh_compression';
 const BASISU = 'KHR_texture_basisu';
@@ -135,6 +135,7 @@ async function attachDecoders( loader, text, renderer ) {
 
 		const dracoLoader = new draco.DRACOLoader();
 		dracoLoader.setDecoderPath( dracoDecoderPath );
+		dracoLoader.setWorkerLimit( Math.min( 4, hardwareThreads() ) );
 		loader.setDRACOLoader( dracoLoader );
 
 	}
@@ -143,6 +144,7 @@ async function attachDecoders( loader, text, renderer ) {
 
 		const ktx2Loader = new ktx2.KTX2Loader();
 		ktx2Loader.setTranscoderPath( ktx2TranscoderPath );
+		ktx2Loader.setWorkerLimit( Math.min( 4, hardwareThreads() ) );
 		if ( renderer ) {
 
 			ktx2Loader.detectSupport( renderer );

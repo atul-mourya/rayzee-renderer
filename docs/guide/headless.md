@@ -214,6 +214,13 @@ app.dispose();
   `@napi-rs/canvas` (`await loadImage()`, then a 2D canvas) both decode in parallel, ~0.3 s against
   pngjs's 2.5 s serial. The canvas route premultiplies, which zeroes colour under alpha 0 and loses
   it under low alpha; `sharp` is exact. `jpeg-js` differs from libjpeg-turbo by up to 63 levels.
+- **`configurePlatform({ threads })` sets how many threads each worker pool may use**, for a host running several
+  renders on one machine (pbrt's `--nthreads`; also `nodePlatform({ decodeImage, threads })`). A whole number from 1,
+  or `null` (the default) for every core; anything else throws. Set it before constructing the app. It sizes each pool
+  — BVH builds, texture packing, EXR, Draco and KTX2 decoding, pbrt bakes and curves — not their total: pools that run
+  at once (a load builds BVHs and packs textures together) each take that many. Images do not change: a 1.9M-triangle
+  model loaded in Node started 6 workers by default, 2 with `threads: 2` and 1 with `threads: 1`, the same render each
+  time (0.95, 1.10 and 1.38 s).
 - **`nodePlatform()` wraps the `webgpu` queue**, so install its globals first. dawn.node 0.6.1
   segfaults on `writeBuffer` / `writeTexture` from a `SharedArrayBuffer`, which WebGPU allows and the
   engine's triangle and BVH stores are once a scene is large; those uploads are copied out, 64 MB at

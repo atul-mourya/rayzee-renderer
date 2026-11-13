@@ -550,7 +550,7 @@ export class TextureCreator {
 	constructor( options = {} ) {
 
 		this.useWorkers = typeof Worker !== 'undefined';
-		this.maxConcurrentWorkers = TEXTURE_CONSTANTS.MAX_CONCURRENT_WORKERS;
+		this.maxConcurrentWorkers = Math.min( hardwareThreads(), 6 );
 		this.activeWorkers = 0;
 
 		this._issues = options.issues ?? null;

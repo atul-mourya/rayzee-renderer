@@ -8,6 +8,7 @@ import { AssetLoader } from '@/core/loaders/AssetLoader.js';
 import { allFormats, objFormat, stlFormat, plyFormat, exrFormat, fbxFormat, usdFormat, colladaFormat, threeMFFormat } from '@/core/addons/formats.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { decodersOnDemand } from '@/core/loaders/GLTFDecoders.js';
+import { configurePlatform } from '@/core/Platform.js';
 
 const stubControls = () => ( { target: new Vector3(), maxDistance: 0, saveState() {}, update() {} } );
 const newLoader = () => new AssetLoader( new Scene(), new PerspectiveCamera(), stubControls() );
@@ -378,6 +379,35 @@ describe( 'glTF decoders on demand', () => {
 		const textDraco = await parsed( text.loader, json );
 		expect( textDraco?.constructor.name ).toBe( 'DRACOLoader' );
 		textDraco.dispose();
+
+	} );
+
+	it( 'gives Draco and KTX2 at most four workers, fewer where the host sets fewer threads', async () => {
+
+		const limits = async () => {
+
+			const { loader, parse } = fakeLoader();
+			parse.mockImplementation( ( data, path, onLoad ) => onLoad( [ loader.dracoLoader, loader.ktx2Loader ] ) );
+			const [ draco, ktx2 ] = await parsed( loader, glb( { asset: { version: '2.0' }, extensionsUsed: [ 'KHR_draco_mesh_compression', 'KHR_texture_basisu' ] } ) );
+			draco.dispose();
+			ktx2.dispose();
+			return [ draco.workerLimit, ktx2.workerPool.pool ];
+
+		};
+
+		vi.stubGlobal( 'navigator', { hardwareConcurrency: 12 } );
+		try {
+
+			expect( await limits() ).toEqual( [ 4, 4 ] );
+			configurePlatform( { threads: 2 } );
+			expect( await limits() ).toEqual( [ 2, 2 ] );
+
+		} finally {
+
+			configurePlatform( { threads: null } );
+			vi.unstubAllGlobals();
+
+		}
 
 	} );
 

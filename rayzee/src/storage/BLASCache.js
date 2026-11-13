@@ -7,6 +7,7 @@
 import { ENGINE_AREAS, sharedStorage } from './StorageAreas.js';
 import { VERSION } from '../Version.js';
 import { getAssetConfig } from '../AssetConfig.js';
+import { hardwareThreads } from '../Platform.js';
 import { createLogger, fmt } from '../Logger.js';
 
 const log = createLogger( 'scene' );
@@ -198,7 +199,7 @@ function blasCacheKey( processor, workerOpts ) {
 
 	const builder = { ...workerOpts };
 	delete builder.logLevel;
-	const cores = typeof navigator !== 'undefined' ? navigator.hardwareConcurrency : 0;
+	const cores = hardwareThreads();
 	return `blas:${BLAS_CACHE_FORMAT}:${VERSION}:${JSON.stringify( builder )}:${cores}:${processor._sceneKey}`;
 
 }

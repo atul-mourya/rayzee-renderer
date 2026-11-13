@@ -3,7 +3,6 @@ export const TEXTURE_CONSTANTS = {
 	VEC4_PER_BVH_NODE: 4,
 	FLOATS_PER_VEC4: 4,
 	MIN_TEXTURE_WIDTH: 4,
-	MAX_CONCURRENT_WORKERS: Math.min( typeof navigator !== 'undefined' ? navigator.hardwareConcurrency || 4 : 4, 6 ),
 	BUFFER_POOL_SIZE: 20,
 	CANVAS_POOL_SIZE: 12,
 	CACHE_SIZE_LIMIT: 50,

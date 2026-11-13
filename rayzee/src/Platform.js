@@ -21,12 +21,26 @@ const platform = {
 	decodeImage: null,
 	/** `( url: URL ) => Promise<Uint8Array>`: the bytes of a `file:` URL, which Node's `fetch` cannot open. */
 	readFile: null,
+	/**
+	 * Threads each of the engine's worker pools may use (pbrt's `--nthreads`), for hosts running several renders on one
+	 * machine: a whole number from 1, or null for every core. Pools that run at once (a load builds BVHs and packs
+	 * textures together) each take this many. Set before constructing the app: some pools are sized then.
+	 */
+	threads: null,
 };
 
 /** @param {Partial<typeof platform>} overrides - only the keys given are replaced */
 export function configurePlatform( overrides ) {
 
-	if ( overrides ) Object.assign( platform, overrides );
+	if ( ! overrides ) return;
+	const { threads } = overrides;
+	if ( threads != null && ! ( Number.isInteger( threads ) && threads >= 1 ) ) {
+
+		throw new TypeError( `configurePlatform: threads is a whole number from 1, or null for every core (got ${String( threads )})` );
+
+	}
+
+	Object.assign( platform, overrides );
 
 }
 
@@ -36,10 +50,10 @@ export function getPlatform() {
 
 }
 
-/** Logical cores, as the browser reports them; 4 where nothing does. */
+/** The host's `threads` when set, else logical cores as the browser reports them; 4 where nothing does. */
 export function hardwareThreads() {
 
-	return ( typeof navigator !== 'undefined' && navigator.hardwareConcurrency ) || 4;
+	return platform.threads ?? ( ( typeof navigator !== 'undefined' && navigator.hardwareConcurrency ) || 4 );
 
 }
 
