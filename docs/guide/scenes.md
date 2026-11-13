@@ -421,7 +421,7 @@ await engine.refitBVH(positions)                    // the whole scene is posed 
 **`updateMeshTransforms` is the one a gizmo drag wants.** Triangles are stored in each object's own
 space, so a rigid move only rewrites a matrix — no vertex pass, no geometry upload — and refits only the
 tree nodes above what moved, uploading just those. Using `refitBLASes` for a move instead rewrites
-vertices needlessly, and drags along any other object sharing the same geometry. It returns
+vertices needlessly, and is refused for an object whose geometry another shares. It returns
 `{ refitTimeMs, placements }`, or `null` on a `memorySpill` scene whose matrices or tree are on disk:
 the move then lands once they are read back.
 
@@ -454,10 +454,15 @@ await engine.refitBVH(sceneWideFloat32Array);
 Both shapes are length-checked and throw on a mismatch. Before that check existed, a short buffer
 wrote NaN through every bounding box with no error and the scene simply vanished.
 
-An object that shares its geometry with another cannot be deformed — writing its vertices would
-move every copy. `refitBLASes` skips such a mesh and records a `refit.shared_geometry` issue.
-Anything skinned or morphed is given triangles of its own at load, so this only fires when the
-wrong mesh was handed over.
+An object that shares its geometry with another, the first to use it included, cannot be deformed:
+writing its vertices would move every copy. `refitBLASes` skips such a mesh and records a
+`refit.shared_geometry` issue before writing anything, so a strict host's throw leaves the scene as it
+was. `refitBVH` passes over it too: a callback may answer for every mesh, still ones included, so
+positions returned for one are a `refit.shared_geometry` warning, once a mesh, and a scene-wide array's
+slice for one is no request at all. Anything skinned or morphed is given
+triangles of its own at load, and the viewer's animation moves every other mesh by its transform, so
+this only fires when the wrong mesh was handed over. To deform such an object, give it a geometry of
+its own (`mesh.geometry = mesh.geometry.clone()`) before loading.
 
 ---
 

@@ -205,6 +205,7 @@ export class InstanceTable {
 		this.tplObjectAABB = new Float32Array( templateCount * 6 );
 
 		this._placementRuns = null;
+		this._borrowed = null;
 
 		// TLAS entries: one a placement, or one a copy of a group — instanced meshes placed by one shared matrix list,
 		// traced as one object through a small tree over their BLASes. Null maps are the identity.
@@ -275,6 +276,7 @@ export class InstanceTable {
 		this.tplExpandedStart[ t ] = expandedStart ?? triOffset;
 		this.tplNodeCount[ t ] = blasNodeCount;
 		this.tplOwner[ t ] = meshIndex;
+		this._borrowed = null;
 
 		if ( originalToBvhMap ) this.originalToBvhMap.set( t, originalToBvhMap );
 		if ( bvhData ) this.blasData.set( t, bvhData );
@@ -305,6 +307,7 @@ export class InstanceTable {
 		this.tplNodeCount[ t ] = this.tplNodeCount[ ot ];
 		this.tplExpandedStart[ t ] = expandedStart ?? this.tplExpandedStart[ ot ];
 		this.tplOwner[ t ] = this.tplOwner[ ot ];
+		this._borrowed = null;
 
 	}
 
@@ -865,6 +868,30 @@ export class InstanceTable {
 	isOwner( index ) {
 
 		return this.tplOwner[ this.sourceMesh[ index ] ] === index;
+
+	}
+
+	/** True when another mesh's placements use this placement's triangles, or it uses another's (owner included). */
+	sharesTriangles( index ) {
+
+		const t = this.sourceMesh[ index ];
+		const owner = this.tplOwner[ t ];
+		if ( owner < 0 ) return false;
+		if ( this.sourceMesh[ owner ] !== t ) return true;
+
+		if ( ! this._borrowed ) {
+
+			this._borrowed = new Uint8Array( this.templateCount );
+			for ( let u = 0; u < this.templateCount; u ++ ) {
+
+				const o = this.tplOwner[ u ];
+				if ( o >= 0 && this.sourceMesh[ o ] !== u ) this._borrowed[ this.sourceMesh[ o ] ] = 1;
+
+			}
+
+		}
+
+		return this._borrowed[ t ] === 1;
 
 	}
 

@@ -2,13 +2,14 @@
  * AnimationManager — Drives animation clips for the path tracer.
  *
  * Deforming clips (a SkinnedMesh or morph track) return a per-mesh position reader for
- * PathTracerApp.refitBVH(). Rigid clips return nothing and hand the moved meshes to
- * `applyPoseCallback`, which updates placements only — a refit would bake world positions into
- * triangles that other placements share.
+ * PathTracerApp.refitBVH(), which reads only skinned and morphed meshes. Every mesh that only
+ * moves is handed to `applyPoseCallback`, which updates placements only — a refit would bake world
+ * positions into triangles that other placements share.
  */
 
 import { AnimationMixer, EventDispatcher, Timer, Vector3, LoopRepeat, LoopOnce, PropertyBinding } from 'three';
 import { EngineEvents } from '../../EngineEvents.js';
+import { isDeformable } from '../../scene/GeometryExtractor.js';
 
 /**
  * PropertyBinding.findNode from one walk of `root`: three walks the tree again for every track it binds. The first node
@@ -553,17 +554,36 @@ export class AnimationManager extends EventDispatcher {
 
 		}
 
-		const cameras = this._planFor( this._activeClip )?.cameras;
-		if ( cameras?.length ) this.applyPoseCallback?.( { meshIndices: [], visibilityChanged: false, cameras } );
+		const plan = this._planFor( this._activeClip );
+		if ( plan?.cameras.length ) this.applyPoseCallback?.( { meshIndices: [], visibilityChanged: false, cameras: plan.cameras } );
 
 		// Decided once per reader: an expanded instanced emitter asks for one mesh several times.
 		const moved = new Int8Array( this._meshes.length );
-		return m => {
+		const reader = m => {
 
-			if ( moved[ m ] === 0 ) moved[ m ] = this._meshes[ m ].isSkinnedMesh || this._poseChanged( m ) ? 1 : - 1;
+			const mesh = this._meshes[ m ];
+			if ( moved[ m ] === 0 ) moved[ m ] = isDeformable( mesh ) && ( mesh.isSkinnedMesh || this._poseChanged( m ) ) ? 1 : - 1;
 			return moved[ m ] > 0 ? this._computeMeshPositions( m ) : null;
 
 		};
+
+		// A mesh that only moves goes by its placement (its triangles may be another mesh's too), once the refit has
+		// landed, so it moves with the bent ones.
+		reader.placed = [];
+		for ( const m of plan?.meshes ?? [] ) if ( ! isDeformable( this._meshes[ m ] ) && this._poseChanged( m ) ) reader.placed.push( m );
+		return reader;
+
+	}
+
+	/**
+	 * Moves, by their placements, the meshes a deforming pose moved without bending. Call it once that pose's reader has
+	 * been refit, so they reach the screen with the bent ones.
+	 *
+	 * @param {function(number): Float32Array|null} reader - what update() or seekTo() returned
+	 */
+	applyPlaced( reader ) {
+
+		if ( reader?.placed?.length ) this.applyPoseCallback?.( { meshIndices: reader.placed, visibilityChanged: false, cameras: [] } );
 
 	}
 

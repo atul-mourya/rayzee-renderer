@@ -481,31 +481,98 @@ describe( 'a refit', () => {
 
 	} );
 
-	it( 'refuses to deform one copy of a geometry another mesh shares, and records which', async () => {
+	// Copies first, so a placement's number is not its mesh's.
+	async function sharedSpheres( options ) {
 
-		// Copies first, so a placement's number is not its mesh's.
 		const mat = new MeshStandardMaterial(), sphere = new SphereGeometry( 1, 16, 12 );
 		const sharing = [[ - 4, 0, 0 ], [ 0, 4, 0 ], [ 4, 0, 0 ]].map( at => placed( new Mesh( sphere, mat ), at ) );
-		const root = new Group().add( instanced( new BoxGeometry(), mat, 4, 10 ), ...sharing );
+		const lone = placed( new Mesh( new IcosahedronGeometry( 1, 2 ), mat ), [ 0, - 4, 0 ] );
+		const root = new Group().add( instanced( new BoxGeometry(), mat, 4, 10 ), ...sharing, lone );
 		root.updateMatrixWorld( true );
-		const issues = new IssueLog();
-		const sp = await build( root, { issues } );
+		const sp = await build( root, options );
 		const table = sp.instanceTable;
 		const sharers = sharing.map( p => meshIndex( sp, p ) );
 		expect( sharers.map( m => sp._placementOf( m ) ) ).not.toEqual( sharers );
 		const owner = sharers.find( m => table.isOwner( sp._placementOf( m ) ) );
-		const copies = sharers.filter( m => m !== owner );
-		expect( copies ).toHaveLength( 2 );
+		return { sp, sharers, owner, lone: meshIndex( sp, lone ), boxes: meshIndex( sp, root.children[ 0 ] ) };
+
+	}
+
+	const sharedRefusals = issues => issues.list.filter( i => i.code === ISSUE_CODES.REFIT_SHARED_GEOMETRY ).map( i => i.detail );
+
+	// The first mesh to use a geometry is refused too: every copy would move with it.
+	it( 'refuses to deform any mesh whose geometry another shares, the first included, and records which', async () => {
+
+		const issues = new IssueLog();
+		const { sp, sharers, owner, lone, boxes } = await sharedSpheres( { issues } );
+		const table = sp.instanceTable;
+		expect( sharers.map( m => table.sharesTriangles( sp._placementOf( m ) ) ) ).toEqual( [ true, true, true ] );
+		expect( [ lone, boxes ].map( m => table.sharesTriangles( sp._placementOf( m ) ) ) ).toEqual( [ false, false ] );
 
 		const tris = sp.triangleFloats.slice(), nodes = sp.bvh.slice();
 		const read = vi.fn( mesh => movedPositions( sp, mesh, twist ) );
-		sp.refitBLASes( copies, read );
+		sp.refitBLASes( sharers, read );
 
 		expect( read ).not.toHaveBeenCalled();
 		expect( firstDifference( sp.triangleFloats, tris ) ).toBe( - 1 );
 		expect( firstDifference( sp.bvh, nodes ) ).toBe( - 1 );
-		expect( issues.list.filter( i => i.code === ISSUE_CODES.REFIT_SHARED_GEOMETRY ).map( i => i.detail ) )
-			.toEqual( copies.map( m => ( { meshIndex: m, owner } ) ) );
+		expect( sharedRefusals( issues ) ).toEqual( sharers.map( m => ( { meshIndex: m, owner } ) ) );
+
+		// Neither the instanced boxes (one mesh's own copies) nor a mesh beside the refused ones is held back.
+		sp.refitBLASes( [ owner, lone, boxes ], read );
+		expect( read.mock.calls.map( c => c[ 0 ] ) ).toEqual( [ lone, boxes ] );
+		expect( inspect( sp ).problems ).toEqual( [] );
+
+	} );
+
+	// A reader may answer for still meshes too: warned once a mesh, never thrown.
+	it( 'through the worker leaves shared triangles alone, warning once a mesh a reader asks for, never for an array', async () => {
+
+		const issues = new IssueLog( { strict: true } );
+		const { sp, sharers, owner, lone } = await sharedSpheres( { issues } );
+		const tris = sp.triangleFloats.slice();
+		const first = sp.instanceTable.triOffsetOf( sp._placementOf( owner ) ), count = sp.instanceTable.triCountOf( sp._placementOf( owner ) );
+		const sphereTris = () => sp.triangleFloats.slice( first * FPT, ( first + count ) * FPT );
+
+		await sp.refitBVH( mesh => ( mesh === owner || mesh === lone ? movedPositions( sp, mesh, twist ) : null ) );
+		expect( firstDifference( sphereTris(), tris.slice( first * FPT, ( first + count ) * FPT ) ) ).toBe( - 1 );
+		expect( firstDifference( sp.triangleFloats, tris ) ).not.toBe( - 1 );
+		expect( inspect( sp ).problems ).toEqual( [] );
+		expect( sharedRefusals( issues ) ).toEqual( [ { meshIndex: owner, owner } ] );
+		expect( issues.list.map( i => i.severity ) ).toEqual( [ 'warning' ] );
+
+		const asked = vi.fn( mesh => ( mesh === owner ? movedPositions( sp, mesh, twist ) : null ) );
+		await sp.refitBVH( asked );
+		expect( asked ).not.toHaveBeenCalledWith( owner, expect.anything() );
+		expect( sharedRefusals( issues ) ).toHaveLength( 1 );
+
+		// Every mesh's slice, the spheres' grown: they stay as they were, and nothing more is recorded.
+		const all = new Float32Array( sp.expandedTriangleCount * 9 );
+		const table = sp.instanceTable;
+		for ( let t = 0; t < table.templateCount; t ++ ) {
+
+			if ( table.tplOwner[ t ] >= 0 ) all.set( movedPositions( sp, t, v => ( sharers.includes( t ) ? v.multiplyScalar( 2 ) : v ) ), table.tplExpandedStart[ t ] * 9 );
+
+		}
+
+		const before = sphereTris();
+		await sp.refitBVH( all );
+		expect( firstDifference( sphereTris(), before ) ).toBe( - 1 );
+		expect( inspect( sp ).problems ).toEqual( [] );
+		expect( sharedRefusals( issues ) ).toHaveLength( 1 );
+
+	} );
+
+	it( 'refuses on the main thread before writing anything, so a strict host\'s throw leaves the scene as it was', async () => {
+
+		const issues = new IssueLog( { strict: true } );
+		const { sp, owner, lone } = await sharedSpheres( { issues } );
+		const tris = sp.triangleFloats.slice(), nodes = sp.bvh.slice();
+		const read = mesh => movedPositions( sp, mesh, twist );
+
+		expect( () => sp.refitBLASes( new Set( [ lone, owner ] ), read ) ).toThrow( /shares its triangles/ );
+		expect( firstDifference( sp.triangleFloats, tris ) ).toBe( - 1 );
+		expect( firstDifference( sp.bvh, nodes ) ).toBe( - 1 );
 
 	} );
 

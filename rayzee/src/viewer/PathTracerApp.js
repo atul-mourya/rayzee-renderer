@@ -368,6 +368,7 @@ export class PathTracerApp extends RayzeeRenderer {
 					.catch( err => log.error( 'animation refit error:', err ) )
 					.finally( () => {
 
+						this.animationManager?.applyPlaced( positions );
 						this._animRefitInFlight = false;
 
 					} );

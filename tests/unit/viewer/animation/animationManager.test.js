@@ -666,34 +666,67 @@ describe( 'AnimationManager', () => {
 
 	describe( 'deforming clips', () => {
 
+		// Skinned, plain and morphed, each under the bone the clips animate.
 		function deformingScene() {
 
+			const bone = mockMixerRoot.children[ 0 ];
 			const mesh = ( extra = {} ) => ( {
+				parent: bone,
 				matrixWorld: { elements: [ 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 ] },
 				geometry: { attributes: { position: { count: 3 } }, index: null },
 				getVertexPosition: vi.fn( ( i, t ) => t ),
 				...extra
 			} );
 
-			return [ mesh( { isSkinnedMesh: true } ), mesh(), mesh( { morphTargetInfluences: [ 0, 0.5 ] } ) ];
+			const morphed = { attributes: { position: { count: 3 } }, index: null, morphAttributes: { position: [ {}, {} ] } };
+			return [ mesh( { isSkinnedMesh: true } ), mesh(), mesh( { geometry: morphed, morphTargetInfluences: [ 0, 0.5 ] } ) ];
 
 		}
 
 		const read = ( reader, count ) => Array.from( { length: count }, ( _, m ) => reader( m ) !== null );
 
-		it( 'reads only the meshes that skinned, moved or morphed since their last read', () => {
+		it( 'reads only the skinned and morphed meshes that changed, and moves the others by their placements', () => {
 
 			const meshes = deformingScene();
+			const placed = [];
+			manager.applyPoseCallback = pose => placed.push( pose.meshIndices );
 			manager.init( mockScene, mockMixerRoot, meshes, mockAnimations );
 			manager.play( 0 );
 
-			expect( read( manager.update(), 3 ) ).toEqual( [ true, true, true ] );
-			expect( read( manager.update(), 3 ) ).toEqual( [ true, false, false ] );
+			// Placed only once the refit has landed (applyPlaced), so they move with the skinned meshes.
+			const pose = () => {
+
+				const reader = manager.update();
+				const got = read( reader, 3 );
+				expect( placed ).toHaveLength( 0 );
+				manager.applyPlaced( reader );
+				return got;
+
+			};
+
+			expect( pose() ).toEqual( [ true, false, true ] );
+			expect( placed ).toEqual( [[ 1 ]] );
+			expect( meshes[ 1 ].getVertexPosition ).not.toHaveBeenCalled();
+			placed.length = 0;
+			expect( pose() ).toEqual( [ true, false, false ] );
+			expect( placed ).toHaveLength( 0 );
 
 			meshes[ 1 ].matrixWorld.elements[ 12 ] = 2;
 			meshes[ 2 ].morphTargetInfluences[ 1 ] = 0.75;
-			expect( read( manager.update(), 3 ) ).toEqual( [ true, true, true ] );
+			expect( pose() ).toEqual( [ true, false, true ] );
+			expect( placed ).toEqual( [[ 1 ]] );
 			expect( read( manager.seekTo( 0.5 ), 3 ) ).toEqual( [ true, false, false ] );
+
+		} );
+
+		it( 'never reads a mesh that only moved, even one the clip does not name', () => {
+
+			const meshes = deformingScene();
+			meshes[ 1 ].parent = null;
+			manager.init( mockScene, mockMixerRoot, meshes, mockAnimations );
+			manager.play( 0 );
+			meshes[ 1 ].matrixWorld.elements[ 12 ] = 3;
+			expect( manager.update()( 1 ) ).toBeNull();
 
 		} );
 
@@ -704,8 +737,8 @@ describe( 'AnimationManager', () => {
 			manager.play( 0 );
 
 			const reader = manager.update();
-			expect( reader( 1 ) ).toBeInstanceOf( Float32Array );
-			expect( reader( 1 ) ).toBeInstanceOf( Float32Array );
+			expect( reader( 2 ) ).toBeInstanceOf( Float32Array );
+			expect( reader( 2 ) ).toBeInstanceOf( Float32Array );
 
 		} );
 
@@ -714,11 +747,11 @@ describe( 'AnimationManager', () => {
 			const meshes = deformingScene();
 			manager.init( mockScene, mockMixerRoot, meshes, mockAnimations );
 			manager.play( 0 );
-			manager.update()( 1 );
+			manager.update()( 2 );
 
 			manager.init( mockScene, mockMixerRoot, meshes, mockAnimations );
 			manager.play( 0 );
-			expect( manager.update()( 1 ) ).toBeInstanceOf( Float32Array );
+			expect( manager.update()( 2 ) ).toBeInstanceOf( Float32Array );
 
 		} );
 

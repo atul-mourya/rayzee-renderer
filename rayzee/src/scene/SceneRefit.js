@@ -143,6 +143,8 @@ export async function refitBVH( processor, newPositions, newNormals ) {
 
 	if ( ! positionsFor ) throw new Error( 'SceneProcessor.refitBVH: positions are required.' );
 
+	const table = processor.instanceTable;
+
 	// Lazy-create worker
 	if ( ! processor._refitWorker ) {
 
@@ -181,16 +183,36 @@ export async function refitBVH( processor, newPositions, newNormals ) {
 	// Scatter straight into the shared triangle records, mesh by mesh, so the caller's slice
 	// can be released as soon as it is read. Callers hand over world space; triangles are
 	// stored per instance, so each mesh comes back through its own inverse.
-	const table = processor.instanceTable;
 	const FPT = TRIANGLE_DATA_LAYOUT.FLOATS_PER_TRIANGLE;
 	const triRanges = [];
 	const blasRanges = [];
 	const refit = [];
+	const warned = processor._sharedRefitWarned ??= new Set();
 	let owners = 0;
 	for ( let i = 0; i < table.count; i ++ ) {
 
 		if ( ! table.isSet[ i ] || ! table.isOwner( i ) ) continue;
 		owners ++;
+
+		// Shared triangles are never written. A reader may answer for still meshes too, so this warns once a mesh; a
+		// scene-wide array's slice asks nothing.
+		if ( table.sharesTriangles( i ) ) {
+
+			if ( typeof newPositions === 'function' && ! warned.has( i ) && positionsFor( i ) ) {
+
+				warned.add( i );
+				const meshIndex = table.sourceMesh[ i ];
+				processor.config.issues?.warn(
+					ISSUE_CODES.REFIT_SHARED_GEOMETRY,
+					`mesh ${meshIndex} shares its triangles with another mesh; deforming it would move every copy, so its positions were passed over`,
+					{ meshIndex, owner: meshIndex }
+				);
+
+			}
+
+			continue;
+
+		}
 
 		const p = positionsFor( i );
 		if ( ! p ) continue;
@@ -275,6 +297,35 @@ export function placementOf( processor, meshIndex ) {
 
 }
 
+/**
+ * Records, before anything is written, each placement whose triangles another mesh uses too, and returns them: writing
+ * one would move every copy.
+ *
+ * @param {Iterable<number>} placements - -1 or unset entries are passed over
+ * @returns {Set<number>}
+ */
+function refuseSharedTriangles( processor, placements ) {
+
+	const table = processor.instanceTable;
+	const refused = new Set();
+	for ( const placement of placements ) {
+
+		if ( placement < 0 || ! table.isSet[ placement ] || ! table.sharesTriangles( placement ) ) continue;
+		refused.add( placement );
+		const meshIndex = table.sourceMesh[ placement ];
+		const owner = table.tplOwner[ meshIndex ];
+		processor.config.issues?.record(
+			ISSUE_CODES.REFIT_SHARED_GEOMETRY,
+			`mesh ${meshIndex} shares its triangles with another mesh; deforming it would move every copy, so it was skipped`,
+			{ meshIndex, owner: table.sourceMesh[ owner ] ?? owner }
+		);
+
+	}
+
+	return refused;
+
+}
+
 export function refitBLASes( processor, affectedMeshIndices, newPositions, newNormals ) {
 
 	processor._geometryVersion = ( processor._geometryVersion ?? 0 ) + 1;
@@ -301,26 +352,12 @@ export function refitBLASes( processor, affectedMeshIndices, newPositions, newNo
 
 	// Step 1: Update triangle positions and refit each affected BLAS
 	const table = processor.instanceTable;
+	const refused = refuseSharedTriangles( processor, Array.from( affectedMeshIndices, m => processor._placementOf( m ) ) );
 
 	for ( const meshIndex of affectedMeshIndices ) {
 
 		const placement = processor._placementOf( meshIndex );
-		if ( placement < 0 || ! table.isSet[ placement ] ) continue;
-
-		// Triangles are shared between placements of one geometry, so writing this mesh's
-		// vertices would move every other copy with them. Anything that deforms is extracted
-		// with triangles of its own, so reaching here means the wrong mesh was handed over.
-		if ( ! table.isOwner( placement ) ) {
-
-			const owner = table.tplOwner[ table.sourceMesh[ placement ] ];
-			processor.config.issues?.record(
-				ISSUE_CODES.REFIT_SHARED_GEOMETRY,
-				`mesh ${meshIndex} shares its triangles with another placement; deforming it would move every copy, so it was skipped`,
-				{ meshIndex, owner: table.sourceMesh[ owner ] ?? owner }
-			);
-			continue;
-
-		}
+		if ( placement < 0 || ! table.isSet[ placement ] || refused.has( placement ) ) continue;
 
 		const p = positionsFor( placement );
 		if ( ! p ) continue;

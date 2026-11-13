@@ -137,6 +137,7 @@ export class VideoRenderManager {
 				if ( positions ) {
 
 					await app.refitBVH( positions );
+					app.animationManager.applyPlaced( positions );
 
 				} else {
 

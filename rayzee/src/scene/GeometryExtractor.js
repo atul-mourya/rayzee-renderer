@@ -268,7 +268,7 @@ function plainAttribute( attribute, itemSize, exact = 0 ) {
 const MAX_EXPANDED_EMISSIVE_TRIANGLES = 1 << 21;
 
 // A skinned or morphed mesh is posed per copy, so it cannot share one set of triangles.
-function isDeformable( mesh ) {
+export function isDeformable( mesh ) {
 
 	return !! ( mesh.isSkinnedMesh || Object.keys( mesh.geometry?.morphAttributes ?? {} ).length );
 

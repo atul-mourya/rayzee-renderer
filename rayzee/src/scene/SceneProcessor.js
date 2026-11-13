@@ -2079,6 +2079,7 @@ export class SceneProcessor {
 		this.bvhData = null;
 		this.bvhIndexChunks = null;
 		this.bvhIndex = null;
+		this._sharedRefitWarned = null;
 		this.instanceTable = null;
 		this.lightBVHNodeData = null;
 		this.lightBVHNodeCount = 0;

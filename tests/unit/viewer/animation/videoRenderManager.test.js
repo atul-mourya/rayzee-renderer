@@ -45,6 +45,7 @@ function createMockApp( { clipDuration = 2.0, framesTillComplete = 3 } = {} ) {
 			hasAnimations: true,
 			clips: [ { index: 0, name: 'Walk', duration: clipDuration } ],
 			seekTo: vi.fn( () => new Float32Array( 9 ) ),
+			applyPlaced: vi.fn(),
 			stop: vi.fn(),
 		},
 		stages: {
@@ -210,6 +211,12 @@ describe( 'VideoRenderManager', () => {
 			expect( app.animationManager.seekTo ).toHaveBeenNthCalledWith( 1, 0, 0 );
 			expect( app.animationManager.seekTo ).toHaveBeenNthCalledWith( 2, 0.1, 0 );
 			expect( app.animationManager.seekTo ).toHaveBeenNthCalledWith( 3, 0.2, 0 );
+
+			// Meshes the pose only moved follow each frame's refit, so they land with the deformed ones.
+			const refits = app.refitBVH.mock.invocationCallOrder, placed = app.animationManager.applyPlaced.mock.invocationCallOrder;
+			expect( placed ).toHaveLength( 3 );
+			expect( placed.every( ( at, i ) => at > refits[ i ] && ( i === 2 || at < refits[ i + 1 ] ) ) ).toBe( true );
+			expect( app.animationManager.applyPlaced.mock.calls.map( c => c[ 0 ] ) ).toEqual( app.animationManager.seekTo.mock.results.map( r => r.value ) );
 
 		} );
 
