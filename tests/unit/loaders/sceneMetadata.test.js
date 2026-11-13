@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { extractSceneMetadata, parseSceneMetadata, withSceneAspect } from '@/core/loaders/SceneMetadata.js';
+import { extractSceneMetadata, parseSceneMetadata, withSceneAspect, requestedRender } from '@/core/loaders/SceneMetadata.js';
 import { PerspectiveCamera } from 'three';
 
 const PAYLOAD = {
@@ -128,6 +128,62 @@ describe( 'withSceneAspect', () => {
 		expect( withSceneAspect( { render: { width: 500, height: 400, aspect: 2.5 } }, camera ).render.aspect ).toBe( 2.5 );
 		expect( withSceneAspect( PAYLOAD, new PerspectiveCamera() ) ).toBe( PAYLOAD );
 		expect( withSceneAspect( null ) ).toBeNull();
+
+	} );
+
+} );
+
+describe( 'requestedRender', () => {
+
+	const host = { width: 1920, height: 1080 };
+
+	it( 'asks for nothing without a render block, or with one the host already matches', () => {
+
+		expect( requestedRender( null, host ) ).toBeNull();
+		expect( requestedRender( { width: 1920, height: 1080 }, host ) ).toBeNull();
+		expect( requestedRender( { aspect: 16 / 9 }, host ) ).toBeNull();
+
+	} );
+
+	it( 'takes a pbrt file\'s settings by the engine\'s names, its samples and its size', () => {
+
+		const render = {
+			integrator: 'bidirectional', maxBounces: 17, samples: 64, width: 800, height: 600, aspect: 4 / 3,
+			exposure: 0.5, whiteBalance: 6500, sampleClamp: 10, pixelFilter: 'gaussian', pixelFilterRadius: 1.5,
+			pathRegularization: true, mergeRadius: 0.01,
+		};
+		expect( requestedRender( render, host ) ).toEqual( {
+			settings: {
+				integrator: 'bidirectional', maxBounces: 17, exposure: 0.5, whiteBalance: 6500, sampleClamp: 10,
+				pixelFilter: 'gaussian', pixelFilterRadius: 1.5, pathRegularization: true,
+			},
+			samples: 64, width: 800, height: 600,
+		} );
+
+	} );
+
+	it( 'reshapes the host\'s size to an asked aspect on its longer side', () => {
+
+		expect( requestedRender( { aspect: 2 }, host ) ).toMatchObject( { width: 1920, height: 960 } );
+		expect( requestedRender( { aspect: 0.5 }, host ) ).toMatchObject( { width: 960, height: 1920 } );
+		expect( requestedRender( { aspect: 1 }, { width: 600, height: 800 } ) ).toMatchObject( { width: 800, height: 800 } );
+
+	} );
+
+	it( 'carries a panorama\'s projection and framing', () => {
+
+		const render = { cameraProjection: 'equirectangular', panoramaLonRange: [ 90, - 270 ], panoramaLatRange: [ - 90, 90 ], panoramaLevelHorizon: false, aspect: 2 };
+		expect( requestedRender( render, host ).settings ).toEqual( {
+			cameraProjection: 'equirectangular', panoramaLonRange: [ 90, - 270 ], panoramaLatRange: [ - 90, 90 ], panoramaLevelHorizon: false,
+		} );
+
+	} );
+
+	it( 'names only settings the engine has', async () => {
+
+		const { ENGINE_DEFAULTS } = await import( '@/core/EngineDefaults.js' );
+		const every = { integrator: 'path', maxBounces: 1, exposure: 1, whiteBalance: 1, sampleClamp: 1, pixelFilter: 'box', pixelFilterRadius: 1, pathRegularization: true, cameraProjection: 'perspective', panoramaLonRange: [ 0, 1 ], panoramaLatRange: [ 0, 1 ], panoramaLevelHorizon: true };
+		for ( const key of Object.keys( requestedRender( every, host ).settings ) ) expect( ENGINE_DEFAULTS, key ).toHaveProperty( key );
 
 	} );
 

@@ -246,7 +246,7 @@ describe( 'lockstep readbacks', () => {
 		const { stage } = makeStage();
 		Object.assign( stage, {
 			resetCount: 0, frame: { value: 9 }, hasPreviousAccumulated: { value: 1 }, storageTextures: {},
-			updateCompletionThreshold: () => {}, _seedTick: 41, _pinSeedToFrame: false,
+			updateCompletionThreshold: () => {}, _seedTick: 41, _pinSeedToFrame: false, _firstSample: 0,
 			_lastBounceCounts: new Uint32Array( 4 ), _lastBounceEnergy: new Uint32Array( 4 ),
 		} );
 		stage.setLockstepReadbacks( true );
@@ -269,7 +269,7 @@ describe( 'lockstep readbacks', () => {
 		const curve = new Uint32Array( 4 );
 		Object.assign( stage, {
 			resetCount: 0, frame: { value: 9 }, hasPreviousAccumulated: { value: 1 }, storageTextures: {},
-			updateCompletionThreshold: () => {}, _seedTick: 41, _pinSeedToFrame: false, _lastBounceCounts: curve,
+			updateCompletionThreshold: () => {}, _seedTick: 41, _pinSeedToFrame: false, _firstSample: 0, _lastBounceCounts: curve,
 		} );
 
 		stage.reset();
@@ -279,11 +279,81 @@ describe( 'lockstep readbacks', () => {
 
 	} );
 
+	// renderFrames' firstSample: a render of samples 64… merges with one of 0…63 only if every reset rewinds there.
+	describe( 'first sample', () => {
+
+		const resettable = ( stage, fields ) => Object.assign( stage, {
+			resetCount: 0, frame: { value: 9 }, hasPreviousAccumulated: { value: 1 }, storageTextures: {},
+			updateCompletionThreshold: () => {}, _seedTick: 41, _pinSeedToFrame: false, _firstSample: 64, ...fields,
+		} );
+
+		it( 'rewinds a pinned sequence to it, and says where the image starts', () => {
+
+			const { stage } = makeStage();
+			resettable( stage, { _pinSeedToFrame: true } );
+			stage.reset();
+
+			expect( stage._seedTick ).toBe( 64 );
+			expect( stage.accumulationFirstSample ).toBe( 64 );
+
+		} );
+
+		it( 'rewinds a lockstep render there too', () => {
+
+			const { stage } = makeStage();
+			resettable( stage );
+			stage.setLockstepReadbacks( true );
+			stage.reset();
+
+			expect( stage._seedTick ).toBe( 64 );
+			expect( stage.accumulationFirstSample ).toBe( 64 );
+
+		} );
+
+		it( 'travels with a render checkpoint', async () => {
+
+			const { stage } = makeStage();
+			resettable( stage, { _pinSeedToFrame: true } );
+			stage.reset();
+			const pool = { renderWidth: 1, renderHeight: 1, readTarget: { textures: [ {} ] } };
+			Object.assign( stage, {
+				storageTextures: pool, frameCount: 8, _seedTick: 72, frame: { value: 8 },
+				renderer: {
+					readRenderTargetPixelsAsync: async () => new Float32Array( 4 ),
+					backend: { device: { queue: { writeTexture: () => {}, writeBuffer: () => {} } }, get: () => ( { texture: {} } ) },
+				},
+			} );
+
+			const checkpoint = await stage.captureAccumulation();
+			stage._accumulationFirstSample = null;
+			stage.restoreAccumulation( checkpoint );
+
+			expect( checkpoint.state.firstSample ).toBe( 64 );
+			expect( stage.accumulationFirstSample ).toBe( 64 );
+			// One from before the field: where its samples start is not known.
+			stage.restoreAccumulation( { ...checkpoint, state: { ...checkpoint.state, firstSample: undefined } } );
+			expect( stage.accumulationFirstSample ).toBeNull();
+
+		} );
+
+		it( 'leaves a free-running sequence where it is, and does not name a start it cannot vouch for', () => {
+
+			const { stage } = makeStage();
+			resettable( stage );
+			stage.reset();
+
+			expect( stage._seedTick ).toBe( 41 );
+			expect( stage.accumulationFirstSample ).toBeNull();
+
+		} );
+
+	} );
+
 	describe( 'accumulationLockstep', () => {
 
 		const resettable = ( stage ) => Object.assign( stage, {
 			resetCount: 0, frame: { value: 0 }, hasPreviousAccumulated: { value: 0 }, storageTextures: {},
-			updateCompletionThreshold: () => {}, _seedTick: 41, _pinSeedToFrame: false,
+			updateCompletionThreshold: () => {}, _seedTick: 41, _pinSeedToFrame: false, _firstSample: 0,
 		} );
 
 		// renderUntilComplete turns lockstep off again as it returns; the image was still traced in it.

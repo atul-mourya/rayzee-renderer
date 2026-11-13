@@ -164,3 +164,41 @@ export function withSceneAspect( metadata, camera ) {
 	return aspect ? { ...metadata, render: { ...render, aspect } } : metadata;
 
 }
+
+// The settings a file's `render` may ask for, by the engine's own names (the importers write them so).
+const REQUESTED_SETTINGS = [
+	'integrator', 'maxBounces', 'exposure', 'whiteBalance', 'sampleClamp', 'pixelFilter', 'pixelFilterRadius', 'pathRegularization',
+	'cameraProjection', 'panoramaLonRange', 'panoramaLatRange', 'panoramaLevelHorizon',
+];
+
+/**
+ * What a scene's `render` asks the renderer for, as pbrt renders a file: the settings by name, the sample count, and the
+ * picture's size — the one asked for, else `width` × `height` reshaped to the asked aspect on its longer side. Null
+ * when it asks for nothing.
+ * @param {Object} [render] - `sceneMetadata.render`
+ * @param {{width: number, height: number}} host - the size the host would render at
+ * @returns {{settings: Object, samples?: number, width: number, height: number}|null}
+ */
+export function requestedRender( render, { width, height } ) {
+
+	if ( ! render ) return null;
+
+	const settings = {};
+	for ( const key of REQUESTED_SETTINGS ) if ( render[ key ] !== undefined ) settings[ key ] = render[ key ];
+
+	let size = { width, height };
+	if ( render.width > 0 && render.height > 0 ) size = { width: render.width, height: render.height };
+	else if ( render.aspect > 0 ) {
+
+		const side = Math.max( width, height );
+		size = render.aspect >= 1
+			? { width: side, height: Math.max( 1, Math.round( side / render.aspect ) ) }
+			: { width: Math.max( 1, Math.round( side * render.aspect ) ), height: side };
+
+	}
+
+	const samples = render.samples > 0 ? render.samples : undefined;
+	if ( ! Object.keys( settings ).length && ! samples && size.width === width && size.height === height ) return null;
+	return { settings, ...( samples ? { samples } : {} ), ...size };
+
+}

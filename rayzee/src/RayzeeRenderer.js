@@ -1,6 +1,6 @@
 import { WebGPURenderer, RectAreaLightNode, SRGBColorSpace } from 'three/webgpu';
 import { texture as _tslTexture, cubeTexture as _tslCubeTexture } from 'three/tsl';
-import { Scene, EventDispatcher, Box3, REVISION } from 'three';
+import { Scene, EventDispatcher, Box3, Matrix4, REVISION } from 'three';
 import { RectAreaLightTexturesLib } from 'three/addons/lights/RectAreaLightTexturesLib.js';
 import { SceneHelpers } from './scene/SceneHelpers.js';
 import { PathTracer } from './pathtracer/PathTracer.js';
@@ -26,7 +26,7 @@ import { createHeadlessCanvas } from './HeadlessCanvas.js';
 
 // Managers
 import { RenderSettings } from './RenderSettings.js';
-import { ViewCamera } from './scene/ViewCamera.js';
+import { ViewCamera, viewMatrixOf } from './scene/ViewCamera.js';
 import { LightManager } from './lights/LightManager.js';
 import { VERSION } from './Version.js';
 import { toPortable } from './Portable.js';
@@ -1762,6 +1762,7 @@ export class RayzeeRenderer extends EventDispatcher {
 			this._setDeterministicExtras( false, prev.extras );
 
 			stage._pinSeedToFrame = false;
+			stage._firstSample = 0;
 
 			this._deterministicRestore = null;
 			this._deterministic = false;
@@ -1819,86 +1820,114 @@ export class RayzeeRenderer extends EventDispatcher {
 	 * @param {number} [options.yieldEvery=8] - yield to the event loop every N passes (0 disables)
 	 * @param {function(number): void} [options.onProgress] - called with the running sample count
 	 * @param {boolean} [options.allowEarlyRetire=false]
+	 * @param {number} [options.firstSample=0] - with `reset`, trace samples `firstSample … firstSample + count - 1` of the
+	 *   sequence instead of `0 … count - 1`, so renders of disjoint ranges merge into one (see `mergeRenders`). Needs
+	 *   deterministic mode or lockstep readbacks, where every reset rewinds the sequence to it
 	 * @returns {Promise<number>} samples accumulated; below `count` only when retired early
 	 */
-	async renderFrames( count, { reset = true, yieldEvery = 8, onProgress, allowEarlyRetire = false } = {} ) {
+	async renderFrames( count, { reset = true, yieldEvery = 8, onProgress, allowEarlyRetire = false, firstSample = 0 } = {} ) {
 
 		const stage = this.stages.pathTracer;
 		if ( ! stage ) throw new Error( 'renderFrames: app is not initialized' );
 		if ( ! ( count > 0 ) ) throw new Error( `renderFrames: count must be positive, got ${count}` );
+		// 2³¹: Halton reads the index as a signed int.
+		if ( ! ( Number.isInteger( firstSample ) && firstSample >= 0 && firstSample + count <= 2 ** 31 ) ) {
 
-		const target = ( reset ? 0 : stage.frameCount ) + count;
-
-		// completionThreshold is a cached JS number derived from maxSamples, so this must
-		// go through the settings handler — writing the uniform alone would not move it.
-		if ( this.settings.get( 'maxSamples' ) < target ) {
-
-			this.settings.set( 'maxSamples', target, { silent: true, reset: false } );
+			throw new Error( `renderFrames: firstSample must be a whole number from 0, with firstSample + count ≤ 2³¹, got ${firstSample}` );
 
 		}
 
-		if ( reset ) this.reset();
-		this.stopAnimation();
+		if ( firstSample > 0 && ! reset ) throw new Error( 'renderFrames: firstSample starts a render, so it needs reset: true' );
+		// Deterministic mode only: lockstep keeps interaction mode and the pixel freeze, which trace samples outside the range.
+		if ( firstSample > 0 && ! stage._pinSeedToFrame ) {
 
-		const maxPasses = count + 64;
-		let passes = 0;
-
-		let retiredEarly = false;
-
-		while ( stage.frameCount < target && passes < maxPasses ) {
-
-			if ( this._deviceLost ) throw new Error( 'renderFrames: WebGPU device lost' );
-			if ( ! stage.isReady ) throw new Error( 'renderFrames: path tracer stage is not ready' );
-
-			const wait = stage.readbackWait() ?? this.pipeline.compileWait();
-			if ( wait ) {
-
-				await this._awaitReadback( wait );
-				continue;
-
-			}
-
-			// A host moves the camera between calls, and a load frames it with lookAt(), which leaves matrixWorld stale.
-			this.camera.updateMatrixWorld();
-			takeFrameStep( this.renderer );
-			this.pipeline.render();
-			passes ++;
-
-			// render() no-ops once complete; spinning would burn the budget for nothing.
-			if ( stage.isComplete && stage.frameCount < target ) {
-
-				retiredEarly = true;
-				break;
-
-			}
-
-			onProgress?.( stage.frameCount );
-
-			if ( yieldEvery > 0 && passes % yieldEvery === 0 ) {
-
-				await new Promise( ( resolve ) => setTimeout( resolve, 0 ) );
-
-			}
+			throw new Error( 'renderFrames: firstSample needs setDeterministicMode()' );
 
 		}
 
-		if ( stage.frameCount < target && ! ( retiredEarly && allowEarlyRetire ) ) {
+		// This render's resets rewind to it; any reset after the render, to 0 again.
+		if ( reset ) stage._firstSample = firstSample;
 
-			const cause = retiredEarly
-				? 'adaptive sampling retired the frame at the convergence threshold — pass ' +
-					'`allowEarlyRetire: true`, or disable it with setDeterministicMode()'
-				: 'something retired the render (maxSamples, a stray reset, or a canvas resize)';
+		try {
 
-			throw new Error(
-				`renderFrames: stopped at ${stage.frameCount}/${target} samples after ${passes} passes — ${cause}`
-			);
+			const target = ( reset ? 0 : stage.frameCount ) + count;
+
+			// completionThreshold is a cached JS number derived from maxSamples, so this must
+			// go through the settings handler — writing the uniform alone would not move it.
+			if ( this.settings.get( 'maxSamples' ) < target ) {
+
+				this.settings.set( 'maxSamples', target, { silent: true, reset: false } );
+
+			}
+
+			if ( reset ) this.reset();
+			this.stopAnimation();
+
+			const maxPasses = count + 64;
+			let passes = 0;
+
+			let retiredEarly = false;
+
+			while ( stage.frameCount < target && passes < maxPasses ) {
+
+				if ( this._deviceLost ) throw new Error( 'renderFrames: WebGPU device lost' );
+				if ( ! stage.isReady ) throw new Error( 'renderFrames: path tracer stage is not ready' );
+
+				const wait = stage.readbackWait() ?? this.pipeline.compileWait();
+				if ( wait ) {
+
+					await this._awaitReadback( wait );
+					continue;
+
+				}
+
+				// A host moves the camera between calls, and a load frames it with lookAt(), which leaves matrixWorld stale.
+				this.camera.updateMatrixWorld();
+				takeFrameStep( this.renderer );
+				this.pipeline.render();
+				passes ++;
+
+				// render() no-ops once complete; spinning would burn the budget for nothing.
+				if ( stage.isComplete && stage.frameCount < target ) {
+
+					retiredEarly = true;
+					break;
+
+				}
+
+				onProgress?.( stage.frameCount );
+
+				if ( yieldEvery > 0 && passes % yieldEvery === 0 ) {
+
+					await new Promise( ( resolve ) => setTimeout( resolve, 0 ) );
+
+				}
+
+			}
+
+			if ( stage.frameCount < target && ! ( retiredEarly && allowEarlyRetire ) ) {
+
+				const cause = retiredEarly
+					? 'adaptive sampling retired the frame at the convergence threshold — pass ' +
+						'`allowEarlyRetire: true`, or disable it with setDeterministicMode()'
+					: 'something retired the render (maxSamples, a stray reset, or a canvas resize)';
+
+				throw new Error(
+					`renderFrames: stopped at ${stage.frameCount}/${target} samples after ${passes} passes — ${cause}`
+				);
+
+			}
+
+			// The last frames' NaN and infinite samples, and a render shorter than the readback cadence.
+			await stage.readNonFiniteNow?.();
+			await this._finishImage();
+			return stage.frameCount;
+
+		} finally {
+
+			stage._firstSample = 0;
 
 		}
-
-		// The last frames' NaN and infinite samples, and a render shorter than the readback cadence.
-		await stage.readNonFiniteNow?.();
-		await this._finishImage();
-		return stage.frameCount;
 
 	}
 
@@ -1935,7 +1964,14 @@ export class RayzeeRenderer extends EventDispatcher {
 
 		try {
 
-			if ( reset ) this.reset();
+			if ( reset ) {
+
+				// An adaptive render converges on its own samples: ranges of it do not merge, so it starts at 0.
+				stage._firstSample = 0;
+				this.reset();
+
+			}
+
 			this.stopAnimation();
 
 			const queue = this.renderer.backend.device?.queue;
@@ -2021,6 +2057,7 @@ export class RayzeeRenderer extends EventDispatcher {
 				width: stage.width,
 				height: stage.height,
 				samples: stage.frameCount,
+				firstSample: stage.accumulationFirstSample ?? null,
 				complete: stage.isComplete,
 				retiredBy: stage.isComplete ? this.completion.stopCondition( stage ) ?? 'samples' : null,
 			} : null,
@@ -2038,10 +2075,33 @@ export class RayzeeRenderer extends EventDispatcher {
 				backdropExposure: this.stages?.compositor?.backdropExposure ?? null,
 				overlay: overlay ? { width: overlay.width, height: overlay.height } : null,
 			},
+			camera: this._cameraProvenance(),
 			scene: this.sceneSource,
 			settings: this.settings.getEffective(),
 			issues: this.issues.map( ( { code, severity } ) => ( { code, severity } ) ),
 		} );
+
+	}
+
+	// The rendered pose: matrixWorld as the last pass left it, never recomputed here. Three's conventions: column-major,
+	// column vectors, looking down −z; worldToCamera keeps a mirror as the path tracer does.
+	_cameraProvenance() {
+
+		const camera = this.camera;
+		if ( ! camera ) return null;
+		// What was traced: the stage's copies (it copies only past a tolerance), else the camera's own.
+		const stage = this.stages.pathTracer;
+		const m = ( stage?.cameraWorldMatrix?.value ?? camera.matrixWorld ).elements;
+		return {
+			position: [ m[ 12 ], m[ 13 ], m[ 14 ] ],
+			worldToCamera: ( stage?.cameraViewMatrix?.value ?? viewMatrixOf( camera, new Matrix4() ) ).toArray(),
+			projection: camera.projectionMatrix.toArray(),
+			fov: camera.fov,
+			aspect: camera.aspect,
+			near: camera.near,
+			far: camera.far,
+			orthographic: !! camera.isOrthographicCamera,
+		};
 
 	}
 

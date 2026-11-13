@@ -30,3 +30,4 @@ export { MAX_RESERVABLE_RENDER_SIZE } from './pathtracer/StorageTexturePool.js';
 export { TRIANGLE_DATA_LAYOUT } from './scene/BufferLayout.js';
 export { Logger, createLogger, fmt, LOG_LEVELS } from './Logger.js';
 export { VERSION } from './Version.js';
+export { compareImages, mergeRenders } from './output/ImageMath.js';

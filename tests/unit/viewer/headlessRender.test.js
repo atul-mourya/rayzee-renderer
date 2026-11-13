@@ -374,6 +374,210 @@ describe( 'captureHeadless', () => {
 
 } );
 
+describe( 'captureHeadless on the way', () => {
+
+	/** An accumulation 1 + 1/n bright after n samples, against a reference of 1: its error falls as 1/n². */
+	function steppingApp( { width = 2, height = 1, retireAt = Infinity, firstSample = null } = {} ) {
+
+		let total = 0;
+		const calls = [];
+		const app = {
+			calls,
+			stages: { pathTracer: { width, height } },
+			renderFrames: vi.fn( async ( count, options ) => {
+
+				calls.push( [ 'render', count, options ] );
+				total = Math.min( ( options.reset ? 0 : total ) + count, retireAt );
+				return total;
+
+			} ),
+			renderToBuffer: vi.fn( async ( { colorSpace, source } ) => {
+
+				calls.push( [ 'read', colorSpace, source, total ] );
+				const data = colorSpace === 'linear' ? new Float32Array( width * height * 4 ).fill( 1 + 1 / total ) : new Uint8ClampedArray( width * height * 4 ).fill( total );
+				return { data, width, height, colorSpace, source };
+
+			} ),
+			runFinalDenoise: vi.fn( async () => true ),
+			denoisingManager: null,
+			issues: [],
+			adapterInfo: {},
+			getProvenance: () => ( { render: { firstSample } } ),
+		};
+		return app;
+
+	}
+
+	const reference = ( width = 2, height = 1 ) => ( { data: new Float32Array( width * height * 4 ).fill( 1 ), width, height } );
+
+	it( 'gathers one stats block on request, timing the GPU for that capture only', async () => {
+
+		const app = steppingApp();
+		let tracking = false;
+		Object.assign( app, {
+			renderer: { backend: { get trackTimestamp() {
+
+				return tracking;
+
+			} } },
+			enableGPUTiming: vi.fn( ( on ) => ( tracking = on ) ),
+			getStatistics: () => ( { triangles: 3 } ),
+			getMemoryInfo: () => ( { current: 1, peak: 2, byCategory: {} } ),
+			getHostMemoryInfo: () => null,
+			getConvergenceStats: () => ( { converged: 0 } ),
+			getKernelGPUTimings: vi.fn( async () => ( tracking ? { kernels: { shade: 1.5 }, total: 2, unattributed: 0.5, frame: 9 } : null ) ),
+		} );
+
+		const plain = await captureHeadless( app, { samples: 4 } );
+		expect( plain.stats ).toBeUndefined();
+		expect( app.enableGPUTiming ).not.toHaveBeenCalled();
+
+		const out = await captureHeadless( app, { samples: 4, stats: true } );
+		expect( out.stats ).toEqual( {
+			scene: { triangles: 3 }, gpuMemory: { current: 1, peak: 2, byCategory: {} }, hostMemory: null,
+			convergence: { converged: 0 }, kernels: { kernels: { shade: 1.5 }, total: 2, unattributed: 0.5, frame: 9 },
+		} );
+		expect( tracking ).toBe( false );
+
+		// A host that timed already keeps its timing on.
+		tracking = true;
+		await captureHeadless( app, { samples: 4, stats: true } );
+		expect( tracking ).toBe( true );
+
+	} );
+
+	it( 'renders in one go when nothing asks to look on the way', async () => {
+
+		const app = steppingApp();
+		await captureHeadless( app, { samples: 100 } );
+		expect( app.renderFrames ).toHaveBeenCalledOnce();
+		expect( app.renderFrames.mock.calls[ 0 ][ 0 ] ).toBe( 100 );
+
+	} );
+
+	// pbrt's cadence for --write-partial-images: waves of 1, 1, 2, 4 … 64, then 64 at a time.
+	it( 'hands onStep the accumulation at pbrt\'s partial-image counts, continuing the one render', async () => {
+
+		const app = steppingApp();
+		const seen = [];
+		const out = await captureHeadless( app, { samples: 200, onStep: ( frame, { samples } ) => void seen.push( [ samples, frame.data[ 0 ], frame.source ] ) } );
+
+		expect( seen.map( ( [ n ] ) => n ) ).toEqual( [ 1, 2, 4, 8, 16, 32, 64, 128, 192 ] );
+		expect( seen.every( ( [ n, byte, source ] ) => byte === n && source === 'accumulation' ) ).toBe( true );
+		const renders = app.calls.filter( ( [ kind ] ) => kind === 'render' );
+		expect( renders.map( ( [ , count ] ) => count ).reduce( ( a, b ) => a + b ) ).toBe( 200 );
+		expect( renders.map( ( [ , , { reset } ] ) => reset ) ).toEqual( [ true, ...Array( 9 ).fill( false ) ] );
+		expect( out.samples ).toBe( 200 );
+
+	} );
+
+	it( 'awaits onStep before rendering on', async () => {
+
+		const app = steppingApp();
+		let release;
+		const held = new Promise( ( resolve ) => void ( release = resolve ) );
+		const capture = captureHeadless( app, { samples: 4, steps: [ 2 ], onStep: () => held } );
+		await new Promise( ( resolve ) => setTimeout( resolve, 0 ) );
+		expect( app.renderFrames ).toHaveBeenCalledOnce();
+		release();
+		await capture;
+		expect( app.renderFrames ).toHaveBeenCalledTimes( 2 );
+
+	} );
+
+	it( 'takes steps as every N samples or as a list', async () => {
+
+		const every = steppingApp(), list = steppingApp();
+		const at = ( app ) => app.calls.filter( ( [ kind ] ) => kind === 'read' ).map( ( call ) => call[ 3 ] );
+		await captureHeadless( every, { samples: 10, steps: 4, onStep: () => {} } );
+		await captureHeadless( list, { samples: 10, steps: [ 7, 3, 3, 12 ], onStep: () => {} } );
+
+		expect( at( every ) ).toEqual( [ 4, 8, 10 ] );
+		expect( at( list ) ).toEqual( [ 3, 7, 10 ] );
+
+	} );
+
+	it( 'refuses steps that are not sample counts', async () => {
+
+		for ( const steps of [ 0, - 4, 2.5, [ 1, 0 ], 'often' ] ) {
+
+			await expect( captureHeadless( steppingApp(), { steps } ) ).rejects.toThrow( /steps must be/ );
+
+		}
+
+	} );
+
+	// pbrt's --mse-reference-image: the error at each step, and at the end.
+	it( 'measures the accumulation against a reference at each step and at the end', async () => {
+
+		const out = await captureHeadless( steppingApp(), { samples: 4, steps: 2, reference: reference() } );
+
+		expect( out.errors.map( ( e ) => e.samples ) ).toEqual( [ 2, 4 ] );
+		expect( out.errors[ 0 ].mse ).toBeCloseTo( 0.25 );
+		expect( out.errors[ 1 ].mse ).toBeCloseTo( 0.0625 );
+		expect( out.errors[ 1 ] ).toMatchObject( { relativeBias: expect.closeTo( 0.25 ), pixels: 2 } );
+
+	} );
+
+	it( 'reads a linear frame once when it is also what is measured', async () => {
+
+		const app = steppingApp();
+		await captureHeadless( app, { samples: 4, steps: 2, colorSpace: 'linear', reference: reference(), onStep: () => {} } );
+		expect( app.renderToBuffer ).toHaveBeenCalledTimes( 2 );
+
+	} );
+
+	it( 'measures the raw accumulation, then denoises and reads the display', async () => {
+
+		const app = steppingApp();
+		app.denoisingManager = { finalDenoise: true, _syncGBufferStages: () => {} };
+		const out = await captureHeadless( app, { samples: 4, denoise: true, reference: reference() } );
+
+		const reads = app.calls.filter( ( [ kind ] ) => kind === 'read' ).map( ( [ , colorSpace, source ] ) => `${colorSpace}/${source}` );
+		expect( reads.at( - 2 ) ).toBe( 'linear/accumulation' );
+		expect( reads.at( - 1 ) ).toBe( 'srgb/display' );
+		expect( out.errors.at( - 1 ).samples ).toBe( 4 );
+
+	} );
+
+	it( 'stops stepping where the render retired early', async () => {
+
+		const app = steppingApp( { retireAt: 5 } );
+		const out = await captureHeadless( app, { samples: 64, steps: 4, allowEarlyRetire: true, reference: reference() } );
+		expect( out.errors.map( ( e ) => e.samples ) ).toEqual( [ 4, 5 ] );
+		expect( out ).toMatchObject( { samples: 5, retiredBy: 'converged' } );
+
+	} );
+
+	it( 'refuses a reference it could not measure against, before rendering', async () => {
+
+		const app = steppingApp();
+		await expect( captureHeadless( app, { reference: reference( 3, 1 ) } ) ).rejects.toThrow( /render's size \(2×1\)/ );
+		await expect( captureHeadless( app, { reference: { data: new Uint8ClampedArray( 8 ), width: 2, height: 1 } } ) ).rejects.toThrow( /linear floats/ );
+		expect( app.renderFrames ).not.toHaveBeenCalled();
+
+	} );
+
+	it( 'starts the render at firstSample and reports where the engine says it started', async () => {
+
+		const app = steppingApp( { firstSample: 64 } );
+		const out = await captureHeadless( app, { samples: 4, steps: 2, firstSample: 64, onStep: () => {} } );
+
+		expect( app.renderFrames.mock.calls.map( ( [ , { firstSample } ] ) => firstSample ) ).toEqual( [ 64, 0 ] );
+		expect( out.firstSample ).toBe( 64 );
+
+	} );
+
+	it( 'says how long each part took', async () => {
+
+		const out = await captureHeadless( steppingApp(), { samples: 4 } );
+		expect( Object.keys( out.timings ) ).toEqual( [ 'render', 'steps', 'denoise', 'readback' ] );
+		expect( Object.values( out.timings ).every( ( ms ) => ms >= 0 ) ).toBe( true );
+
+	} );
+
+} );
+
 describe( 'openHeadless', () => {
 
 	it( 'needs no canvas, and says how to supply WebGPU where there is none', async () => {

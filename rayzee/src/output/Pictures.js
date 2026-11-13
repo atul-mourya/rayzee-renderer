@@ -414,7 +414,7 @@ function exportDetails( app, format, asShown = false ) {
 	const viewName = view && typeof view === 'object' ? [ view.view, view.look ].filter( Boolean ).join( ', ' ) : view;
 	const summary = [ render && `${render.samples} samples`, render && `${render.width}×${render.height}`, viewName, asShown && 'as shown on screen' ].filter( Boolean ).join( ', ' );
 	const settings = Object.fromEntries( Object.entries( provenance.settings ?? {} ).map( ( [ key, entry ] ) => [ key, entry?.value ] ) );
-	const details = JSON.stringify( { engine: provenance.engine, render, color: provenance.color, settings, display: provenance.display, exposure: provenance.exposure } );
+	const details = JSON.stringify( { engine: provenance.engine, render, color: provenance.color, settings, display: provenance.display, exposure: provenance.exposure, camera: provenance.camera } );
 	const software = `Rayzee ${VERSION}`;
 	const now = new Date();
 	const pad = n => String( n ).padStart( 2, '0' );

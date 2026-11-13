@@ -922,7 +922,7 @@ describe( 'deterministic mode', () => {
 	function deterministic() {
 
 		const values = { useAdaptiveSampling: true, usePixelFreeze: true, interactionModeEnabled: true, renderLimitMode: 'time', renderTimeLimit: 30 };
-		const stage = { _bounceEarlyExitThreshold: 0.02, _useDynamicDispatch: true, _pinSeedToFrame: false };
+		const stage = { _bounceEarlyExitThreshold: 0.02, _useDynamicDispatch: true, _pinSeedToFrame: false, _firstSample: 0 };
 		const app = core( {
 			values,
 			_deterministic: false,
@@ -946,7 +946,7 @@ describe( 'deterministic mode', () => {
 
 		expect( app.setDeterministicMode() ).toBe( true );
 		expect( values ).toEqual( { useAdaptiveSampling: false, usePixelFreeze: false, interactionModeEnabled: false, renderLimitMode: 'frames', renderTimeLimit: 0 } );
-		expect( stage ).toEqual( { _bounceEarlyExitThreshold: - 1, _useDynamicDispatch: false, _pinSeedToFrame: true } );
+		expect( stage ).toEqual( { _bounceEarlyExitThreshold: - 1, _useDynamicDispatch: false, _pinSeedToFrame: true, _firstSample: 0 } );
 		expect( app.isDeterministic ).toBe( true );
 		expect( app._setDeterministicExtras ).toHaveBeenLastCalledWith( true, { autoFocus: true } );
 		expect( app.stopAnimation ).toHaveBeenCalled();
@@ -956,7 +956,7 @@ describe( 'deterministic mode', () => {
 
 		expect( app.setDeterministicMode( false ) ).toBe( false );
 		expect( values ).toEqual( before );
-		expect( stage ).toEqual( { _bounceEarlyExitThreshold: 0.02, _useDynamicDispatch: true, _pinSeedToFrame: false } );
+		expect( stage ).toEqual( { _bounceEarlyExitThreshold: 0.02, _useDynamicDispatch: true, _pinSeedToFrame: false, _firstSample: 0 } );
 		expect( app._setDeterministicExtras ).toHaveBeenLastCalledWith( false, { autoFocus: true } );
 		expect( app.isDeterministic ).toBe( false );
 

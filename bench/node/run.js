@@ -327,6 +327,89 @@ async function nonFinitePixel() {
 
 if ( ! only || only.includes( 'nonfinite' ) ) await nonFinitePixel();
 
+// A render split by firstSample merges into the whole render, to float rounding, and onStep stops change nothing. The
+// firefly clamp scales with each part's own sample count, so it is off here.
+async function splitRender() {
+
+	const { captureHeadless, compareImages, mergeRenders } = await import( 'rayzee' );
+	const threshold = app.settings.get( 'fireflyThreshold' );
+	const spp = 32;
+
+	try {
+
+		for ( const id of [ 'spheres-gradient', 'cornell-emissive' ] ) {
+
+			await session.loadScene( id );
+			app.settings.set( 'fireflyThreshold', 1e9, { silent: true, reset: false } );
+			const linear = { colorSpace: 'linear' };
+			const whole = await captureHeadless( app, { ...linear, samples: 2 * spp } );
+			const stepped = await captureHeadless( app, { ...linear, samples: 2 * spp, steps: 8, onStep: () => {} } );
+			const parts = [
+				await captureHeadless( app, { ...linear, samples: spp, firstSample: spp } ),
+				await captureHeadless( app, { ...linear, samples: spp } ),
+			];
+			const merged = mergeRenders( parts );
+			const m = compareImages( merged, whole );
+			const half = compareImages( parts[ 1 ], whole );
+			const steps = compareImages( stepped, whole );
+			const pass = steps.mse === 0 && merged.samples === 2 * spp && merged.firstSample === 0 && m.rmse <= 1e-4 && m.rmse <= half.rmse / 50;
+			if ( ! pass ) failed ++;
+			console.log(
+				`  ${pass ? GREEN + 'pass' : RED + 'FAIL'}${RESET} ${id} split ${spp} + ${spp}${DIM}  merged vs whole rmse ${m.rmse.toExponential( 2 )} ` +
+				`(a half: ${half.rmse.toExponential( 2 )}), firstSample ${merged.firstSample}, with steps ${steps.mse === 0 ? 'identical' : `rmse ${steps.rmse.toExponential( 2 )}`}${RESET}`
+			);
+
+		}
+
+	} catch ( error ) {
+
+		failed ++;
+		console.log( `  ${RED}FAIL${RESET} split render  ${error.message}` );
+
+	} finally {
+
+		app.settings.set( 'fireflyThreshold', threshold, { silent: true, reset: false } );
+
+	}
+
+}
+
+if ( ! only || only.includes( 'split' ) ) await splitRender();
+
+// sceneRequest: a model whose file asks for its size, samples and bounces renders as asked; the host's settings still win.
+async function sceneRequest() {
+
+	const { captureHeadless } = await import( 'rayzee' );
+	const fs = await import( 'node:fs/promises' );
+	const model = path.join( here, 'fixtures', 'scene-request.gltf' );
+	let asked = null;
+
+	try {
+
+		asked = await openHeadless( { width: 64, height: 64, strict: false, deterministic: true, hostMemoryGB: os.totalmem() / 2 ** 30 } );
+		await asked.loadFile( new File( [ await fs.readFile( model ) ], 'scene-request.gltf' ) );
+		const shot = await captureHeadless( asked, { sceneRequest: true, colorSpace: 'linear' } );
+		const source = asked.settings.getEffective().maxBounces?.source;
+		const got = `${shot.width}×${shot.height}, ${shot.samples} samples, ${asked.settings.get( 'maxBounces' )} bounces from ${source}`;
+		const pass = got === '160×120, 4 samples, 2 bounces from scene-metadata';
+		if ( ! pass ) failed ++;
+		console.log( `  ${pass ? GREEN + 'pass' : RED + 'FAIL'}${RESET} scene request${DIM}  ${got}${RESET}` );
+
+	} catch ( error ) {
+
+		failed ++;
+		console.log( `  ${RED}FAIL${RESET} scene request  ${error.message}` );
+
+	} finally {
+
+		asked?.dispose();
+
+	}
+
+}
+
+if ( ! only || only.includes( 'scene-request' ) ) await sceneRequest();
+
 // Compressed glTF: three's own Draco and KTX2 loaders start their workers themselves, which works in Node only because
 // the engine lends them NodeWorker for the parse (withHostWorker). Each fixture (bench/tools/make-compressed-fixtures.mjs)
 // renders against its uncompressed twin, so a decoder that runs but decodes wrongly fails too. The decoders are three's

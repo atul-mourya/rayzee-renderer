@@ -190,6 +190,9 @@ import { acquireSharedStorage } from 'rayzee/addons/storage';
 // Headless rendering (see Deterministic & Headless Rendering)
 import { renderHeadless, openHeadless, captureHeadless } from 'rayzee';
 
+// Merging a render split by sample range, and pbrt's image error metrics (also in rayzee/core)
+import { mergeRenders, compareImages } from 'rayzee';
+
 // File writers behind exportImage(), for pixels a host already has (see Saving a file)
 import {
   IMAGE_FORMATS, encodePNG, encodeEXR, encodeHDR, encodeWithCanvas, encodeGainMapJPEG,

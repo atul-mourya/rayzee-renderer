@@ -111,6 +111,7 @@ function makeApp( { width = 2, height = 1, pixel = [ 0.5, 0.25, 0.125, 0.5 ], tr
 			color: { view: { view: 'AgX', look: 'Punchy' } },
 			settings: { exposure: { value: 1.5, source: 'host' } },
 			display: { exposure: 1 },
+			camera: { position: [ 1, 2, 3 ], fov: 50 },
 		} ),
 	} );
 
@@ -419,6 +420,8 @@ describe( 'exportImage', () => {
 		expect( text.Software ).toBe( `Rayzee ${VERSION}` );
 		expect( text.Comment ).toBe( '64 samples, 2×1, AgX, Punchy' );
 		expect( JSON.parse( text.rayzee ).settings ).toEqual( { exposure: 1.5 } );
+		// pbrt's EXR carries the camera (worldToCamera); a compositor lining a layer up needs it.
+		expect( JSON.parse( text.rayzee ).camera ).toEqual( { position: [ 1, 2, 3 ], fov: 50 } );
 
 	} );
 

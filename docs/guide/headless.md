@@ -93,11 +93,79 @@ here, or `engine.settings` before loading the model.
 
 **Provenance.** `engine.getProvenance()` — also `frame.provenance` from `captureHeadless` — is plain
 JSON naming what produced the image: engine and three.js versions, the adapter, every live setting with its source, the colour pipeline, the render size and
-samples, whether it ran headless, strict, deterministic or lockstepped, and the denoisers (`denoise.live`, and
-`denoise.final`: the OIDN tier, weights file, precision and tile). `mode.lockstep` says
-whether the current image was traced in lockstep, so it stays true after `renderUntilComplete` turns
-lockstep back off. Store it beside each render and "what made this?" has an answer without rendering
+samples, whether it ran headless, strict, deterministic or lockstepped, the denoisers (`denoise.live`, and
+`denoise.final`: the OIDN tier, weights file, precision and tile), and the camera as it was rendered (`camera`:
+`position`, `worldToCamera`, `projection` — three.js's column-major matrices, looking down −z, a mirrored camera's
+mirror kept — `fov`, `aspect`, `near`, `far`, `orthographic`; pbrt writes the same into its EXR as `worldToCamera`).
+Saved files carry it too. `mode.lockstep` says whether the current image was traced in lockstep, so it stays true
+after `renderUntilComplete` turns lockstep back off. Store it beside each render and "what made this?" has an answer without rendering
 again.
+
+### Rendering what the file asks, splitting a render, partial images, error curves
+
+Four things pbrt's command line does, for a batch host:
+
+```js
+import { captureHeadless, mergeRenders, compareImages } from 'rayzee';   // the last two are in rayzee/core too
+
+// The model's file decides, as `pbrt scene.pbrt` does: its size (or aspect), samples, bounces, light transport,
+// exposure, white balance, sample clamp, pixel filter and panorama. Your `samples` and `settings` still win.
+const shot = await renderHeadless({ model: 'scene.pbrt.zip', sceneRequest: true });
+
+// One view on four GPUs: each renders its own 64 samples of the sequence (pbrt's --debugstart first,count).
+const part = await captureHeadless(app, { samples: 64, firstSample: 64 * gpuIndex, colorSpace: 'linear' });
+// …gather the four parts, then, anywhere:
+const image = mergeRenders(parts);           // the 256-sample render: { data, width, height, samples: 256, firstSample: 0 }
+
+// The raw image on the way (pbrt's --write-partial-images), and its error against a reference
+// (pbrt's --mse-reference-image / --mse-reference-out):
+const frame = await captureHeadless(app, {
+  samples: 1024,
+  onStep: (shown, { samples }) => savePNG('partial.png', shown),     // yours; awaited before rendering on
+  reference: { data, width, height },        // linear RGBA floats at the render's size
+});
+frame.errors;   // [{ samples: 1, mse, rmse, mae, mrse, relativeBias, … }, { samples: 2, … }, … { samples: 1024, … }]
+frame.timings;  // { render, steps, denoise, readback } in ms
+// pbrt's --stats: { scene, gpuMemory, hostMemory, convergence, kernels } — kernels the last frame's GPU ms per kernel
+const { stats } = await captureHeadless(app, { samples: 64, stats: true });
+```
+
+- **`sceneRequest: true`** (on `renderHeadless` or `captureHeadless`) applies `sceneMetadata.render` at capture, so a
+  model the host loaded itself (`loadFile`, `loadObject3D`) renders as asked too: the settings with source
+  `'scene-metadata'` in provenance, then the host's `settings` over them, the canvas resized to the size asked for
+  (else reshaped to the aspect asked for, on the longer side), and `samples` the file's when the host gives none.
+  pbrt's `maxdepth` is applied as `maxBounces`, as the app reads it. Not the app's choice: the app shows a file's
+  bounces and samples without applying them (its counts assume no denoiser and no early stop).
+- **`firstSample`** (also `renderFrames(n, { firstSample })`) renders samples `firstSample … firstSample + n − 1` of the
+  sequence instead of `0 … n − 1` (up to 2³¹), so renders of disjoint ranges are parts of one render. It needs
+  deterministic mode (`openHeadless`'s default), where each reset rewinds the sequence there: lockstep alone leaves
+  interaction mode (frames that draw samples without counting) and the pixel freeze (pixels with fewer samples) on.
+  It holds for the render that asks for it: any reset after it — `app.reset()`, a load, a mode switch — starts at 0
+  again. `frame.firstSample` and
+  `provenance.render.firstSample` say where an image's samples start (null while the sequence runs free).
+  `renderUntilComplete` always starts at 0: an adaptive render converges on its own samples.
+- **`mergeRenders(parts)`** weights each part by its `samples` and refuses parts whose ranges overlap (two renders of
+  the same samples are the noise of one), that are not light (`colorSpace: 'linear'`) or that are a denoised picture
+  (`source` other than `'accumulation'`). The parts merge into the
+  render of all their samples to float rounding with the firefly clamp off (`fireflyThreshold: 1e9`); with it on
+  (the default), each part clamps as its own young render does, a little more than the whole would. Other things that
+  start over with each part: the light visibility learned where a scene has more kinds of light than `shadowRays`
+  traces (three under `'two'`, two under `'one'`), and under `'bidirectional'` and `'vcm'` the light guide and vertex
+  merging's shrinking radius (a 4-way VCM split carries the merge bias of a quarter-length render). Exact for the path
+  integrator.
+- **`steps`** sets where the render stops on the way: a list of sample counts, or N for every N samples. With
+  `onStep` or `reference` and no `steps`, pbrt's partial-image cadence: 1, 2, 4 … 64, then every 64 (with a reference
+  pbrt measures every sample; `steps: 1` does that). Stopping does not change the
+  image. `onStep` gets the raw accumulation in `colorSpace`, never the denoised picture.
+- **`reference`** measures the accumulation at each step and at the end, in linear light. To measure a denoised
+  frame, capture it with `colorSpace: 'linear'` and call `compareImages(frame, reference)`.
+- **`compareImages(image, reference, { crop, errorImage })`** gives the numbers pbrt's `imgtool diff` prints, by its
+  definitions: `mse`, `rmse`, `mae`, `mrse` (squared error over (reference + 0.01)²), means over red, green and blue
+  of every pixel; `relativeBias` (mean ÷ reference mean − 1: light gained or lost, which the means of errors do not
+  show); `nonFinite`, values counted as no error. Floats compare as they are, 8- and 16-bit data as their stored
+  value ÷ 255 or ÷ 65,535 (pbrt decodes an sRGB PNG to linear first: decode yours to match its numbers; a half-float
+  buffer in a `Uint16Array` must be converted), and a float image against an integer one is refused. `errorImage: true`
+  adds each pixel's squared error.
 
 **Pinning a look.** A change to what a render looks like when a host sets nothing — a default
 setting, a mode preset, light units — can ship in any release, and its release notes say how renders

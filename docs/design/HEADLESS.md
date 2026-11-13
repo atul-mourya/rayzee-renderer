@@ -93,7 +93,9 @@ Public renderer methods for offline rendering and reproducible output — on `Ra
   as moved whenever the frame before traced another view, and skipping it there made the first render after a load
   differ (glass-transmission, one pixel).
 - **`app.getProvenance()`** — plain JSON of what produced the image (versions, adapter, `settings.getEffective()`, colour, render size/samples, headless/strict/deterministic/
-  lockstep). `captureHeadless` returns it as `provenance`. `mode.lockstep` is `stage.accumulationLockstep` —
+  lockstep, `render.firstSample`, `camera`). `camera` reads the stage's own copies of what it traced (`cameraWorldMatrix`,
+  `cameraViewMatrix`: it copies only past `_matricesApproxEqual`'s tolerance), else the camera's, never recomputing the pose: a camera moved since
+  the render is not what made the image. `exportDetails` puts it in the file's `rayzee` attribute. `captureHeadless` returns it as `provenance`. `mode.lockstep` is `stage.accumulationLockstep` —
   whether the current image was traced in lockstep from a lockstep reset, not the live setting, which
   `renderUntilComplete` restores on return. A checkpoint restore reports false (the curve is not saved).
 - **`await app.runFinalDenoise()`** — one OIDN pass at the final tier, awaited, without the render
@@ -128,9 +130,31 @@ Public renderer methods for offline rendering and reproducible output — on `Ra
 `app.stages.pathTracer.blueNoiseReady` is deprecated and always resolved: the STBN atlases were
 never read by a live code path (the default sampler is Sobol), so the load was removed.
 
+- **`renderFrames( n, { firstSample } )`** — the sampler's index is `seedFrame`, `_seedTick ++` once a traced frame
+  (Generate and Shade read it; FinalWrite and the firefly clamp read the accumulation frame). A reset rewinds the tick
+  only in deterministic mode or lockstep, to `stage._firstSample` (default 0). `renderFrames` sets it for the resets it
+  makes and puts it back to 0 when it returns or throws, so no later reset (`app.reset()`, a load, a mode switch, a
+  video frame) inherits it; `firstSample` needs deterministic mode, as lockstep alone leaves interaction mode (frames
+  that advance the tick without counting) and the pixel freeze on. Below 2³¹: Halton reads the index as a signed int. The stage records where the
+  image starts at the reset (`accumulationFirstSample`, null when nothing rewound), provenance reports it as
+  `render.firstSample`, and a render checkpoint keeps it. Merging parts is exact only for what reads `seedFrame`: the
+  firefly clamp relaxes with √( accumulation frame + 1 ) (`calculateFireflyThreshold`), learned light visibility is
+  cleared at accumulation frame 0, and the bidirectional integrator's light guide (cleared at frame 0, rebuilt at powers
+  of two) and VCM's radius (shrinking with `frameCount + 1`) start over — each part does those afresh. `bench:node -- --only split` holds a 32 + 32 split to the 64-sample render with the clamp off.
+
 `rayzee/src/viewer/Headless.js` wraps the above as the supported entry point — `renderHeadless()` for one
 frame, `openHeadless()` to keep a live app across several, `captureHeadless()` to accumulate and read
-back (`denoise: true` enables OIDN before accumulating, runs `runFinalDenoise()`, reads `'display'`).
+back (`denoise: true` enables OIDN before accumulating, runs `runFinalDenoise()`, reads `'display'`). `sceneRequest`
+maps `sceneMetadata.render` through `requestedRender()` (`loaders/SceneMetadata.js`: the settings the importers write by
+the engine's names, the samples, the size or the aspect on the host's longer side) at capture, not at the load, so a
+model the host loaded itself is covered; `bench:node -- --only scene-request` renders `fixtures/scene-request.gltf`
+(160×120, 4 samples, 2 bounces asked) from a 64² app.
+With `steps` (or `onStep` / `reference`, which default to pbrt's 1, 2, 4 … 64, then every 64) it renders the one render
+as several `renderFrames( k, { reset: false } )` calls and reads the accumulation between them; a step's linear read
+serves the error and a linear `onStep` alike. `compareImages` and `mergeRenders` are core (`output/ImageMath.js`,
+exported from `rayzee` and `rayzee/core`): the first follows pbrt's `Image::MSE` / `MAE` / `MRSE` (util/image.cpp), sums
+over RGB divided by every pixel, a non-finite value skipped; the second sums parts weighted by samples into one
+Float32Array.
 Defaults are the batch renderer's (`strict`, `deterministic`); its `settings` are applied before the load and again
 after it, since some are read while a model loads (`areaLightIntensityScale`). Under `strict`,
 the renderer also defaults storage off unless the host set it (`isAssetConfigured( 'storage' )`):

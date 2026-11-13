@@ -981,6 +981,7 @@ export class PathTracer extends PathTracerStage {
 		const state = {
 			frameCount: this.frameCount,
 			seedTick: this._seedTick,
+			firstSample: this.accumulationFirstSample,
 			auxSamples: aux ? this._auxSamples : 0,
 			convergedFraction: this._convergedFraction,
 			convergedGeometryFraction: this._convergedGeometryFraction,
@@ -1045,6 +1046,7 @@ export class PathTracer extends PathTracerStage {
 		this.frameCount = state.frameCount;
 		this.frame.value = state.frameCount;
 		this._seedTick = state.seedTick;
+		this._accumulationFirstSample = state.firstSample ?? null;
 		this.hasPreviousAccumulated.value = state.frameCount > 0 ? 1 : 0;
 		this._auxSamples = checkpoint.normalDepth ? state.auxSamples : 0;
 		this._auxSeedPending = this._auxGBufferEnabled && ! checkpoint.normalDepth;
@@ -1107,6 +1109,13 @@ export class PathTracer extends PathTracerStage {
 	get accumulationLockstep() {
 
 		return this.frameCount > 0 ? this._accumulationLockstep : this._lockstep;
+
+	}
+
+	/** The sequence index the current image's samples start at; null while the seed axis runs free. */
+	get accumulationFirstSample() {
+
+		return this._accumulationFirstSample ?? null;
 
 	}
 

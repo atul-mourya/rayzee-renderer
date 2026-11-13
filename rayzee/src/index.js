@@ -17,6 +17,7 @@ export { EngineEvents, LEGACY_EVENT_NAMES } from './EngineEvents.js';
 
 // Headless rendering — the supported entry point for a caller with no screen
 export { renderHeadless, openHeadless, captureHeadless } from './viewer/Headless.js';
+export { compareImages, mergeRenders } from './output/ImageMath.js';
 
 // Degradation contract — what the engine survived instead of failing on
 export { ISSUE_CODES, ISSUE_SEVERITY, IssueLog, EngineIssueError } from './EngineIssues.js';

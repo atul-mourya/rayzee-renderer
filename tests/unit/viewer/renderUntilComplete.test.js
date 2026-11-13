@@ -158,6 +158,24 @@ describe( 'renderUntilComplete', () => {
 
 	} );
 
+	// An adaptive render converges on its own samples, so a split render's first sample must not carry into it.
+	it( 'starts from sample 0 whatever an earlier render started from', async () => {
+
+		const { app, stage } = makeApp();
+		stage._firstSample = 64;
+		let atReset;
+		app.reset = ( ( reset ) => function () {
+
+			atReset = stage._firstSample;
+			reset.call( this );
+
+		} )( app.reset );
+
+		await app.renderUntilComplete();
+		expect( atReset ).toBe( 0 );
+
+	} );
+
 	it( 'waits on a readback that is due instead of rendering past it', async () => {
 
 		const { app, rendered, release } = makeApp( { ceiling: 8, waitAtFrame: 4 } );

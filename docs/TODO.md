@@ -10,6 +10,12 @@
     `night/bvh-package`), not committed
 - claude design: redesign all ui component used in the application to create a custom design system
 - compare api of rayzee headless and pbrt. assess what can we learn and make it better
+  → assessed 2026-11-13: built `firstSample` (renderFrames, captureHeadless, provenance),
+  `captureHeadless` `steps` / `onStep` / `reference` → `errors`, `timings`, `compareImages` / `mergeRenders`, and the
+  camera in provenance and saved files, and `sceneRequest` (render what the file asks: size, spp, bounces,
+  integrator, exposure, …); `bench:node -- --only split,scene-request` pass on this Mac. Next: a crop
+  window with the pixel offset in the sampler's seed (on `feat/tiled-output`), m44f `worldToCamera` / `worldToNDC` EXR
+  attributes, a variance layer in the EXR. Assessment: ~/RayzeeScratch/night/2026-11-13/headless-api/ASSESSMENT.md
   → found on the way (2026-11-13 night): a final render traced its first sample with one
     bounce and kept it in the average (1/N of the indirect light missing); removed, production now traces exactly as
     interactive (`bench:node -- --only production`).

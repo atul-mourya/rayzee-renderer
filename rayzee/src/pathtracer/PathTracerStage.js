@@ -234,6 +234,8 @@ export class PathTracerStage extends RenderStage {
 		// Pinned back to the accumulation index in deterministic mode.
 		this._seedTick = 0;
 		this._pinSeedToFrame = false;
+		// Where a pinned seed axis rewinds to: renderFrames' firstSample.
+		this._firstSample = 0;
 		// Monotonic, unlike the seed axis; let observers tell a traced frame and a reset apart.
 		this.tracedFrames = 0;
 		this.resetCount = 0;
@@ -614,7 +616,9 @@ export class PathTracerStage extends RenderStage {
 		// the denoisers' history. A real mode change is still caught by the renderMode comparison.
 
 		// Only deterministic mode and lockstep readbacks rewind the seed axis; see _pinSeedToFrame.
-		if ( this._pinSeedToFrame || this._lockstep ) this._seedTick = 0;
+		const rewinds = this._pinSeedToFrame || this._lockstep;
+		if ( rewinds ) this._seedTick = this._firstSample;
+		this._accumulationFirstSample = rewinds ? this._firstSample : null;
 		this._accumulationLockstep = !! this._lockstep;
 
 	}

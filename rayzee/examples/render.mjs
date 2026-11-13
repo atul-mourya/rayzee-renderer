@@ -12,8 +12,9 @@
 //                             (default), and a name the scene lacks lists the ones it has
 //   --samples <n>             samples per pixel (default: 128)
 //   --no-denoise              save the raw render instead of running the OIDN denoiser on it
+//   --details                 also save render.json: what made the image (provenance) and how long each part took
 
-import { readFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
@@ -32,6 +33,7 @@ const { values: args } = parseArgs( {
 		camera: { type: 'string' },
 		samples: { type: 'string', default: '128' },
 		denoise: { type: 'boolean', default: true },
+		details: { type: 'boolean', default: false },
 	},
 	allowNegative: true,
 } );
@@ -142,6 +144,12 @@ try {
 		.removeAlpha().png( { adaptiveFiltering: true } ).toFile( 'render.png' );
 	const camera = app.cameraManager.getNames()[ app.cameraManager.currentCameraIndex ];
 	console.log( `saved render.png (${frame.width}×${frame.height}, camera "${camera}", ${samples} samples, ${frame.source === 'accumulation' ? 'not denoised' : `denoised by ${frame.source}`})` );
+	if ( args.details ) {
+
+		await writeFile( 'render.json', JSON.stringify( { timings: frame.timings, provenance: frame.provenance }, null, '\t' ) );
+		console.log( 'saved render.json' );
+
+	}
 
 } finally {
 

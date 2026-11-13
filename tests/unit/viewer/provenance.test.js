@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { REVISION } from 'three';
+import { REVISION, PerspectiveCamera, Matrix4, Vector3 } from 'three';
+import { viewMatrixOf } from '@/core/scene/ViewCamera.js';
 import { PathTracerApp } from '@/core/viewer/PathTracerApp.js';
 import { VERSION } from '@/core/Version.js';
 
@@ -76,6 +77,56 @@ describe( 'getProvenance', () => {
 		// A picture over the render (an AI upscale or neural pass): its light is not that picture.
 		app._displayCanvas = () => ( { width: 820, height: 1024 } );
 		expect( app.getProvenance().display.overlay ).toEqual( { width: 820, height: 1024 } );
+
+	} );
+
+	// A part of a split render: which samples it holds is what mergeRenders checks.
+	it( 'says where the image\'s samples start, or null while the sequence runs free', () => {
+
+		const app = new PathTracerApp( null );
+		const stage = { width: 4, height: 2, frameCount: 32, isComplete: false, accumulationFirstSample: 64 };
+		app.stages.pathTracer = stage;
+		expect( app.getProvenance().render ).toMatchObject( { samples: 32, firstSample: 64 } );
+
+		stage.accumulationFirstSample = null;
+		expect( app.getProvenance().render.firstSample ).toBeNull();
+
+	} );
+
+	it( 'carries the camera the image was rendered from, as three.js keeps it', () => {
+
+		const app = new PathTracerApp( null );
+		expect( app.getProvenance().camera ).toBeNull();
+
+		const camera = new PerspectiveCamera( 50, 2, 0.1, 100 );
+		camera.position.set( 1, 2, 3 );
+		camera.lookAt( 0, 0, 0 );
+		camera.updateMatrixWorld();
+		app.camera = camera;
+		const seen = app.getProvenance().camera;
+
+		expect( seen ).toMatchObject( { position: [ 1, 2, 3 ], fov: 50, aspect: 2, near: 0.1, far: 100, orthographic: false } );
+		expect( seen.projection ).toEqual( camera.projectionMatrix.toArray() );
+		// A world point in front of the camera lands on its −z axis.
+		const ahead = new Vector3( 0, 0, 0 ).applyMatrix4( new Matrix4().fromArray( seen.worldToCamera ) );
+		expect( [ ahead.x, ahead.y, ahead.z + Math.sqrt( 14 ) ].map( ( v ) => Math.abs( v ) < 1e-9 ) ).toEqual( [ true, true, true ] );
+
+		// The pose rendered, not one set since without a render.
+		camera.position.set( 9, 9, 9 );
+		expect( app.getProvenance().camera.position ).toEqual( [ 1, 2, 3 ] );
+
+	} );
+
+	it( 'keeps a mirrored camera\'s mirror, as the path tracer traces it', () => {
+
+		const app = new PathTracerApp( null );
+		const camera = new PerspectiveCamera();
+		camera.scale.x = - 1;
+		camera.position.set( 0, 1, 5 );
+		camera.updateMatrixWorld();
+		app.camera = camera;
+
+		expect( app.getProvenance().camera.worldToCamera ).toEqual( viewMatrixOf( camera, new Matrix4() ).toArray() );
 
 	} );
 
