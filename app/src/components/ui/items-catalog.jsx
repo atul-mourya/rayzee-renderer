@@ -429,7 +429,7 @@ export const ItemsCatalog = ( {
 	if ( error ) {
 
 		return (
-			<div className="flex items-center justify-center h-64 text-danger-500" role="alert">
+			<div className="flex items-center justify-center h-64 text-error" role="alert">
 				<p>{error}</p>
 			</div>
 		);
@@ -449,7 +449,8 @@ export const ItemsCatalog = ( {
 								ref={searchInputRef}
 								type="text"
 								placeholder="item, tag, category"
-								className="h-5 pl-5 pr-6 outline-hidden text-xs w-full rounded-full bg-primary/20"
+								variant="filled"
+								className="h-5 pl-5 pr-6 outline-hidden text-xs w-full rounded-full"
 								value={searchInput}
 								onChange={handleSearchInputChange}
 								onFocus={handleInputFocus}
@@ -537,7 +538,7 @@ export const ItemsCatalog = ( {
 										variant="outline"
 										className="text-xs hover:bg-accent bg-primary/20"
 									>
-										<Filter size={11}/>
+										<Filter size={12}/>
 									</Button>
 								</PopoverTrigger>
 								<PopoverContent className="w-[200px] p-0" align="end">
@@ -587,7 +588,7 @@ export const ItemsCatalog = ( {
 					<div className="flex items-center space-x-2 mb-2">
 						<p className="text-xs text-muted-foreground">Active filters:</p>
 						{filterType && (
-							<Badge variant="secondary" className="text-xs">
+							<Badge variant="secondary">
 								{filterType}: {filterValue || 'All'}
 							</Badge>
 						)}
@@ -663,7 +664,7 @@ export const ItemsCatalog = ( {
 																}
 
 															}}
-															className="w-full h-full object-cover transition-transform group-hover/thumb:scale-105 rounded-lg"
+															className="w-full h-full object-cover group-hover/thumb:scale-105 rounded-lg"
 															loading="lazy"
 														/>
 														{/* Hover actions (e.g. Replace / Add) over a scrim */}
@@ -675,11 +676,12 @@ export const ItemsCatalog = ( {
 																	actions.map( ( action ) => (
 																		<Button
 																			key={action.key}
-																			size="sm"
+																			size="xs"
+																			rounded
 																			variant={action.variant || 'secondary'}
 																			disabled={!! busyKey || action.disabled?.( item )}
 																			onClick={( e ) => handleAction( action, item, e )}
-																			className="h-6 min-w-[76px] gap-1 px-3 text-2xs rounded-full"
+																			className="min-w-[76px] gap-1"
 																		>
 																			{action.icon}
 																			{action.label}
@@ -732,7 +734,7 @@ export const ItemsCatalog = ( {
 															{matchingTags.length > 0 && (
 																<div className="flex flex-wrap gap-1">
 																	{matchingTags.map( tag => (
-																		<Badge key={tag} variant="outline" className="text-xs px-1 py-0">
+																		<Badge key={tag} variant="outline" size="sm">
 																			{highlightSearchTerm( tag, debouncedSearchTerm )}
 																		</Badge>
 																	) )}
@@ -741,7 +743,7 @@ export const ItemsCatalog = ( {
 															{matchingCategories.length > 0 && (
 																<div className="flex flex-wrap gap-1">
 																	{matchingCategories.map( category => (
-																		<Badge key={category} variant="secondary" className="text-xs px-1 py-0">
+																		<Badge key={category} variant="secondary" size="sm">
 																			{highlightSearchTerm( category, debouncedSearchTerm )}
 																		</Badge>
 																	) )}

@@ -362,7 +362,7 @@ const ColorManagementSection = () => {
 			/>
 
 			{error && (
-				<div className="px-1 text-xxs leading-4 text-danger-400 flex items-start gap-1">
+				<div className="px-1 text-xxs leading-4 text-error flex items-start gap-1">
 					<X size={10} className="mt-0.5 shrink-0" /> {error}
 				</div>
 			)}
@@ -472,7 +472,7 @@ const ColorManagementSection = () => {
 				<span>Advanced</span>
 				<span className="flex items-center gap-1 min-w-0">
 					<span className="truncate text-xxs">{systemSummary}</span>
-					<ChevronDown size={12} className={cn( 'shrink-0 transition-transform duration-200', advancedOpen && 'rotate-180' )} />
+					<ChevronDown size={12} className={cn( 'shrink-0', advancedOpen && 'rotate-180' )} />
 				</span>
 			</button>
 

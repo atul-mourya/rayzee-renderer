@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Loader2, AlertTriangle, X } from "lucide-react";
 import { useStore, usePathTracerStore, useAnimationStore } from '@/store';
 import { Progress } from "@/components/ui/progress";
+import { Button } from "@/components/ui/button";
 import { getApp } from '@/lib/appProxy';
 
 // The engine's statuses for the long phases (SceneProcessor: "Building BVH...", "Processing material textures...").
@@ -131,7 +132,7 @@ const LoadingOverlay = ( {
 			<div className="relative flex flex-col items-center space-y-6 p-6 rounded-lg bg-card shadow-lg">
 				<div className="relative">
 					{failed ? (
-						<AlertTriangle className="relative h-12 w-12 text-destructive" />
+						<AlertTriangle className="relative h-12 w-12 text-error" />
 					) : (
 						<>
 							<div className="absolute -inset-1 bg-linear-to-r from-primary to-primary-foreground opacity-75 blur-lg" />
@@ -141,7 +142,7 @@ const LoadingOverlay = ( {
 				</div>
 
 				<div className="flex flex-col items-center gap-4">
-					<p className={`text-xl font-semibold ${failed ? 'text-destructive' : 'text-foreground animate-pulse'}`}>
+					<p className={`text-xl font-semibold ${failed ? 'text-error' : 'text-foreground animate-pulse'}`}>
 						{failed ? ( loading.failedTitle || "Couldn't load" ) : ( loading.title || 'Loading' )}
 					</p>
 
@@ -152,13 +153,9 @@ const LoadingOverlay = ( {
 					)}
 
 					{failed && (
-						<button
-							type="button"
-							onClick={() => useStore.getState().setLoading( { isLoading: false } )}
-							className="text-xs text-muted-foreground transition-colors hover:text-foreground underline-offset-4 hover:underline"
-						>
+						<Button variant="quiet" size="text" onClick={() => useStore.getState().setLoading( { isLoading: false } )}>
 							Dismiss
-						</button>
+						</Button>
 					)}
 
 					{! failed && showProgress && loading.progress > 0 && (
@@ -181,14 +178,9 @@ const LoadingOverlay = ( {
 					)}
 
 					{! failed && loading.canCancel && (
-						<button
-							type="button"
-							onClick={handleCancel}
-							disabled={cancelling}
-							className="text-xs text-muted-foreground transition-colors hover:text-foreground underline-offset-4 hover:underline disabled:opacity-60 disabled:no-underline"
-						>
+						<Button variant="quiet" size="text" onClick={handleCancel} disabled={cancelling}>
 							{cancelling ? 'Cancelling…' : 'Cancel'}
-						</button>
+						</Button>
 					)}
 				</div>
 			</div>
@@ -228,14 +220,9 @@ const StatusPill = ( { label, percent, onCancel } ) => (
 			<span className="rounded-full bg-primary/15 px-1.5 py-px text-xxs font-medium tabular-nums text-primary">{Math.round( percent )}%</span>
 		)}
 		{onCancel && (
-			<button
-				type="button"
-				onClick={onCancel}
-				title="Cancel"
-				className="pointer-events-auto -mr-1 rounded-full p-0.5 text-muted-foreground transition-colors hover:bg-destructive/20 hover:text-destructive"
-			>
+			<Button variant="quiet-destructive" size="icon-xs" className="pointer-events-auto -mr-1" onClick={onCancel} title="Cancel" aria-label="Cancel">
 				<X className="size-3" />
-			</button>
+			</Button>
 		)}
 	</div>
 );

@@ -218,7 +218,7 @@ const CatalogBrowser = ( { source, notice, variant, onVariantChange, actions, on
 						value={query}
 						onChange={( e ) => setQuery( e.target.value )}
 						placeholder={selectedCategory ? `Search in ${selectedCategory.name}…` : `Search ${source.NAME}…`}
-						className="h-7 pl-7 pr-7 text-xs rounded-full bg-primary/20"
+						variant="filled" className="h-7 pl-7 pr-7 text-xs rounded-full"
 						aria-label={selectedCategory ? 'Search within category' : `Search ${source.NAME}`}
 					/>
 					{query && (

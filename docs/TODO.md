@@ -11,6 +11,10 @@
 - claude design: redesign all ui component used in the application to create a custom design system
   → 2026-11-13: the app's own look on a design system (`feat/design-system`): tokens for every colour and size in
     `app/src/index.css`, the `?design` reference page, docs/design/DESIGN_SYSTEM.md, tests/unit/app/designTokens.test.js
+  → Audited and fixed the same day: hand-made buttons, chips and copies on the shared parts (one shape each), text at
+    WCAG AA in both themes (dark error red 1.7 → 6.0:1, light labels 3.3 → 5.4:1), every control named, the page
+    complete and loading no engine, PT Sans shipped. Left: `primary` as text on the hover grey reads 4.0:1 in dark and
+    `muted-foreground` there 4.3:1 in light (both shadcn's own); unchanged.
 - compare api of rayzee headless and pbrt. assess what can we learn and make it better
   → assessed 2026-11-13: built `firstSample` (renderFrames, captureHeadless, provenance),
   `captureHeadless` `steps` / `onStep` / `reference` → `errors`, `timings`, `compareImages` / `mergeRenders`, and the

@@ -111,20 +111,12 @@ const ArchiveElementDialog = () => {
 				</DialogHeader>
 
 				<div className="flex items-center justify-between text-xs text-muted-foreground px-1">
-					<button
-						type="button"
-						className="underline underline-offset-2 hover:text-foreground"
-						onClick={() => setPicked( new Set( elements.map( e => e.prefix ) ) )}
-					>
+					<Button variant="quiet" size="text" onClick={() => setPicked( new Set( elements.map( e => e.prefix ) ) )}>
 						Select all
-					</button>
-					<button
-						type="button"
-						className="underline underline-offset-2 hover:text-foreground"
-						onClick={() => setPicked( new Set() )}
-					>
+					</Button>
+					<Button variant="quiet" size="text" onClick={() => setPicked( new Set() )}>
 						Clear
-					</button>
+					</Button>
 				</div>
 
 				<ScrollArea className="h-80 pr-3">
@@ -148,7 +140,7 @@ const ArchiveElementDialog = () => {
 				</ScrollArea>
 
 				{risky && (
-					<div className="flex items-start gap-2 text-xs text-warning-500 px-1">
+					<div className="flex items-start gap-2 text-xs text-warning px-1">
 						<AlertTriangle className="h-4 w-4 shrink-0 mt-px" />
 						<span>
 							This much at once may run the tab out of memory. It is most likely to fit

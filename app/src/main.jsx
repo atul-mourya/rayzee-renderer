@@ -1,17 +1,21 @@
-import { StrictMode, Suspense, lazy } from 'react';
+import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
-import App from './App.jsx';
 import './index.css';
-import { logVersion } from './lib/version';
 import { crossOriginIsolate } from './lib/crossOriginIsolation';
 
-logVersion();
+// `?design` shows the design system's reference page instead of the app; neither downloads the other, and the page
+// skips the engine (the version log imports it). Both fetch while isolation settles.
+const page = new URLSearchParams( location.search ).has( 'design' )
+	? import( './components/DesignSystem.jsx' )
+	: Promise.all( [ import( './App.jsx' ), import( './lib/version' ) ] ).then( ( [ app, version ] ) => {
 
-// `?design` shows the design system's reference page instead of the app (no renderer starts).
-const DesignSystem = new URLSearchParams( location.search ).has( 'design' ) ? lazy( () => import( './components/DesignSystem.jsx' ) ) : null;
+		version.logVersion();
+		return app;
 
-crossOriginIsolate().then( () => createRoot( document.getElementById( 'root' ) ).render(
+	} );
+
+Promise.all( [ page, crossOriginIsolate() ] ).then( ( [ { default: Page } ] ) => createRoot( document.getElementById( 'root' ) ).render(
 	<StrictMode>
-		{DesignSystem ? <Suspense fallback={null}><DesignSystem /></Suspense> : <App />}
+		<Page />
 	</StrictMode>,
 ) );

@@ -217,7 +217,7 @@ const AnimationTab = () => {
 								<div className="flex items-center gap-1 ml-auto">
 									{keyActions.map( ( [ Icon, action, title ] ) => (
 										<Button key={title} variant="outline" size="icon-xs" onClick={() => action( key.id )} disabled={busy} title={title}>
-											<Icon size={11} />
+											<Icon size={12} />
 										</Button>
 									) )}
 								</div>

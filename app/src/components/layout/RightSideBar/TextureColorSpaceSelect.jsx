@@ -83,7 +83,7 @@ const TextureColorSpaceSelect = ( { texture } ) => {
 					</Select>
 				</div>
 			</Row>
-			{error && <div className="px-1 text-xxs leading-4 text-danger-400">{error}</div>}
+			{error && <div className="px-1 text-xxs leading-4 text-error">{error}</div>}
 		</>
 	);
 

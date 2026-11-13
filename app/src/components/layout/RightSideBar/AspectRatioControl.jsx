@@ -1,4 +1,5 @@
 import { RectangleHorizontal, RectangleVertical } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Row } from "@/components/ui/row";
 import { usePathTracerStore } from '@/store';
@@ -22,16 +23,16 @@ const AspectRatioControl = () => {
 			<span className="control-label truncate" title="The picture's shape. The small button beside it swaps wide and tall.">Aspect Ratio</span>
 			<div className="flex items-center gap-1">
 				{aspectRatioPreset !== '1:1' && (
-					<button
+					<Button
+						variant="quiet" size="icon-xs"
 						onClick={handleOrientationToggle}
-						className="p-1 rounded hover:bg-primary/20 transition-colors opacity-40 hover:opacity-100"
 						title={orientation === 'landscape' ? 'Switch to portrait' : 'Switch to landscape'}
 					>
 						{orientation === 'landscape'
 							? <RectangleHorizontal size={10} />
 							: <RectangleVertical size={10} />
 						}
-					</button>
+					</Button>
 				)}
 				<Select value={aspectRatioPreset} onValueChange={handleAspectPresetChange}>
 					<SelectTrigger size="sm" className="max-w-28">

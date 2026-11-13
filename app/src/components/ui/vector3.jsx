@@ -58,6 +58,7 @@ const Vector3Component = ( {
 					precision={precision}
 					dragSensitivity={dragSensitivity}
 					icon={XLabel}
+					aria-label={typeof props.label === "string" ? `${props.label} X` : "X"}
 				/>
 
 				{/* Y component */}
@@ -71,6 +72,7 @@ const Vector3Component = ( {
 					precision={precision}
 					dragSensitivity={dragSensitivity}
 					icon={YLabel}
+					aria-label={typeof props.label === "string" ? `${props.label} Y` : "Y"}
 				/>
 
 				{/* Z component */}
@@ -84,6 +86,7 @@ const Vector3Component = ( {
 					precision={precision}
 					dragSensitivity={dragSensitivity}
 					icon={ZLabel}
+					aria-label={typeof props.label === "string" ? `${props.label} Z` : "Z"}
 				/>
 			</div>
 		</>

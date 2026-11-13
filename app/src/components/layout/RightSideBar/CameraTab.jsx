@@ -183,10 +183,10 @@ const CameraTab = () => {
 						</Button>
 						<Button
 							variant="outline"
-							size="icon"
+							size="icon-xs"
 							onClick={() => handleRemoveCamera( selectedCameraIndex )}
 							disabled={! canRemoveCamera}
-							className="h-5 w-5 rounded-full shrink-0"
+							className="shrink-0"
 							title={canRemoveCamera ? "Remove this camera" : "Only user-added cameras can be removed"}
 						>
 							<Trash2 size={12} />
@@ -386,9 +386,8 @@ const CameraTab = () => {
 										{unitsPerMetre !== 1 && (
 											<Button
 												variant="outline"
-												size="icon"
+												size="icon-xs"
 												onClick={() => handleSubjectSizeChange( modelSize )}
-												className="h-5 w-5 rounded-full"
 												title="Back to the size in the file"
 											>
 												<RotateCcw size={10} />

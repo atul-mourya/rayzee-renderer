@@ -2,6 +2,8 @@ import { useRef, useEffect, useState, forwardRef, useMemo, useCallback } from 'r
 import { debounce } from '@/lib/utils';
 import { RotateCcw, Save, Eye } from "lucide-react";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
+import { Chip } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { TooltipProvider } from '@radix-ui/react-tooltip';
 import { useToast } from '@/hooks/use-toast';
 import { useStore, useAIStore } from '@/store';
@@ -656,18 +658,16 @@ const ResultsViewport = forwardRef( function ResultsViewport( props, ref ) {
 			onPointerDown={imageData ? handlePointerDown : undefined}
 		>
 			{imageData && ( isHovering || viewingOriginal ) && ! marking && (
-				<div className="absolute top-2 left-1/2 transform -translate-x-1/2 z-20">
-					<div className="px-2 py-1 bg-scrim/80 rounded-md text-xs text-on-scrim-300 flex items-center gap-1 shadow-md">
-						<Eye size={12} className="text-on-scrim-400" />
-						{viewingOriginal ? "Viewing Original" : "Press & Hold to See Original"}
-					</div>
-				</div>
+				<Chip className="absolute top-2 left-1/2 -translate-x-1/2 z-20">
+					<Eye size={12} className="text-on-scrim-400" />
+					{viewingOriginal ? "Viewing Original" : "Press & Hold to See Original"}
+				</Chip>
 			)}
 
 			{showingVersion && compare !== 'version' && (
 				<div className="absolute top-2 left-2 z-20 flex gap-1.5">
-					<span className="px-2 py-1 bg-scrim/60 rounded-md text-xs text-on-scrim-300">Render</span>
-					<span className="px-2 py-1 bg-ai-600 rounded-md text-xs text-on-scrim">v{version.n}</span>
+					<Chip>Render</Chip>
+					<Chip tone="ai">v{version.n}</Chip>
 				</div>
 			)}
 
@@ -680,13 +680,10 @@ const ResultsViewport = forwardRef( function ResultsViewport( props, ref ) {
 			{/* Save button only appears when changes have been made */}
 			{imageData && hasChanges && ! viewingOriginal && ! showingVersion && (
 				<div className="absolute top-2 right-20 z-20 flex space-x-2">
-					<button
-						onClick={saveEditedImage}
-						className="flex items-center justify-center bg-primary hover:bg-primary/90 text-primary-foreground px-3 py-1 rounded-md text-xs"
-					>
+					<Button size="xs" rounded onClick={saveEditedImage}>
 						<Save size={12} className="mr-1" />
 						Save
-					</button>
+					</Button>
 				</div>
 			)}
 
@@ -696,13 +693,13 @@ const ResultsViewport = forwardRef( function ResultsViewport( props, ref ) {
 					<TooltipProvider>
 						<Tooltip>
 							<TooltipTrigger asChild>
-								<button
+								<Button
+									variant="secondary" size="icon-sm" rounded
 									onClick={resetImageProcessing}
-									className="flex items-center justify-center bg-secondary hover:bg-secondary/90 text-foreground px-2 py-1 rounded-full text-xs h-8"
 									disabled={! imageData || viewingOriginal || ! hasChanges}
 								>
 									<RotateCcw size={12} className={`${( ! imageData || viewingOriginal || ! hasChanges ) ? 'text-foreground/30' : 'text-foreground/70'}`} />
-								</button>
+								</Button>
 							</TooltipTrigger>
 							<TooltipContent>
 								<p className="text-xs">Reset Processing</p>
@@ -714,11 +711,9 @@ const ResultsViewport = forwardRef( function ResultsViewport( props, ref ) {
 
 			{/* Render time display */}
 			{imageData && imageData.renderTime && ! viewingOriginal && (
-				<div className={`absolute ${hasChanges ? 'bottom-2 left-12' : 'bottom-2 left-2'} z-20`}>
-					<div className="px-2 py-1 bg-scrim/60 rounded-md text-xs text-on-scrim-300 flex items-center gap-1">
-						⏱ {formatRenderTime( imageData.renderTime )}
-					</div>
-				</div>
+				<Chip className={`absolute ${hasChanges ? 'bottom-2 left-12' : 'bottom-2 left-2'} z-20`}>
+					⏱ {formatRenderTime( imageData.renderTime )}
+				</Chip>
 			)}
 
 			{/* Viewport wrapper */}
@@ -761,7 +756,7 @@ const ResultsViewport = forwardRef( function ResultsViewport( props, ref ) {
 					{imageData && imageLoadState.error && (
 						<div className="absolute inset-0 flex items-center justify-center bg-scrim/80 text-on-scrim">
 							<div className="text-center">
-								<p className="text-sm text-danger-400 mb-2">Failed to load 4K image</p>
+								<p className="text-sm text-on-scrim-error mb-2">Failed to load 4K image</p>
 								<p className="text-xs text-on-scrim-400">The image may be corrupted or too large</p>
 							</div>
 						</div>

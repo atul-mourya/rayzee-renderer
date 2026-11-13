@@ -241,45 +241,45 @@ const MenuBar = ( { onOpenImportModal, onOpenStorage, onOpenRecent } ) => {
 				onChange={handleImportRenders}
 				style={{ display: 'none' }}
 			/>
-			<Menubar className="h-full border-none bg-none p-0 shadow-none">
+			<Menubar>
 				<MenubarMenu>
-					<MenubarTrigger className="text-muted-foreground text-sm font-medium hover:text-foreground">File</MenubarTrigger>
+					<MenubarTrigger>File</MenubarTrigger>
 					<MenubarContent>
-						<MenubarItem onSelect={handleOpenFile} className="flex items-center">Open</MenubarItem>
-						<MenubarItem onSelect={handleOpenFolder} className="flex items-center">Open Folder…</MenubarItem>
-						<MenubarItem onSelect={onOpenImportModal} className="flex items-center">Import from URL</MenubarItem>
-						<MenubarItem onSelect={onOpenRecent} className="flex items-center">Open Recent…</MenubarItem>
+						<MenubarItem onSelect={handleOpenFile}>Open</MenubarItem>
+						<MenubarItem onSelect={handleOpenFolder}>Open Folder…</MenubarItem>
+						<MenubarItem onSelect={onOpenImportModal}>Import from URL</MenubarItem>
+						<MenubarItem onSelect={onOpenRecent}>Open Recent…</MenubarItem>
 						<MenubarSeparator />
-						<MenubarItem onSelect={() => projectInputRef.current?.click()} className="flex items-center">Open Project…</MenubarItem>
-						<MenubarItem onSelect={handleSaveProject} className="flex items-center">Save Project…</MenubarItem>
+						<MenubarItem onSelect={() => projectInputRef.current?.click()}>Open Project…</MenubarItem>
+						<MenubarItem onSelect={handleSaveProject}>Save Project…</MenubarItem>
 						<MenubarSeparator />
-						<MenubarItem onSelect={() => useStore.getState().setExportRequest( { tab: 'picture', from: 'live' } )} className="flex items-center">Export Picture…</MenubarItem>
-						<MenubarItem onSelect={() => useStore.getState().setExportRequest( { tab: 'video', from: 'live' } )} className="flex items-center">Export Video…</MenubarItem>
+						<MenubarItem onSelect={() => useStore.getState().setExportRequest( { tab: 'picture', from: 'live' } )}>Export Picture…</MenubarItem>
+						<MenubarItem onSelect={() => useStore.getState().setExportRequest( { tab: 'video', from: 'live' } )}>Export Video…</MenubarItem>
 						<MenubarSeparator />
-						<MenubarItem onSelect={handleExportRenders} className="flex items-center">Export Renders…</MenubarItem>
-						<MenubarItem onSelect={() => rendersInputRef.current?.click()} className="flex items-center">Import Renders…</MenubarItem>
+						<MenubarItem onSelect={handleExportRenders}>Export Renders…</MenubarItem>
+						<MenubarItem onSelect={() => rendersInputRef.current?.click()}>Import Renders…</MenubarItem>
 						<MenubarSeparator />
-						<MenubarItem onSelect={onOpenStorage} className="flex items-center">Storage…</MenubarItem>
+						<MenubarItem onSelect={onOpenStorage}>Storage…</MenubarItem>
 					</MenubarContent>
 				</MenubarMenu>
 
 				<MenubarMenu>
-					<MenubarTrigger className="text-muted-foreground text-sm font-medium hover:text-foreground">Edit</MenubarTrigger>
+					<MenubarTrigger>Edit</MenubarTrigger>
 					<MenubarContent>
-						<MenubarItem disabled className="flex items-center">Undo</MenubarItem>
-						<MenubarItem disabled className="flex items-center">Redo</MenubarItem>
+						<MenubarItem disabled>Undo</MenubarItem>
+						<MenubarItem disabled>Redo</MenubarItem>
 						<MenubarSeparator />
-						<MenubarItem disabled className="flex items-center">Copy</MenubarItem>
-						<MenubarItem disabled className="flex items-center">Paste</MenubarItem>
+						<MenubarItem disabled>Copy</MenubarItem>
+						<MenubarItem disabled>Paste</MenubarItem>
 					</MenubarContent>
 				</MenubarMenu>
 
 				<MenubarMenu>
-					<MenubarTrigger className="text-muted-foreground text-sm font-medium hover:text-foreground">View</MenubarTrigger>
+					<MenubarTrigger>View</MenubarTrigger>
 					<MenubarContent>
-						<MenubarItem disabled className="flex items-center">Zoom In</MenubarItem>
-						<MenubarItem disabled className="flex items-center">Zoom Out</MenubarItem>
-						<MenubarItem disabled className="flex items-center">Reset View</MenubarItem>
+						<MenubarItem disabled>Zoom In</MenubarItem>
+						<MenubarItem disabled>Zoom Out</MenubarItem>
+						<MenubarItem disabled>Reset View</MenubarItem>
 					</MenubarContent>
 				</MenubarMenu>
 			</Menubar>

@@ -176,6 +176,9 @@ const DraggableInput = React.forwardRef( ( {
 				onMouseDown={setupDrag}
 				onFocus={() => ! disabled && setIsEditing( true )}
 				tabIndex={disabled ? - 1 : 0}
+				role="spinbutton"
+				aria-valuenow={isNaN( currentValue ) ? undefined : currentValue}
+				aria-disabled={disabled || undefined}
 				{...domProps}
 			>
 				{/* Icon */}
@@ -196,6 +199,8 @@ const DraggableInput = React.forwardRef( ( {
 					<input
 						className="w-full bg-transparent text-foreground outline-none text-xs text-right"
 						type="number"
+						aria-label={domProps[ "aria-label" ]}
+						name={domProps[ "aria-label" ]}
 						value={isNaN( currentValue ) ? "" : currentValue}
 						step={step}
 						min={min}

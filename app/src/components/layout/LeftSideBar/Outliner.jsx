@@ -298,7 +298,7 @@ const OutlinerRow = memo( ( { row, onToggleOpen } ) => {
 	return (
 		<div
 			className={cn(
-				"group flex items-center h-7 pr-1 cursor-pointer transition-colors border-none outline-none min-w-full w-fit select-none",
+				"group flex items-center h-7 pr-1 cursor-pointer border-none outline-none min-w-full w-fit select-none",
 				isSelected ? STYLES.itemActive : "hover:bg-accent/50 text-muted-foreground hover:text-foreground",
 				( parentHidden || ! visible ) && "opacity-50"
 			)}
@@ -323,7 +323,7 @@ const OutlinerRow = memo( ( { row, onToggleOpen } ) => {
 			<div className="sticky right-0 flex items-center h-full pl-2 pr-1 ml-auto">
 				<div className="absolute inset-0 bg-background -z-20" />
 				<div className={cn(
-					"absolute inset-0 -z-10 transition-colors",
+					"absolute inset-0 -z-10",
 					isSelected ? "bg-accent" : "group-hover:bg-accent/0"
 				)} />
 				{/* Gradient mask for smooth transition - simplified */}
@@ -367,7 +367,7 @@ const OutlinerHeader = memo( ( { searchTerm, onSearchChange, filters, onFilterCh
 	return (
 		<div className={cn( "flex items-center px-2 py-1 gap-1 shrink-0 border-b h-10", STYLES.bg, STYLES.border )}>
 			{/* View Layer Button */}
-			<div className={cn( "h-7 w-7 flex items-center justify-center rounded hover:bg-accent/50 cursor-pointer text-muted-foreground hover:text-foreground transition-colors" )}>
+			<div className={cn( "h-7 w-7 flex items-center justify-center rounded hover:bg-accent/50 cursor-pointer text-muted-foreground hover:text-foreground" )}>
 				<Layers size={14} strokeWidth={1.5} />
 			</div>
 
@@ -375,6 +375,8 @@ const OutlinerHeader = memo( ( { searchTerm, onSearchChange, filters, onFilterCh
 			<div className={cn( "flex-1 h-7 flex items-center px-2 rounded gap-2", STYLES.inputBg )}>
 				<Search size={12} className="text-muted-foreground/50" />
 				<input
+					name="scene-search"
+					aria-label="Search the scene"
 					value={searchTerm}
 					onChange={onSearchChange}
 					placeholder="Search..."
@@ -385,7 +387,7 @@ const OutlinerHeader = memo( ( { searchTerm, onSearchChange, filters, onFilterCh
 			{/* Filter Button */}
 			<DropdownMenu>
 				<DropdownMenuTrigger asChild>
-					<div className={cn( "h-7 w-7 flex items-center justify-center rounded hover:bg-accent/50 cursor-pointer text-muted-foreground hover:text-foreground transition-colors",
+					<div className={cn( "h-7 w-7 flex items-center justify-center rounded hover:bg-accent/50 cursor-pointer text-muted-foreground hover:text-foreground",
 						! allChecked && "text-accent-foreground bg-accent/30"
 					)}>
 						<Filter size={14} strokeWidth={1.5} />

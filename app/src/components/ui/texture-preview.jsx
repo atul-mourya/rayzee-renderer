@@ -145,7 +145,7 @@ const TexturePreview = ( { texture, label, tip, actions, expanded, onToggle } ) 
 				onClick={isToggleable ? onToggle : undefined}
 			>
 				{isToggleable && (
-					<ChevronRight size={10} className={`shrink-0 opacity-40 transition-transform ${expanded ? 'rotate-90' : ''}`} />
+					<ChevronRight size={10} className={`shrink-0 opacity-40 ${expanded ? 'rotate-90' : ''}`} />
 				)}
 				<div className="min-w-0">
 					{label && <div className="text-2xs font-medium truncate leading-tight" title={tip}>{label}</div>}

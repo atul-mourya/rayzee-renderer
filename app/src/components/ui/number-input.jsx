@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback, forwardRef } from 'react';
+import { useState, useRef, useEffect, useCallback, forwardRef, useId } from 'react';
 import { Input } from '@/components/ui/input';
 import { cn } from "@/lib/utils";
 
@@ -17,6 +17,7 @@ const NumberInput = forwardRef( ( {
 	...props
 }, ref ) => {
 
+	const id = useId();
 	const [ isDragging, setIsDragging ] = useState( false );
 	const [ dragOffset, setDragOffset ] = useState( 0 );
 	const [ value, setValue ] = useState( propValue ?? defaultValue );
@@ -236,8 +237,11 @@ const NumberInput = forwardRef( ( {
 				<Input
 					ref={ref}
 					type="number"
+					variant="filled"
+					id={id}
+					aria-label={typeof label === "string" ? label : undefined}
 					className={cn(
-						"px-1 h-full rounded-10 text-xs bg-primary/20 text-right transition-colors",
+						"px-1 h-full rounded-10 text-xs text-right",
 						"[appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none",
 						isDragging && "bg-primary/30",
 						inputFocused && "bg-background/80"

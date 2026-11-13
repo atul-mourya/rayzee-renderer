@@ -3,6 +3,7 @@ import * as ToggleGroupPrimitive from "@radix-ui/react-toggle-group";
 
 import { cn } from "@/lib/utils";
 import { toggleVariants } from "@/components/ui/toggle";
+import { useRowLabel } from "@/components/ui/row";
 
 const ToggleGroupContext = React.createContext( {
 	size: "default",
@@ -12,6 +13,7 @@ const ToggleGroupContext = React.createContext( {
 const ToggleGroup = React.forwardRef( ( { className, variant, size, children, ...props }, ref ) => (
 	<ToggleGroupPrimitive.Root
 		ref={ref}
+		aria-labelledby={useRowLabel()}
 		className={cn( "flex items-center justify-between gap-0 max-w-32 h-5 rounded-full", className )}
 		{...props}>
 		<ToggleGroupContext.Provider value={{ variant, size }}>

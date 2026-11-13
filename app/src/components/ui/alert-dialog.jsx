@@ -122,10 +122,11 @@ function AlertDialogDescription( {
 
 function AlertDialogAction( {
 	className,
+	variant,
 	...props
 } ) {
 
-	return ( <AlertDialogPrimitive.Action className={cn( buttonVariants(), className )} {...props} /> );
+	return ( <AlertDialogPrimitive.Action className={cn( buttonVariants( { variant } ), className )} {...props} /> );
 
 }
 

@@ -13,6 +13,9 @@ import {
 	AlertDialogHeader,
 	AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Chip } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 // Create Context for sharing state across components
@@ -628,7 +631,7 @@ const RenderItem = memo( ( {
 					<LazyImage
 						src={image.thumb ?? image.image}
 						alt={`4K Render ${index + 1}`}
-						className="w-full h-full object-cover transition-transform duration-200 group-hover:scale-105"
+						className="w-full h-full object-cover group-hover:scale-105"
 						onError={handleImageError}
 					/>
 				</div>
@@ -653,9 +656,9 @@ const RenderItem = memo( ( {
 						<TooltipProvider>
 							<Tooltip>
 								<TooltipTrigger asChild>
-									<div className="bg-ai-600/90 h-4 pl-0.5 pr-1.5 rounded-full cursor-default flex items-center gap-0.5 text-on-scrim text-2xs font-semibold">
-										<Sparkles size={11} />{versions.length}
-									</div>
+									<Chip tone="ai" size="sm" className="cursor-default">
+										<Sparkles size={10} />{versions.length}
+									</Chip>
 								</TooltipTrigger>
 								<TooltipContent side="left" className="text-xs max-w-xs">
 									<div className="space-y-1">
@@ -667,9 +670,9 @@ const RenderItem = memo( ( {
 						</TooltipProvider>
 					)}
 					{job && (
-						<div className="bg-scrim/80 h-4 pl-1 pr-1.5 rounded-full flex items-center gap-1 text-on-scrim-300 text-2xs" title="Making an AI version">
+						<Chip size="sm" title="Making an AI version">
 							<Loader2 size={10} className="animate-spin text-ai-400" />v{job.n}
-						</div>
+						</Chip>
 					)}
 				</div>
 			</div>
@@ -699,13 +702,9 @@ const RenderItem = memo( ( {
 									</span>
 
 									{/* Delete button */}
-									<div
-										className="flex items-center justify-center p-1 rounded-full hover:bg-destructive/10 hover:text-destructive transition-colors cursor-pointer"
-										onClick={handleDeleteClick}
-										aria-label="Delete render"
-									>
-										<Trash2 size={14} className="text-muted-foreground hover:text-destructive" />
-									</div>
+									<Button variant="quiet-destructive" size="icon-xs" onClick={handleDeleteClick} aria-label="Delete render">
+										<Trash2 size={14} />
+									</Button>
 								</div>
 							</div>
 						</TooltipTrigger>
@@ -742,10 +741,10 @@ const DeleteConfirmationDialog = memo( ( {
 
 	return (
 		<AlertDialog open={open} onOpenChange={onCancel}>
-			<AlertDialogContent className="border border-border">
+			<AlertDialogContent>
 				<AlertDialogHeader>
 					<AlertDialogTitle className="flex items-center gap-2">
-						<AlertTriangle size={18} className="text-destructive" />
+						<AlertTriangle size={16} className="text-error" />
 						Confirm Deletion
 					</AlertDialogTitle>
 					<AlertDialogDescription>
@@ -753,14 +752,11 @@ const DeleteConfirmationDialog = memo( ( {
 					</AlertDialogDescription>
 				</AlertDialogHeader>
 				<AlertDialogFooter>
-					<AlertDialogCancel
-						className="bg-transparent border border-border hover:bg-muted"
-						disabled={isDeleting}
-					>
+					<AlertDialogCancel disabled={isDeleting}>
 						Cancel
 					</AlertDialogCancel>
 					<AlertDialogAction
-						className="bg-destructive hover:bg-destructive/90 text-destructive-foreground"
+						variant="destructive"
 						onClick={onConfirm}
 						disabled={isDeleting}
 					>
@@ -787,10 +783,9 @@ const ResultsHeader = memo( ( { loading, error, renderedImages, aiOnly, setAiOnl
 
 	const withAI = renderedImages.filter( r => r.aiVersions?.length ).length;
 	const toggle = ( on, label ) => (
-		<button type="button" aria-pressed={aiOnly === on} onClick={() => setAiOnly( on )}
-			className={`h-7 px-2.5 rounded-md border border-input text-xs font-medium shadow-xs hover:bg-accent ${aiOnly === on ? 'bg-accent' : 'bg-background'}`}>
+		<Button variant="outline" size="xs" aria-pressed={aiOnly === on} onClick={() => setAiOnly( on )}>
 			{label}
-		</button>
+		</Button>
 	);
 
 	return (
@@ -828,10 +823,10 @@ LoadingState.displayName = 'LoadingState';
 
 // Component for error state
 const ErrorState = memo( ( { error } ) => (
-	<div className="p-4 m-3 text-sm text-destructive-foreground bg-destructive/10 rounded-md border border-destructive/20">
-		<div className="font-medium mb-1">Error loading renders</div>
-		{error}
-	</div>
+	<Alert variant="destructive" className="m-3 w-auto">
+		<AlertTitle>Error loading renders</AlertTitle>
+		<AlertDescription>{error}</AlertDescription>
+	</Alert>
 ) );
 
 ErrorState.displayName = 'ErrorState';

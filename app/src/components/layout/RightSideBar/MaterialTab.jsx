@@ -10,6 +10,7 @@ import { useStore, useMaterialStore } from '@/store';
 import { getApp } from '@/lib/appProxy';
 import { scaleToTranslucency } from '@/Constants';
 import { Switch } from '@/components/ui/switch';
+import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { TexturePreview } from '@/components/ui/texture-preview';
 import TextureColorSpaceSelect, { COLOR_MAP_SLOTS } from './TextureColorSpaceSelect';
@@ -812,22 +813,22 @@ const MaterialTab = () => {
 										onToggle={() => toggleTextureExpanded( name )}
 										actions={
 											<>
-												<button
-													className="p-1 rounded-md hover:bg-primary/20 transition-colors disabled:opacity-50"
+												<Button
+													variant="quiet" size="icon-xs"
 													onClick={() => openTexturePicker( name )}
 													disabled={loadingTexture === name}
 													title="Change texture"
 												>
 													<RefreshCw size={12} className={loadingTexture === name ? 'animate-spin' : ''} />
-												</button>
-												<button
-													className="p-1 rounded-md text-destructive hover:bg-destructive/10 transition-colors disabled:opacity-50"
+												</Button>
+												<Button
+													variant="quiet-destructive" size="icon-xs"
 													onClick={() => handleRemoveTexture( name )}
 													disabled={loadingTexture === name}
 													title="Remove texture"
 												>
 													<Trash2 size={12} />
-												</button>
+												</Button>
 											</>
 										}
 									/>
@@ -867,14 +868,14 @@ const MaterialTab = () => {
 								<div className="text-center control-hint" title="Adds an image to an empty slot of this material.">Add Texture</div>
 								<div className="flex flex-wrap gap-1 justify-center">
 									{emptySlots.map( ( { name, label } ) => (
-										<button
+										<Button
 											key={name}
-											className="text-xxs px-2 py-0.5 rounded-full border border-dashed border-primary/40 hover:bg-primary/10 transition-colors disabled:opacity-50 inline-flex items-center gap-0.5"
+											variant="outline" size="pill"
 											onClick={() => openTexturePicker( name )}
 											disabled={loadingTexture === name}
 										>
 											<Plus size={10} />{loadingTexture === name ? '...' : label}
-										</button>
+										</Button>
 									) )}
 								</div>
 							</div>

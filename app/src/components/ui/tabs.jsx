@@ -7,7 +7,7 @@ const Tabs = TabsPrimitive.Root;
 
 // A list's variant styles its triggers too. `bar`: a sidebar's icon tabs (the column count stays the caller's);
 // `pills`: two or three choices as pills (with the caller's column count); `compact`: small text tabs.
-const LIST_VARIANTS = { default: "", bar: "relative grid w-full h-12 p-0", pills: "grid w-full h-auto p-0 border", compact: "" };
+const LIST_VARIANTS = { default: "", bar: "relative grid w-full h-12 p-0", pills: "grid w-full h-auto p-0 border", compact: "relative grid w-full h-auto p-0" };
 const TRIGGER_VARIANTS = { default: "", bar: "flex flex-col items-center py-2", pills: "text-xs rounded-full", compact: "text-xs truncate py-2" };
 const TabsVariant = React.createContext( "default" );
 

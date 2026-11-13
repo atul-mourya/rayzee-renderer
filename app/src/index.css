@@ -4,6 +4,36 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/* PT Sans (OFL, assets/fonts/OFL.txt): the installed face where there is one (macOS), else these, Latin only */
+@font-face {
+  font-family: 'PT Sans';
+  font-weight: 400;
+  font-display: swap;
+  src: local('PT Sans'), local('PTSans-Regular'), url('./assets/fonts/pt-sans-400-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'PT Sans';
+  font-weight: 400;
+  font-display: swap;
+  src: local('PT Sans'), local('PTSans-Regular'), url('./assets/fonts/pt-sans-400-latin-ext.woff2') format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: 'PT Sans';
+  font-weight: 700;
+  font-display: swap;
+  src: local('PT Sans Bold'), local('PTSans-Bold'), url('./assets/fonts/pt-sans-700-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'PT Sans';
+  font-weight: 700;
+  font-display: swap;
+  src: local('PT Sans Bold'), local('PTSans-Bold'), url('./assets/fonts/pt-sans-700-latin-ext.woff2') format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
 @theme {
   --radius-lg: var(--radius);
   --radius-md: calc(var(--radius) - 2px);
@@ -40,19 +70,15 @@
 
   --color-border: hsl(var(--border));
   --color-input: hsl(var(--input));
+  --color-field: hsl(var(--field));
   --color-ring: hsl(var(--ring));
-
-  --color-chart-1: hsl(var(--chart-1));
-  --color-chart-2: hsl(var(--chart-2));
-  --color-chart-3: hsl(var(--chart-3));
-  --color-chart-4: hsl(var(--chart-4));
-  --color-chart-5: hsl(var(--chart-5));
 
   --color-scrim: var(--scrim);
   --color-on-scrim: var(--on-scrim);
   --color-on-scrim-200: var(--on-scrim-200);
   --color-on-scrim-300: var(--on-scrim-300);
   --color-on-scrim-400: var(--on-scrim-400);
+  --color-on-scrim-error: var(--on-scrim-error);
   --color-overlay-accent: var(--overlay-accent);
   --color-well: var(--well);
   --color-placeholder: var(--placeholder);
@@ -68,18 +94,12 @@
   --color-float-border: var(--float-border);
   --shadow-float: var(--float-shadow);
 
+  --color-error: var(--error);
+  --color-warning: var(--warning);
   --color-success: var(--success);
-  --color-warning-400: var(--warning-400);
-  --color-warning-500: var(--warning-500);
-  --color-danger-50: var(--danger-50);
-  --color-danger-200: var(--danger-200);
-  --color-danger-300: var(--danger-300);
-  --color-danger-400: var(--danger-400);
-  --color-danger-500: var(--danger-500);
-  --color-danger-600: var(--danger-600);
   --color-favorite: var(--favorite);
   --color-favorite-outline: var(--favorite-outline);
-  --color-ai-300: var(--ai-300);
+  --color-ai: var(--ai);
   --color-ai-400: var(--ai-400);
   --color-ai-500: var(--ai-500);
   --color-ai-600: var(--ai-600);
@@ -111,24 +131,16 @@
   }
 }
 
-/* A control's name beside it in a panel (Slider, Switch, a select's label…) */
+/* A control's name beside it in a panel (Slider, Switch, a select's label…); darker on white, which half did not pass */
 @utility control-label {
-  @apply text-xs opacity-50;
+  @apply text-xs opacity-50 not-dark:opacity-65;
 }
 
 /* A hint or note under a control or in a dialog */
 @utility control-hint {
-  @apply text-xs opacity-50;
+  @apply text-xs opacity-50 not-dark:opacity-65;
 }
 
-/*
-  The default border color has changed to `currentColor` in Tailwind CSS v4,
-  so we've added these compatibility styles to make sure everything still
-  looks the same as it did with Tailwind CSS v3.
-
-  If we ever want to remove these styles, we need to add an explicit border
-  color utility to any element that depends on these defaults.
-*/
 @layer base {
   *,
   ::after,
@@ -136,6 +148,12 @@
   ::backdrop,
   ::file-selector-button {
     border-color: hsl(var(--border));
+  }
+
+  body {
+    margin: 0;
+    min-height: 100vh;
+    @apply bg-background text-foreground;
   }
 }
 
@@ -162,30 +180,41 @@
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
   }
-
-  body {
-    margin: 0;
-    min-width: 320px;
-    min-height: 100vh;
-  }
-
-  h1 {
-    font-size: 3.2em;
-    line-height: 1.1;
-  }
-
-  .transition-colors {
-    transition: none !important;
-  }
-
-  .transition-transform {
-    transition-property: none !important;
-  }
 }
 
-
 @layer base {
+  /* Both themes */
   :root {
+    --radius: 0.3rem;
+    --destructive-foreground: 210 40% 98%;
+
+    /* Over the render and pictures */
+    --scrim: #000;
+    --on-scrim: #fff;
+    --on-scrim-200: oklch(92.8% 0.006 264.531);
+    --on-scrim-300: oklch(87.2% 0.01 258.338);
+    --on-scrim-400: oklch(70.7% 0.022 261.325);
+    --on-scrim-error: oklch(70.4% 0.191 22.216);
+    --overlay-accent: oklch(70.7% 0.165 254.624);
+    --well: #000;
+    --placeholder: oklch(27.8% 0.033 256.848);
+    --placeholder-pulse: oklch(37.3% 0.034 259.733);
+    --handle: #fff;
+    --on-handle: oklch(20.8% 0.042 265.755);
+    --checked: oklch(54.6% 0.245 262.881);
+    --disabled: oklch(70.7% 0.022 261.325);
+    --float-border: #fff;
+
+    --success: oklch(76.5% 0.177 163.223);
+    --favorite: oklch(44.4% 0.177 26.899);
+    --favorite-outline: oklch(70.4% 0.191 22.216);
+    --ai-400: oklch(71.4% 0.203 305.504);
+    --ai-500: oklch(62.7% 0.265 303.9);
+    --ai-600: oklch(55.8% 0.288 302.321);
+  }
+
+  /* Light: text colours one step darker than dark's, to read on white */
+  :root:not(.dark) {
     --background: 0 0% 100%;
     --foreground: 217.2 15% 11%;
     --card: 0 0% 100%;
@@ -200,62 +229,27 @@
     --muted-foreground: 215.4 16.3% 46.9%;
     --accent: 210 40% 96.1%;
     --accent-foreground: 222.2 47.4% 11.2%;
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 210 40% 98%;
+    --destructive: 0 72.2% 50.6%;
     --border: 214.3 31.8% 91.4%;
     --input: 214.3 31.8% 91.4%;
+    --field: 215 14% 55%;
     --ring: 221.2 83.2% 53.3%;
-    --radius: 0.3rem;
-    --chart-1: 12 76% 61%;
-    --chart-2: 173 58% 39%;
-    --chart-3: 197 37% 24%;
-    --chart-4: 43 74% 66%;
-    --chart-5: 27 87% 67%;
 
-    /* Over the render and pictures: the same in both themes */
-    --scrim: #000;
-    --on-scrim: #fff;
-    --on-scrim-200: oklch(92.8% 0.006 264.531);
-    --on-scrim-300: oklch(87.2% 0.01 258.338);
-    --on-scrim-400: oklch(70.7% 0.022 261.325);
-    --overlay-accent: oklch(70.7% 0.165 254.624);
-    --well: #000;
-    --placeholder: oklch(27.8% 0.033 256.848);
-    --placeholder-pulse: oklch(37.3% 0.034 259.733);
-    --handle: #fff;
-    --on-handle: oklch(20.8% 0.042 265.755);
-    --checked: oklch(54.6% 0.245 262.881);
-    --disabled: oklch(70.7% 0.022 261.325);
     --highlight: oklch(94.5% 0.129 101.54);
-
-    /* A row's popover of expert controls */
     --surface-float: hsl(210 40% 98%);
     --float-input: oklch(92.9% 0.013 255.508);
-    --float-border: #fff;
     --float-shadow: 0 40px 80px -12px rgba(0, 0, 0, 0.6), 0 20px 40px -8px rgba(0, 0, 0, 0.4);
 
-    --success: oklch(76.5% 0.177 163.223);
-    --warning-400: oklch(82.8% 0.189 84.429);
-    --warning-500: oklch(76.9% 0.188 70.08);
-    --danger-50: oklch(97.1% 0.013 17.38);
-    --danger-200: oklch(88.5% 0.062 18.334);
-    --danger-300: oklch(80.8% 0.114 19.571);
-    --danger-400: oklch(70.4% 0.191 22.216);
-    --danger-500: oklch(63.7% 0.237 25.331);
-    --danger-600: oklch(57.7% 0.245 27.325);
-    --favorite: oklch(44.4% 0.177 26.899);
-    --favorite-outline: oklch(70.4% 0.191 22.216);
-    --ai-300: oklch(82.7% 0.119 306.383);
-    --ai-400: oklch(71.4% 0.203 305.504);
-    --ai-500: oklch(62.7% 0.265 303.9);
-    --ai-600: oklch(55.8% 0.288 302.321);
+    --error: oklch(50.5% 0.213 27.518);
+    --warning: oklch(55.5% 0.163 48.998);
+    --ai: oklch(49.6% 0.265 301.924);
 
     /* Data, not chrome */
-    --axis-x: oklch(63.7% 0.237 25.331);
-    --axis-y: oklch(72.3% 0.219 149.579);
-    --axis-z: oklch(62.3% 0.214 259.815);
-    --kind-object: oklch(70.5% 0.213 47.604);
-    --kind-data: oklch(69.6% 0.17 162.48);
+    --axis-x: oklch(50.5% 0.213 27.518);
+    --axis-y: oklch(44.8% 0.119 151.328);
+    --axis-z: oklch(48.8% 0.243 264.376);
+    --kind-object: oklch(55.3% 0.195 38.402);
+    --kind-data: oklch(50.8% 0.118 165.612);
 
     color-scheme: light;
   }
@@ -276,68 +270,26 @@
     --accent: 217.2 32.6% 17.5%;
     --accent-foreground: 210 40% 98%;
     --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 210 40% 98%;
     --border: 217.2 32.6% 17.5%;
     --input: 217.2 32.6% 17.5%;
-    --ring: 224.3 76.3% 48%;
-    --chart-1: 220 70% 50%;
-    --chart-2: 160 60% 45%;
-    --chart-3: 30 80% 55%;
-    --chart-4: 280 65% 60%;
-    --chart-5: 340 75% 55%;
+    --field: 215 16% 45%;
+    --ring: 217.2 91.2% 59.8%;
 
-    --scrim: #000;
-    --on-scrim: #fff;
-    --on-scrim-200: oklch(92.8% 0.006 264.531);
-    --on-scrim-300: oklch(87.2% 0.01 258.338);
-    --on-scrim-400: oklch(70.7% 0.022 261.325);
-    --overlay-accent: oklch(70.7% 0.165 254.624);
-    --well: #000;
-    --placeholder: oklch(27.8% 0.033 256.848);
-    --placeholder-pulse: oklch(37.3% 0.034 259.733);
-    --handle: #fff;
-    --on-handle: oklch(20.8% 0.042 265.755);
-    --checked: oklch(54.6% 0.245 262.881);
-    --disabled: oklch(70.7% 0.022 261.325);
     --highlight: oklch(47.6% 0.114 61.907);
-
     --surface-float: oklch(27.9% 0.041 260.031);
     --float-input: oklch(12.9% 0.042 264.695);
-    --float-border: #fff;
     --float-shadow: 0 20px 30px 0 rgba(0, 0, 0, 1), 0 40px 60px 0 rgba(0, 0, 0, 1), 0 60px 100px 0 rgba(0, 0, 0, 0.95), 0 80px 140px 0 rgba(0, 0, 0, 0.85);
 
-    --success: oklch(76.5% 0.177 163.223);
-    --warning-400: oklch(82.8% 0.189 84.429);
-    --warning-500: oklch(76.9% 0.188 70.08);
-    --danger-50: oklch(97.1% 0.013 17.38);
-    --danger-200: oklch(88.5% 0.062 18.334);
-    --danger-300: oklch(80.8% 0.114 19.571);
-    --danger-400: oklch(70.4% 0.191 22.216);
-    --danger-500: oklch(63.7% 0.237 25.331);
-    --danger-600: oklch(57.7% 0.245 27.325);
-    --favorite: oklch(44.4% 0.177 26.899);
-    --favorite-outline: oklch(70.4% 0.191 22.216);
-    --ai-300: oklch(82.7% 0.119 306.383);
-    --ai-400: oklch(71.4% 0.203 305.504);
-    --ai-500: oklch(62.7% 0.265 303.9);
-    --ai-600: oklch(55.8% 0.288 302.321);
+    --error: oklch(70.4% 0.191 22.216);
+    --warning: oklch(82.8% 0.189 84.429);
+    --ai: oklch(71.4% 0.203 305.504);
 
-    --axis-x: oklch(63.7% 0.237 25.331);
+    --axis-x: oklch(70.4% 0.191 22.216);
     --axis-y: oklch(72.3% 0.219 149.579);
-    --axis-z: oklch(62.3% 0.214 259.815);
+    --axis-z: oklch(70.7% 0.165 254.624);
     --kind-object: oklch(70.5% 0.213 47.604);
     --kind-data: oklch(69.6% 0.17 162.48);
 
     color-scheme: dark;
-  }
-}
-
-
-@layer base {
-  * {
-    @apply border-border;
-  }
-  body {
-    @apply bg-background text-foreground;
   }
 }

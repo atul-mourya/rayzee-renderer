@@ -299,7 +299,7 @@ const SessionDialog = () => {
 										: ' The browser does not keep folders you open, so choose it again to bring the edits back.'}
 							</DialogDescription>
 						</DialogHeader>
-						{pick.error && <p className="text-sm text-destructive">{pick.error}</p>}
+						{pick.error && <p className="text-sm text-error">{pick.error}</p>}
 						<DialogFooter className="gap-2">
 							<Button variant="outline" onClick={skip}>Skip</Button>
 							{pick.handle && <Button variant="outline" onClick={chooseFolder}>Choose another…</Button>}
@@ -320,7 +320,7 @@ const SessionDialog = () => {
 								The browser does not keep files you open, so choose it again to bring the edits back.
 							</DialogDescription>
 						</DialogHeader>
-						{pick.error && <p className="text-sm text-destructive">{pick.error}</p>}
+						{pick.error && <p className="text-sm text-error">{pick.error}</p>}
 						<input ref={inputRef} type="file" className="hidden" onChange={onFile} />
 						<DialogFooter className="gap-2">
 							<Button variant="outline" onClick={skip}>Skip</Button>

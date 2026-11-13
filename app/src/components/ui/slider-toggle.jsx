@@ -53,7 +53,7 @@ const SliderToggle = forwardRef( ( {
 				<div className="relative flex h-5 w-full overflow-hidden">
 					<div
 						className={cn(
-							"absolute inset-0 transition-transform duration-300 ease-in-out",
+							"absolute inset-0",
 							isPowerOn ? "translate-x-0" : "translate-x-full"
 						)}
 					>
@@ -76,6 +76,7 @@ const SliderToggle = forwardRef( ( {
 							precision={precision}
 							disabled={disabled || ! isPowerOn}
 							label={null} // Label is handled by parent
+							aria-label={typeof label === "string" ? label : undefined}
 							{...props}
 						/>
 					</div>
@@ -84,6 +85,8 @@ const SliderToggle = forwardRef( ( {
 				{/* Power toggle button */}
 				<Button
 					className="h-full px-1 py-1 text-xs rounded-full ml-2"
+					aria-label={typeof label === "string" ? label : undefined}
+					aria-pressed={isPowerOn}
 					onClick={togglePower}
 					disabled={disabled}
 				>

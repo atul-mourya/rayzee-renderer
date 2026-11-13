@@ -26,10 +26,39 @@ const ALLOWED = {
 	'components/ui/colorinput.jsx': [ '#000000' ],
 	// A sample value in the reference page.
 	'components/DesignSystem.jsx': [ '#3a5f7d' ],
-	// An image (data URI) and a canvas: no CSS reaches them.
-	'components/ui/env-catalog.jsx': [ '#94a3b8' ],
+	// A canvas: no CSS reaches it.
 	'components/layout/Viewports/StatsPanel.jsx': [ '#ffffff', '#1e293b' ],
 	'components/ui/texture-preview.jsx': [ '#444', '#fff', '#333', '#999', '#222', '#666' ],
+};
+
+// Buttons and fields written out of ui/: pictures, tiles and rows rather than buttons. A new one is a Button, or a
+// line here.
+const OWN_BUTTONS = {
+	'components/layout/RightSideBar/AITab.jsx': 2, // a reference's remove mark, a picture to start from
+	'components/layout/RightSideBar/ColorManagementSection.jsx': 1, // a section's disclosure row
+	'components/layout/RightSideBar/LightsTab.jsx': 3, // gobo and IES tiles and their picker
+	'components/layout/TopBar/RecentDialog.jsx': 1, // a recent scene's row
+	'components/layout/Viewports/StatsMeter.jsx': 1, // a value over the render, typed into when clicked
+};
+const OWN_FIELDS = {
+	'components/layout/LeftSideBar/Outliner.jsx': 1, // the scene list's search, in its header
+	'components/layout/Viewports/StatsMeter.jsx': 1, // a value typed over the render
+};
+
+const ICON_SIZES = [ 10, 12, 14, 16 ];
+
+// ui/ parts the reference page leaves out: seen inside another part, or only in their one place.
+const NOT_ON_PAGE = {
+	InteractionContextMenu: 'the viewport\'s right-click menu',
+	card: 'inside the Assets browser',
+	'draggable-input': 'inside Vector3',
+	'items-catalog': 'the Assets browser',
+	'linkable-vector2': 'a texture\'s repeat and offset',
+	resizable: 'the panels\' splitters',
+	'texture-preview': 'a material\'s texture',
+	toast: 'through Toaster',
+	toggle: 'inside ToggleGroup',
+	trackpad: 'the camera\'s trackpad',
 };
 
 function sources( dir ) {
@@ -78,9 +107,11 @@ function tags( name ) {
 	for ( const file of COMPONENTS ) {
 
 		const text = readFileSync( file, 'utf8' );
-		for ( const m of text.matchAll( new RegExp( `<${name}\\b[^>]*>`, 'g' ) ) ) {
+		// An attribute's `{…}` may hold `=>` and one level of braces.
+		for ( const m of text.matchAll( new RegExp( `<${name}\\b(?:[^>"{]|"[^"]*"|\\{(?:[^{}]|\\{[^{}]*\\})*\\})*>`, 'g' ) ) ) {
 
-			found.push( { at: `${path.relative( ROOT, file )}:${text.slice( 0, m.index ).split( '\n' ).length}`, tag: m[ 0 ] } );
+			const file_ = path.relative( ROOT, file ).split( path.sep ).join( '/' );
+			found.push( { file: file_, at: `${file_}:${text.slice( 0, m.index ).split( '\n' ).length}`, tag: m[ 0 ] } );
 
 		}
 
@@ -90,24 +121,27 @@ function tags( name ) {
 
 }
 
-function block( selector ) {
+// The token block under `selector` that sets `marker` (:root also sets the font, in another block).
+function block( selector, marker ) {
 
 	for ( let start = CSS.indexOf( `${selector} {` ); start >= 0; start = CSS.indexOf( `${selector} {`, start + 1 ) ) {
 
 		const text = CSS.slice( start, CSS.indexOf( '\n  }', start ) );
-		if ( text.includes( '--background:' ) ) return text;
+		if ( text.includes( marker ) ) return text;
 
 	}
 
-	throw new Error( `no ${selector} block sets the tokens` );
+	throw new Error( `no ${selector} block sets ${marker}` );
 
 }
 
 function definedIn( text ) {
 
-	return new Set( [ ...text.matchAll( /^\s*(--[\w-]+)\s*:/gm ) ].map( m => m[ 1 ] ) );
+	return new Map( [ ...text.matchAll( /^\s*(--[\w-]+)\s*:\s*([^;]+);/gm ) ].map( m => [ m[ 1 ], m[ 2 ].trim() ] ) );
 
 }
+
+const MAPPED = new Set( [ ...CSS.slice( CSS.indexOf( '@theme {' ), CSS.indexOf( '@layer base {' ) ).matchAll( /--color-[\w-]+:\s*(?:hsl\()?var\((--[\w-]+)\)/g ) ].map( m => m[ 1 ] ) );
 
 describe( 'design tokens', () => {
 
@@ -154,19 +188,34 @@ describe( 'design tokens', () => {
 
 	} );
 
-	it( 'every colour the theme maps is defined in both themes', () => {
+	it( 'every colour is written once for both themes, or once in each', () => {
 
-		const theme = CSS.slice( CSS.indexOf( '@theme {' ), CSS.indexOf( '@layer base {' ) );
-		const used = new Set( [ ...theme.matchAll( /--color-[\w-]+:\s*(?:hsl\()?var\((--[\w-]+)\)/g ) ].map( m => m[ 1 ] ) );
-		const light = definedIn( block( ':root' ) );
-		const dark = definedIn( block( '.dark' ) );
+		const shared = definedIn( block( ':root', '--scrim:' ) );
+		const light = definedIn( block( ':root:not(.dark)', '--background:' ) );
+		const dark = definedIn( block( '.dark', '--background:' ) );
 
-		expect( used.size ).toBeGreaterThan( 20 );
-		expect( [ ...used ].filter( name => ! light.has( name ) ) ).toEqual( [] );
-		// The dark theme sets every colour token the light one does, so no colour falls through to the light value.
-		const colourTokens = [ ...light ].filter( name => name !== '--radius' );
-		expect( colourTokens.filter( name => ! dark.has( name ) ) ).toEqual( [] );
-		expect( [ ...dark ].filter( name => ! light.has( name ) ) ).toEqual( [] );
+		expect( MAPPED.size ).toBeGreaterThan( 20 );
+		expect( [ ...MAPPED ].filter( name => ! shared.has( name ) && ! light.has( name ) ) ).toEqual( [] );
+		// Each theme sets the same tokens, so neither falls through to the other's value.
+		expect( [ ...light.keys() ].filter( name => ! dark.has( name ) ) ).toEqual( [] );
+		expect( [ ...dark.keys() ].filter( name => ! light.has( name ) ) ).toEqual( [] );
+		// A value both themes share is written once: two copies drift apart.
+		expect( [ ...light ].filter( ( [ name, value ] ) => dark.get( name ) === value ).map( ( [ name ] ) => name ) ).toEqual( [] );
+		expect( [ ...shared.keys() ].filter( name => light.has( name ) ) ).toEqual( [] );
+
+	} );
+
+	it( 'the reference page shows every colour', () => {
+
+		const page = readFileSync( path.join( ROOT, 'components/DesignSystem.jsx' ), 'utf8' );
+		expect( [ ...MAPPED ].map( name => name.slice( 2 ) ).filter( name => ! page.includes( `"${name}"` ) ) ).toEqual( [] );
+
+	} );
+
+	it( 'nothing asks for a colour or movement fade', () => {
+
+		// Turned off on purpose (a19dc9a4, "remove unnecessary animations"); the class would only say otherwise.
+		expect( findings( /\btransition-(?:colors|transform)\b/g ) ).toEqual( [] );
 
 	} );
 
@@ -193,10 +242,66 @@ describe( 'design tokens', () => {
 			...tags( 'SelectTrigger' ).filter( t => /className="[^"]*\bh-5 rounded-full/.test( t.tag ) ),
 			...tags( 'ToggleGroupItem' ).filter( t => /className="text-xs px-3 h-5"/.test( t.tag ) ),
 			...tags( 'TabsTrigger' ).filter( t => /className="(?:flex flex-col items-center py-2|text-xs rounded-full|text-xs truncate py-2)"/.test( t.tag ) ),
+			...tags( 'TabsList' ).filter( t => /className="[^"]*\b(?:relative grid w-full|h-auto p-0)\b/.test( t.tag ) ),
 			// One-offs, not sizes: a 20 px square-cornered button, a 24 px round one on a catalog card.
 			...tags( 'Button' ).filter( t => /\ssize="(?:sm|icon)"/.test( t.tag ) && /className="[^"]*\bh-[56]\b/.test( t.tag ) && ! /"h-5 text-xs px-2"|h-6 w-6 rounded-full/.test( t.tag ) ),
 		];
 		expect( restyled.map( t => t.at ) ).toEqual( [] );
+
+	} );
+
+	it( 'buttons and fields come from ui/, except the ones listed', () => {
+
+		const count = ( name, skip ) => {
+
+			const counts = {};
+			for ( const t of tags( name ) ) {
+
+				if ( t.file.startsWith( 'components/ui/' ) || t.file === 'components/DesignSystem.jsx' || skip?.test( t.tag ) ) continue;
+				counts[ t.file ] = ( counts[ t.file ] ?? 0 ) + 1;
+
+			}
+
+			return counts;
+
+		};
+
+		expect( count( 'button' ) ).toEqual( OWN_BUTTONS );
+		expect( count( 'input', /type="file"/ ) ).toEqual( OWN_FIELDS );
+
+	} );
+
+	it( 'chips over a picture are Chip', () => {
+
+		// A scrim or AI fill with padding and a text size, written where it is used.
+		expect( findings( /className="(?=[^"]*\bbg-(?:scrim|ai-\d{3})\b)(?=[^"]*\btext-(?:xs|2xs|xxs)\b)(?=[^"]*\bpx-)[^"]*"/g ) ).toEqual( [] );
+
+	} );
+
+	it( 'icons use the icon sizes', () => {
+
+		const off = {};
+		for ( const file of COMPONENTS ) {
+
+			const name = path.relative( ROOT, file ).split( path.sep ).join( '/' );
+			for ( const m of readFileSync( file, 'utf8' ).matchAll( /\bsize=\{(\d+)\}/g ) ) {
+
+				if ( ! ICON_SIZES.includes( Number( m[ 1 ] ) ) ) ( off[ name ] ??= [] ).push( Number( m[ 1 ] ) );
+
+			}
+
+		}
+
+		expect( off ).toEqual( {} );
+
+	} );
+
+	it( 'the reference page shows every shared part', () => {
+
+		const page = readFileSync( path.join( ROOT, 'components/DesignSystem.jsx' ), 'utf8' );
+		const parts = readdirSync( path.join( ROOT, 'components/ui' ) ).filter( f => f.endsWith( '.jsx' ) ).map( f => f.slice( 0, - 4 ) );
+		expect( parts.filter( p => ! page.includes( `"@/components/ui/${p}"` ) && ! NOT_ON_PAGE[ p ] ) ).toEqual( [] );
+		expect( Object.keys( NOT_ON_PAGE ).filter( p => ! parts.includes( p ) || page.includes( `"@/components/ui/${p}"` ) ) ).toEqual( [] );
 
 	} );
 

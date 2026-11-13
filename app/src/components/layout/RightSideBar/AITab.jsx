@@ -13,7 +13,6 @@ import { useStore, useAIStore, nextVersionOf } from '@/store';
 import { IDEAS, MAX_REFERENCES, SCOPES, SIZES } from '@/lib/aiEdit';
 
 const STUDIO_URL = 'https://aistudio.google.com/app/apikey';
-const PILL = 'h-5 gap-1 rounded-full px-2 text-xs font-normal';
 
 const label = ( text, tip ) => <span className="control-label truncate" title={tip}>{text}</span>;
 
@@ -95,7 +94,7 @@ function KeyForm() {
 				<Label htmlFor="gemini-key" className="text-xs">API Key</Label>
 				<Input id="gemini-key" type="password" autoComplete="off" value={value} onChange={e => setValue( e.target.value )} placeholder="Paste your Gemini API key" aria-invalid={!! error} aria-describedby={error ? 'gemini-key-error' : undefined} />
 				{error && (
-					<p id="gemini-key-error" className="flex gap-1.5 text-xs text-danger-300">
+					<p id="gemini-key-error" className="flex gap-1.5 text-xs text-error">
 						<AlertCircle className="h-3.5 w-3.5 shrink-0 mt-0.5" />{messages[ error ] ?? messages.other}
 					</p>
 				)}
@@ -131,16 +130,16 @@ function Notice( { notice, onRetry, id } ) {
 	const destructive = notice.kind === 'declined' || notice.kind === 'key';
 
 	return (
-		<Alert className={`p-3 ${destructive ? 'border-destructive' : ''}`}>
-			{notice.kind === 'quota' ? <Clock className="h-4 w-4 text-warning-400!" /> : <AlertCircle className={`h-4 w-4 ${destructive ? 'text-danger-300!' : ''}`} />}
-			<AlertTitle className={`text-xs ${destructive ? 'text-danger-300' : ''}`}>{copy[ 0 ]}</AlertTitle>
+		<Alert variant={destructive ? 'destructive' : 'default'} className="p-3">
+			{notice.kind === 'quota' ? <Clock className="h-4 w-4 text-warning!" /> : <AlertCircle className="h-4 w-4" />}
+			<AlertTitle className="text-xs">{copy[ 0 ]}</AlertTitle>
 			<AlertDescription className="text-xs text-muted-foreground">
 				<p>{copy[ 1 ]}</p>
 				<div className="flex gap-1.5 mt-2">
 					{notice.kind === 'key'
-						? <Button variant="outline" className={PILL} onClick={() => openConnect()}>Change key</Button>
-						: <Button variant="outline" className={PILL} disabled={wait > 0} onClick={onRetry}>{wait > 0 ? `Try again in ${clock( wait )}` : 'Try again'}</Button>}
-					<Button variant="ghost" className={PILL} onClick={() => dismiss( id )}>Dismiss</Button>
+						? <Button variant="outline" size="pill" onClick={() => openConnect()}>Change key</Button>
+						: <Button variant="outline" size="pill" disabled={wait > 0} onClick={onRetry}>{wait > 0 ? `Try again in ${clock( wait )}` : 'Try again'}</Button>}
+					<Button variant="ghost" size="pill" onClick={() => dismiss( id )}>Dismiss</Button>
 				</div>
 			</AlertDescription>
 		</Alert>
@@ -168,7 +167,7 @@ function References( { disabled } ) {
 					</div>
 				) )}
 				{references.length < MAX_REFERENCES && (
-					<Button variant="outline" className={PILL} disabled={disabled} onClick={() => inputRef.current?.click()}>
+					<Button variant="outline" size="pill" disabled={disabled} onClick={() => inputRef.current?.click()}>
 						<Plus className="h-3 w-3" />Add
 					</Button>
 				)}
@@ -226,7 +225,7 @@ function Editor( { render } ) {
 						const picked = prompt.startsWith( idea.text.trim() );
 						return (
 							<Button key={idea.label} variant="outline" aria-pressed={picked} disabled={busy} onClick={() => pickIdea( idea )}
-								className={`h-6 rounded-md px-2 text-xs font-normal ${picked ? 'bg-accent' : ''}`}>
+								className="h-6 rounded-md px-2 text-xs font-normal">
 								{idea.label}
 							</Button>
 						);
@@ -251,8 +250,8 @@ function Editor( { render } ) {
 			</Row>
 			{where === 'part' && (
 				<Row>
-					<span className="text-xs text-ai-300">{area ? 'Only the marked area changes.' : 'Drag on the picture to mark the area.'}</span>
-					{area && ! busy && <Button variant="ghost" className={PILL} onClick={() => store.setArea( id, null )}>Clear</Button>}
+					<span className="text-xs text-ai">{area ? 'Only the marked area changes.' : 'Drag on the picture to mark the area.'}</span>
+					{area && ! busy && <Button variant="ghost" size="pill" onClick={() => store.setArea( id, null )}>Clear</Button>}
 				</Row>
 			)}
 
@@ -353,7 +352,7 @@ function Editing( { render, where } ) {
 				{job && (
 					<div className="flex flex-col gap-1 shrink-0" title={job.prompt}>
 						<span className="w-14 h-10 rounded border border-dashed border-ai-500 flex items-center justify-center">
-							<Loader2 className="h-4 w-4 animate-spin text-ai-400" />
+							<Loader2 className="h-4 w-4 animate-spin text-ai" />
 						</span>
 						<span className="control-hint leading-none">v{job.n}</span>
 					</div>
@@ -365,19 +364,19 @@ function Editing( { render, where } ) {
 				{current && confirming === current.n ? (
 					<div className="flex items-center gap-1.5">
 						<p className="text-xs flex-1 min-w-0">Delete v{current.n}? <span className="text-muted-foreground">The render stays.</span></p>
-						<Button variant="destructive" className={PILL} onClick={async () => {
+						<Button variant="destructive" size="pill" onClick={async () => {
 
 							setConfirming( null );
 							await store.deleteVersion( render, current.n );
 
 						}}>Delete</Button>
-						<Button variant="outline" className={PILL} onClick={() => setConfirming( null )}>Cancel</Button>
+						<Button variant="outline" size="pill" onClick={() => setConfirming( null )}>Cancel</Button>
 					</div>
 				) : (
 					<div className="flex items-center gap-1.5">
 						<p className="text-xs text-muted-foreground truncate flex-1 min-w-0">{meta}</p>
 						{current && (
-							<Button variant="ghost" aria-label={`Delete v${current.n}`} title={`Delete v${current.n}`} className={`${PILL} text-danger-300 hover:text-danger-200`} onClick={() => setConfirming( current.n )}>
+							<Button variant="quiet-destructive" aria-label={`Delete v${current.n}`} title={`Delete v${current.n}`} size="pill" onClick={() => setConfirming( current.n )}>
 								<Trash2 className="h-3 w-3" />
 							</Button>
 						)}
@@ -400,8 +399,8 @@ function KeyRow() {
 			{label( 'Gemini key', 'Kept in this browser only. Each edit sends the picture to Google and is billed to this key.' )}
 			<div className="flex items-center gap-1">
 				<span className="text-xs text-muted-foreground">{key ? `••••${key.slice( - 4 )}` : 'None'}</span>
-				<Button variant="ghost" className={PILL} onClick={() => openConnect()}>{key ? 'Change' : 'Add'}</Button>
-				{key && <Button variant="ghost" className={PILL} onClick={removeKey}>Remove</Button>}
+				<Button variant="ghost" size="pill" onClick={() => openConnect()}>{key ? 'Change' : 'Add'}</Button>
+				{key && <Button variant="ghost" size="pill" onClick={removeKey}>Remove</Button>}
 			</div>
 		</Row>
 	);

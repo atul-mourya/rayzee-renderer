@@ -1,6 +1,9 @@
 import React from 'react';
 import { Check, X } from 'lucide-react';
 import { useLocalStorage } from '@/hooks/useLocalStorage';
+import { Chip } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 
 const SaveControls = ( { onSave, onDiscard } ) => {
 
@@ -8,25 +11,18 @@ const SaveControls = ( { onSave, onDiscard } ) => {
 
 	return (
 		<div className="absolute top-2 right-2 flex items-center space-x-2">
-			<label
-				className="flex items-center gap-1 bg-scrim/60 text-xs text-on-scrim-200 px-2 py-1 rounded-full cursor-pointer select-none"
-				title="Also keep the full-range (EXR) image, so exposure and tone mapping can change later without rendering again"
-			>
-				<input type="checkbox" className="accent-current" checked={keepHDR} onChange={( e ) => setKeepHDR( e.target.checked )} />
-				Keep HDR copy
-			</label>
-			<button
-				onClick={() => onSave( { keepHDR } )}
-				className="flex items-center bg-primary text-background text-xs px-3 py-1 rounded-full shadow-sm hover:bg-primary/90 transition-all cursor-pointer"
-			>
+			<Chip asChild rounded className="cursor-pointer select-none">
+				<label title="Also keep the full-range (EXR) image, so exposure and tone mapping can change later without rendering again">
+					<Checkbox checked={keepHDR} onCheckedChange={v => setKeepHDR( v === true )} />
+					Keep HDR copy
+				</label>
+			</Chip>
+			<Button size="xs" rounded onClick={() => onSave( { keepHDR } )}>
 				<Check size={14} className="mr-1" /> Save
-			</button>
-			<button
-				onClick={onDiscard}
-				className="flex items-center bg-primary text-background text-xs px-3 py-1 rounded-full shadow-sm hover:bg-secondary/90 transition-all cursor-pointer"
-			>
+			</Button>
+			<Button size="xs" rounded onClick={onDiscard}>
 				<X size={14} className="mr-1" /> Ignore
-			</button>
+			</Button>
 		</div>
 	);
 

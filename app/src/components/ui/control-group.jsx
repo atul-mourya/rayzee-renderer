@@ -17,14 +17,14 @@ export function ControlGroup( { name, icon: Icon, children, className, defaultOp
 			>
 				<div className="flex items-center">
 					{Icon && <Icon className={cn(
-						"h-4 w-4 mr-2 transition-transform duration-200",
+						"h-4 w-4 mr-2",
 						isOpen ? "rotate-180" : ""
 					)} />}
 					{name}
 				</div>
 				<ChevronDown
 					className={cn(
-						"h-4 w-4 transition-transform duration-200",
+						"h-4 w-4",
 						isOpen ? "rotate-180" : ""
 					)}
 				/>

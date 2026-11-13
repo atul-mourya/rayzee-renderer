@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react';
 import { ChevronsLeftRight, Columns2, Image, SquareSplitHorizontal } from 'lucide-react';
+import { Chip } from '@/components/ui/badge';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 
@@ -147,7 +148,7 @@ export function AreaLayer( { fitted, onChange, editable } ) {
 			{shown && (
 				<div aria-label="Area to change" className="absolute border-2 border-dashed border-ai-500 bg-ai-600/10 pointer-events-none"
 					style={{ left: `${shown.x * 100}%`, top: `${shown.y * 100}%`, width: `${shown.w * 100}%`, height: `${shown.h * 100}%` }}>
-					<span className="absolute top-1 left-1 px-2 py-0.5 rounded-md bg-ai-600 text-on-scrim text-xs whitespace-nowrap">Area to change</span>
+					<Chip tone="ai" className="absolute top-1 left-1">Area to change</Chip>
 				</div>
 			)}
 		</div>

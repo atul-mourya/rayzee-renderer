@@ -402,6 +402,8 @@ const Slider = React.forwardRef( ( {
 					<input
 						className="absolute right-2 h-full bg-transparent text-foreground outline-none text-xs text-right max-w-full"
 						type="number"
+						aria-label={typeof label === "string" ? label : undefined}
+						name={typeof label === "string" ? label : undefined}
 						value={isNaN( currentValue ) ? "" : currentValue}
 						step={step}
 						min={min}

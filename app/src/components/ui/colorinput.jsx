@@ -1,10 +1,11 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useId } from 'react';
 import { Input } from "@/components/ui/input";
 import { Paintbrush } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const ColorInput = ( { onChange, className, value, tip, ...props } ) => {
 
+	const id = useId();
 	const [ color, setColor ] = useState( value || "#000000" );
 	const colorInputRef = useRef( null );
 
@@ -35,9 +36,11 @@ const ColorInput = ( { onChange, className, value, tip, ...props } ) => {
 				<div className="relative h-full w-full grow overflow-hidden rounded-full bg-primary/20">
 					<Input
 						type="text"
+						id={id}
+						aria-label={typeof props.label === "string" ? `${props.label}, hex` : undefined}
 						value={color}
 						onChange={handleChange}
-						className="absolute h-full bg-primary text-xs text-center tracking-widest rounded-full"
+						className="absolute h-full border-input bg-primary text-xs text-center tracking-widest rounded-full"
 					/>
 					<div className="h-full w-5 absolute left-0 text-center">
 						<Paintbrush size={14} className="h-full w-full p-1"/>
@@ -51,6 +54,8 @@ const ColorInput = ( { onChange, className, value, tip, ...props } ) => {
 				<input
 					ref={colorInputRef}
 					type="color"
+					name={`${id}-picker`}
+					aria-label={typeof props.label === "string" ? props.label : undefined}
 					value={color}
 					onChange={handleChange}
 					className="sr-only bottom-0"

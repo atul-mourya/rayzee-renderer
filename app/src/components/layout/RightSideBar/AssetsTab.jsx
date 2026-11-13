@@ -31,7 +31,7 @@ const AssetsTab = () => {
 				onValueChange={setActiveTab}
 				className="flex flex-col h-full w-full"
 			>
-				<TabsList variant="compact" className="relative grid w-full grid-cols-4 h-auto p-0">
+				<TabsList variant="compact" className="grid-cols-4">
 					<TabsTrigger value="models">
                         Models
 					</TabsTrigger>

@@ -88,7 +88,7 @@ const LightListItem = ( { light, index, isSelected, onSelect, onRemove, onToggle
 				}
 
 			}}
-			className={`group flex items-center gap-2 py-1 px-2 cursor-pointer transition-colors rounded-sm ${
+			className={`group flex items-center gap-2 py-1 px-2 cursor-pointer rounded-sm ${
 				isSelected
 					? 'bg-primary/15'
 					: 'hover:bg-accent/30'
@@ -101,30 +101,28 @@ const LightListItem = ( { light, index, isSelected, onSelect, onRemove, onToggle
 				style={{ backgroundColor: light.color }}
 			/>
 			<Button
-				size="sm"
-				variant="ghost"
+				variant="quiet" size="icon-xs" className="shrink-0"
+				aria-label={isVisible ? 'Hide light' : 'Show light'}
 				onClick={( e ) => {
 
 					e.stopPropagation();
 					onToggleVisibility( index );
 
 				}}
-				className="h-4 w-4 p-0 opacity-70 hover:opacity-100 transition-opacity shrink-0 text-muted-foreground hover:text-foreground"
 			>
-				{isVisible ? <Eye size={9} /> : <EyeOff size={9} />}
+				{isVisible ? <Eye size={10} /> : <EyeOff size={10} />}
 			</Button>
 			<Button
-				size="sm"
-				variant="ghost"
+				variant="quiet-destructive" size="icon-xs" className="shrink-0"
+				aria-label="Remove light"
 				onClick={( e ) => {
 
 					e.stopPropagation();
 					onRemove( index );
 
 				}}
-				className="h-4 w-4 p-0 opacity-70 hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive shrink-0"
 			>
-				<Trash2 size={9} />
+				<Trash2 size={10} />
 			</Button>
 		</div>
 	);
@@ -179,7 +177,7 @@ const LibraryPicker = ( { value, onChange, items, title, addTooltip = 'Assign' }
 			<PopoverTrigger asChild>
 				<button
 					type="button"
-					className="h-7 w-7 rounded-md border border-border bg-background flex items-center justify-center overflow-hidden hover:border-primary/60 transition-colors"
+					className="h-8 w-8 rounded-md border border-border bg-background flex items-center justify-center overflow-hidden hover:border-primary/60"
 					title={selected ? selected.label : addTooltip}
 				>
 					{selected ? (
@@ -204,12 +202,12 @@ const LibraryPicker = ( { value, onChange, items, title, addTooltip = 'Assign' }
 						onClick={() => pick( null )}
 						title="None"
 						ref={! selected ? selectedTileRef : null}
-						className={`flex flex-col items-center justify-center rounded-md border bg-background hover:border-primary/60 transition-colors ${
+						className={`flex flex-col items-center justify-center rounded-md border bg-background hover:border-primary/60 ${
 							! selected ? 'border-primary ring-1 ring-primary/40' : 'border-border'
 						}`}
 						style={{ width: GOBO_TILE_PX, height: GOBO_TILE_PX }}
 					>
-						<X size={18} className="text-muted-foreground" />
+						<X size={16} className="text-muted-foreground" />
 						<span className="text-3xs text-muted-foreground mt-0.5">None</span>
 					</button>
 					{items.map( g => (
@@ -219,7 +217,7 @@ const LibraryPicker = ( { value, onChange, items, title, addTooltip = 'Assign' }
 							onClick={() => pick( g.name )}
 							title={g.label}
 							ref={selected?.name === g.name ? selectedTileRef : null}
-							className={`relative rounded-md overflow-hidden border hover:border-primary/60 transition-colors ${
+							className={`relative rounded-md overflow-hidden border hover:border-primary/60 ${
 								selected?.name === g.name ? 'border-primary ring-1 ring-primary/40' : 'border-border'
 							}`}
 							style={{ width: GOBO_TILE_PX, height: GOBO_TILE_PX }}
@@ -251,21 +249,17 @@ const IESPicker = ( props ) => (
 const GoboControls = ( { light, index, onLightChange, showScale = false } ) => (
 	<>
 		<Row>
-			<span className="control-label truncate flex items-center gap-1" title="A cut-out pattern over the light, such as window bars or leaves, that shapes its light and shadows."><FilmIcon size={11} /> Gobo Mask</span>
+			<span className="control-label truncate flex items-center gap-1" title="A cut-out pattern over the light, such as window bars or leaves, that shapes its light and shadows."><FilmIcon size={12} /> Gobo Mask</span>
 			<div className="flex items-center gap-1.5">
 				{light.gobo && (
-					<button
-						type="button"
+					<Button
+						variant="outline" size="icon-sm"
+						aria-pressed={!! light.goboInverted}
 						onClick={() => onLightChange( index, 'goboInverted', ! light.goboInverted )}
 						title={light.goboInverted ? 'Mask inverted — click to restore' : 'Invert mask'}
-						className={`h-7 w-7 rounded-md border flex items-center justify-center transition-colors ${
-							light.goboInverted
-								? 'border-primary bg-primary/15 text-primary'
-								: 'border-border bg-background text-muted-foreground hover:border-primary/60'
-						}`}
 					>
 						<Contrast size={14} />
-					</button>
+					</Button>
 				)}
 				<GoboPicker
 					value={light.gobo || null}
@@ -443,7 +437,7 @@ const LightDetailPanel = ( { light, index, onLightChange } ) => {
 					</Row>
 					<GoboControls light={light} index={index} onLightChange={onLightChange} />
 					<Row>
-						<span className="control-label truncate flex items-center gap-1" title="The beam shape of a real light fixture, as measured by its maker."><Lightbulb size={11} /> IES Profile</span>
+						<span className="control-label truncate flex items-center gap-1" title="The beam shape of a real light fixture, as measured by its maker."><Lightbulb size={12} /> IES Profile</span>
 						<IESPicker
 							value={light.ies || null}
 							onChange={name => onLightChange( index, 'ies', name )}
@@ -759,9 +753,9 @@ const LightsTab = () => {
 					)}
 					<DropdownMenu>
 						<DropdownMenuTrigger asChild>
-							<button className="hover:opacity-100 opacity-60 transition-opacity">
+							<Button variant="quiet" size="icon-xs" aria-label="Add a light">
 								<Plus size={14} />
-							</button>
+							</Button>
 						</DropdownMenuTrigger>
 						<DropdownMenuContent align="end">
 							<DropdownMenuItem className="text-xs" onClick={() => handleAddLight( 'DirectionalLight' )}>
@@ -783,7 +777,7 @@ const LightsTab = () => {
 							{lights.length > 0 && (
 								<>
 									<Separator className="my-1" />
-									<DropdownMenuItem className="text-xs text-destructive focus:text-destructive" onClick={handleClearAllLights}>
+									<DropdownMenuItem className="text-xs text-error focus:text-error" onClick={handleClearAllLights}>
 										<Trash2 className="mr-2 h-3 w-3" />
 										Clear All
 									</DropdownMenuItem>

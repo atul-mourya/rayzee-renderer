@@ -143,9 +143,9 @@ const StorageDialog = ( { isOpen, onClose } ) => {
 										</div>
 										<span className="shrink-0 text-xs tabular-nums opacity-70">{formatBytes( row.bytes )}</span>
 										<Button
-											variant="ghost"
-											size="icon"
-											className="h-7 w-7 shrink-0"
+											variant="quiet-destructive"
+											size="icon-sm"
+											className="shrink-0"
 											title={row.name === APP_AREAS.RENDERS ? 'Delete saved renders from the Results tab' : `Clear ${row.label.toLowerCase()}`}
 											disabled={row.name === APP_AREAS.RENDERS || row.entries === 0 || busy !== null}
 											onClick={() => ( row.kind === 'user' ? setConfirmArea( row.name ) : clearArea( row.name ) )}
@@ -187,7 +187,7 @@ const StorageDialog = ( { isOpen, onClose } ) => {
 					</AlertDialogHeader>
 					<AlertDialogFooter>
 						<AlertDialogCancel>Cancel</AlertDialogCancel>
-						<AlertDialogAction onClick={() => {
+						<AlertDialogAction variant="destructive" onClick={() => {
 
 							const name = confirmArea;
 							setConfirmArea( null );

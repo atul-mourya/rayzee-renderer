@@ -15,7 +15,7 @@ const StatChip = ( { active, onClick, title, children } ) => (
 		title={title}
 		className={cn(
 			"inline-flex items-center gap-1",
-			onClick && "cursor-pointer hover:text-on-scrim transition-colors",
+			onClick && "cursor-pointer hover:text-on-scrim",
 			active && "font-bold text-overlay-accent"
 		)}
 	>
@@ -31,7 +31,7 @@ const formatBytes = ( bytes ) => {
 
 };
 
-const EditableValue = ( { value, onCommit } ) => {
+const EditableValue = ( { value, onCommit, label } ) => {
 
 	const [ isEditing, setIsEditing ] = useState( false );
 	const [ tempValue, setTempValue ] = useState( String( value ) );
@@ -64,6 +64,8 @@ const EditableValue = ( { value, onCommit } ) => {
 			<input
 				className="bg-transparent border-b border-on-scrim text-on-scrim w-12"
 				type="number"
+				name={label}
+				aria-label={label}
 				value={tempValue}
 				onChange={e => setTempValue( e.target.value )}
 				onBlur={commit}
@@ -75,12 +77,14 @@ const EditableValue = ( { value, onCommit } ) => {
 	}
 
 	return (
-		<span
+		<button
+			type="button"
+			aria-label={`${label}: ${value}, change`}
 			onClick={() => setIsEditing( true )}
-			className="cursor-pointer border-b border-dotted border-on-scrim hover:border-overlay-accent transition-colors duration-300"
+			className="cursor-pointer border-b border-dotted border-on-scrim hover:border-overlay-accent"
 		>
 			{value}
-		</span>
+		</button>
 	);
 
 };
@@ -187,7 +191,7 @@ const StatsMeter = ( { viewportMode } ) => {
 					</StatChip>
 					<span className="text-on-scrim">{stats.timeElapsed.toFixed( 2 )}</span>s
 					{timeLimited && (
-						<> / <EditableValue value={renderTimeLimit} onCommit={handleRenderTimeLimitChange} />s </>
+						<> / <EditableValue label="Time limit" value={renderTimeLimit} onCommit={handleRenderTimeLimitChange} />s </>
 					)}
 					<DoneTick show={completionReason === 'timeLimit'} />
 					<span className="mx-1">|</span>
@@ -200,7 +204,7 @@ const StatsMeter = ( { viewportMode } ) => {
 					</StatChip>
 					<span className="text-on-scrim">{stats.samples}</span>
 					{framesLimited && (
-						<> / <EditableValue value={storeMaxSamples} onCommit={handleMaxSamplesEdit} /> </>
+						<> / <EditableValue label="Samples" value={storeMaxSamples} onCommit={handleMaxSamplesEdit} /> </>
 					)}
 					<DoneTick show={completionReason === 'samples'} />
 					<span className="mx-1">|</span>

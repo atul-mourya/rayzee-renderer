@@ -8,6 +8,7 @@ import {
 import * as SelectPrimitive from "@radix-ui/react-select";
 
 import { cn } from "@/lib/utils";
+import { useRowLabel } from "@/components/ui/row";
 
 const Select = SelectPrimitive.Root;
 
@@ -18,9 +19,16 @@ const SelectValue = SelectPrimitive.Value;
 // `sm`: the small pill a panel row uses; pass a width (`max-w-32`), not a height or corners.
 const TRIGGER_SIZES = { default: "", sm: "h-5 rounded-full" };
 
-const SelectTrigger = React.forwardRef( ( { className, children, size = "default", ...props }, ref ) => (
-	<SelectPrimitive.Trigger
+// In a Row it is named by the row's label, then its value.
+const SelectTrigger = React.forwardRef( ( { className, children, size = "default", ...props }, ref ) => {
+
+	const ownId = React.useId();
+	const id = props.id ?? ownId;
+	const label = useRowLabel();
+	return ( <SelectPrimitive.Trigger
 		ref={ref}
+		id={id}
+		aria-labelledby={label && ! props[ "aria-label" ] ? `${label} ${id}` : undefined}
 		className={cn(
 			"flex h-9 w-full items-center justify-between whitespace-nowrap rounded-md border border-input bg-transparent px-3 py-2 text-xs shadow-xs ring-offset-background placeholder:text-muted-foreground focus:outline-hidden focus:ring-1 focus:ring-ring disabled:cursor-not-allowed disabled:opacity-50 [&>span]:line-clamp-1",
 			TRIGGER_SIZES[ size ],
@@ -31,8 +39,9 @@ const SelectTrigger = React.forwardRef( ( { className, children, size = "default
 		<SelectPrimitive.Icon asChild>
 			<ChevronsUpDownIcon className="h-3.5 w-3.5 opacity-50" />
 		</SelectPrimitive.Icon>
-	</SelectPrimitive.Trigger>
-) );
+	</SelectPrimitive.Trigger> );
+
+} );
 SelectTrigger.displayName = SelectPrimitive.Trigger.displayName;
 
 const SelectScrollUpButton = React.forwardRef( ( { className, ...props }, ref ) => (
