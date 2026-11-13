@@ -18,6 +18,8 @@
     "lint": "eslint .",
     "lint-fix": "npx eslint --fix",
     "preview": "npm -w @rayzee/app run preview",
+    "docs": "node scripts/check-docs.mjs --serve",
+    "docs:check": "node scripts/check-docs.mjs",
     "test": "vitest run --coverage",
     "test:watch": "vitest",
     "bench": "node bench/runner/cli.js run",

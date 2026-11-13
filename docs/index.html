@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<title>Rayzee docs</title>
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<meta name="description" content="Rayzee: a real-time path tracer in the browser. How to use the app, how to build on the engine, and how it works inside.">
+	<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='9' fill='%2352d1e9'/%3E%3C/svg%3E">
+	<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/docsify@4.13.1/lib/themes/dark.css">
+	<style>
+		/* Dark theme: neutral greys, cyan accent. */
+		:root {
+			--theme-color: #52d1e9;
+			--bg: #202020;
+			--panel: #161616;
+			--raised: #303030;
+			--line: #353535;
+			--text: #dedede;
+			--muted: #9e9e9e;
+			--heading: #f7f7f7;
+		}
+		body, .sidebar { background-color: var(--bg); color: var(--text); }
+		.sidebar { background-color: var(--panel); border-right: 1px solid var(--line); }
+		.sidebar-toggle, body.close .sidebar-toggle { background-color: rgba(22, 22, 22, .9); }
+		.sidebar > h1 a { color: var(--heading); font-weight: 600; letter-spacing: .02em; }
+		.sidebar ul li a { color: var(--text); }
+		.sidebar ul li a:hover { color: var(--theme-color); }
+		.sidebar-nav > ul > li > strong { display: block; color: var(--heading); font-size: 13px; font-weight: 600; margin-top: 18px; }
+		.sidebar ul li.active > a { color: var(--theme-color); }
+		.markdown-section { max-width: 900px; }
+		.markdown-section h1, .markdown-section h2, .markdown-section h3, .markdown-section h4, .markdown-section strong { color: var(--heading); }
+		.markdown-section h2 { border-bottom: 1px solid var(--line); padding-bottom: .3em; }
+		.markdown-section p, .markdown-section li { line-height: 1.65; }
+		.markdown-section em { color: var(--muted); }
+		.markdown-section code { background-color: var(--raised); color: var(--heading); }
+		.markdown-section pre, .markdown-section pre > code { background-color: var(--panel); color: var(--text); }
+		.markdown-section pre { border: 1px solid var(--line); border-radius: 6px; }
+		.markdown-section blockquote { color: var(--muted); }
+		.markdown-section hr { border-bottom-color: var(--line); }
+		.markdown-section table { display: block; overflow-x: auto; }
+		.markdown-section td, .markdown-section th { border-color: var(--line); }
+		.markdown-section tr { border-top-color: var(--line); }
+		.markdown-section tr:nth-child(2n) { background-color: var(--panel); }
+		.markdown-section img { border-radius: 6px; }
+		.markdown-section kbd { border-color: var(--line); background: var(--raised); color: var(--heading); }
+		.markdown-section p.tip { background-color: var(--panel); color: var(--text); }
+		.markdown-section p.tip code { background-color: var(--raised); }
+		.markdown-section p.warn { background: rgba(238, 177, 84, .1); color: var(--text); }
+		.token.punctuation { color: #8f8f8f; }
+		.token.string, .token.attr-value { color: #a5d6a7; }
+		.token.keyword { color: #52d1e9; }
+		.token.comment { color: #727272; }
+		input[type=search] { background: var(--raised); border-color: var(--line); color: var(--text); }
+		.search { border-bottom-color: var(--line); }
+		.app-nav a { color: var(--text); }
+		.app-nav li ul { background-color: var(--panel); border-color: var(--line); }
+		.github-corner svg { color: var(--bg); }
+		.markdown-section .page-source { margin-top: 3em; font-size: 13px; color: var(--muted); border-top: 1px solid var(--line); padding-top: 1em; }
+		.markdown-section .page-source a { color: var(--muted); font-weight: 400; }
+		.markdown-section pre.mermaid { background: none; border: none; text-align: center; }
+		.doors { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; margin: 1.5em 0; }
+		.door { border: 1px solid var(--line); border-radius: 8px; padding: 4px 20px 12px; background: var(--panel); }
+		.door:hover { border-color: var(--theme-color); }
+	</style>
+</head>
+<body>
+	<nav>
+		<a href="#/app/">App guide</a>
+		<a href="#/guide/getting-started">Engine guide</a>
+		<a href="#/design/CORE_AND_ADDONS">How it works</a>
+		<a href="https://atul-mourya.github.io/rayzee-renderer/" target="_blank" rel="noopener">Open the app</a>
+	</nav>
+	<div id="app">Loading…</div>
+	<script>
+		( function () {
+
+			var REPO = 'atul-mourya/rayzee-renderer';
+			var BLOB = 'https://github.com/' + REPO + '/blob/main/';
+
+			// GitHub's heading ids, so links written for GitHub land here too (docsify's own differ: '--' collapses, '&' reads 'amp').
+			function githubSlug( text ) {
+
+				return text.trim().toLowerCase().replace( /[^\p{L}\p{M}\p{N}\p{Pc}\- ]/gu, '' ).replace( / /g, '-' );
+
+			}
+
+			// A link that leaves docs/ (e.g. ../../rayzee/README.md) opens on GitHub instead.
+			function outOfSite( markdown, file ) {
+
+				var dir = file.split( '/' ).slice( 0, - 1 );
+				var parts = markdown.split( /(^```[\s\S]*?^```)/m );
+				for ( var i = 0; i < parts.length; i += 2 ) {
+
+					parts[ i ] = parts[ i ].replace( /\]\((\.\.\/[^)\s]+)\)/g, function ( all, target ) {
+
+						var path = [ 'docs' ].concat( dir );
+						var escapes = false;
+						target.split( '/' ).forEach( function ( seg ) {
+
+							if ( seg === '..' ) {
+
+								path.pop();
+								if ( path.length === 0 ) escapes = true;
+
+							} else if ( seg !== '.' ) path.push( seg );
+
+						} );
+						if ( path[ 0 ] === 'docs' && ! escapes ) return all;
+						return '](' + BLOB + path.join( '/' ) + ')';
+
+					} );
+
+				}
+
+				return parts.join( '' );
+
+			}
+
+			function rayzeePlugin( hook, vm ) {
+
+				var pageFile = function () {
+
+					return ( vm.route.file || '' ).replace( /^\/+/, '' );
+
+				};
+
+				hook.beforeEach( function ( markdown ) {
+
+					return outOfSite( markdown, pageFile() );
+
+				} );
+
+				hook.afterEach( function ( html, next ) {
+
+					var t = document.createElement( 'template' );
+					t.innerHTML = html;
+					var seen = {};
+					t.content.querySelectorAll( 'h1, h2, h3, h4, h5, h6' ).forEach( function ( h ) {
+
+						var base = githubSlug( h.textContent );
+						var slug = seen[ base ] === undefined ? base : base + '-' + seen[ base ];
+						seen[ base ] = ( seen[ base ] || 0 ) + 1;
+						if ( ! slug || slug === h.id || /^\d/.test( slug ) || t.content.getElementById( slug ) ) return;
+						var a = document.createElement( 'span' );
+						a.id = slug;
+						h.insertBefore( a, h.firstChild );
+
+					} );
+					var file = pageFile();
+					var source = file ? '<p class="page-source"><a href="' + BLOB + 'docs/' + file + '" target="_blank" rel="noopener">This page on GitHub</a></p>' : '';
+					next( t.innerHTML + source );
+
+				} );
+
+				hook.doneEach( function () {
+
+					var nodes = document.querySelectorAll( '.markdown-section pre.mermaid' );
+					if ( ! nodes.length ) return;
+					var run = function () {
+
+						window.mermaid.initialize( { startOnLoad: false, theme: 'dark' } );
+						window.mermaid.run( { nodes: nodes } );
+
+					};
+					if ( window.mermaid ) return run();
+					var s = document.createElement( 'script' );
+					s.src = 'https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.min.js';
+					s.onload = run;
+					document.head.appendChild( s );
+
+				} );
+
+			}
+
+			window.$docsify = {
+				name: 'Rayzee',
+				repo: REPO,
+				homepage: 'README.md',
+				loadSidebar: true,
+				alias: { '/.*/_sidebar.md': '/_sidebar.md' },
+				subMaxLevel: 2,
+				relativePath: true,
+				auto2top: true,
+				externalLinkTarget: '_blank',
+				search: { paths: 'auto', depth: 3, placeholder: 'Search', noData: 'Nothing found' },
+				copyCode: { buttonText: 'Copy', successText: 'Copied', errorText: 'Error' },
+				markdown: {
+					renderer: {
+						code: function ( code, lang ) {
+
+							if ( lang !== 'mermaid' ) return this.origin.code.apply( this, arguments );
+							return '<pre class="mermaid">' + code.replace( /&/g, '&amp;' ).replace( /</g, '&lt;' ) + '</pre>';
+
+						}
+					}
+				},
+				plugins: [ rayzeePlugin ]
+			};
+
+		} )();
+	</script>
+	<script src="https://cdn.jsdelivr.net/npm/docsify@4.13.1/lib/docsify.min.js"></script>
+	<script src="https://cdn.jsdelivr.net/npm/docsify@4.13.1/lib/plugins/search.min.js"></script>
+	<script src="https://cdn.jsdelivr.net/npm/docsify@4.13.1/lib/plugins/zoom-image.min.js"></script>
+	<script src="https://cdn.jsdelivr.net/npm/docsify-copy-code@2.1.1/dist/docsify-copy-code.min.js"></script>
+	<script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-bash.min.js"></script>
+	<script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-json.min.js"></script>
+	<script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-jsx.min.js"></script>
+</body>
+</html>

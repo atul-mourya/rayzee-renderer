@@ -24,6 +24,10 @@
   → `render.non_finite_samples` names the lowest pixel struck (`detail.pixel`), as pbrt's CHECK names it: night of
     2026-11-13
 - Dedicated docsify documentation for both rayzee as and app and as an engine
+  → built on the night of 2026-11-13: a docsify site rooted at `docs/`
+    (`index.html`, `_sidebar.md`, landing `README.md`), a new app guide in `docs/app/` (9 pages, from the app's source),
+    the engine guide and design notes as they are; `npm run docs` serves it, `npm run docs:check` checks every sidebar
+    entry, link, image and anchor. Not deployed yet
 
 ### Follow-ups from the Rust/WebAssembly night (2026-11-11)
 - [ ] `bench:load -- --chrome` with the WebAssembly BLAS: done against 1f605fe7 (blas crown −74 %, classroom −70 %,

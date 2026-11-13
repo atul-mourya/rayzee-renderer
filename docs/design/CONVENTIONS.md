@@ -108,6 +108,8 @@ A class that grows past what one person can read is split **by job**, not by siz
   go to `docs/design/<TOPIC>.md`, with a one-paragraph summary, every ⚠️ and a link left behind. *Check* (warns past
   135k).
 - `docs/guide/` is for people using the engine; a public API change updates it. `docs/design/` is how it works inside.
+- `docs/app/` is for people using the app, in the UI's own labels; a control added, renamed or removed updates it.
+  `docs/` is a docsify site: a new page goes in `docs/_sidebar.md`. *Check:* `npm run docs:check`.
 - `rayzee/README.md` is the npm page: install, a quick start, links. `bench/README.md` is a how-to; its detail is
   `docs/design/BENCH.md`. *Check* (length).
 - `.github/copilot-instructions.md` repeats only the easiest rules to break, and where it disagrees `CLAUDE.md` is

@@ -55,7 +55,8 @@ app/                      # The React UI
 bench/                    # Headless-GPU regression bench (bench/README.md)
 tests/                    # Vitest: unit/ (by the folder of the code under test; core/ for rayzee/src's root files,
                           # app/ and bench/ for those) and gpu/ (run on Dawn in Node)
-docs/                     # guide/ for people using the engine, design/ for how it works inside
+docs/                     # A docsify site (npm run docs): app/ for people using the app, guide/ for people using
+                          # the engine, design/ for how it works inside
 ```
 
 The engine has three layers: the **renderer core**, **add-ons**, and the **viewer** built on both. Viewer code never
@@ -118,14 +119,17 @@ Before submitting a PR:
   `npm run bench:bless` once on a new one. See `bench/README.md`
 - **Engine core changes**: `npm run bench:node -- --core` renders every bench scene with the renderer core and the
   full engine and requires them to match byte for byte
-- **UI changes**: load a model and an HDRI, check the controls you touched, and watch the console
+- **UI changes**: load a model and an HDRI, check the controls you touched, and watch the console; a control added,
+  renamed or removed updates `docs/app/`
+- **Docs changes**: `npm run docs:check` (sidebar, links, images, anchors); `npm run docs` serves the site locally
 
 Remove debug logs, and dispose every GPU resource and listener a change creates.
 
 ## 🔄 Pull Request Process
 
 1. **Branch** from `main`, named by change type: `feat/…`, `fix/…`, `refactor/…`, `docs/…`.
-2. **Make the change**, updating `CLAUDE.md`, `docs/guide/` or `docs/design/` when behaviour or API changes.
+2. **Make the change**, updating `CLAUDE.md`, `docs/app/`, `docs/guide/` or `docs/design/` when behaviour, the UI or
+   the API changes.
 3. **Test** as above.
 4. **Commit** following the conventions below, and open the PR — the template lists what to fill in.
 
