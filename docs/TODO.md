@@ -15,6 +15,8 @@
     interactive (`bench:node -- --only production`).
   → `samplerSeed` (pbrt's --seed) built on the night of 2026-11-13: seed 0
     bit-identical to before, two seeds independent (averaged: 0.701 of one's error; 0.707 ideal)
+  → `render.non_finite_samples` names the lowest pixel struck (`detail.pixel`), as pbrt's CHECK names it: night of
+    2026-11-13
 - Dedicated docsify documentation for both rayzee as and app and as an engine
 
 ### Follow-ups from the Rust/WebAssembly night (2026-11-11)

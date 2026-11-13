@@ -1591,7 +1591,8 @@ export class PathTracer extends PathTracerStage {
 	 */
 	_noteNonFinite( buf, issuedAt ) {
 
-		const seen = new Uint32Array( buf )[ COUNTER.NON_FINITE_SAMPLES ];
+		const words = new Uint32Array( buf );
+		const seen = words[ COUNTER.NON_FINITE_SAMPLES ];
 		if ( issuedAt !== this._nonFiniteEpoch ) return;
 		// A smaller total is a new counters buffer (a rebuild), which starts from zero.
 		const added = ( seen >= this._nonFiniteSeen ? seen - this._nonFiniteSeen : seen ) >>> 0;
@@ -1599,7 +1600,13 @@ export class PathTracer extends PathTracerStage {
 		if ( ! added ) return;
 		const first = this._nonFiniteSinceReset === 0;
 		this._nonFiniteSinceReset += added;
-		if ( first ) this.issues?.warn( ISSUE_CODES.RENDER_NON_FINITE_SAMPLES, `${added} samples came out NaN or infinite and were left out of the render; more may follow until it restarts`, { count: added } );
+		if ( ! first ) return;
+		// The lowest pixel with one so far (y · width + x): with firstSample, that pixel's samples can be rendered again.
+		const kept = words[ COUNTER.NON_FINITE_FIRST_PIXEL ];
+		const index = 0xFFFFFFFF - kept;
+		const width = this._wfRenderWidth?.value ?? 0;
+		const pixel = kept !== 0 && width > 0 ? { x: index % width, y: Math.floor( index / width ) } : null;
+		this.issues?.warn( ISSUE_CODES.RENDER_NON_FINITE_SAMPLES, `${added} samples came out NaN or infinite and were left out of the render${pixel ? `, the first at pixel ${pixel.x}, ${pixel.y}` : ''}; more may follow until it restarts`, { count: added, pixel } );
 
 	}
 

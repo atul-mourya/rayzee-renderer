@@ -155,7 +155,9 @@ the render. FinalWrite counts them in `COUNTER.NON_FINITE_SAMPLES`, a total over
 frame by the counter reset, which `_nonFiniteEpoch` mirrors), read with the other counters on their cadence
 (`_noteNonFinite`; a readback issued before that frame 0 is dropped) and once more as `renderFrames`,
 `renderUntilComplete` or the loop finishes a render (`readNonFiniteNow`); the first count after a frame 0 records
-`render.non_finite_samples`. A frozen pixel's stale sample is not counted again, and the emission kept apart for NRD
+`render.non_finite_samples`, with the lowest pixel struck (`COUNTER.NON_FINITE_FIRST_PIXEL`: `atomicMax` of
+0xFFFFFFFF − index, so a fresh buffer's 0 is none; reset with the count; `bench:node -- --only nonfinite` holds it to the
+first pixel that differs from the clean render). A frozen pixel's stale sample is not counted again, and the emission kept apart for NRD
 (`requestOutput( 'emission' )`) drops with its sample. Debug mode 11 shows the
 sample as it came. Cost: a bit test and a rarely taken atomic; 53 of 54 quality goldens stayed bit-identical.
 

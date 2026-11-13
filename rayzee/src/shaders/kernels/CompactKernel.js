@@ -139,12 +139,13 @@ export function writeListSizes( sizes, count, maxGroups ) {
 }
 
 // CONVERGED and the geometry counts are per frame, summed over its chunks in FinalWrite: zeroed on its first chunk only.
-// NON_FINITE_SAMPLES runs over a render: zeroed on a restart's first frame.
+// NON_FINITE_SAMPLES and NON_FINITE_FIRST_PIXEL run over a render: reset on a restart's first frame.
 function resetFrameCounts( counters, isFirstChunk, frame ) {
 
 	If( isFirstChunk.greaterThan( uint( 0 ) ).and( frame.equal( uint( 0 ) ) ), () => {
 
 		atomicStore( counters.element( uint( COUNTER.NON_FINITE_SAMPLES ) ), uint( 0 ) );
+		atomicStore( counters.element( uint( COUNTER.NON_FINITE_FIRST_PIXEL ) ), uint( 0 ) );
 
 	} );
 

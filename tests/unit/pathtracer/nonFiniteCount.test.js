@@ -6,10 +6,12 @@ import { describe, it, expect, vi } from 'vitest';
 import { PathTracer } from '@/core/pathtracer/PathTracer.js';
 import { COUNTER } from '@/core/pathtracer/QueueManager.js';
 
-const counters = total => {
+const counters = ( total, pixel = null ) => {
 
 	const words = new Uint32Array( COUNTER.COUNT );
 	words[ COUNTER.NON_FINITE_SAMPLES ] = total;
+	// FinalWrite keeps the lowest pixel index as 0xFFFFFFFF − index (atomicMax); 0 is none.
+	if ( pixel !== null ) words[ COUNTER.NON_FINITE_FIRST_PIXEL ] = 0xFFFFFFFF - pixel;
 	return words.buffer;
 
 };
@@ -21,6 +23,7 @@ function makeStage() {
 		_nonFiniteSinceReset: 0,
 		_nonFiniteEpoch: 1,
 		issues: { warn: vi.fn() },
+		_wfRenderWidth: { value: 100 },
 	} );
 
 }
@@ -77,6 +80,24 @@ describe( 'non-finite sample count', () => {
 		// No counters yet: nothing to read.
 		stage._queueManager = null;
 		await expect( stage.readNonFiniteNow() ).resolves.toBeUndefined();
+
+	} );
+
+	it( 'names the lowest pixel with one, for a host to render that pixel again', () => {
+
+		const stage = makeStage();
+		stage._noteNonFinite( counters( 3, 2 * 100 + 17 ), 1 );
+		const [ , message, detail ] = stage.issues.warn.mock.calls[ 0 ];
+		expect( detail ).toEqual( { count: 3, pixel: { x: 17, y: 2 } } );
+		expect( message ).toMatch( /pixel 17, 2/ );
+
+		// Pixel 0 is a pixel; a buffer that holds none (fresh, 0) names none.
+		const corner = makeStage();
+		corner._noteNonFinite( counters( 1, 0 ), 1 );
+		expect( corner.issues.warn.mock.calls[ 0 ][ 2 ].pixel ).toEqual( { x: 0, y: 0 } );
+		const none = makeStage();
+		none._noteNonFinite( counters( 1 ), 1 );
+		expect( none.issues.warn.mock.calls[ 0 ][ 2 ].pixel ).toBeNull();
 
 	} );
 

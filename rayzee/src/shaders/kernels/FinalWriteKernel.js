@@ -13,7 +13,7 @@
 import {
 	Fn, wgslFn, float, vec2, vec3, vec4, int, uint, uvec2, bool as tslBool,
 	If, mix, select, texture, textureStore, length, max, floatBitsToUint,
-	localId, workgroupId, instanceIndex, atomicAdd,
+	localId, workgroupId, instanceIndex, atomicAdd, atomicMax,
 } from 'three/tsl';
 
 import {
@@ -114,7 +114,7 @@ export function buildFinalWriteKernel( params ) {
 		emissionRW = null, emissionOutput = null,
 		// The per-sample cap, compiled in only while it has a limit under the path integrator ({ limit, toXYZ } uniforms).
 		sampleClamp = null,
-		// COUNTER.NON_FINITE_SAMPLES counts the samples dropped as NaN or infinite.
+		// Samples dropped as NaN or infinite are counted, and the lowest pixel kept.
 		counters,
 	} = params;
 
@@ -158,6 +158,7 @@ export function buildFinalWriteKernel( params ) {
 			If( checked.w.greaterThan( 0.0 ).and( wasFrozen.not() ), () => {
 
 				atomicAdd( counters.element( uint( COUNTER.NON_FINITE_SAMPLES ) ), uint( 1 ) );
+				atomicMax( counters.element( uint( COUNTER.NON_FINITE_FIRST_PIXEL ) ), uint( 0xFFFFFFFF ).sub( pixelId ) );
 
 			} );
 

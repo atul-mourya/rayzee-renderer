@@ -20,9 +20,8 @@ export const COUNTER = {
 	// Samples FinalWrite dropped as NaN or infinite over a render: zeroed on a restart's first frame, read as
 	// differences (PathTracer._noteNonFinite).
 	NON_FINITE_SAMPLES: 3,
-	// Reserved hole — was ACTIVE_PIXEL_COUNT, which held only the last row band's count; each band's now rides
-	// with its survivor curve (QueueManager.pixelCountOffset).
-	RESERVED_4: 4,
+	// The lowest pixel index (y · width + x) with a dropped sample, kept as 0xFFFFFFFF − index by atomicMax: 0 is none.
+	NON_FINITE_FIRST_PIXEL: 4,
 	// Geometry-only convergence gate. CONVERGED_COUNT counts every pixel, so a mostly-sky frame inherits the
 	// sky's free convergence and can retire while the subject is still noisy. These count the same eroded
 	// bits restricted to pixels that hit geometry, so the stop can require both fractions.

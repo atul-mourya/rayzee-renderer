@@ -285,6 +285,48 @@ async function samplerSeeds() {
 
 if ( ! only || only.includes( 'seed' ) ) await samplerSeeds();
 
+// A NaN sample is dropped and counted, and render.non_finite_samples names the first pixel that differs from a clean render.
+async function nonFinitePixel() {
+
+	const id = 'rough-diffuse';
+	const linear = async () => Float32Array.from( ( await app.renderToBuffer( { colorSpace: 'linear' } ) ).data );
+
+	try {
+
+		await session.loadScene( id );
+		await app.renderFrames( 4, { reset: true } );
+		const clean = await linear();
+		// A NaN colour, not roughness: clamps make a NaN roughness finite on the GPU. No later section renders this scene.
+		for ( let m = 0; m < app.stages.pathTracer.materialData.materialCount; m ++ ) app.setMaterialProperty( m, 'color', [ NaN, NaN, NaN ] );
+		const before = app.issues.length;
+		await app.renderFrames( 4, { reset: true } );
+		const poisoned = await linear();
+		await app.stages.pathTracer.readNonFiniteNow();
+		const issue = app.issues.slice( before ).find( ( i ) => i.code === 'render.non_finite_samples' );
+		const width = app.stages.pathTracer.width;
+		let first = - 1;
+		for ( let i = 0; i < clean.length && first < 0; i += 4 ) {
+
+			if ( clean[ i ] !== poisoned[ i ] || clean[ i + 1 ] !== poisoned[ i + 1 ] || clean[ i + 2 ] !== poisoned[ i + 2 ] ) first = i / 4;
+
+		}
+
+		const named = issue?.detail?.pixel;
+		const pass = !! named && first >= 0 && named.y * width + named.x === first;
+		if ( ! pass ) failed ++;
+		console.log( `  ${pass ? GREEN + 'pass' : RED + 'FAIL'}${RESET} ${id} NaN pixel${DIM}  ${issue?.detail?.count ?? 0} samples dropped, named ${named ? `${named.x}, ${named.y}` : 'none'}, first changed ${first >= 0 ? `${first % width}, ${Math.floor( first / width )}` : 'none'}${RESET}` );
+
+	} catch ( error ) {
+
+		failed ++;
+		console.log( `  ${RED}FAIL${RESET} NaN pixel  ${error.message}` );
+
+	}
+
+}
+
+if ( ! only || only.includes( 'nonfinite' ) ) await nonFinitePixel();
+
 // Compressed glTF: three's own Draco and KTX2 loaders start their workers themselves, which works in Node only because
 // the engine lends them NodeWorker for the parse (withHostWorker). Each fixture (bench/tools/make-compressed-fixtures.mjs)
 // renders against its uncompressed twin, so a decoder that runs but decodes wrongly fails too. The decoders are three's
