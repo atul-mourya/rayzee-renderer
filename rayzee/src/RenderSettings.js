@@ -56,6 +56,7 @@ const SETTING_ROUTES = {
 	sampleClamp: { handler: 'handleSampleClamp', reset: true },
 	pixelFilter: { handler: 'handlePixelFilter', reset: true },
 	pixelFilterRadius: { handler: 'handlePixelFilterRadius', reset: true },
+	samplerSeed: { handler: 'handleSamplerSeed', reset: true },
 	shadowTerminatorOffset: { uniform: 'shadowTerminatorOffset', reset: true },
 	enableAlphaShadows: { uniform: 'enableAlphaShadows', reset: true },
 	// Adaptive sampling — whole-frame early-stop (useAdaptiveSampling) + per-pixel freeze (usePixelFreeze)
@@ -248,6 +249,7 @@ export class RenderSettings extends EventDispatcher {
 			handleSampleClamp: ( value ) => stages.pathTracer?.setUniform( 'sampleClamp', Math.max( Number( value ) || 0, 0 ) ),
 			handlePixelFilter: ( value ) => stages.pathTracer?.setPixelFilter?.( value ),
 			handlePixelFilterRadius: ( value ) => stages.pathTracer?.setUniform( 'pixelFilterRadius', Math.max( Number( value ) || 0, 0 ) ),
+			handleSamplerSeed: ( value ) => stages.pathTracer?.setSamplerSeed?.( value ),
 
 			handleFogDensity: ( value ) => {
 

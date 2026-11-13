@@ -1,7 +1,7 @@
 import { describe } from 'vitest';
 import { WebGPURenderer } from 'three/webgpu';
 import { Fn, instanceIndex, instancedArray } from 'three/tsl';
-import { withSceneResources } from '@/core/shaders/SceneResources.js';
+import { withSceneResources, withSamplerSeed } from '@/core/shaders/SceneResources.js';
 
 const unavailable = globalThis.__rayzeeGPUUnavailable;
 
@@ -40,7 +40,8 @@ export async function createRenderer() {
  * Runs `fn` once per element on the GPU and returns the ArrayBuffer it wrote.
  * @param {Object<string, [ArrayLike<number>, string]>} inputs - name → [ data, TSL element type ]
  * @param {function(Object<string, Node>): Node} fn - gets each input's element by name
- * @param {{materialLayers?: Object<string, boolean>}} [resources] - the kernel's scene resources (SceneResources.js)
+ * @param {{materialLayers?: Object<string, boolean>, samplerSeed?: number}} [resources] - the kernel's scene resources
+ *   (SceneResources.js), and the sampler seed it is built under
  */
 export async function evaluate( renderer, count, inputs, outType, fn, resources = null ) {
 
@@ -53,7 +54,7 @@ export async function evaluate( renderer, count, inputs, outType, fn, resources 
 		out.element( instanceIndex ).assign( fn( args ) );
 
 	} )();
-	const kernel = ( resources ? withSceneResources( body, resources ) : body ).compute( count );
+	const kernel = withSamplerSeed( resources ? withSceneResources( body, resources ) : body, resources?.samplerSeed ?? 0 ).compute( count );
 
 	await renderer.computeAsync( kernel );
 	return renderer.getArrayBufferAsync( out.value );

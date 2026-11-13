@@ -1,6 +1,7 @@
 // Three.js Transpiler r182
 
-import { uniform, float, If, wgslFn, uint, TWO_PI, cos, sin, vec2, sqrt, select, int, vec4 } from 'three/tsl';
+import { uniform, float, If, wgslFn, uint, TWO_PI, cos, sin, vec2, sqrt, select, int, vec4, Fn } from 'three/tsl';
+import { samplerSeed } from './SceneResources.js';
 
 // -----------------------------------------------------------------------------
 // Uniform declarations and constants
@@ -10,6 +11,23 @@ export const samplingTechniqueUniform = uniform( 0, 'int' );
 const samplingTechnique = samplingTechniqueUniform;
 
 // 0: PCG, 1: Halton, 2: Owen-scrambled Sobol (default; anything higher falls back to it)
+
+// The sampler seed (from the kernel's build context) scrambles each pixel's sequence and first random state; with none,
+// both return their input.
+const pixelKey = Fn( ( [ pixelCoord, resolution ], builder ) => {
+
+	const pixel = uint( pixelCoord.x ).add( uint( pixelCoord.y ).mul( uint( resolution.x ) ) );
+	const seed = samplerSeed( builder );
+	return seed ? pixel.bitXor( uint( Math.imul( seed, 0x9E3779B9 ) >>> 0 ) ) : pixel;
+
+} );
+
+export const seededState = Fn( ( [ state ], builder ) => {
+
+	const seed = samplerSeed( builder );
+	return seed ? pcgHash( { state: state.bitXor( uint( Math.imul( seed, 0x85EBCA6B ) >>> 0 ) ) } ) : state;
+
+} );
 
 // -----------------------------------------------------------------------------
 // Basic random number generation
@@ -335,7 +353,7 @@ const getRandomSampleND = ( pixelCoord, sampleIndex, bounceIndex, rngState, dime
 		// Halton — the accumulation frame is the sequence INDEX, not part of the scramble. Folding
 		// frame into the scramble (as this did) re-randomises point 0 every frame and never walks the
 		// sequence, which is a hash, not low-discrepancy sampling. The scramble is what separates pixels.
-		const pixelHash = uint( pixelCoord.x ).add( uint( pixelCoord.y ).mul( uint( resolution.x ) ) );
+		const pixelHash = pixelKey( pixelCoord, resolution );
 		const scramble = pcgHash( { state: pixelHash.bitXor( uint( bounceIndex ).mul( uint( 0x517cc1b7 ) ) ).bitXor( uint( sampleIndex ).mul( uint( 0x2545f491 ) ) ) } ).toVar();
 
 		result.x.assign( haltonScrambled( { index: int( frame ), base: int( 2 ), scramble } ) );
@@ -362,7 +380,7 @@ const getRandomSampleND = ( pixelCoord, sampleIndex, bounceIndex, rngState, dime
 
 		// Sobol — frame is the sequence INDEX; the per-pixel Owen seed must stay frame-independent
 		// or the sequence never advances. See the Halton note above.
-		const pixelHash = uint( pixelCoord.x ).add( uint( pixelCoord.y ).mul( uint( resolution.x ) ) );
+		const pixelHash = pixelKey( pixelCoord, resolution );
 		const seed = pcgHash( { state: pixelHash.bitXor( uint( bounceIndex ).mul( uint( 0x517cc1b7 ) ) ).bitXor( uint( sampleIndex ).mul( uint( 0x2545f491 ) ) ) } ).toVar();
 
 		// Drawn as PAIRS, not four padded 1D dimensions — only a shared index shuffle keeps
@@ -425,7 +443,7 @@ export const getRandomSample2D = ( pixelCoord, sampleIndex, dimensionIndex, rngS
 
 	} ).ElseIf( samplingTechnique.equal( int( 1 ) ), () => {
 
-		const pixelHash = uint( pixelCoord.x ).add( uint( pixelCoord.y ).mul( uint( resolution.x ) ) );
+		const pixelHash = pixelKey( pixelCoord, resolution );
 		const scramble = pcgHash( { state: pixelHash.bitXor( uint( dimensionIndex ).mul( uint( 0x517cc1b7 ) ) ).bitXor( uint( sampleIndex ).mul( uint( 0x2545f491 ) ) ) } ).toVar();
 		result.assign( vec2(
 			haltonScrambled( { index: int( frame ), base: int( 2 ), scramble } ),
@@ -434,7 +452,7 @@ export const getRandomSample2D = ( pixelCoord, sampleIndex, dimensionIndex, rngS
 
 	} ).Else( () => {
 
-		const pixelHash = uint( pixelCoord.x ).add( uint( pixelCoord.y ).mul( uint( resolution.x ) ) );
+		const pixelHash = pixelKey( pixelCoord, resolution );
 		const seed = pcgHash( { state: pixelHash.bitXor( uint( dimensionIndex ).mul( uint( 0x517cc1b7 ) ) ).bitXor( uint( sampleIndex ).mul( uint( 0x2545f491 ) ) ) } ).toVar();
 		result.assign( owen_scrambled_sobol2D( { index: uint( frame ), seed } ) );
 
@@ -458,13 +476,13 @@ export const getRandomSample1D = ( pixelCoord, sampleIndex, dimensionIndex, rngS
 
 	} ).ElseIf( samplingTechnique.equal( int( 1 ) ), () => {
 
-		const pixelHash = uint( pixelCoord.x ).add( uint( pixelCoord.y ).mul( uint( resolution.x ) ) );
+		const pixelHash = pixelKey( pixelCoord, resolution );
 		const scramble = pcgHash( { state: pixelHash.bitXor( uint( dimensionIndex ).mul( uint( 0x517cc1b7 ) ) ).bitXor( uint( sampleIndex ).mul( uint( 0x2545f491 ) ) ) } ).toVar();
 		result.assign( haltonScrambled( { index: int( frame ), base: int( 2 ), scramble } ) );
 
 	} ).Else( () => {
 
-		const pixelHash = uint( pixelCoord.x ).add( uint( pixelCoord.y ).mul( uint( resolution.x ) ) );
+		const pixelHash = pixelKey( pixelCoord, resolution );
 		const seed = pcgHash( { state: pixelHash.bitXor( uint( dimensionIndex ).mul( uint( 0x517cc1b7 ) ) ).bitXor( uint( sampleIndex ).mul( uint( 0x2545f491 ) ) ) } ).toVar();
 		result.assign( owen_scrambled_sobol( { index: uint( frame ), dimension: uint( 0 ), seed } ) );
 

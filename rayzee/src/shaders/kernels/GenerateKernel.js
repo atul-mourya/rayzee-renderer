@@ -18,6 +18,7 @@ import {
 
 import {
 	getDecorrelatedSeed,
+	seededState,
 	pcgHash,
 	getStratifiedSample,
 } from '../Random.js';
@@ -102,7 +103,7 @@ export function buildGenerateKernel( params ) {
 
 		const pixelCoord = vec2( float( gx ).add( 0.5 ), float( gy ).add( 0.5 ) );
 
-		const baseSeed = getDecorrelatedSeed( { pixelCoord, rayIndex: int( 0 ), frame } ).toVar();
+		const baseSeed = seededState( getDecorrelatedSeed( { pixelCoord, rayIndex: int( 0 ), frame } ) ).toVar();
 		const seed = pcgHash( { state: baseSeed } ).toVar();
 
 		// Sample index 1, not the bounces' 0, so the sub-pixel position is independent of the first scatter.

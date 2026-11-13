@@ -43,6 +43,16 @@ export function sceneResources( builder ) {
 
 }
 
+const SEED_KEY = 'rayzeeSamplerSeed';
+
+/**
+ * Builds `node` with the renderer's sampler seed in its context. Seed 0 adds nothing.
+ */
+export const withSamplerSeed = ( node, seed ) => ( seed ? context( node, { [ SEED_KEY ]: seed >>> 0 } ) : node );
+
+/** The sampler seed of the kernel being built (a whole number below 2³²), 0 without one. */
+export const samplerSeed = ( builder ) => builder.context[ SEED_KEY ] ?? 0;
+
 /** The material layers a kernel compiles only while some material in its scene has them. */
 export const MATERIAL_LAYERS = Object.freeze( [ 'clearcoat', 'sheen', 'iridescence', 'anisotropy', 'subsurface', 'dispersion', 'diffuseTransmission', 'diffuseRoughness' ] );
 

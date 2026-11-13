@@ -223,6 +223,68 @@ async function productionPreset() {
 
 if ( ! only || only.includes( 'production' ) ) await productionPreset();
 
+// samplerSeed (pbrt's --seed): two seeds average to about 1/√2 of one's error; seed 0 renders byte for byte as before.
+async function samplerSeeds() {
+
+	const id = 'cornell-emissive';
+	const linear = async () => Float32Array.from( ( await app.renderToBuffer( { colorSpace: 'linear' } ) ).data );
+	const rmse = ( a, b ) => {
+
+		let e = 0, n = 0;
+		for ( let i = 0; i < a.length; i += 4 ) for ( let c = 0; c < 3; c ++ ) {
+
+			const d = a[ i + c ] - b[ i + c ];
+			if ( Number.isFinite( d ) ) {
+
+				e += d * d; n ++;
+
+			}
+
+		}
+
+		return Math.sqrt( e / n );
+
+	};
+
+	try {
+
+		await session.loadScene( id );
+		app.settings.set( 'samplerSeed', 0 );
+		await app.renderFrames( 512, { reset: true } );
+		const truth = await linear();
+		const shot = async ( seed ) => {
+
+			app.settings.set( 'samplerSeed', seed );
+			await app.renderFrames( 16, { reset: true } );
+			return linear();
+
+		};
+
+		const zero = await shot( 0 ), seven = await shot( 7 ), again = await shot( 0 );
+		const mean = zero.map( ( v, i ) => ( v + seven[ i ] ) / 2 );
+		const one = ( rmse( zero, truth ) + rmse( seven, truth ) ) / 2;
+		const ratio = rmse( mean, truth ) / one;
+		let same = 0;
+		for ( let i = 0; i < zero.length; i ++ ) if ( zero[ i ] === again[ i ] ) same ++;
+		const pass = rmse( zero, seven ) > 0 && ratio < 0.8 && same === zero.length;
+		if ( ! pass ) failed ++;
+		console.log( `  ${pass ? GREEN + 'pass' : RED + 'FAIL'}${RESET} ${id} samplerSeed${DIM}  two seeds averaged: ${ratio.toFixed( 3 )} of one's error (independent: 0.707), seed 0 again ${same === zero.length ? 'byte-identical' : `${zero.length - same} values differ`}${RESET}` );
+
+	} catch ( error ) {
+
+		failed ++;
+		console.log( `  ${RED}FAIL${RESET} samplerSeed  ${error.message}` );
+
+	} finally {
+
+		app.settings.set( 'samplerSeed', 0 );
+
+	}
+
+}
+
+if ( ! only || only.includes( 'seed' ) ) await samplerSeeds();
+
 // Compressed glTF: three's own Draco and KTX2 loaders start their workers themselves, which works in Node only because
 // the engine lends them NodeWorker for the parse (withHostWorker). Each fixture (bench/tools/make-compressed-fixtures.mjs)
 // renders against its uncompressed twin, so a decoder that runs but decodes wrongly fails too. The decoders are three's

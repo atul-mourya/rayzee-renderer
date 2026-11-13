@@ -141,6 +141,18 @@ describe( 'the path tracer\'s integrators', () => {
 
 	} );
 
+	it( 'takes a whole-number sampler seed below 2³², anything else as 0', () => {
+
+		const pt = bare();
+		for ( const [ given, kept ] of [[ 7, 7 ], [ 2 ** 32 - 1, 2 ** 32 - 1 ], [ '12', 12 ], [ 0, 0 ], [ - 1, 0 ], [ 1.5, 0 ], [ 2 ** 32, 0 ], [ 'x', 0 ]] ) {
+
+			pt.setSamplerSeed( given );
+			expect( pt._samplerSeed, String( given ) ).toBe( kept );
+
+		}
+
+	} );
+
 	it( 'measures the clamp in CIE XYZ from whatever the working space is', () => {
 
 		const pt = bare();

@@ -13,6 +13,8 @@
   → found on the way (2026-11-13 night): a final render traced its first sample with one
     bounce and kept it in the average (1/N of the indirect light missing); removed, production now traces exactly as
     interactive (`bench:node -- --only production`).
+  → `samplerSeed` (pbrt's --seed) built on the night of 2026-11-13: seed 0
+    bit-identical to before, two seeds independent (averaged: 0.701 of one's error; 0.707 ideal)
 - Dedicated docsify documentation for both rayzee as and app and as an engine
 
 ### Follow-ups from the Rust/WebAssembly night (2026-11-11)
@@ -76,6 +78,9 @@
 
 ### Known
 
+- [ ] Halton (`samplingTechnique` 1, not the default) scrambles each digit by an LCG whose low bit only alternates
+  (`s * 747796405 + 2891336453`, both odd): in base 2 a pixel's scramble has one bit, so every pixel draws one of two
+  sequences in that dimension (base 3 a handful). Found 2026-11-13 testing the sampler seed. Sobol (the default) is fine.
 - [ ] Collada does not load in Node: three's ColladaParser needs a `DOMParser` (`DOMParser is not defined`), and
   `configurePlatform` has no seam for one (found 2026-11-08; the browser loads all 12 local `.dae` files).
 - [ ] A scene whose file asks for bidirectional and has glass loses light through the glass: glass blocks the

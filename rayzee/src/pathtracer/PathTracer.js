@@ -29,7 +29,7 @@ import {
 } from '../shaders/kernels/FinalWriteKernel.js';
 import { buildDebugKernel, DEBUG_WG_SIZE } from '../shaders/kernels/DebugKernel.js';
 import { buildBucketTextureNodes, refreshBucketTextureNodes } from '../shaders/TextureSampling.js';
-import { withSceneResources, MATERIAL_LAYERS } from '../shaders/SceneResources.js';
+import { withSceneResources, withSamplerSeed, MATERIAL_LAYERS } from '../shaders/SceneResources.js';
 import {
 	buildResetGlobalHistKernel, buildGlobalHistKernel, buildGlobalPrefixKernel, buildGlobalScatterKernel,
 	SORT_GLOBAL_WG_SIZE, SORT_GLOBAL_MAX_BINS,
@@ -196,6 +196,8 @@ export class PathTracer extends PathTracerStage {
 		this._pathRegularization = ENGINE_DEFAULTS.pathRegularization;
 		// The pixel filter the camera rays are drawn from, and the one Generate was compiled with ('' = the box of 0.5).
 		this._pixelFilter = ENGINE_DEFAULTS.pixelFilter;
+		this._samplerSeed = ENGINE_DEFAULTS.samplerSeed;
+		this._compiledSamplerSeed = 0;
 		this._compiledPixelFilter = '';
 		this._learnsVisibility = false;
 
@@ -500,6 +502,25 @@ export class PathTracer extends PathTracerStage {
 
 	}
 
+	/**
+	 * Scrambles every pixel's sample sequence and first random state (pbrt's --seed). A whole number below 2³²; 0, the
+	 * default, compiles no seed in.
+	 */
+	setSamplerSeed( seed ) {
+
+		const value = Number( seed );
+		if ( ! ( Number.isInteger( value ) && value >= 0 && value < 2 ** 32 ) ) {
+
+			log.warn( `samplerSeed: expected a whole number from 0 to 2³² − 1, got ${seed}; using 0` );
+			this._samplerSeed = 0;
+			return;
+
+		}
+
+		this._samplerSeed = value;
+
+	}
+
 	/** The filter each camera sample's position is drawn from (pbrt's PixelFilter): 'box', 'triangle' or 'gaussian'. */
 	setPixelFilter( type ) {
 
@@ -610,6 +631,7 @@ export class PathTracer extends PathTracerStage {
 		if ( this._stackNeeded() > this._compiledStack ) this._outputsChanged = true;
 		if ( this._sampleClampNeeded() !== this._compiledSampleClamp ) this._outputsChanged = true;
 		if ( this._pixelFilterNeeded() !== this._compiledPixelFilter ) this._outputsChanged = true;
+		if ( this._samplerSeed !== this._compiledSamplerSeed ) this._outputsChanged = true;
 
 		if ( this._lightBufferRealloc || this._outputsChanged ) {
 
@@ -2029,8 +2051,11 @@ export class PathTracer extends PathTracerStage {
 			pixelFilter: this._compiledPixelFilter ? { type: this._compiledPixelFilter, radius: this.pixelFilterRadius } : null,
 		};
 		const genFn = buildGenerateKernel( genParams );
+		// Every kernel that draws samples is built under the sampler seed (none at 0).
+		const seed = this._compiledSamplerSeed = this._samplerSeed;
+		const seeded = ( call ) => withSamplerSeed( call, seed );
 		this._kernelManager.register( 'generate',
-			genFn().compute(
+			seeded( genFn() ).compute(
 				[ Math.ceil( w / GENERATE_WG_SIZE ), Math.ceil( this._chunkRows / GENERATE_WG_SIZE ), 1 ],
 				[ GENERATE_WG_SIZE, GENERATE_WG_SIZE, 1 ]
 			)
@@ -2073,7 +2098,7 @@ export class PathTracer extends PathTracerStage {
 			counters,
 		} );
 		this._kernelManager.register( 'generateList',
-			genListFn().compute( [ Math.ceil( maxRays / LIST_WG_SIZE ), 1, 1 ], [ LIST_WG_SIZE, 1, 1 ] )
+			seeded( genListFn() ).compute( [ Math.ceil( maxRays / LIST_WG_SIZE ), 1, 1 ], [ LIST_WG_SIZE, 1, 1 ] )
 		);
 
 		const freshBvh = this.bvhStorageNode;
@@ -2112,7 +2137,7 @@ export class PathTracer extends PathTracerStage {
 		};
 		this._compiledFog = resources.fog !== null;
 		this._compiledStack = this._stackNeeded();
-		const own = ( call ) => withSceneResources( call, resources );
+		const own = ( call ) => seeded( withSceneResources( call, resources ) );
 		const freshEnvTex = _env.environmentTexture ? texture( _env.environmentTexture ) : texNodes.envTex;
 
 		this._wfTexNodes = {

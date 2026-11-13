@@ -9,7 +9,7 @@ import {
 	sqrt, cos, sin, Loop, sampler, bool as tslBool,
 } from 'three/tsl';
 
-import { getRandomSample1D, getRandomSample2D, getDecorrelatedSeed, pcgHash } from '../../shaders/Random.js';
+import { getRandomSample1D, getRandomSample2D, getDecorrelatedSeed, pcgHash, seededState } from '../../shaders/Random.js';
 import { sampleTriangle, fetchTriangleData, binarySearchCDF, TriangleData } from '../../shaders/EmissiveSampling.js';
 import { cosineWeightedSample } from '../../shaders/MaterialSampling.js';
 import { offsetRayOrigin, triangleRow } from '../../shaders/Common.js';
@@ -67,7 +67,7 @@ export function buildLightGenerateKernel( params ) {
 		activeIndicesRW.element( tid ).assign( tid );
 
 		const pixel = lightPathPixel( tid, resolution ).toVar();
-		const rng = pcgHash( { state: getDecorrelatedSeed( { pixelCoord: pixel, rayIndex: int( 3 ), frame } ) } ).toVar();
+		const rng = pcgHash( { state: seededState( getDecorrelatedSeed( { pixelCoord: pixel, rayIndex: int( 3 ), frame } ) ) } ).toVar();
 
 		const origin = vec3( 0.0 ).toVar();
 		const direction = vec3( 0.0, 1.0, 0.0 ).toVar();

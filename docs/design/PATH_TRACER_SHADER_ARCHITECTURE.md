@@ -508,6 +508,15 @@ Shade uses it while `lightBVHNodeCount > 0` and falls back to the uniform-CDF pa
 
 The STBN blue-noise atlases were removed in 9.2.0; no live code path read them.
 
+**The sampler seed** (`samplerSeed`, pbrt's `--seed`) is a compile-time constant in each sampling kernel's build context
+(`withSamplerSeed` / `samplerSeed( builder )`, `shaders/SceneResources.js`; Generate, Shade, Debug and the bidirectional
+kernels through `own`). `pixelKey` XORs it (× 0x9E3779B9) into the pixel index every Sobol and Halton scramble hashes,
+and `seededState` hashes it (× 0x85EBCA6B) into the first random state Generate and LightGenerate draw from, so every
+dimension, the PCG ones included, changes with it. At 0 neither emits anything: the kernels are the unseeded ones, bit
+for bit (`tests/gpu/samplerSeed.test.js`). A change rebuilds the kernels (`_compiledSamplerSeed`). Measured: two seeds'
+16-sample renders of cornell-emissive averaged have 0.701 of one's RMSE against 512 samples (independent: 0.707;
+`bench:node -- --only seed`).
+
 ### Strategies
 - The primary ray's jitter within the pixel is the sequence's own 2D sample (`getStratifiedSample`, sample index 1, so it is independent of the first scatter).
 - `getRandomSample1D` / `getRandomSample2D` draw on an explicit dimension: each bounce owns `SAMPLER_DIMS_PER_BOUNCE` (32) dimensions, and per-pixel variable-count draws use the range from `SAMPLER_DIM_AUX_BASE`.
