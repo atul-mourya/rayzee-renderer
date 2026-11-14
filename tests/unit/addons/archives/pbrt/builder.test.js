@@ -205,6 +205,69 @@ describe( 'PBRT scene builder', () => {
 
 	} );
 
+	it( 'splits a mesh under a directionmix texture into the faces along its direction (tex1) and across (tex2)', async () => {
+
+		// A unit cube, 12 triangles; its top and bottom face +y and -y.
+		const P = '-1 -1 -1  1 -1 -1  1 1 -1  -1 1 -1  -1 -1 1  1 -1 1  1 1 1  -1 1 1';
+		const I = '0 2 1  0 3 2  4 5 6  4 6 7  0 1 5  0 5 4  3 6 2  3 7 6  0 4 7  0 7 3  1 2 6  1 6 5';
+		const cube = `Shape "trianglemesh" "point3 P" [ ${P} ] "integer indices" [ ${I} ] "point2 uv" [ 0 0 1 0 1 1 0 1 0 0 1 0 1 1 0 1 ]`;
+		const scene = ( texture, shapes = cube ) => `LookAt 0 0 5  0 0 0  0 1 0
+			Camera "perspective" "float fov" 40
+			WorldBegin
+			${texture}
+			Material "diffuse" "texture reflectance" "mix"
+			${shapes}`;
+		const MIX = 'Texture "mix" "spectrum" "directionmix" "rgb tex1" [ 0.8 0 0 ] "rgb tex2" [ 0 0 0.8 ] "vector3 dir" [ 0 1 0 ]';
+		const load = async ( ...args ) => {
+
+			const result = await loadPBRTScene( buildArgs( { vfs: { 'scene.pbrt': enc.encode( scene( ...args ) ) } } ) );
+			const meshes = [];
+			result.group.traverse( ( o ) => o.isMesh && meshes.push( o ) );
+			const faces = ( colour ) => meshes.filter( ( m ) => m.material.color.r > 0.5 === colour ).reduce( ( n, m ) => n + ( m.isInstancedMesh ? m.count : 1 ) * ( m.geometry.index ? m.geometry.index.count : m.geometry.attributes.position.count ) / 3, 0 );
+			return { ...result, red: faces( true ), blue: faces( false ), meshes };
+
+		};
+
+		const up = await load( MIX );
+		expect( [ up.red, up.blue ] ).toEqual( [ 4, 8 ] );
+		expect( up.warnings.some( ( w ) => /directionmix/.test( w ) ) ).toBe( false );
+		expect( up.parameters.approximated ).toEqual( {} );
+		expect( Object.keys( up.parameters.unused ).filter( ( key ) => /directionmix/.test( key ) ) ).toEqual( [] );
+		// Each part keeps only its own vertices, its uvs with them.
+		for ( const mesh of up.meshes ) expect( mesh.geometry.attributes.uv.count ).toBe( mesh.geometry.attributes.position.count );
+
+		// The direction is in the texture's space: turned onto x, the ±x sides take tex1.
+		const turned = await load( `AttributeBegin Rotate 90 0 0 1 ${MIX} AttributeEnd` );
+		expect( [ turned.red, turned.blue ] ).toEqual( [ 4, 8 ] );
+		// Every tex1 triangle lies in a plane x = ±1.
+		const sides = turned.meshes.find( ( m ) => m.material.color.r > 0.5 ).geometry;
+		const corner = ( t, k ) => sides.attributes.position.getX( sides.index ? sides.index.getX( t * 3 + k ) : t * 3 + k );
+		for ( let t = 0; t < 4; t ++ ) expect( [ corner( t, 1 ), corner( t, 2 ) ] ).toEqual( [ corner( t, 0 ), corner( t, 0 ) ] );
+
+		// tex1 and tex2 default to 1 (white), dir to +y.
+		const plain = await load( 'Texture "mix" "spectrum" "directionmix" "rgb tex2" [ 0 0 0.8 ]' );
+		expect( [ plain.red, plain.blue ] ).toEqual( [ 4, 8 ] );
+		expect( plain.meshes.find( ( m ) => m.material.color.r > 0.5 ).material.color.toArray() ).toEqual( [ 1, 1, 1 ] );
+		// Inside an object, placed twice. A tilted direction leaves faces between: each goes to its larger part, reported.
+		const placed = await load( MIX, `ObjectBegin "box" ${cube} ObjectEnd ObjectInstance "box" Translate 3 0 0 ObjectInstance "box"` );
+		expect( [ placed.red, placed.blue ] ).toEqual( [ 8, 16 ] );
+		const tilted = await load( MIX.replace( '"vector3 dir" [ 0 1 0 ]', '"vector3 dir" [ 0 1 0.2 ]' ) );
+		expect( [ tilted.red, tilted.blue ] ).toEqual( [ 4, 8 ] );
+		expect( Object.keys( tilted.parameters.approximated ) ).toEqual( [ 'Texture directionmix: dir' ] );
+		// The shading normal decides where the mesh has one, turned as normals turn: corner normals on a box flattened
+		// tenfold all lean up, where its faces stay square to the axes.
+		const flat = `AttributeBegin Scale 1 0.1 1 ${cube} AttributeEnd`;
+		const N = '"normal N" [ -1 -1 -1  1 -1 -1  1 1 -1  -1 1 -1  -1 -1 1  1 -1 1  1 1 1  -1 1 1 ]';
+		const box = await load( MIX, flat );
+		expect( [ box.red, box.blue ] ).toEqual( [ 4, 8 ] );
+		const smooth = await load( MIX, flat.replace( '"integer indices"', `${N} "integer indices"` ) );
+		expect( [ smooth.red, smooth.blue ] ).toEqual( [ 12, 0 ] );
+		// A shape other than a triangle mesh keeps the old path: warned, not split.
+		const sphere = await load( MIX, 'Shape "sphere" "float radius" 1' );
+		expect( sphere.warnings.some( ( w ) => /texture class "directionmix" not supported/.test( w ) ) ).toBe( true );
+
+	} );
+
 	it( 'reports what the scene asks the renderer for: its integrator, depth, samples and film size', async () => {
 
 		const scene = 'Integrator "volpath" "integer maxdepth" 15\nSampler "zsobol" "integer pixelsamples" 1024\n' + SCENE;

@@ -946,7 +946,7 @@ export class PBRTParser {
 				const texClass = this._expectString( 'Texture class' ); // imagemap | scale | ...
 				const params = this._withAttributes( 'texture', this._parseParams() );
 				const def = { dataType, class: texClass, params };
-				if ( this._str( params.mapping, 'uv' ) !== 'uv' ) def.ctm = this._ctmSnapshot();
+				if ( this._str( params.mapping, 'uv' ) !== 'uv' || texClass === 'directionmix' ) def.ctm = this._ctmSnapshot();
 				this.ir.namedTextures.set( texName, def );
 				break;
 

@@ -212,7 +212,7 @@
 - [ ] **Displacement** (`texture displacement` + `edgelength`): dice to the edge length and displace along the normal at
   load, as pbrt does — kroken's rug pile, cushion tufting, bricks, rocks. Needs a per-shape triangle cap.
 - [ ] **Texture classes**: `dots` (needs pbrt's Perlin noise); `fbm`, `wrinkled`, `windy`, `marble` (3D procedural);
-  `directionmix` (by the normal). 2D `checkerboard` and `bilerp` are baked since 2026-10-05. `ptex` is not read on main:
+  `directionmix` on shapes other than triangle meshes (a triangle mesh is split by face). 2D `checkerboard` and `bilerp` are baked since 2026-10-05. `ptex` is not read on main:
   the 2026-10-06 reader was lost, and its rebuild (pbrt and USD) is on branch `feat/island-geometry-and-ptex` (36806b04).
 - [ ] **Ptex past 1,024 files** (the rebuild on `feat/island-geometry-and-ptex` packs shared atlas pages): each .ptx is a texture of its own, and past 1,024 for one map type the engine renders
   the rest untextured — Moana's isCoral names 2,273, isDunesA 755. Pack small atlases onto shared pages (distinct
