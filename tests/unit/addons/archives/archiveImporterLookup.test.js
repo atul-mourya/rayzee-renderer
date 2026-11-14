@@ -197,3 +197,23 @@ describe( 'prepareFixedMtlContent', () => {
 	} );
 
 } );
+
+describe( 'a numbered run as one model', () => {
+
+	it( 'loads a run of frames in order, named for its archive or, loose, for the run', async () => {
+
+		const loadModelSequence = vi.fn( async ( format, frames, name ) => ( { name, frames: await Promise.all( frames.map( f => f() ) ) } ) );
+		const importer = new ArchiveImporter( {
+			getFileFormat: ( p ) => ( /\.vdb$/i.test( p ) ? { type: 'model', label: 'OpenVDB', parseSequence: () => {} } : /\.glb$/.test( p ) ? { type: 'model' } : null ),
+			loadModelSequence,
+		} );
+		const paths = [ 'Fire_01/README.txt', 'Fire_01/Fire_01/fire_a_10.vdb', 'Fire_01/Fire_01/fire_a_2.vdb', 'Fire_01/Fire_01/fire_a_1.vdb' ];
+		const named = async ( filename ) => ( await importer._loadSequence( paths, async ( p ) => p.split( '_' ).pop(), filename ) ).name;
+		expect( ( await importer._loadSequence( paths, async ( p ) => p.split( 'a_' ).pop(), 'Fire_01.zip' ) ).frames ).toEqual( [ '1.vdb', '2.vdb', '10.vdb' ] );
+		expect( [ await named( 'Fire_01.zip' ), await named( 'Fire_01.tar.gz' ), await named( 'Fire_01' ), await named( 'fire_a_1.vdb' ) ] ).toEqual( [ 'Fire_01', 'Fire_01', 'Fire_01', 'fire_a' ] );
+		// Another model beside the run: not a sequence.
+		expect( await importer._loadSequence( [ ...paths, 'Fire_01/stand.glb' ], async () => null, 'Fire_01.zip' ) ).toBeNull();
+
+	} );
+
+} );

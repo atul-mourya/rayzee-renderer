@@ -1,7 +1,7 @@
-import { storage } from 'three/tsl';
+import { storage, texture3D, uniform, uniformArray } from 'three/tsl';
 import { StorageParts } from '../shaders/ThreePatches.js';
 import { StorageInstancedBufferAttribute } from 'three/webgpu';
-import { Vector2, Matrix4 } from 'three';
+import { Vector2, Vector3, Matrix4, Data3DTexture, RedFormat, RGFormat, HalfFloatType, LinearFilter, ClampToEdgeWrapping } from 'three';
 
 // Pipeline system
 import { RenderStage, StageExecutionMode } from '../pipeline/RenderStage.js';
@@ -21,7 +21,9 @@ import { LightSerializer } from '../lights/LightSerializer';
 
 // Constants
 import { ENGINE_DEFAULTS as DEFAULT_STATE } from '../EngineDefaults.js';
-import { TRIANGLE_DATA_LAYOUT, CLUSTER_COPY_HIDDEN, bvhIndexView } from '../scene/BufferLayout.js';
+import { ISSUE_CODES } from '../EngineIssues.js';
+import { TRIANGLE_DATA_LAYOUT, CLUSTER_COPY_HIDDEN, bvhIndexView, VOLUME_LAYOUT } from '../scene/BufferLayout.js';
+import { packVolumes, packVolumeFrame, unifyGrids, growReserve, writeVolumeHeaders, volumeUniformArray } from '../scene/Volumes.js';
 import { traversalStackSize } from '../bvh/TraversalStack.js';
 import { TRI_GEO_ROWS, TRI_SHADE_ROWS, splitStorage } from '../shaders/Common.js';
 import { buildCorners, buildWideTree, wideTraversalStack, writeTreeRecords } from './CompactLayout.js';
@@ -58,6 +60,30 @@ async function writeTextureLayers( renderer, texture, firstLayer, data, layers )
 			{ width, height, depthOrArrayLayers: n }
 		);
 		await queue.onSubmittedWorkDone();
+
+	}
+
+}
+
+/** Writes a box of a 3D texture, `size` texels from `origin`, from `data` (`bytesPerTexel` a texel), in drained slabs. */
+async function writeTextureBox( renderer, texture, origin, size, data, bytesPerTexel ) {
+
+	const gpu = renderer.backend.get( texture ).texture;
+	if ( ! gpu ) return;
+	const bytes = new Uint8Array( data.buffer, data.byteOffset, data.byteLength );
+	const sliceBytes = size[ 0 ] * size[ 1 ] * bytesPerTexel;
+	const step = Math.max( 1, Math.floor( TEXTURE_UPLOAD_SLICE_BYTES / sliceBytes ) );
+	const { queue } = renderer.backend.device;
+	for ( let k = 0; k < size[ 2 ]; k += step ) {
+
+		const n = Math.min( step, size[ 2 ] - k );
+		queue.writeTexture(
+			{ texture: gpu, origin: { x: origin[ 0 ], y: origin[ 1 ], z: origin[ 2 ] + k } },
+			bytes.subarray( k * sliceBytes, ( k + n ) * sliceBytes ),
+			{ bytesPerRow: size[ 0 ] * bytesPerTexel, rowsPerImage: size[ 1 ] },
+			{ width: size[ 0 ], height: size[ 1 ], depthOrArrayLayers: n }
+		);
+		if ( k + n < size[ 2 ] ) await queue.onSubmittedWorkDone();
 
 	}
 
@@ -307,6 +333,15 @@ export class PathTracerStage extends RenderStage {
 		// Set when _rebuildLightBuffer had to grow-reallocate the attribute, or a light list grew
 		// (_writeLightList): compiled kernels still bind the old one and must be rebuilt to see the new data.
 		this._lightBufferRealloc = false;
+
+		// Volumes (scene/Volumes.js): their atlas, its node, where each landed and the headers Shade reads.
+		this._volumeAtlas = null;
+		this._volumeAtlasNode = null;
+		this._volumeEntries = [];
+		this._volumeChannels = 0;
+		this._volumeHeaders = uniformArray( volumeUniformArray(), 'vec4' );
+		this._volumeCount = uniform( 0, 'int' );
+		this._volumeAtlasInverse = uniform( new Vector3( 1, 1, 1 ) );
 
 		// Cached CPU-side data — rebuilt into the packed buffer whenever any source changes.
 		this._lbvhDataCache = null;
@@ -593,6 +628,102 @@ export class PathTracerStage extends RenderStage {
 		if ( used > 0 ) node.array.set( data.subarray( 0, used ) );
 		node.array.fill( 0, used );
 		count.value = lights;
+
+	}
+
+	/**
+	 * Packs `volumes` into the atlas and headers the shading kernel reads, in place of the last set. The kernels rebuild
+	 * when what they compile changes (volumes come or go, or start to emit).
+	 * @param {import('../scene/Volumes.js').Volume[]} volumes
+	 */
+	async setVolumes( volumes ) {
+
+		let packed = null, atlas = null;
+		if ( volumes.length > VOLUME_LAYOUT.MAX ) this.issues?.warn( ISSUE_CODES.VOLUME_DOWNSAMPLED, `${volumes.length} volumes: the first ${VOLUME_LAYOUT.MAX} are drawn`, { volumes: volumes.length } );
+		if ( volumes.length ) {
+
+			const maxDimension = this.renderer?.backend?.device?.limits?.maxTextureDimension3D ?? 2048;
+			packed = packVolumes( volumes, { maxDimension } );
+			if ( packed.halved.length ) this.issues?.warn( ISSUE_CODES.VOLUME_DOWNSAMPLED, `volume grids halved to fit the GPU: ${packed.halved.join( ', ' )}`, { halved: packed.halved } );
+			const [ width, height, depth ] = packed.size;
+			atlas = new Data3DTexture( packed.data, width, height, depth );
+			atlas.format = packed.channels === 2 ? RGFormat : RedFormat;
+			atlas.type = HalfFloatType;
+			atlas.minFilter = atlas.magFilter = LinearFilter;
+			atlas.wrapS = atlas.wrapT = atlas.wrapR = ClampToEdgeWrapping;
+			atlas.generateMipmaps = false;
+			atlas.unpackAlignment = 1;
+			// Allocated by three.js (a version past 0), written here a slab at a time.
+			atlas.needsUpdate = true;
+			atlas.source.dataReady = false;
+			this.renderer.initTexture( atlas );
+			await writeTextureLayers( this.renderer, atlas, 0, new Uint8Array( packed.data.buffer ), depth );
+			atlas.image.data = null;
+			this._volumeAtlasInverse.value.set( 1 / width, 1 / height, 1 / depth );
+
+		}
+
+		// Swapped in whole once uploaded, read through the kernels' node: a frame meanwhile would rebuild without volumes.
+		const previous = this._volumeAtlas;
+		this._volumeAtlas = atlas;
+		this._volumeEntries = packed?.entries ?? [];
+		this._volumeChannels = packed?.channels ?? 0;
+		if ( atlas && this._volumeAtlasNode ) this._volumeAtlasNode.value = atlas;
+		else if ( atlas ) this._volumeAtlasNode = texture3D( atlas );
+		this._volumeCount.value = this._volumeEntries.length;
+		this.refreshVolumes();
+		previous?.dispose();
+
+	}
+
+	/**
+	 * Puts these volumes' current grids on the GPU: each into its slot of the atlas when it fits, else every volume is
+	 * packed again with room to grow (a sequence's frame bigger than any before it).
+	 * @param {import('../scene/Volumes.js').Volume[]} volumes
+	 */
+	async updateVolumeFrames( volumes ) {
+
+		const grow = [];
+		for ( const volume of volumes ) {
+
+			const entry = this._volumeEntries.find( ( e ) => e.volume === volume );
+			const { grid, emission } = entry ? unifyGrids( volume.grid, volume.emissionGrid ?? null ) : {};
+			const frame = entry && packVolumeFrame( entry, grid, emission, this._volumeChannels );
+			if ( ! frame ) {
+
+				grow.push( volume );
+				continue;
+
+			}
+
+			entry.source = volume.grid;
+			entry.sourceEmission = emission ? volume.emissionGrid : null;
+			const texel = this._volumeChannels * 2;
+			await writeTextureBox( this.renderer, this._volumeAtlas, frame.voxelOrigin, frame.voxelSize, frame.voxels, texel );
+			await writeTextureBox( this.renderer, this._volumeAtlas, frame.majorantOrigin, frame.majorantSize, frame.majorants, texel );
+
+		}
+
+		if ( grow.length ) {
+
+			for ( const volume of grow ) volume.reserve = growReserve( volume );
+			await this.setVolumes( this.volumes );
+
+		} else this.refreshVolumes();
+
+	}
+
+	/** Rewrites the volumes' headers from their objects as they stand: matrices, visibility, inputs. */
+	refreshVolumes() {
+
+		writeVolumeHeaders( this._volumeHeaders.array, this._volumeEntries );
+
+	}
+
+	/** The volumes packed now, in their atlas's order. */
+	get volumes() {
+
+		return this._volumeEntries.map( ( entry ) => entry.volume );
 
 	}
 
@@ -2083,6 +2214,9 @@ export class PathTracerStage extends RenderStage {
 
 		// Dispose textures
 		this.placeholderTexture?.dispose();
+		this._volumeAtlas?.dispose();
+		this._volumeAtlas = this._volumeAtlasNode = null;
+		this._volumeEntries = [];
 
 		// Clear data references
 		this.triangleGeoAttr = null;

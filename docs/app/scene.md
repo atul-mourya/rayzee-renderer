@@ -77,6 +77,22 @@ settings:
 
 The environment and the sun are set in the [Tracer tab](tracer.md#environment), not here.
 
+## Smoke, clouds and fire
+
+**Add → Cloud** puts a cloud above what the camera looks at; **Add → Smoke** a column of smoke in front of it, both
+sized to the view. A `.vdb` file opened from **File → Open** comes in the same way. Select one in the **Outliner** (it
+cannot be clicked in the view) and move it with its handle; the **Material** tab then shows:
+
+| Setting | What it does |
+|---|---|
+| **Density** | How thick it is: how much light it stops along each metre |
+| **Color** | The colour of the light it scatters: white for clouds, grey or darker for smoke |
+| **Glow Toward Light** | How much brighter it looks facing the light, as clouds do around the sun |
+| **Fire Brightness** | (A file with flames) how brightly they glow; 0 turns them off |
+| **Temperature** or **Fire Color** | How hot the flames are (dim red when cool, yellow-white when hot), or the colour they glow |
+
+A dense white cloud needs many **Bounces** to look bright; **Render** uses more than **Preview**. Path Tracing only.
+
 ## Material
 
 Select an object first; until then the tab says *Please select an object to customize its material properties*. It has
@@ -136,6 +152,11 @@ The **Anim** tab plays a model's own animation and moves the camera for a video.
 **Clips.** If the model has animations, pick one in **Animation Clip** and press **Play** (then **Pause** / **Resume**,
 and the stop button). **Speed** sets how fast it plays and **Loop** plays it again from the start. **Duration** shows
 its length. A model without animation says so; you can still make a video by moving the camera.
+
+**Sequences.** Smoke or fire opened as numbered frames shows here by name with its number of frames. **Frame Rate**
+sets how many frames play each second; **Frame** shows one frame to look at. **Play** plays it (the camera stays free
+to move; **Stop Preview** ends it), and **Export Video…** renders every frame. Large frames take about a second each
+to read, so they play slowly in the view but export normally.
 
 **Camera keyframes.** Frame a view, then press **+ Keyframe**. Each key is placed 2 seconds after the last; type a time
 to pace the move. Each key has buttons to go to its view, replace it with the current view, or remove it. With two or

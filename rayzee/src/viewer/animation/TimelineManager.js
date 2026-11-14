@@ -4,7 +4,8 @@ import { CameraTrack } from './CameraTrack.js';
 
 /**
  * The authored animation: keyframed tracks on one time axis, in seconds, of which the camera's
- * ({@link CameraTrack}) is the first. A model's own clips stay with the AnimationManager.
+ * ({@link CameraTrack}) is the first, and the scene's frame sequences (a VDB volume's) played on it
+ * from 0. A model's own clips stay with the AnimationManager.
  */
 export class TimelineManager extends EventDispatcher {
 
@@ -12,13 +13,18 @@ export class TimelineManager extends EventDispatcher {
 	 * @param {Object} deps
 	 * @param {import('../camera/CameraManager.js').CameraManager} deps.cameraManager
 	 * @param {Function} deps.onReset - restarts accumulation and wakes the frame loop
+	 * @param {function(): Array<import('../../loaders/FrameSequence.js').FrameSequence>} [deps.sequences] - the scene's
+	 * @param {function(number): Promise<boolean>} [deps.seekSequences] - puts them on a time, resolving once shown
 	 */
-	constructor( { cameraManager, onReset } ) {
+	constructor( { cameraManager, onReset, sequences = () => [], seekSequences = async () => false } ) {
 
 		super();
 
 		this._cameraManager = cameraManager;
 		this._onReset = onReset;
+		this._sequences = sequences;
+		this._seekSequences = seekSequences;
+		this._settling = Promise.resolve( false );
 
 		this.camera = new CameraTrack( cameraManager, () => this._changed( 'camera' ) );
 
@@ -29,27 +35,58 @@ export class TimelineManager extends EventDispatcher {
 
 	}
 
-	/** Seconds to the last key of any track. */
+	/** The scene's frame sequences, played from time 0. */
+	get sequences() {
+
+		return this._sequences();
+
+	}
+
+	/** Seconds to the last key of any track, or the end of the longest sequence. */
 	get duration() {
 
-		return this.camera.duration;
+		return Math.max( this.camera.duration, ...this.sequences.map( s => s.duration ) );
 
 	}
 
 	get animates() {
 
-		return this.camera.animates;
+		return this.camera.animates || this.sequences.some( s => s.frameCount > 1 );
 
 	}
 
 	/**
-	 * Puts the scene where the timeline has it at `time`.
+	 * Puts the scene where the timeline has it at `time`. A sequence's frame may still be decoding: {@link settled}
+	 * resolves once it shows.
 	 * @param {number} time - seconds
-	 * @returns {boolean} whether anything moved
+	 * @returns {boolean} whether the camera moved
 	 */
 	seek( time ) {
 
+		this._settling = this._seekSequences( time );
 		return this.camera.seek( time );
+
+	}
+
+	/** Resolves once the frames the last seek asked for show: whether any changed. */
+	settled() {
+
+		return this._settling;
+
+	}
+
+	/** Frames a second of a sequence (all of them by default). */
+	setFrameRate( fps, sequence = null ) {
+
+		for ( const s of sequence ? [ sequence ] : this.sequences ) s.fps = fps;
+		this._changed( 'sequences' );
+
+	}
+
+	/** After the scene's sequences come or go. */
+	sequencesChanged() {
+
+		this._changed( 'sequences' );
 
 	}
 
@@ -65,7 +102,8 @@ export class TimelineManager extends EventDispatcher {
 
 			const controls = this._cameraManager.controls;
 			this._playback = { elapsed: 0, resolve, controlsEnabled: controls.enabled };
-			controls.enabled = false;
+			// Locked only while the camera moves: a sequence alone leaves the view free.
+			if ( this.camera.animates ) controls.enabled = false;
 			this._timer.reset();
 			this._changed();
 			this._onReset?.();
@@ -133,6 +171,8 @@ export class TimelineManager extends EventDispatcher {
 		this._timer.dispose();
 		this.camera.dispose();
 		this._cameraManager = this._onReset = null;
+		this._sequences = () => [];
+		this._seekSequences = async () => false;
 
 	}
 

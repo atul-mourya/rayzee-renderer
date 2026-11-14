@@ -640,6 +640,7 @@ describe( 'building the scene', () => {
 			_collectMeshRefs: vi.fn( () => [ 'refs' ] ),
 			setMeshVisibilityData: vi.fn(),
 			setupMaterial: vi.fn( () => void order.push( 'compile' ) ),
+			setVolumes: vi.fn( async () => {} ),
 			triangleCount: 12,
 			bvhNodeCount: 5,
 			materialData: { materialCount: 2 },

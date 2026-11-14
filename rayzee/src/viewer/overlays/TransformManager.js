@@ -9,6 +9,7 @@ import { Scene, Vector3 } from 'three';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { EngineEvents } from '../../EngineEvents.js';
 import { createLogger } from '../../Logger.js';
+import { collectVolumes } from '../../scene/Volumes.js';
 
 const log = createLogger( 'overlay' );
 
@@ -351,7 +352,13 @@ export class TransformManager {
 		// Find which meshes are affected (the attached object or its descendants)
 		const affectedIndices = this._findAffectedMeshIndices( this._attached );
 
-		if ( affectedIndices.length === 0 ) return;
+		if ( affectedIndices.length === 0 ) {
+
+			// A volume moves by its header alone; with meshes, updateMeshTransforms rewrites it too.
+			if ( collectVolumes( this._attached ).length ) this._app.updateVolumes();
+			return;
+
+		}
 
 		this._refitInFlight = true;
 

@@ -6,7 +6,7 @@ Loading models and environments, and the camera, lights, materials and animation
 
 ```js
 await engine.loadModel(url)                  // Load a GLB/GLTF by URL
-await engine.loadFile(fileOrUrl)              // Any supported file: GLB/GLTF/FBX/OBJ/STL/PLY/DAE/3MF/USD/USDZ, archives, HDR/EXR
+await engine.loadFile(fileOrUrl)              // Any supported file: GLB/GLTF/FBX/OBJ/STL/PLY/DAE/3MF/USD/USDZ, VDB, archives, HDR/EXR
 await engine.loadFile({ files })              // A folder of files — see Loading a folder
 await engine.loadObject3D(object3d, name?)    // Load a Three.js Object3D directly (name is optional, defaults to 'object3d')
 await engine.loadEnvironment(url)             // Load HDR/EXR environment map
@@ -14,6 +14,9 @@ engine.cancelLoad()                           // Abort an in-flight download (ne
 ```
 
 On `rayzee/core`, formats other than glTF and `.hdr` need the `rayzee/addons/formats` add-on — see [Add-ons](getting-started.md#add-ons).
+
+A run of numbered `.vdb` files loads as one volume that changes over time, played by the timeline or by
+`engine.seekSequences( seconds )`: see [Volumes](rendering.md#volumes).
 
 `loadModel` / `loadObject3D` **replace** the current scene. A model that carries cameras opens through its first one; `cameraManager.switchCamera(0)` goes back to the default view, fitted to the model. To add or remove objects from a live scene without a full reload (and without reframing the camera):
 

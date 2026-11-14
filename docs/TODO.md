@@ -150,11 +150,13 @@
 
 ### Rendering
 - [ ] Explore neural textures: example <https://cornell-neural.utsubo.io/>
-- [ ] Volumetric rendering (heterogeneous: smoke, clouds, VDB) — homogeneous fog is the entry above
+- [ ] Volumes, what is left (docs/design/VOLUMES.md): pbrt `nanovdb` / `uniformgrid` and USD `OpenVDBAsset` (Moana
+  ocean); inside glass and subsurface; coloured extinction; NEE toward glowing volumes; NRD guides; picking; sparse
+  bricks; sessions keeping an added cloud or smoke.
 - [ ] Introduce Sequenced HRDIs - https://mattepaint.com/gallery/hdri/skies/
 - [ ] **Fog and light shafts** ROADMAP: "Fog and homogeneous participating media", "Volumetric lighting and shadows";
-  - [ ] Follow-ups: fog inside glass; density varying other than with height (noise, VDB); the shadow catcher ignores
-    fog; the bidirectional integrators render without it (they record `setting.ignored`).
+  - [ ] Follow-ups: fog inside glass; the shadow catcher ignores fog; the bidirectional integrators render without it
+    (they record `setting.ignored`).
   - [ ] A bright speckle remains wherever a bounced ray passes close to a small bright emitter in fog: the segment's
     light from one point of it goes as 1 / (the ray's distance from that point). Drawing the point with the segment in
     view (Cycles' light tree takes a segment) would soften it.

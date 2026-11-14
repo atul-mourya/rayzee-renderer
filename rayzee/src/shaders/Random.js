@@ -127,6 +127,7 @@ export const RandomPointInCircle = ( rngState ) => {
 //       +9  physical-sky sun disc        (LightsSampling, Fog)
 //      +10  fog scatter direction        (ShadeKernel)
 //      +11  fog segment light: point on a sized lamp (Fog)
+//      +12  volume scatter: point on a sized lamp (Fog pointScatterLight)
 //   1D  +0  light kind for the picked shadow ray (LightsSampling lightPick, setting shadowRays)
 //       +1  emissive-triangle pick       (EmissiveSampling / LightBVHSampling)
 //       +2  BSDF lobe selection          (ShadeKernel)
@@ -152,9 +153,13 @@ export const RandomPointInCircle = ( rngState ) => {
 //      +22  fog's picked shadow ray      (Fog, setting shadowRays)
 //      +23  fog segment emitters: reference point (Fog)
 //      +25  fog segment emitters: the triangle    (EmissiveSampling / LightBVHSampling, from base +24)
+//      +26  volume free flight's first distance (Volume)
+//      +27  volume scatter: the lamp or the emitters (Fog pointScatterLight)
+//      +29  volume scatter emitters: the triangle  (EmissiveSampling / LightBVHSampling, from base +28)
 //   2D +27  fog segment emitters: the point on it (EmissiveSampling / LightBVHSampling, from base +24)
+//      +31  volume scatter emitters: the point on it (EmissiveSampling / LightBVHSampling, from base +28)
 //
-// A fog scatter ends its bounce before any surface work, so its light samples reuse the surface's NEE dimensions.
+// A fog or volume scatter ends its bounce before any surface work, so its light samples reuse the surface's NEE dimensions.
 //
 // Stride is 32 rather than the ~16 in use so a new call site does not force a renumbering.
 // The index only keys a scramble seed, so spare slots cost nothing.

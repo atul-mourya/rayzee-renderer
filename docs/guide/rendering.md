@@ -111,6 +111,68 @@ engine.settings.setMany({ fogDensity: 0.1, fogColor: '#fff4e6', fogAnisotropy: 0
   Thinning with height costs nothing measurable.
 - Fog is not drawn inside glass or subsurface objects, and the ground-plane shadow catcher ignores it.
 
+## Volumes
+
+Smoke, clouds and fire whose density changes from point to point: a `Volume` in the scene holding a grid of density,
+and optionally one of emission or temperature. Open an OpenVDB file (`loadFile( 'plume.vdb' )`, with
+`rayzee/addons/formats` on the core), or build a grid yourself:
+
+```js
+import { Volume, VolumeGrid } from 'rayzee'
+
+const cloud = new Volume( VolumeGrid.procedural( 'cloud', { resolution: 96 } ), { density: 6, anisotropy: 0.5 } )
+cloud.scale.setScalar( 8 )                     // the grid fills the unit cube; the object places it
+cloud.position.set( 0, 6, 0 )
+await engine.addModelFromObject3D( new Group().add( cloud ), { name: 'Cloud' } )
+
+// A grid of your own: width × height × depth values, x fastest, and where index space sits in the object.
+const grid = new VolumeGrid( { width, height, depth, data /* Float32Array */, transform /* Matrix4, optional */ } )
+```
+
+- **Inputs** (Blender's Principled Volume): `density` — extinction per scene unit for a grid value of 1; `color` — what
+  a scatter keeps, white for clouds, grey for smoke; `anisotropy` — Henyey–Greenstein `g`. Emission, from
+  `emissionGrid`: `emissionStrength` × `emissionColor` × the grid, per unit of length; or with `blackbody: true` the
+  grid is a temperature, glowing at grid × `temperature` kelvin as Blender's Blackbody Intensity `emissionStrength` does.
+- **Edits.** Change any input, its matrix (a move, the gizmo) or its visibility, then call `engine.updateVolumes()`: a
+  header is rewritten and the render restarts. A new grid, or a volume added or removed, is packed again, as a load
+  does.
+- **OpenVDB.** Float, half and double grids, any tree, Zip or Blosc compression, linear transforms. The grid named
+  `density` (else the first fog volume) is the density; a `temperature` grid glows as a black body, else a `flame`,
+  `fire` or `heat` grid glows orange. A fire with no density grid (EmberGen's) glows and casts no shadow. The
+  temperature is read at Blender's 1000 K a unit, raised so the hottest voxel reaches 2500 K where it would not
+  (EmberGen's grids peak near 1), or at 1 K where the grid is already in kelvin. A file Houdini, Maya and the like
+  wrote stays as it is; any other (Blender, EmberGen: Z-up, and they name no creator) is stood upright
+  (`rotation.x = −π/2`). Level sets and vector grids are not read.
+- **Sequences.** A run of numbered `.vdb` files (`fire_0001.vdb`, `fire_0002.vdb`, …) opened together — the files
+  selected at once, their folder, or a zip — loads as one volume that changes over time: `engine.sequences` lists it,
+  `engine.seekSequences( seconds )` shows the frame at that time (resolving once it is on the GPU), and the viewer's
+  timeline plays it and exports it as video. Frames are read in a worker, two ahead, and written into the volume's
+  place on the GPU without rebuilding shaders; a frame larger than any before it grows that place once. Frame rate:
+  `sequence.fps` (24 by default). A run may start empty (a fire not yet lit): it opens on its first frame holding
+  anything. Five of its frames are read at load for the space the whole run takes, so the camera frames all of it and
+  every frame is read at one resolution. A sequence of your own: give a volume a `FrameSequence` whose frames decode
+  to `{ grid, emission }`:
+
+  ```js
+  import { FrameSequence, VolumeGrid } from 'rayzee'
+
+  volume.sequence = new FrameSequence( {
+    frames: puffs.map( ( puff ) => async () => puff ),                 // each frame's reader
+    decode: async ( puff ) => ( { grid: VolumeGrid.fromFunction( 64, puff ), emission: null } ),
+    fps: 24, shown: 0,                                                 // the volume shows frame 0 already
+  } )
+  ```
+
+- **Memory.** Every volume's voxels go to the GPU as half floats in one 3D texture, past 2²⁷ voxels (256 MB) the
+  largest grids halved until they fit; `volume.downsampled` says which. Up to 16 volumes are drawn.
+- **Tracing.** Free flight by delta tracking over a coarse grid of majorants, shadow rays by ratio tracking, the light
+  a volume gives integrated along each ray; at a scatter point it takes every kind of light, weighed against the
+  phase function. Volumes and fog mix. Scatters count as bounces: a dense white cloud needs many (`maxBounces`) to
+  look bright.
+- **Cost.** With no volume, every shader is exactly as without the feature. Path integrator only (else
+  `setting.ignored`); not drawn inside glass or subsurface objects, nor seen by the NRD denoiser's guides (OIDN reads
+  them well).
+
 ## Rendering Modes
 
 ```js

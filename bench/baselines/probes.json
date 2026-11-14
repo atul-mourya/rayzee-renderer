@@ -1157,5 +1157,90 @@
 			"samples": 64
 		},
 		"rmseVsTruth": 0.0060802443610681045
+	},
+	"volume-furnace": {
+		"truth": {
+			"meanR": 0.9998898486865073,
+			"meanG": 0.9998898486865073,
+			"meanB": 0.9998898486865073,
+			"meanLuminance": 0.9998898486865073,
+			"maxLuminance": 3.9262781143188477,
+			"nonFinite": 0,
+			"samples": 512
+		},
+		"golden": {
+			"meanR": 0.999821417345629,
+			"meanG": 0.999821417345629,
+			"meanB": 0.999821417345629,
+			"meanLuminance": 0.999821417345629,
+			"maxLuminance": 8.303679466247559,
+			"nonFinite": 0,
+			"samples": 128
+		},
+		"rmseVsTruth": 0.007016676740826417,
+		"furnaceRatio": 0.999821417345629
+	},
+	"volume-cloud": {
+		"truth": {
+			"meanR": 0.24563557904150457,
+			"meanG": 0.2502286441148698,
+			"meanB": 0.302658759602906,
+			"meanLuminance": 0.2530376128185107,
+			"maxLuminance": 1.8954581235408783,
+			"nonFinite": 0,
+			"samples": 2048
+		},
+		"golden": {
+			"meanR": 0.2458422088085399,
+			"meanG": 0.2503998006275552,
+			"meanB": 0.3028120884921961,
+			"meanLuminance": 0.25321502379066024,
+			"maxLuminance": 1.908460964155197,
+			"nonFinite": 0,
+			"samples": 64
+		},
+		"rmseVsTruth": 0.006536629677737288
+	},
+	"volume-fire": {
+		"truth": {
+			"meanR": 0.011432189974208029,
+			"meanG": 0.009905338736480473,
+			"meanB": 0.01445791440020372,
+			"meanLuminance": 0.010558643272546324,
+			"maxLuminance": 0.4537021798223257,
+			"nonFinite": 0,
+			"samples": 2048
+		},
+		"golden": {
+			"meanR": 0.0114233163603501,
+			"meanG": 0.009901481902431897,
+			"meanB": 0.014456048095489393,
+			"meanLuminance": 0.010553863587328183,
+			"maxLuminance": 0.5033916243463755,
+			"nonFinite": 0,
+			"samples": 64
+		},
+		"rmseVsTruth": 0.0011642138916701122
+	},
+	"volume-lamps": {
+		"truth": {
+			"meanR": 0.04135484866569783,
+			"meanG": 0.0391601268966042,
+			"meanB": 0.05723658430977707,
+			"meanLuminance": 0.040931844969944814,
+			"maxLuminance": 1.4609293368637564,
+			"nonFinite": 0,
+			"samples": 2048
+		},
+		"golden": {
+			"meanR": 0.041350710772668275,
+			"meanG": 0.039154096560873874,
+			"meanB": 0.05722779842479486,
+			"meanLuminance": 0.04092601801687679,
+			"maxLuminance": 1.5741979640662669,
+			"nonFinite": 0,
+			"samples": 64
+		},
+		"rmseVsTruth": 0.007552231175041075
 	}
 }

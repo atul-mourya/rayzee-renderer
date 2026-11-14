@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { Vector3, Matrix4, Texture, SRGBColorSpace, MirroredRepeatWrapping, ClampToEdgeWrapping } from 'three';
 import { USDFiles, loadUSDScene } from '@/core/addons/archives/usd/index.js';
-import { blackbodyToLinearRGB } from '@/core/lights/LightSerializer.js';
+import { blackbodyToLinearRGB } from '@/core/color/WhiteBalance.js';
 
 const usda = body => `#usda 1.0\n${body}\n`;
 

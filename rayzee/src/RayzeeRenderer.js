@@ -27,6 +27,7 @@ import { createHeadlessCanvas } from './HeadlessCanvas.js';
 // Managers
 import { RenderSettings } from './RenderSettings.js';
 import { ViewCamera, viewMatrixOf } from './scene/ViewCamera.js';
+import { expandByVolumes } from './scene/Volumes.js';
 import { LightManager } from './lights/LightManager.js';
 import { VERSION } from './Version.js';
 import { toPortable } from './Portable.js';
@@ -814,6 +815,7 @@ export class RayzeeRenderer extends EventDispatcher {
 
 		this._removeTrackedListeners();
 		setStatusCallback( null );
+		SceneLoading.disposeSequences( this );
 
 		this._storageRelease?.();
 		this._storageRelease = null;
@@ -1009,6 +1011,25 @@ export class RayzeeRenderer extends EventDispatcher {
 	loadEnvironment( url ) {
 
 		return SceneLoading.loadEnvironment( this, url );
+
+	}
+
+	/** The scene's frame sequences (loaders/FrameSequence.js): each sequence volume's. */
+	get sequences() {
+
+		return SceneLoading.sceneSequences( this );
+
+	}
+
+	/**
+	 * Puts every frame sequence on the frame `time` falls on, decoding what it must, and restarts the render if any
+	 * moved. Resolves once the frames are on the GPU, so a render after it shows them.
+	 * @param {number} time - seconds
+	 * @returns {Promise<boolean>} whether a frame changed
+	 */
+	seekSequences( time ) {
+
+		return SceneLoading.seekSequences( this, time );
 
 	}
 
@@ -1403,6 +1424,17 @@ export class RayzeeRenderer extends EventDispatcher {
 	updateMeshTransforms( meshIndices ) {
 
 		return SceneEdits.updateMeshTransforms( this, meshIndices );
+
+	}
+
+	/**
+	 * Re-reads the scene's volumes ({@link Volume}) after a change, and restarts the render: their inputs, matrices and
+	 * visibility at once; a volume added or removed, or given another grid, is packed again.
+	 * @returns {Promise<void>}
+	 */
+	updateVolumes() {
+
+		return SceneEdits.updateVolumes( this );
 
 	}
 
@@ -2622,7 +2654,7 @@ export class RayzeeRenderer extends EventDispatcher {
 	getSceneMinY() {
 
 		if ( ! this.meshScene ) return 0;
-		const box = new Box3().setFromObject( this.meshScene );
+		const box = expandByVolumes( new Box3().setFromObject( this.meshScene ), this.meshScene );
 		return Number.isFinite( box.min.y ) ? box.min.y : 0;
 
 	}
@@ -2639,7 +2671,7 @@ export class RayzeeRenderer extends EventDispatcher {
 		for ( const child of this.meshScene?.children ?? [] ) {
 
 			if ( ! child.userData?.__rayzeeSceneObject ) continue;
-			part.setFromObject( child );
+			expandByVolumes( part.setFromObject( child ), child );
 			if ( ! part.isEmpty() ) target.union( part );
 
 		}

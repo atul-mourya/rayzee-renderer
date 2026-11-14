@@ -136,6 +136,9 @@ export class VideoRenderManager {
 
 				}
 
+				// A sequence's frame decodes before it can be rendered.
+				await timeline?.settled();
+
 				// 2. Refit BVH with deformed positions (also calls reset())
 				if ( positions ) {
 

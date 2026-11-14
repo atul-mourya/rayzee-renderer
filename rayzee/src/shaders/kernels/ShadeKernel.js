@@ -51,7 +51,8 @@ import {
 	sampleEmissiveTriangle, sampleEmissiveTriangleIndexed, fetchTriangleData, TriangleData,
 } from '../EmissiveSampling.js';
 import { sampleLightBVHTriangle, sampleLightBVHTriangleIndexed, calculateLightBVHPdf } from '../LightBVHSampling.js';
-import { fogSpan, fogFreeFlight, henyeyGreenstein, fogSegmentLight, fogScatterLight, traceFogLight, FOG_DIM } from '../Fog.js';
+import { fogSpan, fogFreeFlight, henyeyGreenstein, fogSegmentLight, fogScatterLight, pointScatterLight, traceFogLight, FOG_DIM } from '../Fog.js';
+import { volumeFreeFlight, volumeTransmittance, volumeEmission, volumeMedium } from '../Volume.js';
 import {
 	Ray,
 	HitInfo,
@@ -145,6 +146,8 @@ export function buildShadeKernel( params ) {
 		cameraWorldMatrix = null,
 		// The fog's uniforms while it has a density (path tracing only); null compiles it out.
 		fog = null,
+		// The volumes' resources while some are packed (path tracing only); null compiles them out.
+		volumes = null,
 	} = params;
 	const diffuseTransmission = layers.diffuseTransmission;
 
@@ -457,96 +460,143 @@ export function buildShadeKernel( params ) {
 
 		} );
 
-		// Fog, outside glass and subsurface media: each segment takes the point and spot lights and the emitters; a free flight
-		// ending before the hit (or the sky) is a scatter, which takes the other lights and continues along a phase-function draw.
-		if ( fog ) If( int( readMediumStack( rayBufferRW, rayID ).stackDepth ).equal( 0 ), () => {
+		// Fog and volumes, outside glass and subsurface media. The fog's segment takes the point and spot lights and the
+		// emitters; a free flight ending before the hit (or the sky) is a scatter, which takes the other lights — in a
+		// volume all of them — and continues along a phase-function draw. Volumes give their light up to it.
+		if ( fog || volumes ) If( int( readMediumStack( rayBufferRW, rayID ).stackDepth ).equal( 0 ), () => {
 
-			const span = fogSpan( origin, direction, min( hitDist, float( 1e30 ) ), fog.boxMin, fog.boxMax ).toVar();
-			If( span.y.greaterThan( span.x ), () => {
+			const sample1D = ( d ) => getRandomSample1D( _pixelCoord, int( 0 ), dimBase.add( int( d ) ), rngState, resolution, frame );
+			const sample2D = ( d ) => getRandomSample2D( _pixelCoord, int( 0 ), dimBase.add( int( d ) ), rngState, resolution, frame );
+			const stop = () => {
 
-				const stop = () => {
+				writeRayRadiance( rayBufferRW, rayID, currentRadiance );
+				writeRayDirFlags( rayBufferRW, rayID, direction, flags.bitAnd( uint( ~ RAY_FLAG.ACTIVE ) ) );
+				persistRng();
+				Return();
 
-					writeRayRadiance( rayBufferRW, rayID, currentRadiance );
-					writeRayDirFlags( rayBufferRW, rayID, direction, flags.bitAnd( uint( ~ RAY_FLAG.ACTIVE ) ) );
-					persistRng();
-					Return();
+			};
 
-				};
+			// Where the path scatters (the segment's end if it does not), and in what: 0 nothing, 1 the fog, 2 a volume.
+			const scatterT = min( hitDist, float( 1e30 ) ).toVar();
+			const medium = int( 0 ).toVar();
+			const scatterColor = ( fog ? vec3( fog.color ) : vec3( 1.0 ) ).toVar();
+			const scatterG = ( fog ? float( fog.anisotropy ) : float( 0.0 ) ).toVar();
+			const fogRange = fog ? fogSpan( origin, direction, scatterT, fog.boxMin, fog.boxMax ).toVar() : null;
+			const inFog = fog ? fogRange.y.greaterThan( fogRange.x ).toVar() : null;
+			if ( fog ) If( inFog, () => {
 
-				const sample1D = ( d ) => getRandomSample1D( _pixelCoord, int( 0 ), dimBase.add( int( d ) ), rngState, resolution, frame );
-				const sample2D = ( d ) => getRandomSample2D( _pixelCoord, int( 0 ), dimBase.add( int( d ) ), rngState, resolution, frame );
-				const t = fogFreeFlight( fog, origin, direction, span.x, span.y, log( float( 1.0 ).sub( sample1D( FOG_DIM.DISTANCE ) ) ).negate() ).toVar();
-				const scatters = t.lessThan( span.y ).toVar();
-				// Past the bounce budget only emission is wanted: neither a segment's light nor a scatter is seen.
-				const emissionOnly = flags.bitAnd( uint( RAY_FLAG.EMISSION_ONLY ) ).notEqual( uint( 0 ) );
-				If( emissionOnly.and( scatters ), stop );
+				const t = fogFreeFlight( fog, origin, direction, fogRange.x, fogRange.y, log( float( 1.0 ).sub( sample1D( FOG_DIM.DISTANCE ) ) ).negate() ).toVar();
+				If( t.lessThan( fogRange.y ), () => {
 
-				const scatterPoint = origin.add( direction.mul( t ) ).toVar();
+					scatterT.assign( t );
+					medium.assign( 1 );
+
+				} );
+
+			} );
+
+			if ( volumes ) {
+
+				const flight = volumeFreeFlight( volumes, origin, direction, scatterT, sample1D( FOG_DIM.VOLUME_DISTANCE ), rngState );
+				If( flight.index.greaterThanEqual( int( 0 ) ), () => {
+
+					scatterT.assign( flight.t );
+					medium.assign( 2 );
+					const scattering = volumeMedium( volumes, flight.index );
+					scatterColor.assign( scattering.color );
+					scatterG.assign( scattering.anisotropy );
+
+				} );
+
+			}
+
+			const giScale = select( bounceIndex.greaterThan( 0 ), globalIlluminationIntensity, float( 1.0 ) );
+			const regularized = ( radiance ) => regularizePathContribution( throughput.mul( radiance ).mul( giScale ), float( bounceIndex ), fireflyThreshold, int( accumFrame ) );
+			if ( volumes?.emission ) currentRadiance.assign( vec4( currentRadiance.xyz.add( regularized( volumeEmission( volumes, origin, direction, scatterT, rngState ) ) ), currentRadiance.w ) );
+
+			const scatters = medium.greaterThan( int( 0 ) ).toVar();
+			// Past the bounce budget only emission is wanted: neither a segment's light nor a scatter is seen.
+			const emissionOnly = flags.bitAnd( uint( RAY_FLAG.EMISSION_ONLY ) ).notEqual( uint( 0 ) );
+			If( emissionOnly.and( scatters ), stop );
+
+			const scatterPoint = origin.add( direction.mul( scatterT ) ).toVar();
+			const emitters = useEmissiveNEE ? {
+				enabled: enableEmissiveTriangleSampling.equal( int( 1 ) ).and( emissiveTriangleCount.greaterThan( int( 0 ) ) ),
+				rngState, samplerArgs: [ _pixelCoord, resolution, frame, dimBase ],
+				lightBVHNodeCount, lightBuffer, vec4Offset: emissiveVec4Offset, count: emissiveTriangleCount, totalPower: emissiveTotalPower,
+				triangleBuffer, bvhBuffer, boost: emissiveBoost, pdf: emissiveNEEPdf,
+			} : null;
+			const slots = [];
+			if ( fog ) {
+
 				const segment = fogSegmentLight( {
-					enabled: emissionOnly.not(), origin, dir: direction, near: span.x, far: span.y, g: fog.anisotropy, fog, lamps, sample1D, sample2D,
-					emitters: useEmissiveNEE ? {
-						enabled: enableEmissiveTriangleSampling.equal( int( 1 ) ).and( emissiveTriangleCount.greaterThan( int( 0 ) ) ),
-						rngState, samplerArgs: [ _pixelCoord, resolution, frame, dimBase ],
-						lightBVHNodeCount, lightBuffer, vec4Offset: emissiveVec4Offset, count: emissiveTriangleCount, totalPower: emissiveTotalPower,
-						triangleBuffer, bvhBuffer, boost: emissiveBoost, pdf: emissiveNEEPdf,
-					} : null,
+					enabled: emissionOnly.not().and( inFog ), origin, dir: direction, near: fogRange.x, far: fogRange.y, g: fog.anisotropy, fog, lamps, sample1D, sample2D, emitters,
 				} );
-				const scatter = fogScatterLight( {
-					enabled: scatters, p: scatterPoint, dir: direction, g: fog.anisotropy, fog, sample1D, sample2D, lamps,
-					env: {
-						enabled: enableEnvironmentLight, totalSum: envTotalSum, cdf: envCDFTexture, matrix: envMatrix, resolution: envResolution,
-						texture: envTexture, intensity: environmentIntensity,
-					},
-					sun: { hasSun, direction: sunDirection, radiance: sunRadiance, params: sunParams },
-				} );
-				const light = traceFogLight( [ segment, ...scatter ],
-					( from, L, maxDist ) => traceShadowRay( from, L, maxDist, traverseBVHShadow, bvhBuffer, triangleBuffer, materialBuffer ),
-					picksLights ? shadowRays : null, picksLights ? sample1D( FOG_DIM.SHADOW_PICK ) : null );
-				const giScale = select( bounceIndex.greaterThan( 0 ), globalIlluminationIntensity, float( 1.0 ) );
-				const regularized = ( radiance ) => regularizePathContribution( throughput.mul( radiance ).mul( giScale ), float( bounceIndex ), fireflyThreshold, int( accumFrame ) );
-				currentRadiance.assign( vec4( currentRadiance.xyz.add( regularized( light.direct ) ).add( regularized( light.emitted ) ), currentRadiance.w ) );
+				// The volumes between the ray's start and the segment's point dim its light on the way back.
+				if ( volumes ) If( segment.value.x.add( segment.value.y ).add( segment.value.z ).greaterThan( 0.0 ), () => {
 
-				If( scatters, () => {
-
-					throughput.mulAssign( fog.color );
-
-					if ( aux ) If( aux.and( flags.bitAnd( uint( RAY_FLAG.AUX_LOCKED ) ).equal( uint( 0 ) ) ), () => {
-
-						const depth = select( bounceIndex.equal( 0 ),
-							computeNDCDepth( { worldPos: scatterPoint, cameraProjectionMatrix, cameraViewMatrix } ),
-							gbDecodeNormalDepth( readGBuffer( gBufferRW, pixelIndex ) ).w );
-						writeGBuffer( gBufferRW, pixelIndex, direction.negate(), depth, clamp( fog.color.mul( featCarry ), vec3( 0.0 ), vec3( 1.0 ) ), null, guideUnlikely() );
-						flags.assign( flags.bitOr( uint( RAY_FLAG.AUX_LOCKED ) ) );
-
-					} );
-
-					const newDir = sampleHenyeyGreenstein( direction, fog.anisotropy, sample2D( FOG_DIM.DIRECTION ) ).toVar();
-					const phasePdf = henyeyGreenstein( dot( direction, newDir ), fog.anisotropy ).toVar();
-
-					If( cameraDepth.greaterThanEqual( int( 3 ) ), () => {
-
-						const survive = clamp( max( max( throughput.x, throughput.y ), throughput.z ), 0.05, 1.0 ).toVar();
-						If( sample1D( 3 ).greaterThan( survive ), stop );
-						throughput.divAssign( survive );
-
-					} );
-
-					// Like an opaque scatter: the sky past it is light, not the backdrop, and the sun's NEE here draws any direction.
-					flags.assign( flags.sub( flags.bitAnd( uint( RAY_FLAG.UNDER_SURFACE ) ) )
-						.bitOr( uint( RAY_FLAG.REDIRECTED | RAY_FLAG.HAS_HIT_OPAQUE | RAY_FLAG.SUN_NEE | ( regularize ? RAY_FLAG.ROUGH_PATH : 0 ) ) ) );
-					If( cameraDepth.greaterThanEqual( maxBounceCount ), () => {
-
-						flags.assign( flags.bitOr( uint( RAY_FLAG.EMISSION_ONLY | RAY_FLAG.AUX_LOCKED ) ) );
-
-					} );
-					writeRayOriginMeta( rayBufferRW, rayID, scatterPoint, cameraDepth.add( 1 ), sssSteps, transparentCount );
-					writeRayDirFlags( rayBufferRW, rayID, newDir, flags );
-					writeRayThroughputPdf( rayBufferRW, rayID, throughput, phasePdf );
-					writeRayRadiance( rayBufferRW, rayID, currentRadiance );
-					persistRng();
-					Return();
+					segment.value.mulAssign( volumeTransmittance( volumes, origin, direction, dot( segment.from.sub( origin ), direction ) ) );
 
 				} );
+				slots.push( segment );
+
+			}
+
+			slots.push( ...fogScatterLight( {
+				enabled: scatters, p: scatterPoint, dir: direction, g: scatterG, fog: { color: scatterColor }, sample1D, sample2D, lamps,
+				env: {
+					enabled: enableEnvironmentLight, totalSum: envTotalSum, cdf: envCDFTexture, matrix: envMatrix, resolution: envResolution,
+					texture: envTexture, intensity: environmentIntensity,
+				},
+				sun: { hasSun, direction: sunDirection, radiance: sunRadiance, params: sunParams },
+			} ) );
+			if ( volumes ) slots.push( pointScatterLight( {
+				enabled: medium.equal( int( 2 ) ), p: scatterPoint, dir: direction, g: scatterG, color: scatterColor, lamps, emitters, sample1D, sample2D,
+			} ) );
+			const light = traceFogLight( slots,
+				( from, L, maxDist ) => traceShadowRay( from, L, maxDist, traverseBVHShadow, bvhBuffer, triangleBuffer, materialBuffer ),
+				picksLights ? shadowRays : null, picksLights ? sample1D( FOG_DIM.SHADOW_PICK ) : null );
+			currentRadiance.assign( vec4( currentRadiance.xyz.add( regularized( light.direct ) ).add( regularized( light.emitted ) ), currentRadiance.w ) );
+
+			If( scatters, () => {
+
+				throughput.mulAssign( scatterColor );
+
+				if ( aux ) If( aux.and( flags.bitAnd( uint( RAY_FLAG.AUX_LOCKED ) ).equal( uint( 0 ) ) ), () => {
+
+					const depth = select( bounceIndex.equal( 0 ),
+						computeNDCDepth( { worldPos: scatterPoint, cameraProjectionMatrix, cameraViewMatrix } ),
+						gbDecodeNormalDepth( readGBuffer( gBufferRW, pixelIndex ) ).w );
+					writeGBuffer( gBufferRW, pixelIndex, direction.negate(), depth, clamp( scatterColor.mul( featCarry ), vec3( 0.0 ), vec3( 1.0 ) ), null, guideUnlikely() );
+					flags.assign( flags.bitOr( uint( RAY_FLAG.AUX_LOCKED ) ) );
+
+				} );
+
+				const newDir = sampleHenyeyGreenstein( direction, scatterG, sample2D( FOG_DIM.DIRECTION ) ).toVar();
+				const phasePdf = henyeyGreenstein( dot( direction, newDir ), scatterG ).toVar();
+
+				If( cameraDepth.greaterThanEqual( int( 3 ) ), () => {
+
+					const survive = clamp( max( max( throughput.x, throughput.y ), throughput.z ), 0.05, 1.0 ).toVar();
+					If( sample1D( 3 ).greaterThan( survive ), stop );
+					throughput.divAssign( survive );
+
+				} );
+
+				// Like an opaque scatter: the sky past it is light, not the backdrop, and the sun's NEE here draws any direction.
+				flags.assign( flags.sub( flags.bitAnd( uint( RAY_FLAG.UNDER_SURFACE ) ) )
+					.bitOr( uint( RAY_FLAG.REDIRECTED | RAY_FLAG.HAS_HIT_OPAQUE | RAY_FLAG.SUN_NEE | ( regularize ? RAY_FLAG.ROUGH_PATH : 0 ) ) ) );
+				If( cameraDepth.greaterThanEqual( maxBounceCount ), () => {
+
+					flags.assign( flags.bitOr( uint( RAY_FLAG.EMISSION_ONLY | RAY_FLAG.AUX_LOCKED ) ) );
+
+				} );
+				writeRayOriginMeta( rayBufferRW, rayID, scatterPoint, cameraDepth.add( 1 ), sssSteps, transparentCount );
+				writeRayDirFlags( rayBufferRW, rayID, newDir, flags );
+				writeRayThroughputPdf( rayBufferRW, rayID, throughput, phasePdf );
+				writeRayRadiance( rayBufferRW, rayID, currentRadiance );
+				persistRng();
+				Return();
 
 			} );
 

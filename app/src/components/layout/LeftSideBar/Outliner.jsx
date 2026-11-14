@@ -2,7 +2,7 @@ import { useState, useEffect, useLayoutEffect, useCallback, memo, useMemo, useRe
 import {
 	Search, Box, Circle, Cylinder, Camera, ChevronRight, ChevronDown,
 	Sun, Flashlight, Boxes, Folder, Shapes, Triangle, LampDesk,
-	Eye, EyeOff, Layers, Filter, Trash2
+	Eye, EyeOff, Layers, Filter, Trash2, Cloud
 } from 'lucide-react';
 import { useStore } from '@/store';
 import { getApp } from '@/lib/appProxy';
@@ -56,6 +56,7 @@ const ObjectIcon = memo( ( { object } ) => {
 	if ( object.type === 'PointLight' ) return <LampDesk className={cn( baseClass, STYLES.iconOrange )} />;
 	if ( object.type === 'SpotLight' ) return <Flashlight className={cn( baseClass, STYLES.iconOrange )} />;
 	if ( object.type.includes( 'Camera' ) ) return <Camera className={cn( baseClass, STYLES.iconOrange )} />;
+	if ( object.type === 'Volume' ) return <Cloud className={cn( baseClass, STYLES.iconOrange )} />;
 
 	return <Shapes className={cn( baseClass, STYLES.iconOrange )} />;
 

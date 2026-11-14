@@ -1,0 +1,1 @@
+[{"name": "flames", "type": "float", "class": "fog volume", "indexToWorld": [[0.1, 0.0, 0.0], [0.0, 0.1, 0.0], [0.0, 0.0, 0.1], [0.0, 0.0, 0.0]], "count": 0}, {"name": "temperature", "type": "float", "class": "fog volume", "indexToWorld": [[0.1, 0.0, 0.0], [0.0, 0.1, 0.0], [0.0, 0.0, 0.1], [0.0, 0.0, 0.0]], "count": 0}]

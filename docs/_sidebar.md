@@ -21,6 +21,7 @@
   - [Render pipeline](/design/PIPELINE_ARCHITECTURE.md)
   - [Path tracer and its data](/design/PATH_TRACER_SHADER_ARCHITECTURE.md)
   - [Materials and shading](/design/SHADING.md)
+  - [Volumes](/design/VOLUMES.md)
   - [Bidirectional and vertex merging](/design/BIDIRECTIONAL.md)
   - [NRD denoiser](/design/NRD_DENOISER.md)
   - [Colour management](/design/COLOR_MANAGEMENT.md)

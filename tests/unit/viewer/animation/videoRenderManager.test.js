@@ -391,6 +391,7 @@ describe( 'VideoRenderManager', () => {
 					return true;
 
 				} ),
+				settled: vi.fn( async () => false ),
 			};
 
 		};

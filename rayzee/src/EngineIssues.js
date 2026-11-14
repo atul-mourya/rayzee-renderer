@@ -43,6 +43,7 @@ export const ISSUE_CODES = Object.freeze( {
 	CAPABILITY_MISSING: 'capability.missing',
 	SETTING_IGNORED: 'setting.ignored',
 	RENDER_NON_FINITE_SAMPLES: 'render.non_finite_samples',
+	VOLUME_DOWNSAMPLED: 'volume.downsampled',
 } );
 
 /** Strict throws on ERROR only. */

@@ -115,7 +115,10 @@ export class PathTracerApp extends RayzeeRenderer {
 	_createCamera() {
 
 		this.cameraManager = new CameraManager( this.canvas );
-		this.timeline = new TimelineManager( { cameraManager: this.cameraManager, onReset: () => this.reset() } );
+		this.timeline = new TimelineManager( {
+			cameraManager: this.cameraManager, onReset: () => this.reset(),
+			sequences: () => this.sequences, seekSequences: ( time ) => this.seekSequences( time ),
+		} );
 		return this.cameraManager.camera;
 
 	}
@@ -566,6 +569,7 @@ export class PathTracerApp extends RayzeeRenderer {
 	_sceneRebuilt() {
 
 		this._initAnimationAndTransforms();
+		this.timeline.sequencesChanged();
 
 	}
 

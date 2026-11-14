@@ -20,6 +20,7 @@ import { extractSceneMetadata, withSceneAspect } from './SceneMetadata.js';
 import { ISSUE_CODES } from '../EngineIssues.js';
 import { ENGINE_DEFAULTS } from '../EngineDefaults.js';
 import { createLogger } from '../Logger.js';
+import { expandByVolumes } from '../scene/Volumes.js';
 
 const log = createLogger( 'assets' );
 
@@ -734,6 +735,37 @@ export class AssetLoader extends EventDispatcher {
 
 	}
 
+	/**
+	 * A run of numbered files of one format loaded as one model that changes over time (`format.parseSequence`).
+	 * @param {Object} format - a registered model format with `parseSequence`
+	 * @param {Array<function(): Promise<ArrayBuffer|Uint8Array>>} frames - each file's reader, in frame order
+	 * @param {string} filename
+	 */
+	async loadModelSequence( format, frames, filename ) {
+
+		try {
+
+			updateLoading( { isLoading: true, status: `Reading the first of ${frames.length} frames...`, progress: 5 } );
+			const { model } = await format.parseSequence( frames, { filename, fps: 24 } );
+			this.releaseTargetModel();
+			this.targetModel = model;
+
+			updateLoading( { isLoading: true, status: "Processing Data...", progress: 10 } );
+			await this.onModelLoad( this.targetModel );
+
+			this.dispatchEvent( { type: 'load', model, filename } );
+			return model;
+
+		} catch ( error ) {
+
+			log.error( `Error loading the ${format.label} sequence:`, error );
+			this.dispatchEvent( { type: 'error', message: error.message, filename } );
+			throw error;
+
+		}
+
+	}
+
 	async _loadModelWithFormat( format, file, filename ) {
 
 		try {
@@ -1205,7 +1237,7 @@ export class AssetLoader extends EventDispatcher {
 		// Center model and adjust camera
 		buildTimer.start( 'Camera setup' );
 		computeInstanceBoundingBoxes( model );
-		const box = new Box3().setFromObject( model );
+		const box = expandByVolumes( new Box3().setFromObject( model ), model );
 		const center = box.getCenter( new Vector3() );
 		const size = box.getSize( new Vector3() );
 

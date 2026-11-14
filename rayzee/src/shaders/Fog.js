@@ -24,7 +24,8 @@ import { emitterSide } from './BVHTraversal.js';
  */
 export const FOG_DIM = Object.freeze( {
 	DISTANCE: 18, LAMP_PICK: 19, SEGMENT_PICK: 20, SEGMENT_DISTANCE: 21, SHADOW_PICK: 22, EMITTER_REFERENCE: 23, EMITTER_SAMPLER: 24,
-	DIRECTION: 10, SEGMENT_POINT: 11,
+	VOLUME_DISTANCE: 26, POINT_PICK: 27, POINT_EMITTER_SAMPLER: 28,
+	DIRECTION: 10, SEGMENT_POINT: 11, POINT_LAMP: 12,
 } );
 
 /** Where a ray from `origin` along `dir`, up to `tMax`, is inside the box: ( enter, leave ), empty when leave ≤ enter. */
@@ -366,6 +367,142 @@ function emitterLight( { slot, origin, dir, near, far, g, fog, emitters, sample1
 			const geometry = abs( dot( slot.L, e.faceNormal ) ).div( dist.mul( dist ).mul( distancePdf ).mul( e.areaPdf ).mul( pickPdf ) );
 			slot.value.assign( inScattering( fog, origin, dir, near, t ).mul( e.emission ).mul( phaseValue ).mul( geometry )
 				.mul( powerHeuristic( { pdf1: lightPdf, pdf2: phaseValue } ) ).mul( emitters.boost ) );
+			slot.dist.assign( dist.mul( SHADOW_END ) );
+			slot.emissive.assign( true );
+
+		} );
+
+	} );
+
+}
+
+/**
+ * The point and spot lights and the emitters at a scatter point `p` of a volume, reached along `dir`: one picked by its
+ * unshadowed light there, through the phase function and `color` (the albedo); an emitter weighed against the phase
+ * draw by the power heuristic, as its hit is. Before the path's throughput. A fog scatter leaves these to the segment.
+ */
+export function pointScatterLight( { enabled, p, dir, g, color, lamps, emitters, sample1D, sample2D } ) {
+
+	const slot = lightSlot();
+	const lists = [[ 2, lamps.numPoint ], [ 3, lamps.numSpot ]];
+	if ( emitters ) lists.push( [ EMITTERS, select( emitters.enabled, int( 1 ), int( 0 ) ) ] );
+	const lightOf = ( kind, i ) => ( kind === 2 ? PointLight.wrap( getPointLight( lamps.point, i ) ) : SpotLight.wrap( getSpotLight( lamps.spot, i ) ) );
+
+	If( enabled, () => {
+
+		slot.from.assign( p );
+		const picked = pickLight( lists, ( kind, i ) => {
+
+			if ( kind === EMITTERS ) {
+
+				const root = emitters.lightBuffer.element( int( 0 ) ), rootMax = emitters.lightBuffer.element( int( 1 ) );
+				const centre = select( emitters.lightBVHNodeCount.greaterThan( int( 0 ) ), root.xyz.add( rootMax.xyz ).mul( 0.5 ), p.add( dir ) );
+				const toCentre = centre.sub( p );
+				return max( emitters.totalPower.div( max( dot( toCentre, toCentre ), 1e-8 ) ), 1e-20 );
+
+			}
+
+			const light = lightOf( kind, i );
+			const toLight = light.position.sub( p );
+			return max( luminance( light.color ).mul( light.intensity ).div( max( dot( toLight, toLight ), 1e-8 ) ), 0.0 );
+
+		}, sample1D( FOG_DIM.POINT_PICK ) );
+
+		If( picked.kind.equal( int( EMITTERS ) ), () => {
+
+			if ( emitters ) pointEmitterLight( { slot, p, dir, g, emitters, pickPdf: picked.pdf } );
+
+		} ).ElseIf( picked.kind.greaterThanEqual( int( 0 ) ), () => {
+
+			const ruv = sample2D( FOG_DIM.POINT_LAMP ).toVar();
+			const valid = tslBool( false ).toVar();
+			const emission = vec3( 0.0 ).toVar();
+			const distance = float( 0.0 ).toVar();
+			const take = ( sample ) => {
+
+				const ls = LightSample.wrap( sample );
+				valid.assign( ls.valid );
+				slot.L.assign( ls.direction );
+				emission.assign( ls.emission );
+				distance.assign( ls.distance );
+
+			};
+
+			If( picked.kind.equal( int( 2 ) ), () => {
+
+				take( samplePointLightWithAttenuation( PointLight.wrap( getPointLight( lamps.point, picked.index ) ), p, float( 1.0 ), ruv ) );
+
+			} ).Else( () => {
+
+				take( sampleSpotLightWithRadius( SpotLight.wrap( getSpotLight( lamps.spot, picked.index ) ), p, float( 1.0 ), ruv ) );
+
+			} );
+
+			If( valid, () => {
+
+				slot.value.assign( emission.mul( henyeyGreenstein( dot( dir, slot.L ), g ) ).div( picked.pdf ) );
+				slot.dist.assign( distance.mul( SHADOW_END ) );
+
+			} );
+
+		} );
+
+		slot.value.mulAssign( color );
+
+	} );
+
+	return slot;
+
+}
+
+// pointScatterLight's emitters: a point on one drawn from `p`, either side, lit only where `p` faces its emitting side.
+function pointEmitterLight( { slot, p, dir, g, emitters, pickPdf } ) {
+
+	const [ pixelCoord, resolution, frame, dimBase ] = emitters.samplerArgs;
+	const sampleArgs = [ p, vec3( 0.0, 1.0, 0.0 ), emitters.rngState, pixelCoord, resolution, frame, dimBase.add( int( FOG_DIM.POINT_EMITTER_SAMPLER ) ) ];
+	const e = {
+		position: vec3( 0.0 ).toVar(), faceNormal: vec3( 0.0 ).toVar(), emission: vec3( 0.0 ).toVar(), areaPdf: float( 0.0 ).toVar(),
+		triangle: int( 0 ).toVar(), instance: int( 0 ).toVar(), valid: tslBool( false ).toVar(),
+	};
+	const take = ( sample ) => {
+
+		const s = EmissiveSampleAnySide.wrap( sample );
+		e.position.assign( s.position );
+		e.faceNormal.assign( s.faceNormal );
+		e.emission.assign( s.emission );
+		e.areaPdf.assign( s.pdf );
+		e.triangle.assign( s.triangleIndex );
+		e.instance.assign( s.instance );
+		e.valid.assign( s.valid );
+
+	};
+
+	If( emitters.lightBVHNodeCount.greaterThan( int( 0 ) ), () => {
+
+		take( sampleLightBVHTriangleAnySide( ...sampleArgs, emitters.lightBuffer, emitters.lightBuffer, emitters.vec4Offset, emitters.triangleBuffer, emitters.bvhBuffer, tslBool( true ) ) );
+
+	} ).Else( () => {
+
+		take( sampleEmissiveTriangleAnySide( ...sampleArgs, emitters.lightBuffer, emitters.vec4Offset, emitters.count, emitters.totalPower, emitters.triangleBuffer, emitters.bvhBuffer, tslBool( true ) ) );
+
+	} );
+
+	const side = emitterSide( triangleRow( emitters.triangleBuffer, e.triangle, 4 ).z ).toVar();
+	const facing = select( side.equal( int( 1 ) ), float( - 1.0 ), float( 1.0 ) );
+	const lit = side.equal( int( 2 ) ).or( dot( p.sub( e.position ), e.faceNormal ).mul( facing ).greaterThan( 0.0 ) );
+
+	If( e.valid.and( lit ), () => {
+
+		const toLight = e.position.sub( p ).toVar();
+		const dist = length( toLight ).toVar();
+		slot.L.assign( toLight.div( dist ) );
+		const lightPdf = emitters.pdf( e.triangle, dist, slot.L, p, e.instance ).toVar();
+
+		If( lightPdf.greaterThan( 0.0 ), () => {
+
+			const phaseValue = henyeyGreenstein( dot( dir, slot.L ), g ).toVar();
+			const geometry = abs( dot( slot.L, e.faceNormal ) ).div( dist.mul( dist ).mul( e.areaPdf ).mul( pickPdf ) );
+			slot.value.assign( e.emission.mul( phaseValue ).mul( geometry ).mul( powerHeuristic( { pdf1: lightPdf, pdf2: phaseValue } ) ).mul( emitters.boost ) );
 			slot.dist.assign( dist.mul( SHADOW_END ) );
 			slot.emissive.assign( true );
 

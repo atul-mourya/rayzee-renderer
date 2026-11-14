@@ -13,6 +13,7 @@ import { configurePlatform } from '@/core/Platform.js';
 import { configureAssets } from '@/core/AssetConfig.js';
 import { openHeadless } from '@/core/viewer/Headless.js';
 import { ALL_MATERIAL_LAYERS } from '@/core/shaders/SceneResources.js';
+import { Volume, VolumeGrid } from '@/core/scene/Volumes.js';
 
 const LIMIT = 8192;
 const ROOT = new URL( '../../', import.meta.url );
@@ -143,7 +144,8 @@ async function largestFunctions( integrator ) {
 	const point = new PointLight( 0xffffff, 20 );
 	point.userData.radius = 0.1;
 	const rect = new RectAreaLight( 0xffffff, 5, 1, 1 );
-	await app.loadObject3D( new Scene().add( floor, glass, coat, lamp, point, new SpotLight(), new DirectionalLight(), rect ), 'features' );
+	const smoke = new Volume( VolumeGrid.fromFunction( 8, () => 1 ), { emissionGrid: VolumeGrid.fromFunction( 8, () => 1 ), emissionStrength: 1 } );
+	await app.loadObject3D( new Scene().add( floor, glass, coat, lamp, point, new SpotLight(), new DirectionalLight(), rect, smoke ), 'features' );
 	await app.environmentManager.setMode( 'procedural' );
 	await app.renderFrames( 1 );
 

@@ -43,6 +43,8 @@ import {
 	Vector3,
 } from 'three';
 
+import { Volume, VolumeGrid } from 'rayzee';
+
 import { generateMaterialSpheres } from './generateMaterialSpheres.js';
 
 /**
@@ -2246,6 +2248,124 @@ SCENES.push( {
 
 		await app.loadObject3D( room, 'fog-shafts' );
 		setCamera( app, [ 2.6, 1.0, 2.4 ], [ - 1.5, 1.1, - 0.6 ] );
+
+	},
+} );
+
+// Volumes. A white cloud around a white Lambert sphere in a white sky renders the sky: delta tracking through the
+// majorant grid, the phase draw and its MIS at scatter points, and shadow rays' ratio tracking must all agree on one
+// density field, or the furnace drifts from 1.
+SCENES.push( {
+	id: 'volume-furnace',
+	covers: 'white furnace — a volume: delta-tracked free flight, ratio-tracked shadow rays, the phase draw and MIS at its scatter points',
+	spp: 128,
+	truthSpp: 512,
+	settings: { maxBounces: 128, enableEnvironment: true, environmentIntensity: 1 },
+	furnaceRadiance: 1.0,
+	async build( app ) {
+
+		const env = app.stages.pathTracer.environment;
+		env.envParams.solidSkyColor = new Color( 0xffffff );
+		await env.setMode( 'color' );
+
+		const cloud = new Volume( VolumeGrid.procedural( 'cloud', { resolution: 48 } ), { density: 12, anisotropy: 0.4 } );
+		cloud.scale.setScalar( 2.4 );
+		const group = new Group().add( cloud, new Mesh( new SphereGeometry( 0.35, 96, 48 ), new MeshPhysicalMaterial( { color: 0xffffff, roughness: 1.0, metalness: 0 } ) ) );
+		await app.loadObject3D( group, 'volume-furnace' );
+		setCamera( app, [ 0, 0, 3 ], [ 0, 0, 0 ] );
+
+	},
+} );
+
+// A cumulus in the physical sky over a slab and a ball: the sun and sky light it through many scatters, and it shades
+// the slab by ratio-tracked shadow rays.
+SCENES.push( {
+	id: 'volume-cloud',
+	covers: 'a cloud in the physical sky: multiple scattering, sun and sky NEE at scatter points, its shadow on the ground',
+	spp: 64,
+	truthSpp: 2048,
+	settings: { maxBounces: 24, enableEnvironment: true, environmentIntensity: 1 },
+	async build( app ) {
+
+		await app.stages.pathTracer.environment.setMode( 'procedural' );
+		const cloud = new Volume( VolumeGrid.procedural( 'cloud', { resolution: 96 } ), { density: 6, anisotropy: 0.5 } );
+		cloud.scale.setScalar( 8 );
+		cloud.position.set( 0, 6, 0 );
+		const slab = new Mesh( new BoxGeometry( 60, 0.2, 60 ), new MeshPhysicalMaterial( { color: 0x8a8a80, roughness: 0.9, metalness: 0 } ) );
+		slab.position.y = - 0.1;
+		const ball = new Mesh( new SphereGeometry( 1, 64, 32 ), new MeshPhysicalMaterial( { color: 0xd04040, roughness: 0.3, metalness: 0 } ) );
+		ball.position.set( 3, 1, 4 );
+		await app.loadObject3D( new Group().add( cloud, slab, ball ), 'volume-cloud' );
+		setCamera( app, [ 0, 3, 17 ], [ 0, 5, 0 ] );
+
+	},
+} );
+
+// Fire: smoke with a hot core glowing as a black body over a dark floor, which only its light reaches.
+SCENES.push( {
+	id: 'volume-fire',
+	covers: 'a volume\'s emission: the track-length integral along each segment, the blackbody ramp, its light on a surface',
+	spp: 64,
+	truthSpp: 2048,
+	settings: { maxBounces: 8, enableEnvironment: true, environmentIntensity: 1 },
+	async build( app ) {
+
+		const env = app.stages.pathTracer.environment;
+		env.envParams.solidSkyColor = new Color( 0.01, 0.012, 0.02 );
+		await env.setMode( 'color' );
+		const n = 40;
+		const plume = ( x, y, z ) => Math.max( 0, 1 - Math.hypot( x / ( 0.12 + 0.25 * ( y + 0.5 ) ), y / 0.5, z / ( 0.12 + 0.25 * ( y + 0.5 ) ) ) );
+		const fire = new Volume( VolumeGrid.fromFunction( n, ( x, y, z ) => plume( x, y, z ) ), {
+			density: 1.5, color: 0x707070, emissionGrid: VolumeGrid.fromFunction( n, ( x, y, z ) => 4 * plume( x, y + 0.15, z ) ** 1.5 ),
+			emissionStrength: 1, blackbody: true, temperature: 1000,
+		} );
+		fire.scale.setScalar( 2 );
+		fire.position.y = 1;
+		const floor = new Mesh( new BoxGeometry( 12, 0.2, 12 ), new MeshPhysicalMaterial( { color: 0xb0aaa0, roughness: 0.7, metalness: 0 } ) );
+		floor.position.y = - 0.1;
+		await app.loadObject3D( new Group().add( fire, floor ), 'volume-fire' );
+		setCamera( app, [ 0, 1.2, 5 ], [ 0, 0.9, 0 ] );
+
+	},
+} );
+
+// Smoke in fog, lit by a spot light, a sized point light and a one-sided panel: each kind of light a volume's scatter
+// point draws, the emitters weighed against the phase draw, and the fog's segment light dimmed by the smoke between.
+SCENES.push( {
+	id: 'volume-lamps',
+	covers: 'a volume lit by point, spot and emitter lights in fog: the scatter point\'s light pick and MIS, fog and volume together',
+	spp: 64,
+	truthSpp: 2048,
+	settings: {
+		maxBounces: 6, enableEnvironment: false, enableEmissiveTriangleSampling: true,
+		fogDensity: 0.05, fogColor: '#ffffff', fogAnisotropy: 0.3, fogBounds: null,
+	},
+	async build( app ) {
+
+		// Its own sky: the backdrop shows past the walls, and would otherwise be the last scene's.
+		const env = app.stages.pathTracer.environment;
+		env.envParams.solidSkyColor = new Color( 0.01, 0.012, 0.02 );
+		await env.setMode( 'color' );
+		const room = new Group();
+		const floor = new Mesh( new BoxGeometry( 8, 0.2, 8 ), new MeshPhysicalMaterial( { color: 0x9a948c, roughness: 0.8, metalness: 0 } ) );
+		floor.position.y = - 0.1;
+		const back = new Mesh( new BoxGeometry( 8, 4, 0.2 ), new MeshPhysicalMaterial( { color: 0x9a948c, roughness: 0.8, metalness: 0 } ) );
+		back.position.set( 0, 2, - 2 );
+		const smoke = new Volume( VolumeGrid.procedural( 'smoke', { resolution: 64 } ), { density: 5, color: 0xd0d0d0, anisotropy: 0.3 } );
+		smoke.scale.setScalar( 3 );
+		smoke.position.y = 1.5;
+		const spot = new SpotLight( 0xfff0dd, 40 * LUMENS_PER_WATT, 0, Math.PI / 9, 0.3, 2 );
+		spot.position.set( - 2.5, 3.5, 1.5 );
+		spot.target.position.set( 0, 1.2, 0 );
+		const point = new PointLight( 0x88aaff, 4 * LUMENS_PER_WATT, 0, 2 );
+		point.position.set( 1.2, 1, 1 );
+		point.userData.radius = 0.1;
+		const panel = new Mesh( new PlaneGeometry( 1.2, 0.6 ), new MeshPhysicalMaterial( { color: 0, emissive: 0xffc070, emissiveIntensity: 3 } ) );
+		panel.position.set( 1.8, 3, - 0.5 );
+		panel.rotation.x = Math.PI / 2;
+		room.add( floor, back, smoke, spot, spot.target, point, panel );
+		await app.loadObject3D( room, 'volume-lamps' );
+		setCamera( app, [ 0, 1.6, 6 ], [ 0, 1.4, 0 ] );
 
 	},
 } );

@@ -503,6 +503,25 @@ export class PathTracer extends PathTracerStage {
 	}
 
 	/**
+	 * What volumes compile in: null for none, else their atlas's channels (two while some volume has an emission grid).
+	 * A new atlas of as many is read through the same node, with no rebuild. Path integrator only.
+	 */
+	_volumesNeeded() {
+
+		if ( ! this._volumeAtlas ) return null;
+		if ( ! this._integrator ) return this._volumeChannels;
+		if ( this._volumesIgnoredBy !== this._integrator.name ) {
+
+			this._volumesIgnoredBy = this._integrator.name;
+			this.issues?.warn( ISSUE_CODES.SETTING_IGNORED, `volumes are drawn by the path integrator only: "${this._integrator.name}" renders without them`, { setting: 'volumes', integrator: this._integrator.name } );
+
+		}
+
+		return null;
+
+	}
+
+	/**
 	 * Scrambles every pixel's sample sequence and first random state (pbrt's --seed). A whole number below 2³²; 0, the
 	 * default, compiles no seed in.
 	 */
@@ -627,6 +646,7 @@ export class PathTracer extends PathTracerStage {
 		if ( PICKED_SHADOW_RAYS.includes( this._shadowRays ) && this._pickedShadowRays() !== this._compiledPick ) this._outputsChanged = true;
 		if ( this._lightRadiusNeeded() !== this._compiledLightRadius ) this._outputsChanged = true;
 		if ( this._fogNeeded() !== this._compiledFog ) this._outputsChanged = true;
+		if ( this._volumesNeeded() !== ( this._compiledVolumes ?? null ) ) this._outputsChanged = true;
 		// A tree deeper than the stack compiled (an added object, a rebuilt BLAS) grows it; a shallower one waits.
 		if ( this._stackNeeded() > this._compiledStack ) this._outputsChanged = true;
 		if ( this._sampleClampNeeded() !== this._compiledSampleClamp ) this._outputsChanged = true;
@@ -2150,8 +2170,13 @@ export class PathTracer extends PathTracerStage {
 				density: this.fogDensity, color: this.fogColor, anisotropy: this.fogAnisotropy, boxMin: this.fogBoxMin, boxMax: this.fogBoxMax,
 				falloff: this.fogHeightFalloff, floor: this.fogFloor,
 			} : null,
+			volumes: this._volumesNeeded() ? {
+				headers: this._volumeHeaders, atlas: this._volumeAtlasNode, invAtlasSize: this._volumeAtlasInverse, count: this._volumeCount,
+				emission: this._volumeChannels > 1, seed: this.seedFrame,
+			} : null,
 		};
 		this._compiledFog = resources.fog !== null;
+		this._compiledVolumes = this._volumesNeeded();
 		this._compiledStack = this._stackNeeded();
 		const own = ( call ) => seeded( withSceneResources( call, resources ) );
 		const freshEnvTex = _env.environmentTexture ? texture( _env.environmentTexture ) : texNodes.envTex;
@@ -2299,6 +2324,7 @@ export class PathTracer extends PathTracerStage {
 			shadowRays: picked,
 			cameraWorldMatrix: this.cameraWorldMatrix,
 			fog: resources.fog,
+			volumes: resources.volumes,
 		} );
 		this._kernelManager.register( 'shade',
 			own( shadeFn() ).compute(

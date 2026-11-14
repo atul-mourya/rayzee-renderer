@@ -26,6 +26,7 @@ function makeApp( { sdf = {}, pathTracer = {} } = {} ) {
 				setLightBVHData: log( 'lightBVH' ),
 				updateMeshVisibility: log( 'meshVisibility' ),
 				updateAllMeshVisibility: log( 'allVisibility' ),
+				refreshVolumes: log( 'volumes' ),
 				materialData: {
 					getMaterialProperty: vi.fn( () => 0.5 ),
 					getMaterialPropertySource: vi.fn( () => 'host' ),
@@ -160,6 +161,7 @@ describe( 'moving placements', () => {
 		expect( app.calls ).toEqual( [
 			[ 'noteMoving', [ 4 ]], [ 'move' ],
 			[ 'ranges', [], [[ 'tlas', 0 ]]],
+			[ 'volumes' ],
 			[ 'reset', false, { motion: true } ],
 		] );
 
@@ -407,8 +409,8 @@ describe( 'visibility', () => {
 		SceneEdits.setMeshVisibility( app, 3, false );
 		SceneEdits.updateAllMeshVisibility( app );
 		expect( app.calls ).toEqual( [
-			[ 'meshVisibility', 3, false ], [ 'refreshEmissive' ], [ 'reset' ],
-			[ 'allVisibility' ], [ 'refreshEmissive' ], [ 'reset' ],
+			[ 'meshVisibility', 3, false ], [ 'volumes' ], [ 'refreshEmissive' ], [ 'reset' ],
+			[ 'allVisibility' ], [ 'volumes' ], [ 'refreshEmissive' ], [ 'reset' ],
 		] );
 
 	} );
@@ -422,7 +424,7 @@ describe( 'visibility', () => {
 		expect( app.calls ).toEqual( [] );
 		back();
 		await flush();
-		expect( app.calls ).toEqual( [[ 'meshVisibility', 1, true ], [ 'refreshEmissive' ], [ 'reset' ]] );
+		expect( app.calls ).toEqual( [[ 'meshVisibility', 1, true ], [ 'volumes' ], [ 'refreshEmissive' ], [ 'reset' ]] );
 
 	} );
 

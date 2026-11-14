@@ -1,9 +1,9 @@
 import { FloatType, MathUtils, Mesh, MeshStandardMaterial, Points, PointsMaterial } from 'three';
 
 /**
- * File formats beyond glTF and .hdr — `rayzee/addons/formats`: FBX, OBJ, STL, PLY, Collada, 3MF and USD models, and
- * EXR environments. PathTracerApp registers all of them itself; on the renderer core, register the ones you read (each
- * three.js loader is downloaded the first time its format is read, and a bundler drops the formats you leave out):
+ * File formats beyond glTF and .hdr — `rayzee/addons/formats`: FBX, OBJ, STL, PLY, Collada, 3MF and USD models, OpenVDB
+ * volumes, and EXR environments. PathTracerApp registers all of them itself; on the renderer core, register the ones you
+ * read (each loader is downloaded the first time its format is read, and a bundler drops the formats you leave out):
  *
  * @example
  * import { RayzeeRenderer } from 'rayzee/core';
@@ -12,8 +12,9 @@ import { FloatType, MathUtils, Mesh, MeshStandardMaterial, Points, PointsMateria
  * renderer.assetLoader.registerFormat( objFormat, exrFormat );
  * await renderer.loadFile( objFile );
  *
- * A model format's `parse( file, { filename, cache } )` resolves to `{ model, result? }`; an environment format's
- * `createLoader( manager )` to a three.js loader whose `loadAsync` resolves to a texture.
+ * A model format's `parse( file, { filename, cache } )` resolves to `{ model, result? }`, and its optional
+ * `parseSequence( frames, { filename, fps } )` reads a run of numbered files as one animated model; an environment
+ * format's `createLoader( manager )` to a three.js loader whose `loadAsync` resolves to a texture.
  */
 
 // FBXLoader gives a camera naming no shape (AspectWidth / AspectHeight) the window's. It is lent FBX's default, 320 × 200,
@@ -260,6 +261,23 @@ export const usdFormat = {
 	},
 };
 
+export const vdbFormat = {
+	name: 'OpenVDB (smoke, clouds, fire)', label: 'VDB', type: 'model', extensions: [ 'vdb' ],
+	async parse( file, { filename } ) {
+
+		const { volumeFromOpenVDB } = await import( '../loaders/OpenVDB.js' );
+		return { model: volumeFromOpenVDB( await file.arrayBuffer(), { name: filename } ) };
+
+	},
+	// A run of numbered frames (`fire_0001.vdb`, …) plays as one volume on the timeline.
+	async parseSequence( frames, { filename, fps } ) {
+
+		const { volumeSequenceFromOpenVDB } = await import( '../loaders/OpenVDBSequence.js' );
+		return { model: await volumeSequenceFromOpenVDB( frames, { name: filename, fps } ) };
+
+	},
+};
+
 export const exrFormat = {
 	name: 'EXR (OpenEXR)', label: 'EXR', type: 'environment', extensions: [ 'exr' ],
 	async createLoader( manager ) {
@@ -271,4 +289,4 @@ export const exrFormat = {
 };
 
 /** Every format above. */
-export const allFormats = [ fbxFormat, objFormat, stlFormat, plyFormat, colladaFormat, threeMFFormat, usdFormat, exrFormat ];
+export const allFormats = [ fbxFormat, objFormat, stlFormat, plyFormat, colladaFormat, threeMFFormat, usdFormat, vdbFormat, exrFormat ];

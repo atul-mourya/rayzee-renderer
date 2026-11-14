@@ -493,10 +493,12 @@ describe( 'timeline', () => {
 		await withApp();
 		animation().syncTimeline( {
 			camera: { keys: [ { id: 3, time: 1, position: {} }, { id: 5, time: 2.5 } ] },
-			duration: 2.5, animates: true, isPlaying: true,
+			duration: 2.5, animates: true, isPlaying: true, sequences: [ { name: 'fire', frameCount: 24, fps: 12, current: 5 } ],
 		} );
 
 		expect( animation().cameraKeys ).toEqual( [ { id: 3, time: 1 }, { id: 5, time: 2.5 } ] );
+		expect( animation().sequences ).toEqual( [ { name: 'fire', frames: 24, fps: 12 } ] );
+		expect( animation().sequenceFrame ).toBe( 5 );
 		expect( [ animation().timelineDuration, animation().timelineAnimates, animation().isTimelinePlaying ] ).toEqual( [ 2.5, true, true ] );
 
 	} );

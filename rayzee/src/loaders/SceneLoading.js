@@ -1,3 +1,4 @@
+import { Mesh, BufferGeometry, Float32BufferAttribute, MeshBasicMaterial } from 'three';
 import { EngineEvents, resetLoading, updateLoading } from '../EngineEvents.js';
 import { nameFromUrl } from '../storage/DownloadCache.js';
 import { isFolderInput, localFolder } from './ArchiveFormats.js';
@@ -6,6 +7,7 @@ import { SPILL_ENVIRONMENT_WIDTH } from '../memory/HostMemory.js';
 import { ISSUE_CODES } from '../EngineIssues.js';
 import { SETTING_SOURCE } from '../RenderSettings.js';
 import { BuildTimer } from '../scene/BuildTimer.js';
+import { collectVolumes } from '../scene/Volumes.js';
 import { createLogger, fmt } from '../Logger.js';
 
 const log = createLogger( 'scene' );
@@ -46,6 +48,46 @@ function busyError( app, where ) {
 	const error = new Error( `${where}: another load is already in progress` );
 	error.code = 'LOAD_IN_PROGRESS';
 	return error;
+
+}
+
+/** The scene's frame sequences: its volumes'. */
+export function sceneSequences( app ) {
+
+	return app.meshScene ? collectVolumes( app.meshScene ).map( v => v.sequence ).filter( Boolean ) : [];
+
+}
+
+/**
+ * Puts every sequence on the frame `time` falls on, decoding what it must, and restarts the render if any moved.
+ * Updates go to the GPU one at a time: playback seeks every frame, and frames finish decoding out of step.
+ * @returns {Promise<boolean>} whether a frame changed
+ */
+export async function seekSequences( app, time ) {
+
+	const volumes = app.meshScene ? collectVolumes( app.meshScene ).filter( v => v.sequence ) : [];
+	const frames = await Promise.all( volumes.map( v => v.sequence.seek( time ) ) );
+	const moved = volumes.filter( ( _, i ) => frames[ i ] );
+	if ( ! moved.length ) return false;
+
+	const update = ( app._sequenceUpdate ?? Promise.resolve() ).then( async () => {
+
+		moved.forEach( v => v.setFrame( frames[ volumes.indexOf( v ) ].frame ) );
+		await app.stages.pathTracer.updateVolumeFrames( moved );
+
+	} );
+	app._sequenceUpdate = update.catch( error => log.warn( `a sequence frame failed to apply: ${error.message}` ) );
+	await update;
+	app.reset();
+	return true;
+
+}
+
+/** Lets go of every frame sequence the scene held. */
+export function disposeSequences( app ) {
+
+	for ( const sequence of app._volumeSequences ?? [] ) sequence.dispose();
+	app._volumeSequences = null;
 
 }
 
@@ -429,6 +471,26 @@ function restoreUnlitSettings( app ) {
 
 }
 
+const VOLUMES_ANCHOR = '__rayzeeVolumesAnchor';
+
+// A scene of volumes alone still needs a triangle for its geometry build: a hidden one stands in.
+function anchorVolumes( scene ) {
+
+	scene.getObjectByName( VOLUMES_ANCHOR )?.removeFromParent();
+	let surfaces = false;
+	scene.traverse( ( object ) => {
+
+		if ( object.isMesh && object.geometry?.attributes?.position?.count >= 3 ) surfaces = true;
+
+	} );
+	if ( surfaces || ! collectVolumes( scene ).length ) return;
+	const anchor = new Mesh( new BufferGeometry().setAttribute( 'position', new Float32BufferAttribute( [ 0, 0, 0, 1e-6, 0, 0, 0, 1e-6, 0 ], 3 ) ), new MeshBasicMaterial() );
+	anchor.name = VOLUMES_ANCHOR;
+	anchor.visible = false;
+	scene.add( anchor );
+
+}
+
 export async function loadSceneData( app, { pendingEnvironment = null, keepUserLights = false } = {} ) {
 
 	// The append path (addModel) keeps its selection: the selected object persists.
@@ -480,6 +542,8 @@ export async function loadSceneData( app, { pendingEnvironment = null, keepUserL
 
 	}
 
+	anchorVolumes( app.meshScene );
+
 	// Build BVH
 	timer.start( 'BVH build (SceneProcessor)' );
 	app._sdf.setMaxTextureSize( app.settings.get( 'maxTextureSize' ) );
@@ -514,6 +578,13 @@ export async function loadSceneData( app, { pendingEnvironment = null, keepUserL
 
 	// The objects' trees go to the GPU 4-wide, from the binary tree with visibility patched in.
 	if ( app.stages.pathTracer.compactLayout ) await app.stages.pathTracer.buildWideBVH();
+
+	const volumes = collectVolumes( app.meshScene );
+	await app.stages.pathTracer.setVolumes( volumes );
+	// The sequences of volumes the scene no longer holds.
+	const live = new Set( volumes.map( v => v.sequence ).filter( Boolean ) );
+	for ( const sequence of app._volumeSequences ?? [] ) if ( ! live.has( sequence ) ) sequence.dispose();
+	app._volumeSequences = live;
 
 	timer.end( 'GPU data transfer' );
 

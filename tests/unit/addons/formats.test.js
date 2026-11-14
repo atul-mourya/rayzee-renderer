@@ -5,7 +5,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import { Group, Mesh, PerspectiveCamera, Points, Scene, Vector3 } from 'three';
 import { AssetLoader } from '@/core/loaders/AssetLoader.js';
-import { allFormats, objFormat, stlFormat, plyFormat, exrFormat, fbxFormat, usdFormat, colladaFormat, threeMFFormat } from '@/core/addons/formats.js';
+import { allFormats, objFormat, stlFormat, plyFormat, exrFormat, fbxFormat, usdFormat, colladaFormat, threeMFFormat, vdbFormat } from '@/core/addons/formats.js';
+import { readFileSync } from 'node:fs';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { decodersOnDemand } from '@/core/loaders/GLTFDecoders.js';
 import { configurePlatform } from '@/core/Platform.js';
@@ -39,8 +40,22 @@ describe( 'file formats', () => {
 		expect( loader.getFileFormat( 'a.USDA' ) ).toMatchObject( { type: 'model', label: 'USD' } );
 		expect( loader.getFileFormat( 'sky.exr' ) ).toMatchObject( { type: 'environment' } );
 		expect( Object.keys( loader.getSupportedFormats( 'model' ) ).sort() ).toEqual(
-			[ '3mf', 'dae', 'fbx', 'glb', 'gltf', 'obj', 'ply', 'stl', 'usd', 'usda', 'usdc', 'usdz' ]
+			[ '3mf', 'dae', 'fbx', 'glb', 'gltf', 'obj', 'ply', 'stl', 'usd', 'usda', 'usdc', 'usdz', 'vdb' ]
 		);
+
+	} );
+
+	it( 'loads an OpenVDB file as a volume, its temperature glowing as a black body', async () => {
+
+		const loader = newLoader().registerFormat( vdbFormat );
+		vi.spyOn( loader, 'onModelLoad' ).mockResolvedValue();
+		const bytes = readFileSync( new URL( '../loaders/fixtures/vdb/mantaflow.vdb', import.meta.url ) );
+		await loader._loadModelFileByExtension( new File( [ bytes ], 'fire.vdb' ), 'fire.vdb' );
+		const [ volume ] = loader.targetModel.children;
+		expect( loader.targetModel.name ).toBe( 'fire.vdb' );
+		expect( volume.isVolume ).toBe( true );
+		expect( [ volume.grid.name, volume.emissionGrid.name, volume.blackbody, volume.emits ] ).toEqual( [ 'density', 'temperature', true, true ] );
+		expect( volume.grid.max ).toBeCloseTo( 0.987, 3 );
 
 	} );
 

@@ -89,12 +89,13 @@ surface** — pin a version and branch on the strings; they are never renamed or
 | `denoiser.unavailable` | a requested denoise or upscale produced nothing — the denoiser was not built, OIDN was off while accumulating, or the pass needs a canvas in a document |
 | `denoiser.non_finite_input` | the render handed OIDN NaN or infinite pixels (`detail.color` / `albedo` / `normal`: how many), which were treated as zero — a warning, recorded again only after a clean frame |
 | `render.non_finite_samples` | samples came out NaN or infinite and were left out of the render as black, as pbrt's film leaves them out (`detail.count`: how many at the first count; `detail.pixel`: `{ x, y }`, the lowest pixel row by row with one, or null — render it again with `renderFrames( n, { firstSample } )`) — a warning, recorded once a restart; debug mode 11 still shows them |
+| `volume.downsampled` | volume grids were halved to fit the GPU (`detail.halved`: the volumes' names), or more volumes than are drawn were loaded (`detail.volumes`) — a warning |
 | `output.source_fallback` | `renderToBuffer( { source: 'display' } )` found no denoised picture and returned the raw accumulation |
 | `output.tonemap_fallback` | `renderToBuffer`'s `'srgb'` bytes were tone-mapped on the CPU, not the GPU — the picture is the same within a level, only slower (a warning: strict does not throw) |
 | `output.pass_unavailable` | `exportImage` was asked for an EXR layer it cannot write, such as `albedo` or `normal` with no denoiser on (`detail.pass`); the file is written without it |
 | `light.placeholder_skipped` | a `RectAreaLightPlaceholder` node lacked `userData.name` or `userData.type: 'RectAreaLight'`, so no light was made for it |
 | `capability.missing` | a feature was asked for whose add-on is not installed on the core (procedural sky, an unregistered integrator, a colour config, storage) — names the add-on |
-| `setting.ignored` | a setting has no effect in the current setup: fog under a bidirectional integrator, which renders without it (a warning, once per integrator) — names the setting |
+| `setting.ignored` | a setting has no effect in the current setup: fog or volumes under a bidirectional integrator, which renders without them (a warning, once per integrator) — names the setting |
 | `color.config_load_failed` / `viewTransform.bake_failed` / `viewTransform.display_mismatch` | a colour config failed to load (the previous one stays), a view could not be rebaked, or a view targets a display the canvas cannot show (a saved buffer is still right) — warnings |
 | `storage.unavailable` / `storage.quota_exceeded` / `storage.write_failed` / `storage.read_failed` / `storage.entry_corrupt` / `storage.cache_mismatch` | on-disk storage is off or failed; the engine carries on in memory — warnings |
 
@@ -251,6 +252,10 @@ import {
 // 1 / σt) from the colour it shows and its diffuse mean free path — the subsurface radius of RenderMan and the
 // Physically Based database — and its IOR; the radius comes back in the path's unit
 import { subsurfaceFromDiffuse } from 'rayzee';
+
+// Smoke, clouds and fire: a grid of density in an object of the scene, and frames of one over time (also in
+// rayzee/core; see Volumes in Rendering)
+import { Volume, VolumeGrid, FrameSequence } from 'rayzee';
 
 // Where the sun stands for a solar time, date and latitude (degrees; azimuth clockwise from north)
 import { sunPosition, timeForSunElevation, dayOfYearForMonth } from 'rayzee';

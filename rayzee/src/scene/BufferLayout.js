@@ -554,3 +554,15 @@ export function assertBVHIndexFits( count, what ) {
 	return count;
 
 }
+
+/**
+ * Volumes (scene/Volumes.js, shaders/Volume.js): one uniform array of vec4s, a header of VOLUME_VEC4S for each of up to
+ * MAX_VOLUMES volumes, then their emission ramps, VOLUME_RAMP entries each. Header rows:
+ *   0–2  world → grid ( a voxel centre at index + 0.5 ), one row an axis
+ *   3    atlas texel of grid ( 0, 0, 0 ), extinction a unit of grid value (−1: hidden)
+ *   4    grid size, anisotropy
+ *   5    scattering colour, voxels a majorant cell
+ *   6    atlas texel of majorant cell ( 0, 0, 0 ), emission ( 0 none, 1 per unit length, 2 through absorption )
+ *   7    majorant cells an axis, ramp entries a unit of emission grid value
+ */
+export const VOLUME_LAYOUT = Object.freeze( { VEC4S: 8, RAMP: 64, MAX: 16 } );

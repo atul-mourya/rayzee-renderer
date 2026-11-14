@@ -67,6 +67,10 @@ const AnimationTab = () => {
 	const handleRemoveCameraKey = useAnimationStore( s => s.handleRemoveCameraKey );
 	const handleCameraKeyTimeChange = useAnimationStore( s => s.handleCameraKeyTimeChange );
 	const handleGoToCameraKey = useAnimationStore( s => s.handleGoToCameraKey );
+	const sequences = useAnimationStore( s => s.sequences );
+	const sequenceFrame = useAnimationStore( s => s.sequenceFrame );
+	const handleSequenceFpsChange = useAnimationStore( s => s.handleSequenceFpsChange );
+	const handleSequenceFrameChange = useAnimationStore( s => s.handleSequenceFrameChange );
 	const handlePlayTimeline = useAnimationStore( s => s.handlePlayTimeline );
 	const handleStopTimeline = useAnimationStore( s => s.handleStopTimeline );
 	const duration = useAnimationStore( videoDuration );
@@ -173,11 +177,50 @@ const AnimationTab = () => {
 							/>
 						</Row>
 					</>
-				) : (
+				) : ! sequences.length && (
 					<p className="control-hint leading-relaxed">
 						This model has no animation of its own. You can still make a video by moving the camera along a path of keyframes.
 					</p>
 				)}
+
+				{/* Frame sequences: a VDB volume's */}
+				{sequences.map( ( sequence, i ) => (
+					<div key={sequence.name + i} className="space-y-3">
+						{( hasClips || i > 0 ) && <Separator />}
+						<Row>
+							<span className="control-label truncate inline-flex items-center" title="Numbered files that play one after another as the timeline runs: smoke or fire changing frame by frame.">
+								<Film size={12} className="mr-1" />
+								{sequence.name}
+							</span>
+							<span className="text-xs opacity-60">{sequence.frames} frames</span>
+						</Row>
+						<Row>
+							<NumberInput
+								label="Frame Rate"
+								tip="How many of its frames play each second."
+								min={1}
+								max={120}
+								step={1}
+								precision={0}
+								value={sequence.fps}
+								onValueChange={( fps ) => handleSequenceFpsChange( i, fps )}
+								disabled={busy}
+							/>
+						</Row>
+						<Row>
+							<Slider
+								label="Frame"
+								tip="Shows one frame, to look at it before playing."
+								min={0}
+								max={sequence.frames - 1}
+								step={1}
+								value={[ Math.min( sequenceFrame, sequence.frames - 1 ) ]}
+								onValueChange={( [ frame ] ) => handleSequenceFrameChange( frame, i )}
+								disabled={busy}
+							/>
+						</Row>
+					</div>
+				) )}
 
 				<Separator />
 
@@ -254,7 +297,7 @@ const AnimationTab = () => {
 							{isTimelinePlaying ? (
 								<><Square size={12} className="mr-1" /> Stop Preview</>
 							) : (
-								<><Play size={12} className="mr-1" /> Preview Move</>
+								<><Play size={12} className="mr-1" /> {cameraKeys.length > 1 ? 'Preview Move' : 'Play'}</>
 							)}
 						</Button>
 					</>

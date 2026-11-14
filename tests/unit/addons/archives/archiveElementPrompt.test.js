@@ -89,7 +89,7 @@ const total = listing => listing.reduce( ( n, e ) => n + e.size, 0 );
 
 describe( 'choosing parts of a large scene archive', () => {
 
-	const importer = new ArchiveImporter( {} );
+	const importer = new ArchiveImporter( { getFileFormat: () => null } );
 	const ask = ( listing, promptBytes ) =>
 		importer._requireElementChoice( 'island.tar', listing, total( listing ), promptBytes );
 
@@ -141,7 +141,7 @@ describe( 'choosing parts of a large scene archive', () => {
 
 		// record() throws on its own in strict mode. Raising the refusal as an error there
 		// replaced the typed one, so the host got no list and could not offer the choice.
-		const strict = new ArchiveImporter( { _issues: new IssueLog( { strict: true } ) } );
+		const strict = new ArchiveImporter( { _issues: new IssueLog( { strict: true } ), getFileFormat: () => null } );
 
 		const listing = islandListing( 15, 5e8 );
 		let thrown = null;

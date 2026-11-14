@@ -114,12 +114,37 @@ export const useAnimationStore = create( ( set, get ) => ( {
 	isTimelinePlaying: false,
 	moveCameraInVideo: false,
 
+	// The scene's frame sequences (a VDB volume's): { name, frames, fps } each.
+	sequences: [],
+	sequenceFrame: 0,
+
 	syncTimeline: timeline => set( {
 		cameraKeys: timeline.camera.keys.map( ( { id, time } ) => ( { id, time } ) ),
 		timelineDuration: timeline.duration,
 		timelineAnimates: timeline.animates,
 		isTimelinePlaying: timeline.isPlaying,
+		sequences: timeline.sequences.map( ( { name, frameCount, fps } ) => ( { name, frames: frameCount, fps } ) ),
+		sequenceFrame: Math.max( 0, timeline.sequences[ 0 ]?.current ?? 0 ),
 	} ),
+
+	handleSequenceFpsChange: ( index, fps ) => {
+
+		const app = getApp();
+		const sequence = app?.timeline.sequences[ index ];
+		if ( sequence && fps > 0 ) app.timeline.setFrameRate( fps, sequence );
+
+	},
+
+	// Shows a frame of sequence `index` (and the timeline at its time).
+	handleSequenceFrameChange: ( frame, index = 0 ) => {
+
+		const app = getApp();
+		const sequence = app?.timeline.sequences[ index ];
+		if ( ! sequence ) return;
+		set( { sequenceFrame: frame } );
+		app.timeline.seek( frame / sequence.fps );
+
+	},
 
 	handleMoveCameraInVideoChange: moveCameraInVideo => set( { moveCameraInVideo } ),
 	handleAddCameraKey: () => getApp()?.timeline.camera.addKey(),

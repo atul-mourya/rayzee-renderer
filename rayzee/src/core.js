@@ -25,6 +25,8 @@ export { listViewTransforms, getViewTransform, onRegistryChange, DEFAULT_VIEW } 
 export { ARCHIVE_FORMATS, localFolder } from './loaders/ArchiveFormats.js';
 export { ENGINE_DEFAULTS, MATERIAL_DEFAULTS } from './EngineDefaults.js';
 export { subsurfaceFromDiffuse } from './materials/Scattering.js';
+export { Volume, VolumeGrid } from './scene/Volumes.js';
+export { FrameSequence } from './loaders/FrameSequence.js';
 export { SKY_DEFAULTS } from './environment/EnvironmentManager.js';
 export { MAX_RESERVABLE_RENDER_SIZE } from './pathtracer/StorageTexturePool.js';
 export { TRIANGLE_DATA_LAYOUT } from './scene/BufferLayout.js';

@@ -127,7 +127,8 @@ vi.mock( 'three', async ( importOriginal ) => {
 
 } );
 
-import { DirectionalLight, SpotLight, Vector3 } from 'three';
+import { DirectionalLight, Group, SpotLight, Vector3 } from 'three';
+import { Volume, VolumeGrid } from '@/core/scene/Volumes.js';
 import { TransformManager } from '@/core/viewer/overlays/TransformManager.js';
 import { EngineEvents } from '@/core/EngineEvents.js';
 
@@ -182,6 +183,7 @@ function makeMockApp() {
 		wake: vi.fn(),
 		refitBLASes: vi.fn(),
 		updateMeshTransforms: vi.fn(),
+		updateVolumes: vi.fn(),
 		dispatchEvent: vi.fn(),
 		refreshFrame: vi.fn(),
 	};
@@ -379,6 +381,20 @@ describe( 'TransformManager', () => {
 			tm.controls._fire( 'dragging-changed', { value: false } );
 
 			expect( app.updateMeshTransforms ).not.toHaveBeenCalled();
+			expect( app.updateVolumes ).not.toHaveBeenCalled();
+
+		} );
+
+		it( 'rewrites a volume it moves, which owns no mesh', () => {
+
+			tm.setMeshData( [] );
+			tm.attach( new Group().add( new Volume( VolumeGrid.fromFunction( 2, () => 1 ) ) ) );
+
+			tm.controls._fire( 'dragging-changed', { value: true } );
+			tm.controls._fire( 'dragging-changed', { value: false } );
+
+			expect( app.updateMeshTransforms ).not.toHaveBeenCalled();
+			expect( app.updateVolumes ).toHaveBeenCalled();
 
 		} );
 

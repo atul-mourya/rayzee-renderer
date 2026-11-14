@@ -156,6 +156,37 @@ describe( 'TimelineManager', () => {
 
 	};
 
+	it( 'plays the scene\'s frame sequences from 0, as long as the longest, leaving the camera free', async () => {
+
+		const doc = new EventTarget();
+		doc.defaultView = new EventTarget();
+		const canvas = new EventTarget();
+		Object.assign( canvas, { ownerDocument: doc, clientWidth: 800, clientHeight: 400, style: {}, getRootNode: () => doc } );
+		const cm = new CameraManager( canvas );
+		const sequences = [ { frameCount: 48, fps: 24, get duration() {
+
+			return this.frameCount / this.fps;
+
+		} } ];
+		const seekSequences = vi.fn( async ( time ) => time > 0 );
+		const tl = new TimelineManager( { cameraManager: cm, onReset: vi.fn(), sequences: () => sequences, seekSequences } );
+		const changed = vi.fn();
+		tl.addEventListener( EngineEvents.TIMELINE_CHANGED, changed );
+
+		expect( [ tl.duration, tl.animates ] ).toEqual( [ 2, true ] );
+		expect( tl.seek( 0.5 ) ).toBe( false );
+		expect( seekSequences ).toHaveBeenCalledWith( 0.5 );
+		expect( await tl.settled() ).toBe( true );
+		tl.setFrameRate( 12 );
+		expect( [ sequences[ 0 ].fps, tl.duration ] ).toEqual( [ 12, 4 ] );
+		expect( changed ).toHaveBeenCalledWith( expect.objectContaining( { track: 'sequences' } ) );
+		tl.play();
+		expect( cm.controls.enabled ).toBe( true );
+		tl.stop();
+		tl.dispose();
+
+	} );
+
 	it( 'keys the current view, two seconds after the last key, without touching the camera list', () => {
 
 		const { cm, tl } = timeline();

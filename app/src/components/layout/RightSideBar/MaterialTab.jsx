@@ -14,6 +14,7 @@ import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { TexturePreview } from '@/components/ui/texture-preview';
 import TextureColorSpaceSelect, { COLOR_MAP_SLOTS } from './TextureColorSpaceSelect';
+import VolumeControls from './VolumeControls';
 import { LinkableVector2 } from '@/components/ui/linkable-vector2';
 import { RefreshCw, Trash2, Plus } from 'lucide-react';
 
@@ -645,6 +646,21 @@ const MaterialTab = () => {
 	if ( ! selectedObject ) {
 
 		return <div><Separator className="bg-primary" /><p className="pt-4 text-sm text-center text-muted-foreground">Please select an object to customize its material properties</p></div>;
+
+	}
+
+	// Smoke, a cloud or fire: its own controls (a .vdb file loads as a group holding one).
+	let volume = null;
+	selectedObject.traverse?.( ( o ) => void ( volume ??= o.isVolume ? o : null ) );
+	if ( volume ) {
+
+		return (
+			<div className="flex flex-col h-full">
+				<Separator className="bg-primary" />
+				<div className="py-1 text-xs text-center px-2 font-medium truncate" title={name}>{name}</div>
+				<VolumeControls key={volume.uuid} volume={volume} />
+			</div>
+		);
 
 	}
 

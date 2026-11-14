@@ -3,6 +3,8 @@ import { ISSUE_CODES } from '../EngineIssues.js';
 import { TRIANGLE_PATCH_PROPERTIES } from '../materials/MaterialDataManager.js';
 import { usesTextureCoordinates } from './GeometryExtractor.js';
 import { scheduleRespill } from '../memory/SceneSpill.js';
+import { collectVolumes } from './Volumes.js';
+import { VOLUME_LAYOUT } from './BufferLayout.js';
 
 // A scene loaded past the in-memory line keeps its geometry packed on the GPU (PathTracerStage `compactLayout`).
 function assertDeformable( app, what ) {
@@ -74,10 +76,25 @@ export function updateMeshTransforms( app, meshIndices ) {
 	const result = app._sdf.updateMeshTransforms( meshIndices );
 
 	app.stages.pathTracer.updateBufferRanges( [], app._sdf.takeMoveRanges() );
+	app.stages.pathTracer.refreshVolumes();
 	app.reset( false, { motion: true } );
 	scheduleRespill( app );
 
 	return result;
+
+}
+
+export async function updateVolumes( app ) {
+
+	const stage = app.stages.pathTracer;
+	if ( ! stage || ! app.meshScene ) return;
+	const volumes = collectVolumes( app.meshScene );
+	const packed = stage._volumeEntries;
+	const unchanged = Math.min( volumes.length, VOLUME_LAYOUT.MAX ) === packed.length && packed.every( ( entry, i ) => entry.volume === volumes[ i ]
+		&& entry.source === volumes[ i ].grid && entry.sourceEmission === ( volumes[ i ].emissionGrid ?? null ) );
+	if ( unchanged ) stage.refreshVolumes();
+	else await stage.setVolumes( volumes );
+	app.reset();
 
 }
 
@@ -204,6 +221,7 @@ function whenTLASEditable( app, edit ) {
 	const apply = () => {
 
 		edit();
+		app.stages.pathTracer?.refreshVolumes();
 		app._refreshEmissiveForVisibility();
 		app.reset();
 		scheduleRespill( app );

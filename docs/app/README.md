@@ -12,7 +12,7 @@ The app opens on a sample scene, a coffee maker. Drop your own model onto the vi
 
 | Area | What it holds |
 |---|---|
-| **Top bar** | The **File**, **Edit** and **View** menus; the **Preview**, **Render** and **Results** tabs in the middle; on the right, the light/dark switch, the version and a link to the code on GitHub. |
+| **Top bar** | The **File**, **Add**, **Edit** and **View** menus; the **Preview**, **Render** and **Results** tabs in the middle; on the right, the light/dark switch, the version and a link to the code on GitHub. |
 | **Left panel** | The **Outliner**: every object, light and camera in the scene. On the Results page, your saved renders. |
 | **The view** | The picture, with a few controls floating over it. |
 | **Right panel** | Settings, in tabs. Which tabs you see depends on the top-bar tab. |
@@ -46,6 +46,8 @@ The three tabs in the middle of the top bar are three stages of work:
 | **Storage…** | Shows what the app keeps on this device, and clears it. |
 
 How each of these works: [Opening models and skies](loading.md) and [Projects and storage](projects.md).
+
+**Add** puts a **Cloud** or **Smoke** into the scene where the camera looks: see [Smoke, clouds and fire](scene.md#smoke-clouds-and-fire).
 
 The **Edit** and **View** menus are placeholders: their items are greyed out.
 

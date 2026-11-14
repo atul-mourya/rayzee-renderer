@@ -54,6 +54,10 @@ export { deriveAlphaMode, MATERIAL_VALUE_SOURCE } from './scene/GeometryExtracto
 // Subsurface inputs from the colour a material shows and how far its light spreads (RenderMan, Physically Based)
 export { subsurfaceFromDiffuse } from './materials/Scattering.js';
 
+// Smoke, clouds and fire: a density grid in an object of the scene
+export { Volume, VolumeGrid } from './scene/Volumes.js';
+export { FrameSequence } from './loaders/FrameSequence.js';
+
 // Scene-level authoring metadata embedded in model files (glTF `extras`)
 export { extractSceneMetadata, parseSceneMetadata } from './loaders/SceneMetadata.js';
 

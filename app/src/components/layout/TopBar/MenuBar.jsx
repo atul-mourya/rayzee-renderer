@@ -1,4 +1,6 @@
 import { useRef } from "react";
+import { Group, Vector3 } from 'three';
+import { Volume, VolumeGrid } from 'rayzee';
 import { useToast } from "@/hooks/use-toast";
 import { getApp } from '@/lib/appProxy';
 import { useStore } from '@/store';
@@ -12,6 +14,30 @@ import {
 	MenubarSeparator,
 	MenubarTrigger,
 } from "@/components/ui/menubar";
+
+let volumeSeed = 0;
+
+// Where the camera looks, sized to the view: smoke a third of the way back toward the camera (in front of what is looked
+// at), a cloud above it.
+async function addVolume( kind ) {
+
+	const app = getApp();
+	if ( ! app ) return;
+	const camera = app.camera.position;
+	const target = app.cameraManager?.controls?.target?.clone() ?? camera.clone().add( app.camera.getWorldDirection( new Vector3() ).multiplyScalar( 4 ) );
+	const distance = Math.max( camera.distanceTo( target ), 0.1 );
+	const cloud = kind === 'cloud';
+	const size = distance * ( cloud ? 0.8 : 0.6 );
+	const volume = new Volume( VolumeGrid.procedural( kind, { resolution: 96, seed: ++ volumeSeed } ), {
+		density: ( cloud ? 40 : 20 ) / size, color: cloud ? 0xffffff : 0xc0c0c0, anisotropy: cloud ? 0.5 : 0.3,
+	} );
+	volume.name = cloud ? 'Cloud' : 'Smoke';
+	volume.scale.setScalar( size );
+	if ( cloud ) volume.position.copy( target ).add( new Vector3( 0, size * 0.6, 0 ) );
+	else volume.position.copy( target ).lerp( camera, 1 / 3 );
+	await app.addModelFromObject3D( new Group().add( volume ), { name: volume.name } );
+
+}
 
 const MenuBar = ( { onOpenImportModal, onOpenStorage, onOpenRecent } ) => {
 
@@ -222,7 +248,7 @@ const MenuBar = ( { onOpenImportModal, onOpenStorage, onOpenRecent } ) => {
 			<input
 				ref={fileInputRef}
 				type="file"
-				accept=".glb,.gltf,.fbx,.obj,.stl,.ply,.dae,.3mf,.usd,.usda,.usdc,.usdz,.zip,.tar,.tgz,.gz,.rayzee,.bin,.mtl,.png,.jpg,.jpeg,.webp,.avif,.ktx2,.tga,.bmp,.gif,.tif,.tiff"
+				accept=".glb,.gltf,.fbx,.obj,.stl,.ply,.dae,.3mf,.usd,.usda,.usdc,.usdz,.vdb,.zip,.tar,.tgz,.gz,.rayzee,.bin,.mtl,.png,.jpg,.jpeg,.webp,.avif,.ktx2,.tga,.bmp,.gif,.tif,.tiff"
 				multiple
 				onChange={handleFileSelect}
 				style={{ display: 'none' }}
@@ -260,6 +286,14 @@ const MenuBar = ( { onOpenImportModal, onOpenStorage, onOpenRecent } ) => {
 						<MenubarItem onSelect={() => rendersInputRef.current?.click()}>Import Renders…</MenubarItem>
 						<MenubarSeparator />
 						<MenubarItem onSelect={onOpenStorage}>Storage…</MenubarItem>
+					</MenubarContent>
+				</MenubarMenu>
+
+				<MenubarMenu>
+					<MenubarTrigger>Add</MenubarTrigger>
+					<MenubarContent>
+						<MenubarItem onSelect={() => addVolume( 'cloud' )}>Cloud</MenubarItem>
+						<MenubarItem onSelect={() => addVolume( 'smoke' )}>Smoke</MenubarItem>
 					</MenubarContent>
 				</MenubarMenu>
 

@@ -31,6 +31,7 @@ import { platformImageFromBytes, platformImagePlaceholder, imageHeaderSize, IMAG
 import { setImageReader } from '../../materials/TextureCreator.js';
 import { updateLoading } from '../../EngineEvents.js';
 import { createLogger } from '../../Logger.js';
+import { frameRuns } from '../../loaders/FrameSequence.js';
 
 const log = createLogger( 'archive' );
 
@@ -498,6 +499,14 @@ export class ArchiveImporter {
 
 		}
 
+		const sequence = await this._loadSequence( source.listing.map( e => e.path ), ( path ) => source.read( path ), filename );
+		if ( sequence ) {
+
+			this.loader._sourceKey = this.loader._keyed( kind, archiveId );
+			return sequence;
+
+		}
+
 		// A USD scene reads its files as composition reaches them: a zip's compressed ones are inflated then, not all
 		// up front into Blobs (past 500 MB of them a fresh Chrome profile refuses to read any).
 		const kept = source.listing.filter( e => e.offset !== undefined );
@@ -756,7 +765,8 @@ export class ArchiveImporter {
 	 */
 	_requireElementChoice( filename, listing, totalBytes, promptBytes = ARCHIVE_ELEMENT_PROMPT_BYTES ) {
 
-		if ( totalBytes < promptBytes ) return;
+		// A sequence reads one frame at a time, however large the whole.
+		if ( totalBytes < promptBytes || this._sequenceRun( listing.map( e => e.path ) ) ) return;
 
 		const { root, elements } = listArchiveElements( listing );
 		if ( elements.length < 2 ) return;
@@ -1359,6 +1369,32 @@ export class ArchiveImporter {
 
 	}
 
+	/**
+	 * When an archive's models are one numbered run of a format that reads sequences (`parseSequence`), that run as one
+	 * model changing over time, each file read when the timeline reaches it; else null. @private
+	 */
+	async _loadSequence( paths, read, filename ) {
+
+		const sequence = this._sequenceRun( paths );
+		if ( ! sequence ) return null;
+		const { run, format } = sequence;
+		log.info( `${filename} is a sequence of ${run.paths.length} ${format.label} frames` );
+		// Loose frames are named for their first file: the run's own name reads better.
+		const name = run.paths.some( p => p.split( '/' ).pop() === filename ) ? run.name : filename.replace( /\.(zip|tar|tgz|tar\.gz)$/i, '' );
+		return await this.loader.loadModelSequence( format, run.paths.map( path => () => read( path ) ), name );
+
+	}
+
+	/** The numbered run that is every model among `paths`, of a format reading sequences, with that format; or null. @private */
+	_sequenceRun( paths ) {
+
+		const models = paths.filter( p => this.loader.getFileFormat( p )?.type === 'model' );
+		const [ run ] = frameRuns( models );
+		const format = run && this.loader.getFileFormat( run.paths[ 0 ] );
+		return format?.parseSequence && run.paths.length === models.length ? { run, format } : null;
+
+	}
+
 	/** The model an archive or folder loads as: a conventional main file, else the shallowest, glTF first. @private */
 	_mainModelPath( paths ) {
 
@@ -1376,6 +1412,8 @@ export class ArchiveImporter {
 
 	async findAndLoadModelFromZip( zip, filename = 'the ZIP archive' ) {
 
+		const sequence = await this._loadSequence( Object.keys( zip ), ( path ) => bufferOf( zip[ path ] ), filename );
+		if ( sequence ) return sequence;
 		const found = this._mainModelPath( Object.keys( zip ) );
 		if ( ! found ) throw new Error( `No supported model files found in ${filename}` );
 		if ( found.usd ) return await this.loadUSDScene( zip, filename );

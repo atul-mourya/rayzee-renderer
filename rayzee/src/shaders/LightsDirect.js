@@ -37,6 +37,7 @@ import { fresnelDielectric } from './Fresnel.js';
 import { calculateBeerLawAbsorption } from './MaterialTransmission.js';
 import { getTransformedUV, sampleBucket } from './TextureSampling.js';
 import { fogTransmittance } from './Fog.js';
+import { volumeTransmittance } from './Volume.js';
 
 // ================================================================================
 // SHADOW RAY TRACING
@@ -56,7 +57,7 @@ const makeTraceShadowRay = ( refractiveBlocks ) => kernelFunction( 'traceShadowR
 	materialBuffer,
 ], builder ) => {
 
-	const { alphaShadows, shadowAlbedoMaps, linearBuckets, fog } = sceneResources( builder );
+	const { alphaShadows, shadowAlbedoMaps, linearBuckets, fog, volumes } = sceneResources( builder );
 	const glass = ! refractiveBlocks && usesGlass( builder );
 	const transmissionMaps = glass && usesTransmissionMaps( builder );
 	const transmittance = ( glass ? vec3( 1.0 ) : float( 1.0 ) ).toVar();
@@ -65,7 +66,7 @@ const makeTraceShadowRay = ( refractiveBlocks ) => kernelFunction( 'traceShadowR
 	const rayOrigin = origin.toVar();
 	const remainingDist = float( maxDist ).toVar();
 	// As values: the loop below is the first reader of `dir`, and an expression read there first is zero after it.
-	const fogSegment = fog ? { from: vec3( origin ).toVar(), dir: vec3( dir ).toVar(), length: float( maxDist ).toVar() } : null;
+	const segment = fog || volumes ? { from: vec3( origin ).toVar(), dir: vec3( dir ).toVar(), length: float( maxDist ).toVar() } : null;
 
 	const MAX_SHADOW_TRANSMISSIONS = 16;
 
@@ -284,7 +285,18 @@ const makeTraceShadowRay = ( refractiveBlocks ) => kernelFunction( 'traceShadowR
 
 	} );
 
-	const light = fog ? transmittance.mul( fogTransmittance( fog, fogSegment.from, fogSegment.dir, fogSegment.length ) ) : transmittance;
+	let light = fog ? transmittance.mul( fogTransmittance( fog, segment.from, segment.dir, segment.length ) ) : transmittance;
+	if ( volumes ) {
+
+		light = light.toVar();
+		If( ( glass ? max( light.x, max( light.y, light.z ) ) : light ).greaterThan( 0.0 ), () => {
+
+			light.mulAssign( volumeTransmittance( volumes, segment.from, segment.dir, segment.length ) );
+
+		} );
+
+	}
+
 	return refractiveBlocks || glass ? light : vec3( light );
 
 } );
