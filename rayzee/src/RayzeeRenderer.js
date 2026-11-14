@@ -3018,9 +3018,10 @@ export class RayzeeRenderer extends EventDispatcher {
 		// textures of 8, 256 workgroup invocations of 1024 and 256 array layers of 2048.
 		// Requesting exactly what the adapter reports can never fail, so a weaker GPU simply
 		// gets less and every consumer has to stay adaptive.
-		const requiredLimits = { maxColorAttachmentBytesPerSample: 128 };
+		const requiredLimits = {};
 
 		for ( const key of [
+			'maxColorAttachmentBytesPerSample',
 			'maxBufferSize',
 			'maxStorageBufferBindingSize',
 			'maxSampledTexturesPerShaderStage',
