@@ -2163,11 +2163,22 @@ export class USDSceneReader {
 
 		}
 
-		const c = new Color().setRGB( term.value[ 0 ], term.value[ 1 ], term.value[ 2 ] );
-		const hsl = c.getHSL( {} );
-		// three's HSL stands in for HSV: a hue turn is exact, saturation and value scale about it.
-		c.setHSL( ( hsl.h + amount[ 0 ] + 1 ) % 1, Math.min( 1, hsl.s * amount[ 1 ] ), hsl.l );
-		return { value: [ c.r * amount[ 2 ], c.g * amount[ 2 ], c.b * amount[ 2 ] ] };
+		// MaterialX's hsvadjust: to HSV (hexcone), hue turned by amount.x (wrapping), saturation and value scaled, back;
+		// saturation kept within [0, 1] (MaterialX lets it pass 1, which gives negative channels). No change, no trip.
+		if ( amount[ 0 ] === 0 && amount[ 1 ] === 1 && amount[ 2 ] === 1 ) return term;
+		const [ r, g, b ] = term.value;
+		const max = Math.max( r, g, b ), d = max - Math.min( r, g, b );
+		const turn = d > 0 ? ( max === r ? ( g - b ) / d : max === g ? ( b - r ) / d + 2 : ( r - g ) / d + 4 ) / 6 : 0;
+		const h = ( ( ( turn + amount[ 0 ] ) % 1 ) + 1 ) % 1 * 6;
+		const s = Math.min( 1, Math.max( 0, ( max > 0 ? d / max : 0 ) * amount[ 1 ] ) ), v = max * amount[ 2 ];
+		const channel = ( n ) => {
+
+			const k = ( n + h ) % 6;
+			return v - v * s * Math.max( 0, Math.min( k, 4 - k, 1 ) );
+
+		};
+
+		return { value: [ channel( 5 ), channel( 3 ), channel( 1 ) ] };
 
 	}
 

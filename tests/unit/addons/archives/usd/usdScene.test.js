@@ -267,6 +267,34 @@ ${material}
 
 	} );
 
+	// RenderMan's PxrSurface, its main lobes only (USDScene.pxrSurface): its fallbacks are RenderMan's (not checked here,
+	// no PxrSurface.args at hand); these pin what each input is read as.
+	it( 'reads PxrSurface\'s diffuse, glass, diffuse transmission and presence', async () => {
+
+		const pxr = async ( inputs ) => meshes( ( await load( scene( `    token outputs:ri:surface.connect = </mat/s.outputs:bxdf_out>
+    def Shader "s"
+    {
+        uniform token info:id = "PxrSurface"
+        ${inputs}
+    }` ) ) ).group )[ 0 ].material;
+
+		const diffuse = await pxr( 'color3f inputs:diffuseColor = (0.5, 0.25, 0.125)\n        float inputs:diffuseGain = 0.5\n        float inputs:specularRoughness = 0.4' );
+		expect( diffuse.color.toArray() ).toEqual( [ 0.25, 0.125, 0.0625 ] );
+		expect( [ diffuse.roughness, diffuse.metalness, diffuse.transmission, diffuse.diffuseTransmission ?? 0 ] ).toEqual( [ 0.4, 0, 0, 0 ] );
+
+		const glass = await pxr( 'color3f inputs:diffuseColor = (0.5, 0.25, 0.125)\n        float inputs:refractionGain = 2\n        float inputs:glassIor = 1.33\n        float inputs:glassRoughness = 0.05\n        float inputs:diffuseTransmitGain = 1' );
+		// Clear glass at its own IOR and roughness, the gain capped at 1; diffuse transmission then left out.
+		expect( [ glass.transmission, glass.ior, glass.roughness ] ).toEqual( [ 1, 1.33, 0.05 ] );
+		expect( glass.color.toArray() ).toEqual( [ 1, 1, 1 ] );
+		expect( glass.diffuseTransmission ?? 0 ).toBe( 0 );
+
+		const leaf = await pxr( 'float inputs:diffuseTransmitGain = 0.6\n        color3f inputs:diffuseTransmitColor = (0.2, 0.8, 0.1)\n        float inputs:presence = 0.5' );
+		expect( leaf.diffuseTransmission ).toBeCloseTo( 0.6, 6 );
+		expect( leaf.diffuseTransmissionColor.toArray() ).toEqual( [ 0.2, 0.8, 0.1 ].map( ( v ) => expect.closeTo( v, 6 ) ) );
+		expect( [ leaf.opacity, leaf.transparent ] ).toEqual( [ 0.5, true ] );
+
+	} );
+
 	it( 'takes a Ptex colour from the mesh\'s baked displayColor, corrected the same way', async () => {
 
 		const { group } = await load( scene( `    token outputs:ri:surface.connect = </mat/bsdf.outputs:bxdf_out>
@@ -693,6 +721,87 @@ ${nodes}` );
 		const height = await materialOf( coated( 'ND_standard_surface_surfaceshader', 'coat', 'coat_normal', 'heighttonormal_vector3' ), images );
 		expect( [ height.material.clearcoatNormalMap, height.material.bumpMap ] ).toEqual( [ null, null ] );
 		expect( height.result.warnings.some( w => /coat normals from a height map/.test( w ) ) ).toBe( true );
+
+	} );
+
+	// OpenPBR's base colour (or roughness) from one node over constants.
+	const fed = ( input, type, id, node ) => scene( `    token outputs:mtlx:surface.connect = </mat/pbr.outputs:surface>
+    def Shader "pbr"
+    {
+        uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+        ${type} inputs:${input}.connect = </mat/n.outputs:out>
+    }
+    def Shader "n"
+    {
+        uniform token info:id = "${id}"
+        ${node}
+    }` );
+	const rounded = ( values ) => values.map( v => Math.round( v * 1e4 ) / 1e4 );
+
+	it( 'adjusts hue, saturation and value as MaterialX\'s hsvadjust does, in HSV', async () => {
+
+		const hsv = async ( colour, amount ) => rounded( ( await materialOf( fed( 'base_color', 'color3f', 'ND_hsvadjust_color3', `color3f inputs:in = (${colour})
+        vector3f inputs:amount = (${amount})` ) ) ).material.color.toArray() );
+		// Saturation halved in HSV: (1, 0.5, 0.5) has s 0.5, v 1 → s 0.25. (HSL read it as s 1, l 0.75: 0.875, 0.625, 0.625.)
+		expect( await hsv( '1, 0.5, 0.5', '0, 0.5, 1' ) ).toEqual( [ 1, 0.75, 0.75 ] );
+		// A third of a turn, red to green; past a whole turn it wraps.
+		expect( await hsv( '1, 0, 0', '0.3333333, 1, 1' ) ).toEqual( [ 0, 1, 0 ] );
+		expect( await hsv( '0, 0, 1', '1.5, 1, 1' ) ).toEqual( [ 1, 1, 0 ] );
+		// Value scales every channel; grey has no hue to turn.
+		expect( await hsv( '1, 0.5, 0.25', '0, 1, 0.5' ) ).toEqual( [ 0.5, 0.25, 0.125 ] );
+		expect( await hsv( '0.4, 0.4, 0.4', '0.25, 2, 1' ) ).toEqual( [ 0.4, 0.4, 0.4 ] );
+		// A negative turn wraps the other way; saturation stops at 1 (MaterialX's would go negative); nothing to do, unchanged.
+		expect( await hsv( '1, 0, 0', '-0.6666667, 1, 1' ) ).toEqual( [ 0, 1, 0 ] );
+		expect( await hsv( '1, 0.5, 0.5', '0, 4, 1' ) ).toEqual( [ 1, 0, 0 ] );
+		expect( await hsv( '1, -0.5, 0', '0, 1, 1' ) ).toEqual( [ 1, - 0.5, 0 ] );
+
+	} );
+
+	it( 'takes a texture\'s channel for roughness only where it is the one the engine reads (green)', async () => {
+
+		const rough = async ( index ) => materialOf( scene( `    token outputs:mtlx:surface.connect = </mat/pbr.outputs:surface>
+    def Shader "pbr"
+    {
+        uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+        float inputs:specular_roughness.connect = </mat/n.outputs:out>
+    }
+    def Shader "n"
+    {
+        uniform token info:id = "ND_extract_color3"
+        color3f inputs:in.connect = </mat/img.outputs:out>
+        int inputs:index = ${index}
+    }
+    def Shader "img"
+    {
+        uniform token info:id = "ND_image_color3"
+        asset inputs:file = @rough.png@
+    }` ), images );
+
+		const green = await rough( 1 );
+		expect( green.material.roughnessMap?.name ).toBe( 'rough.png' );
+		const red = await rough( 0 );
+		expect( red.material.roughnessMap ).toBeNull();
+		expect( red.result.warnings.some( ( w ) => /"r" channel is not supported/.test( w ) ) ).toBe( true );
+
+	} );
+
+	it( 'takes one channel of a colour as MaterialX\'s extract and separate nodes do', async () => {
+
+		const roughness = async ( id, node, output = 'out' ) => ( await materialOf( scene( `    token outputs:mtlx:surface.connect = </mat/pbr.outputs:surface>
+    def Shader "pbr"
+    {
+        uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+        float inputs:specular_roughness.connect = </mat/n.outputs:${output}>
+    }
+    def Shader "n"
+    {
+        uniform token info:id = "${id}"
+        ${node}
+    }` ) ) ).material.roughness;
+		expect( await roughness( 'ND_extract_color3', 'color3f inputs:in = (0.2, 0.4, 0.6)\n        int inputs:index = 1' ) ).toBeCloseTo( 0.4, 6 );
+		expect( await roughness( 'ND_extract_color3', 'color3f inputs:in = (0.2, 0.4, 0.6)\n        int inputs:index = 2' ) ).toBeCloseTo( 0.6, 6 );
+		expect( await roughness( 'ND_separate3_color3', 'color3f inputs:in = (0.2, 0.4, 0.6)', 'outg' ) ).toBeCloseTo( 0.4, 6 );
+		expect( await roughness( 'ND_separate3_color3', 'color3f inputs:in = (0.2, 0.4, 0.6)', 'outb' ) ).toBeCloseTo( 0.6, 6 );
 
 	} );
 

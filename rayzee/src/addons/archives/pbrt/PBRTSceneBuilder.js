@@ -142,7 +142,7 @@ const DEFAULT_CURVE_TOLERANCE = 0.05;
 const CURVE_SPLIT_CURVES = 20000;
 
 /** Bumped whenever the same scene files build a different graph, so a stored graph is not reused. */
-export const PBRT_BUILD_REVISION = 39;
+export const PBRT_BUILD_REVISION = 40;
 
 // Ptex pages: all of a scene's Ptex colour maps in this much texture memory at most, on square pages this size.
 const DEFAULT_PTEX_MEMORY = 1024 * 2 ** 20;
@@ -1961,11 +1961,20 @@ export class PBRTSceneBuilder {
 
 		}
 
+		// pbrt refuses a Bézier curve of other than 3n + 1 points (cubic segments sharing their ends): read as one, the
+		// spare points were NaN corners.
+		const basis = pString( params, 'basis', 'bezier' );
+		if ( basis === 'bezier' && ( P.length / 3 - 1 ) % 3 !== 0 ) {
+
+			this.warn( `a Bézier curve of ${P.length / 3} points: pbrt needs 3n + 1 — skipped` ); return null;
+
+		}
+
 		const type = pString( params, 'type', 'flat' );
 		const width = pFloat( params, 'width', 1 );
 		const built = tessellateCurve( {
 			P,
-			basis: pString( params, 'basis', 'bezier' ),
+			basis,
 			width0: pFloat( params, 'width0', width ),
 			width1: pFloat( params, 'width1', width ),
 			N: param( params, 'N' )?.value || null,

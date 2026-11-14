@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { BufferGeometry, DataTexture, DoubleSide, Float32BufferAttribute, FloatType, FrontSide, Matrix4, Mesh, NoColorSpace, OrthographicCamera, PerspectiveCamera, SRGBColorSpace, Texture, Vector3 } from 'three';
+import { BufferGeometry, DataTexture, DoubleSide, EquirectangularReflectionMapping, Float32BufferAttribute, FloatType, FrontSide, Matrix4, Mesh, NoColorSpace, OrthographicCamera, PerspectiveCamera, RGBAFormat, SRGBColorSpace, Texture, Vector3 } from 'three';
 import { loadPBRTScene, pickEntryPath, PBRTParser, PBRTSceneBuilder } from '@/core/addons/archives/pbrt/index.js';
 import { deriveAlphaMode } from '@/core/scene/GeometryExtractor.js';
 import { srgbToLinear } from '@/core/addons/archives/pbrt/PBRTTextureBake.js';
@@ -985,6 +985,94 @@ describe( 'PBRT scene builder: pbrt-v4 fidelity', () => {
 	// One row, `values` 0–255 in every channel.
 	const image = ( ...values ) => new DataTexture( new Uint8Array( values.flatMap( ( v ) => [ v, v, v, 255 ] ) ), values.length, 1 );
 
+	// A tetrahedron's four faces.
+	const TETRA = '"point3 P" [ 1 1 1  -1 -1 1  -1 1 -1  1 -1 -1 ] "integer indices" [ 0 1 2  0 3 1  0 2 3  1 3 2 ]';
+	const triangles = ( mesh ) => ( mesh.geometry.index ? mesh.geometry.index.count : mesh.geometry.attributes.position.count ) / 3;
+
+	it( 'subdivides a loopsubdiv shape pbrt\'s three levels by default, each quadrupling its faces, inside its cage', async () => {
+
+		const levels = async ( extra = '' ) => {
+
+			const { meshes, warnings } = await meshesOf( `Shape "loopsubdiv" ${extra} ${TETRA}` );
+			return { count: meshes.length ? triangles( meshes[ 0 ] ) : 0, mesh: meshes[ 0 ], warnings };
+
+		};
+
+		expect( ( await levels() ).count ).toBe( 4 * 64 );
+		expect( ( await levels( '"integer levels" 1' ) ).count ).toBe( 16 );
+		const zero = await levels( '"integer levels" 0' );
+		expect( zero.count ).toBe( 4 );
+		// Pushed to Loop's limit surface: a corner of valence 3 (γ 1/5) lands at a fifth of its distance, √3 / 5, at any level.
+		for ( const level of [ 1, 2, 3 ] ) {
+
+			const p = ( await levels( `"integer levels" ${level}` ) ).mesh.geometry.attributes.position;
+			let largest = 0;
+			for ( let i = 0; i < p.count; i ++ ) largest = Math.max( largest, Math.hypot( p.getX( i ), p.getY( i ), p.getZ( i ) ) );
+			expect( largest ).toBeCloseTo( Math.sqrt( 3 ) / 5, 5 );
+
+		}
+
+		expect( ( await meshesOf( 'Shape "loopsubdiv" "integer levels" 1' ) ).warnings.some( ( w ) => /loopsubdiv missing P/.test( w ) ) ).toBe( true );
+
+	} );
+
+	it( 'sweeps a pbrt curve along its control points at its width, refusing too few points or a Bézier of other than 3n + 1', async () => {
+
+		const curve = async ( params ) => {
+
+			const { meshes, warnings } = await meshesOf( `Shape "curve" ${params}` );
+			return { mesh: meshes[ 0 ], warnings };
+
+		};
+
+		// A straight cubic Bézier from x 0 to 3: the ribbon stays within half its width of the axis, end to end.
+		const { mesh } = await curve( '"point3 P" [ 0 0 0  1 0 0  2 0 0  3 0 0 ] "float width" 0.2' );
+		expect( triangles( mesh ) ).toBeGreaterThan( 0 );
+		const p = mesh.geometry.attributes.position;
+		let minX = Infinity, maxX = - Infinity, off = 0;
+		for ( let i = 0; i < p.count; i ++ ) {
+
+			minX = Math.min( minX, p.getX( i ) );
+			maxX = Math.max( maxX, p.getX( i ) );
+			off = Math.max( off, Math.hypot( p.getY( i ), p.getZ( i ) ) );
+
+		}
+
+		expect( minX ).toBeCloseTo( 0, 3 );
+		expect( maxX ).toBeCloseTo( 3, 3 );
+		expect( off ).toBeLessThanOrEqual( 0.1 + 1e-6 );
+		expect( off ).toBeGreaterThan( 0.05 );
+
+		// A uniform B-spline of five points is two segments spanning x 1 to 3 (each starts at its points' (p0 + 4p1 + p2) / 6).
+		const spline = ( await curve( '"point3 P" [ 0 0 0  1 0 0  2 0 0  3 0 0  4 0 0 ] "string basis" "bspline" "float width" 0.1' ) ).mesh.geometry.attributes.position;
+		let lo = Infinity, hi = - Infinity;
+		for ( let i = 0; i < spline.count; i ++ ) {
+
+			lo = Math.min( lo, spline.getX( i ) );
+			hi = Math.max( hi, spline.getX( i ) );
+
+		}
+
+		expect( [ lo, hi ] ).toEqual( [ expect.closeTo( 1, 1 ), expect.closeTo( 3, 1 ) ] );
+		// pbrt's default width is 1: half a unit either side.
+		const wide = ( await curve( '"point3 P" [ 0 0 0  1 0 0  2 0 0  3 0 0 ]' ) ).mesh.geometry.attributes.position;
+		let reach = 0;
+		for ( let i = 0; i < wide.count; i ++ ) reach = Math.max( reach, Math.hypot( wide.getY( i ), wide.getZ( i ) ) );
+		expect( reach ).toBeCloseTo( 0.5, 3 );
+		// A cylinder takes more sides than a flat ribbon.
+		const flat = triangles( ( await curve( '"point3 P" [ 0 0 0  1 1 0  2 0 0  3 0 0 ] "float width" 0.1' ) ).mesh );
+		const round = triangles( ( await curve( '"point3 P" [ 0 0 0  1 1 0  2 0 0  3 0 0 ] "float width" 0.1 "string type" "cylinder"' ) ).mesh );
+		expect( round ).toBeGreaterThan( flat );
+
+		expect( ( await curve( '"point3 P" [ 0 0 0  1 0 0  2 0 0 ]' ) ).warnings.some( ( w ) => /at least 4 control points/.test( w ) ) ).toBe( true );
+		// Like pbrt, a Bézier needs 3n + 1 points; unlike pbrt (a known gap), degree 2 is refused.
+		const five = await curve( '"point3 P" [ 0 0 0  1 0 0  2 0 0  3 0 0  4 0 0 ]' );
+		expect( [ five.mesh, five.warnings.some( ( w ) => /pbrt needs 3n \+ 1/.test( w ) ) ] ).toEqual( [ undefined, true ] );
+		expect( ( await curve( '"point3 P" [ 0 0 0  1 0 0  2 0 0  3 0 0  4 0 0  5 0 0  6 0 0 ]' ) ).mesh ).toBeTruthy();
+		expect( ( await curve( '"point3 P" [ 0 0 0  1 0 0  2 0 0  3 0 0 ] "integer degree" 2' ) ).warnings.some( ( w ) => /degree 2 not supported/.test( w ) ) ).toBe( true );
+
+	} );
+
 	it( 'lights only the side a one-sided area light faces: its vertex normals', async () => {
 
 		const { meshes } = await meshesOf( `
@@ -1753,6 +1841,92 @@ describe( 'PBRT scene builder: pbrt-v4 fidelity', () => {
 		expect( mix.map.repeat.x ).not.toBe( mix.metalnessMap.repeat.x );
 		expect( mix.clearcoatMap ).toBeNull();
 		expect( mix.clearcoat ).toBeCloseTo( 0.5, 6 );
+
+	} );
+
+} );
+
+describe( 'PBRT scene builder: an infinite light\'s image', () => {
+
+	const sky = ( width, height, at, channels = 4 ) => {
+
+		const data = new Float32Array( width * height * channels ).fill( 0.5 );
+		for ( const [ x, y, value ] of at ) for ( let c = 0; c < 3; c ++ ) data[ ( y * width + x ) * channels + c ] = value;
+		return new DataTexture( data, width, height, channels === 4 ? RGBAFormat : undefined, FloatType );
+
+	};
+
+	const environment = async ( texture, params = '' ) => {
+
+		const builder = new PBRTSceneBuilder( { resolvePLY: async () => null, resolveEnvironment: async () => texture } );
+		const ir = await new PBRTParser().parse( enc.encode( `WorldBegin\nLightSource "infinite" "string filename" "sky.exr" ${params}` ) );
+		const result = await builder._buildEnvironment( ir.lights );
+		return { texture: result?.texture, warnings: builder.warnings };
+
+	};
+
+	const mean = ( t ) => {
+
+		let sum = 0;
+		for ( let i = 0; i < t.image.data.length; i += 4 ) sum += t.image.data[ i ];
+		return sum / ( t.image.data.length / 4 );
+
+	};
+
+	it( 'resamples a square image from pbrt\'s equal-area layout into a float lat-long, `scale` applied', async () => {
+
+		const { texture } = await environment( sky( 32, 32, [] ), '"float scale" 3' );
+		expect( texture.image.width ).toBe( 32 );
+		expect( texture.image.height ).toBe( 16 );
+		expect( [ texture.type, texture.mapping ] ).toEqual( [ FloatType, EquirectangularReflectionMapping ] );
+		// A constant sky stays constant, times the scale.
+		expect( mean( texture ) ).toBeCloseTo( 1.5, 4 );
+
+	} );
+
+	it( 'turns pbrt\'s light frame by the light\'s transform: the square\'s centre (+z) on the horizon, up under Rotate -90 1 0 0', async () => {
+
+		const rowMean = ( t, j ) => {
+
+			const width = t.image.width;
+			let sum = 0;
+			for ( let i = 0; i < width; i ++ ) sum += t.image.data[ ( j * width + i ) * 4 ];
+			return sum / width;
+
+		};
+
+		const bright = sky( 33, 33, [[ 16, 16, 100 ]] );
+		const flat = ( await environment( bright ) ).texture;
+		const rows = flat.image.height;
+		expect( rowMean( flat, rows >> 1 ) ).toBeGreaterThan( 0.6 );
+		// +z sits at three's equirect u of 0.75 (atan2( z, x ) / 2π + ½): a mirrored sky puts it at 0.25.
+		const equator = rows >> 1, w = flat.image.width;
+		let peak = 0;
+		for ( let i = 1; i < w; i ++ ) if ( flat.image.data[ ( equator * w + i ) * 4 ] > flat.image.data[ ( equator * w + peak ) * 4 ] ) peak = i;
+		expect( ( peak + 0.5 ) / w ).toBeCloseTo( 0.75, 1 );
+		expect( rowMean( flat, 0 ) ).toBeCloseTo( 0.5, 3 );
+		expect( rowMean( flat, rows - 1 ) ).toBeCloseTo( 0.5, 3 );
+
+		const builder = new PBRTSceneBuilder( { resolvePLY: async () => null, resolveEnvironment: async () => bright } );
+		const ir = await new PBRTParser().parse( enc.encode( 'WorldBegin\nAttributeBegin\nRotate -90 1 0 0\nLightSource "infinite" "string filename" "sky.exr"\nAttributeEnd' ) );
+		const up = ( await builder._buildEnvironment( ir.lights ) ).texture;
+		// Up is the lat-long's last row here (the first is down): an upside-down sky fails.
+		expect( rowMean( up, rows - 1 ) ).toBeGreaterThan( 1.6 );
+		expect( rowMean( up, 0 ) ).toBeCloseTo( 0.5, 3 );
+		expect( rowMean( up, rows >> 1 ) ).toBeCloseTo( 0.5, 3 );
+
+	} );
+
+	it( 'reads a non-square image as a lat-long, saying pbrt would not, and leaves an image of two channels as it is', async () => {
+
+		const wide = sky( 64, 32, [] );
+		const { texture, warnings } = await environment( wide );
+		expect( texture ).toBe( wide );
+		expect( wide.mapping ).toBe( EquirectangularReflectionMapping );
+		expect( warnings.some( ( w ) => /not square/.test( w ) ) ).toBe( true );
+
+		const grey = sky( 16, 16, [], 2 );
+		expect( ( await environment( grey ) ).texture ).toBe( grey );
 
 	} );
 

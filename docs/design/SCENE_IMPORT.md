@@ -351,8 +351,9 @@ USDLoader. Each layer is read only when composition reaches it (`USDFiles` over 
   Strength × Distance, negative when inverted — taken to `bumpScale` per texel by the map's size; not `bumpDistance`,
   whose heights are scene units);
   under a coat, its own normal map (`geometry_coat_normal`, `coat_normal`, `clearcoat_normal`; a coat height map is dropped).
-  A texture mixed with a colour keeps its larger part; hue shifts of a texture and procedural nodes (noise, ramps) are
-  dropped — each said once. three's MaterialXLoader is not used: it reads `.mtlx` documents, translates only
+  A texture mixed with a colour keeps its larger part; `hsvadjust` on a constant is MaterialX's, in HSV, saturation
+  kept within [0, 1] (it was three's HSL: (1, 0.5, 0.5) at half saturation is (1, 0.75, 0.75), not (0.875, 0.625, 0.625));
+  hue shifts of a texture and procedural nodes (noise, ramps) are dropped — each said once. three's MaterialXLoader is not used: it reads `.mtlx` documents, translates only
   standard_surface / gltf_pbr / open_pbr (not Blender's BSDF graphs), and builds TSL materials the path tracer cannot run. Ptex
   (`PxrPtexture`, `HwPtexTexture_1`; a `UsdUVTexture` naming a `.ptx`) becomes a named pbrt `ptex` texture with the
   exponent of the `PxrColorCorrect` it passes through (Moana: gamma 0.4545, so value^2.2), laid onto the pages as pbrt's
