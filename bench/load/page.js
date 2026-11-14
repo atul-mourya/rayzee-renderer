@@ -1,12 +1,64 @@
 /**
- * One side of `bench:load` in Chrome: a headless engine with on-disk storage, driven by the runner through
- * `globalThis.__load`. Files arrive through the page's file input, disk-backed (DOM.setFileInputFiles).
+ * One side of `bench:load` in a browser: a headless engine with on-disk storage, driven by the runner through
+ * `globalThis.__load`. Files arrive through the page's file input, disk-backed, as the browser's driver sets them.
  */
 
 import { configureAssets, openHeadless } from 'rayzee';
 import { measureLoad } from './measure.js';
 
 let app = null;
+
+// For a driver that sees neither the page's console nor its requests (safaridriver).
+const tail = [];
+let last = null;
+let repeats = 0;
+const keep = ( line ) => {
+
+	if ( line === last ) return ( tail[ tail.length - 1 ] = `${line} (×${++ repeats + 1})` );
+	last = line;
+	repeats = 0;
+	if ( tail.push( line ) > 200 ) tail.shift();
+
+};
+
+for ( const level of [ 'log', 'info', 'warn', 'error', 'debug' ] ) {
+
+	const own = console[ level ];
+	console[ level ] = ( ...args ) => {
+
+		// Drops `%c` and the styles it takes.
+		const styles = typeof args[ 0 ] === 'string' ? args[ 0 ].split( '%c' ).length - 1 : 0;
+		const text = styles ? [ args[ 0 ].replaceAll( '%c', '' ), ...args.slice( 1 + styles ) ] : args;
+		keep( `${level}: ${text.map( String ).join( ' ' )}` );
+		own.apply( console, args );
+
+	};
+
+}
+
+addEventListener( 'error', ( event ) => keep( `pageerror: ${event.message}` ) );
+addEventListener( 'unhandledrejection', ( event ) => keep( `pageerror: ${event.reason?.stack ?? event.reason}` ) );
+
+const foreign = [];
+new PerformanceObserver( ( list ) => {
+
+	for ( const { name } of list.getEntries() ) if ( ! name.startsWith( `${location.origin}/` ) && ! /^(data|blob):/.test( name ) ) foreign.push( name );
+
+} ).observe( { type: 'resource', buffered: true } );
+
+// A window the browser counts as hidden has its timers throttled, and with them every load step.
+const hidden = { ms: 0, since: null };
+document.addEventListener( 'visibilitychange', () => {
+
+	if ( document.hidden ) hidden.since ??= performance.now();
+	else if ( hidden.since !== null ) {
+
+		hidden.ms += performance.now() - hidden.since;
+		hidden.since = null;
+
+	}
+
+} );
 
 // Writes to the cache areas since the load began: started, and still open.
 const writes = { started: 0, open: new Set() };
@@ -77,7 +129,7 @@ function openInput( model ) {
 
 const runtime = {
 	openInput,
-	// Chrome decodes images as the textures pack (inside `textures`) and in the pbrt build, with no one call to time.
+	// A browser decodes images as the textures pack (inside `textures`) and in the pbrt build, with no one call to time.
 	decodeBusy: () => ( { ms: undefined, calls: null } ),
 	resetDecode: () => {},
 	// The runner samples the browser's processes from outside.
@@ -122,8 +174,15 @@ globalThis.__load = {
 
 		if ( ! model.reopen ) await clearCaches();
 		writes.started = 0;
-		return measureLoad( app, model, runtime );
+		hidden.ms = 0;
+		hidden.since = document.hidden ? performance.now() : null;
+		const result = await measureLoad( app, model, runtime );
+		result.hiddenMs = hidden.ms + ( hidden.since === null ? 0 : performance.now() - hidden.since );
+		return result;
 
 	},
+
+	log: () => tail.splice( 0 ),
+	network: () => foreign.splice( 0 ),
 
 };

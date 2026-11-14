@@ -12,7 +12,7 @@ import path from 'node:path';
 import puppeteer from 'puppeteer-core';
 
 import { launchBrowser, nativeLaunchOptions, processTreeRSS } from './browser.js';
-import { PATHS } from './config.js';
+import { FIREFOX, PATHS } from './config.js';
 
 const ROOT = path.join( PATHS.benchRoot, 'harness', 'storage' );
 const TYPES = { '.html': 'text/html', '.js': 'text/javascript' };
@@ -54,12 +54,10 @@ function startServer( { isolated, fixture } ) {
 
 }
 
-const FIREFOX = process.env.FIREFOX_PATH || '/Applications/Firefox.app/Contents/MacOS/firefox';
-
 export async function runStorage( { sizeMiB = 2048, fixture = null, firefox = false, log } ) {
 
 	const browser = firefox
-		? await puppeteer.launch( { browser: 'firefox', ...nativeLaunchOptions( FIREFOX ), headless: true } )
+		? await puppeteer.launch( { browser: 'firefox', ...nativeLaunchOptions( FIREFOX.executablePath ), headless: true } )
 		: await launchBrowser();
 	const reports = [];
 

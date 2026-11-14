@@ -3,11 +3,12 @@
  * engine issues, and an A/B against another checkout gated per phase. See "Scene loading" in docs/design/BENCH.md.
  */
 
-import { execFile, fork } from 'node:child_process';
+import { execFile, execFileSync, fork, spawn } from 'node:child_process';
 import { createReadStream, existsSync, readFileSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import http from 'node:http';
 import { createRequire } from 'node:module';
+import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -15,7 +16,7 @@ import { promisify } from 'node:util';
 import puppeteer from 'puppeteer-core';
 
 import { nativeLaunchOptions, processTreeRSS } from './browser.js';
-import { CHROME, LOAD, PATHS, TIMEOUTS } from './config.js';
+import { CHROME, FIREFOX, LOAD, PATHS, SAFARI, TIMEOUTS } from './config.js';
 import { LOAD_PHASES, compareLoads, loadFailures, parseRoots, phaseDepth, resolveModels, summarisePhases } from '../lib/load.js';
 
 const exec = promisify( execFile );
@@ -260,68 +261,287 @@ async function listFiles( dir ) {
 
 }
 
+const BROWSERS = { chrome: 'Chrome', firefox: 'Firefox', safari: 'Safari' };
+
+const settleWithin = ( promise, ms ) => Promise.race( [ promise.then( () => true, () => false ), new Promise( ( resolve ) => setTimeout( resolve, ms, false ).unref() ) ] );
+
+/** Chrome headless, or Firefox in a window: headless Firefox has no GPU process, so no WebGPU. */
+async function puppeteerDriver( kind, url, keep ) {
+
+	const browser = await puppeteer.launch( kind === 'firefox' ? {
+		browser: 'firefox',
+		...nativeLaunchOptions( FIREFOX.executablePath ),
+		headless: false,
+		protocolTimeout: LOAD.timeoutMs + 60_000,
+	} : {
+		...nativeLaunchOptions( CHROME.executablePath ),
+		headless: true,
+		// gc() for the collections between loads; no host but this one resolves, so a fetch elsewhere fails fast.
+		args: [ ...CHROME.args, '--js-flags=--expose-gc', '--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1' ],
+		protocolTimeout: LOAD.timeoutMs + 60_000,
+	} );
+
+	const pid = browser.process()?.pid;
+	const network = [];
+	const close = async () => {
+
+		if ( ! await settleWithin( browser.close(), 10_000 ) ) browser.process()?.kill( 'SIGKILL' );
+
+	};
+
+	try {
+
+		const page = await browser.newPage();
+		page.on( 'console', ( message ) => keep( `${message.type()}: ${message.text()}` ) );
+		page.on( 'pageerror', ( error ) => keep( `pageerror: ${error.message}` ) );
+		page.on( 'request', ( request ) => {
+
+			const to = request.url();
+			if ( ! to.startsWith( `${url}/` ) && ! /^(data|blob):/.test( to ) ) network.push( to );
+
+		} );
+		await page.goto( url, { waitUntil: 'load', timeout: TIMEOUTS.boot } );
+		await page.waitForFunction( 'globalThis.__load !== undefined', { timeout: TIMEOUTS.boot } );
+
+		return {
+			version: await browser.version(),
+			call: ( name, arg ) => page.evaluate( ( n, a ) => globalThis.__load[ n ]( a ), name, arg ),
+			setFiles: async ( paths ) => ( await page.$( '#files' ) ).uploadFile( ...paths ),
+			network: () => network.splice( 0 ),
+			drainLog: () => {},
+			sampleMemory() {
+
+				let peak = pid ? processTreeRSS( pid ) : 0;
+				const timer = pid && setInterval( () => ( peak = Math.max( peak, processTreeRSS( pid ) ) ), 250 );
+				return () => {
+
+					clearInterval( timer );
+					return peak || null;
+
+				};
+
+			},
+			close,
+		};
+
+	} catch ( error ) {
+
+		await close();
+		throw error;
+
+	}
+
+}
+
+/** One W3C WebDriver command; no timeout, a load can take minutes. */
+function webdriver( port, method, route, body ) {
+
+	return new Promise( ( resolve, reject ) => {
+
+		const request = http.request( { host: '127.0.0.1', port, method, path: route, headers: { 'Content-Type': 'application/json' } }, ( response ) => {
+
+			let text = '';
+			response.setEncoding( 'utf8' );
+			response.on( 'data', ( chunk ) => ( text += chunk ) );
+			response.on( 'end', () => {
+
+				const { value } = JSON.parse( text || '{}' );
+				if ( value?.error ) reject( new Error( `safaridriver: ${value.message || value.error}` ) );
+				else resolve( value );
+
+			} );
+
+		} );
+		request.on( 'error', reject );
+		request.end( body === undefined ? undefined : JSON.stringify( body ) );
+
+	} );
+
+}
+
+/** Resident memory of each WebKit content and GPU process on the machine. */
+function webkitProcesses() {
+
+	const rows = execFileSync( 'ps', [ '-A', '-o', 'pid=,rss=,comm=' ], { encoding: 'utf8' } ).split( '\n' );
+	const out = new Map();
+	for ( const row of rows ) {
+
+		const kind = row.match( /com\.apple\.WebKit\.(WebContent|GPU)$/ )?.[ 1 ];
+		if ( ! kind ) continue;
+		const [ pid, kb ] = row.trim().split( /\s+/ ).map( Number );
+		out.set( pid, { gpu: kind === 'GPU', bytes: kb * 1024 } );
+
+	}
+
+	return out;
+
+}
+
 /**
- * One checkout's engine in a Chrome of its own (a fresh profile, so empty storage), one page kept across loads and
- * restarted if a load fails. Its memory is the whole browser's, sampled from outside.
+ * Safari through safaridriver: a session is an automation window of the user's Safari. Its page runs in a content
+ * process Safari started ahead of time, so the page's is the one that grew most during the load, counted with the GPU
+ * process every Safari tab shares.
  */
-class ChromeSide {
+async function safariDriver( url, keep ) {
 
-	constructor( { label, tree, dist, verbose } ) {
+	const port = await new Promise( ( resolve ) => {
 
-		Object.assign( this, { label, tree, dist, verbose } );
-		this.browser = null;
+		const probe = net.createServer().listen( 0, '127.0.0.1', () => {
+
+			const { port: free } = probe.address();
+			probe.close( () => resolve( free ) );
+
+		} );
+
+	} );
+	const driver = spawn( SAFARI.driver, [ '-p', String( port ) ], { stdio: 'ignore' } );
+	const wd = ( method, route, body ) => webdriver( port, method, route, body );
+	let session = null;
+	const close = async () => {
+
+		if ( session ) await settleWithin( wd( 'DELETE', session ), 10_000 );
+		driver.kill();
+
+	};
+
+	try {
+
+		for ( let i = 0; ; i ++ ) {
+
+			try {
+
+				await wd( 'GET', '/status' );
+				break;
+
+			} catch ( error ) {
+
+				if ( i === 100 ) throw error;
+				await new Promise( ( resolve ) => setTimeout( resolve, 100 ) );
+
+			}
+
+		}
+
+		const created = await wd( 'POST', '/session', { capabilities: { alwaysMatch: { browserName: 'safari' } } } );
+		session = `/session/${created.sessionId}`;
+		await wd( 'POST', `${session}/timeouts`, { script: LOAD.timeoutMs + 60_000, pageLoad: TIMEOUTS.boot } );
+		await wd( 'POST', `${session}/url`, { url } );
+		// Safari hides a window other windows cover, and throttles its timers: a larger one is seldom covered whole.
+		const show = () => wd( 'POST', `${session}/window/maximize`, {} ).catch( () => {} );
+		await show();
+		const sync = ( script ) => wd( 'POST', `${session}/execute/sync`, { script, args: [] } );
+		for ( const end = Date.now() + TIMEOUTS.boot; ! await sync( 'return globalThis.__load !== undefined' ); ) {
+
+			if ( Date.now() > end ) throw new Error( `__load not defined after ${TIMEOUTS.boot} ms` );
+			await new Promise( ( resolve ) => setTimeout( resolve, 100 ) );
+
+		}
+
+		return {
+			version: `Safari ${created.capabilities.browserVersion}`,
+			async call( name, arg ) {
+
+				const reply = JSON.parse( await wd( 'POST', `${session}/execute/async`, {
+					script: `const done = arguments[ 1 ]; globalThis.__load[ ${JSON.stringify( name )} ]( arguments[ 0 ] ).then(
+						( value ) => done( JSON.stringify( { value } ) ), ( e ) => done( JSON.stringify( { thrown: \`\${ e }\\n\${ e?.stack ?? '' }\` } ) ) );`,
+					args: [ arg ],
+				} ) );
+				if ( 'thrown' in reply ) throw new Error( reply.thrown );
+				return reply.value;
+
+			},
+			async setFiles( paths ) {
+
+				await show();
+				// Send Keys adds to a file input's files.
+				await sync( 'document.getElementById( "files" ).value = ""' );
+				const input = await wd( 'POST', `${session}/element`, { using: 'css selector', value: '#files' } );
+				await wd( 'POST', `${session}/element/${Object.values( input )[ 0 ]}/value`, { text: paths.join( '\n' ) } );
+
+			},
+			network: () => sync( 'return globalThis.__load.network()' ),
+			async drainLog() {
+
+				for ( const line of await sync( 'return globalThis.__load.log()' ) ) keep( line );
+
+			},
+			sampleMemory() {
+
+				const samples = [ webkitProcesses() ];
+				const timer = setInterval( () => samples.push( webkitProcesses() ), 250 );
+				return () => {
+
+					clearInterval( timer );
+					samples.push( webkitProcesses() );
+					let page = null;
+					let grew = - Infinity;
+					for ( const [ pid, { gpu, bytes } ] of samples[ 0 ] ) {
+
+						const growth = gpu ? - Infinity : Math.max( ...samples.map( ( s ) => s.get( pid )?.bytes ?? 0 ) ) - bytes;
+						if ( growth > grew ) [ page, grew ] = [ pid, growth ];
+
+					}
+
+					return Math.max( ...samples.map( ( s ) => [ ...s ].reduce( ( sum, [ pid, p ] ) => sum + ( p.gpu || pid === page ? p.bytes : 0 ), 0 ) ) ) || null;
+
+				};
+
+			},
+			close,
+		};
+
+	} catch ( error ) {
+
+		await close();
+		throw error;
+
+	}
+
+}
+
+/**
+ * One checkout's engine in a browser of its own (a fresh profile, so empty storage; in Safari a fresh session), one
+ * page kept across loads and restarted if a load fails. Its memory is sampled from outside.
+ */
+class BrowserSide {
+
+	constructor( { label, tree, dist, verbose, browser } ) {
+
+		Object.assign( this, { label, tree, dist, verbose, browser } );
+		this.driver = null;
 		this.server = null;
-		this.page = null;
 		this.tail = [];
-		this.network = [];
+
+	}
+
+	keep( text ) {
+
+		if ( this.verbose ) process.stdout.write( `${DIM}[${this.label}] ${text}${RESET}\n` );
+		this.tail.push( text );
+		if ( this.tail.length > 60 ) this.tail.splice( 0, this.tail.length - 60 );
 
 	}
 
 	async start() {
 
 		this.server = await serveSide( this.tree, this.dist );
-		this.browser = await puppeteer.launch( {
-			...nativeLaunchOptions( CHROME.executablePath ),
-			headless: true,
-			// gc() for the collections between loads; no host but this one resolves, so a fetch elsewhere fails fast.
-			args: [ ...CHROME.args, '--js-flags=--expose-gc', '--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1' ],
-			protocolTimeout: LOAD.timeoutMs + 60_000,
-		} );
-
-		const page = this.page = await this.browser.newPage();
-		const keep = ( text ) => {
-
-			if ( this.verbose ) process.stdout.write( `${DIM}[${this.label}] ${text}${RESET}\n` );
-			this.tail.push( text );
-			if ( this.tail.length > 60 ) this.tail.splice( 0, this.tail.length - 60 );
-
-		};
-
-		page.on( 'console', ( message ) => keep( `${message.type()}: ${message.text()}` ) );
-		page.on( 'pageerror', ( error ) => keep( `pageerror: ${error.message}` ) );
-		page.on( 'request', ( request ) => {
-
-			const url = request.url();
-			if ( ! url.startsWith( `${this.server.url}/` ) && ! /^(data|blob):/.test( url ) ) this.network.push( url );
-
-		} );
-
-		await page.goto( this.server.url, { waitUntil: 'load', timeout: TIMEOUTS.boot } );
 		try {
 
-			await page.waitForFunction( 'globalThis.__load !== undefined', { timeout: TIMEOUTS.boot } );
+			const keep = ( t ) => this.keep( t );
+			this.driver = this.browser === 'safari' ? await safariDriver( this.server.url, keep ) : await puppeteerDriver( this.browser, this.server.url, keep );
 
 		} catch ( error ) {
 
-			throw new Error( `${this.label}: the page never loaded (${error.message})\n${this.tail.slice( - 20 ).join( '\n' )}` );
+			await this.close();
+			throw new Error( `${this.label}: the page never loaded (${error.message})\n${this.tail.slice( - 20 ).join( '\n' )}`, { cause: error } );
 
 		}
 
-		const ready = await page.evaluate( ( o ) => globalThis.__load.start( o ), { ...LOAD.renderSize, hostMemoryGB: os.totalmem() / 2 ** 30 } );
+		const ready = await this.driver.call( 'start', { ...LOAD.renderSize, hostMemoryGB: os.totalmem() / 2 ** 30 } );
 		this.loads = 0;
 		this.coldFrame = undefined;
-		ready.network = this.network.splice( 0 );
-		ready.browser = await this.browser.version();
+		ready.network = await this.driver.network();
+		ready.browser = this.driver.version;
 		this.startup = ready;
 		return ready;
 
@@ -329,31 +549,29 @@ class ChromeSide {
 
 	async load( model ) {
 
-		if ( ! this.page ) await this.start();
+		if ( ! this.driver ) await this.start();
 
 		const folder = ( await fs.stat( model.file ) ).isDirectory() ? await listFiles( model.file ) : null;
-		await ( await this.page.$( '#files' ) ).uploadFile( ...( folder ? folder.files.map( ( f ) => f.abs ) : [ model.file ] ) );
-
-		const pid = this.browser.process()?.pid;
-		let peak = pid ? processTreeRSS( pid ) : 0;
-		const sampler = pid && setInterval( () => {
-
-			peak = Math.max( peak, processTreeRSS( pid ) );
-
-		}, 250 );
-
+		const peak = this.driver.sampleMemory();
 		let timer;
 		let result;
+		let timedOut = false;
 		try {
 
+			await this.driver.setFiles( folder ? folder.files.map( ( f ) => f.abs ) : [ model.file ] );
 			result = await Promise.race( [
-				this.page.evaluate( ( m ) => globalThis.__load.load( m ), {
+				this.driver.call( 'load', {
 					id: model.id, options: model.options, reopen: !! model.reopen,
 					folder: folder && { name: folder.name, paths: folder.files.map( ( f ) => f.rel ) },
 				} ),
 				new Promise( ( resolve ) => {
 
-					timer = setTimeout( () => resolve( { error: `timed out after ${LOAD.timeoutMs / 1000} s` } ), LOAD.timeoutMs );
+					timer = setTimeout( () => {
+
+						timedOut = true;
+						resolve( { error: `timed out after ${LOAD.timeoutMs / 1000} s` } );
+
+					}, LOAD.timeoutMs );
 
 				} ),
 			] );
@@ -365,17 +583,32 @@ class ChromeSide {
 		} finally {
 
 			clearTimeout( timer );
-			clearInterval( sampler );
 
 		}
 
 		result.phases ??= {};
 		result.issues ??= [];
-		// Chrome keeps compiled pipelines for the browser's life: only its first load compiles the kernels.
+		// A browser keeps compiled pipelines: only its first load compiles the kernels.
 		if ( this.loads ++ === 0 ) this.coldFrame = result.phases.firstFrame;
 		else result.phases.compile = this.coldFrame;
-		result.memory = { ...result.memory, rssPeakBytes: peak || null };
-		result.network = this.network.splice( 0 );
+		result.memory = { ...result.memory, rssPeakBytes: peak() };
+		// A timed-out load still holds Safari's one command slot.
+		if ( ! timedOut ) {
+
+			try {
+
+				result.network = await this.driver.network();
+				if ( result.error || this.verbose ) await this.driver.drainLog();
+
+			} catch ( error ) {
+
+				// Safari closes the window of a page it killed (out of memory).
+				result.error ??= `the page went away after the load: ${error.message}`;
+
+			}
+
+		}
+
 		if ( result.error ) {
 
 			result.log = this.tail.slice( - 20 );
@@ -389,15 +622,9 @@ class ChromeSide {
 
 	async close() {
 
-		const { browser, server } = this;
-		this.browser = this.server = this.page = null;
-		if ( browser ) {
-
-			const closed = await Promise.race( [ browser.close().then( () => true, () => false ), new Promise( ( resolve ) => setTimeout( resolve, 10_000, false ) ) ] );
-			if ( ! closed ) browser.process()?.kill( 'SIGKILL' );
-
-		}
-
+		const { driver, server } = this;
+		this.driver = this.server = null;
+		await driver?.close();
 		await server?.close();
 
 	}
@@ -429,7 +656,8 @@ async function runLoads( sides, models, { rounds, warmup, log } ) {
 			const result = await side.load( model );
 			const line = result.error
 				? `${RED}failed${RESET} ${result.error.split( '\n' )[ 0 ]}`
-				: `ready ${ms( result.phases.ready )}${DIM} (load ${ms( result.phases.load )}, first frame ${ms( result.phases.firstFrame )})${RESET}`;
+				: `ready ${ms( result.phases.ready )}${DIM} (load ${ms( result.phases.load )}, first frame ${ms( result.phases.firstFrame )})${RESET}` +
+					( result.hiddenMs > 0 ? ` ${YELLOW}hidden ${ms( result.hiddenMs )}: throttled${RESET}` : '' );
 			log( `${DIM}  ${side.label.padEnd( 14 )} ${what.padEnd( 8 )}${RESET} ${line}` );
 			return result;
 
@@ -444,7 +672,7 @@ async function runLoads( sides, models, { rounds, warmup, log } ) {
 		for ( const side of fresh ? [] : sides ) {
 
 			// A fresh browser per model, so each model's first load compiles cold.
-			if ( side instanceof ChromeSide ) await side.close();
+			if ( side instanceof BrowserSide ) await side.close();
 			await warm( side );
 
 		}
@@ -495,6 +723,8 @@ function reportSide( model, side, { strict, log } ) {
 
 	}
 
+	const throttled = measured.filter( ( r ) => r.hiddenMs > 0 ).length;
+	if ( throttled ) log( `  ${YELLOW}warning${RESET} ${DIM}the browser hid the page in ${throttled} of ${measured.length} measured loads: their times are throttled (keep its window in view)${RESET}` );
 	if ( ! strict ) for ( const text of new Set( sideWarnings( side ) ) ) log( `  ${YELLOW}warning${RESET} ${DIM}${text}${RESET}` );
 	for ( const text of new Set( failures ) ) log( `  ${RED}FAIL${RESET} ${text}` );
 	const failed = [ ...side.warmup, ...measured ].find( ( r ) => r.error );
@@ -550,7 +780,7 @@ async function addWorktree( ref, log ) {
 }
 
 /**
- * @param {Object} flags - parsed CLI flags: chrome, ab, base-dir, head-dir, only, rounds, warmup, models, config, heavy, strict, json, verbose
+ * @param {Object} flags - parsed CLI flags: chrome, firefox, safari, ab, base-dir, head-dir, only, rounds, warmup, models, config, heavy, strict, json, verbose
  * @param {{ log: function(string): void, positiveInt: function(*, string): (number|undefined) }} io
  * @returns {Promise<number>} exit code
  */
@@ -570,9 +800,12 @@ export async function commandLoad( flags, { log, positiveInt } ) {
 	if ( baseRef && flags[ 'base-dir' ] ) throw new Error( 'pass --ab <ref> or --base-dir <path>, not both' );
 	const headTree = path.resolve( String( flags[ 'head-dir' ] ?? PATHS.repoRoot ) );
 
+	const picked = Object.keys( BROWSERS ).filter( ( name ) => flags[ name ] );
+	if ( picked.length > 1 ) throw new Error( `pick one browser, not ${picked.map( ( name ) => `--${name}` ).join( ' and ' )}` );
+	const browser = picked[ 0 ] ?? null;
+
 	const [ load1, load5 ] = os.loadavg();
-	const chrome = !! flags.chrome;
-	log( `scene loading (${chrome ? 'Chrome, WebGPU' : 'Node, Dawn'}) · ${os.cpus().length} cores, load average ${load1.toFixed( 1 )} / ${load5.toFixed( 1 )}` +
+	log( `scene loading (${browser ? `${BROWSERS[ browser ]}, WebGPU` : 'Node, Dawn'}) · ${os.cpus().length} cores, load average ${load1.toFixed( 1 )} / ${load5.toFixed( 1 )}` +
 		`${load1 > os.cpus().length / 2 ? `${YELLOW} — the machine is busy, so expect noisy times${RESET}` : ''}` );
 	for ( const s of skipped ) log( `  ${YELLOW}skipped${RESET} ${s.id}${DIM}  ${s.reason}${RESET}` );
 	if ( ! models.length ) {
@@ -600,7 +833,8 @@ export async function commandLoad( flags, { log, positiveInt } ) {
 			const t = performance.now();
 			await buildEngine( tree, dist );
 			log( `${DIM}  ${label}: ${tree} (${await describeTree( tree )}), engine built in ${ms( performance.now() - t )}${RESET}` );
-			sides.push( new ( chrome ? ChromeSide : NodeSide )( { label, tree, dist, verbose: !! flags.verbose } ) );
+			const options = { label, tree, dist, verbose: !! flags.verbose };
+			sides.push( browser ? new BrowserSide( { ...options, browser } ) : new NodeSide( options ) );
 
 		}
 
@@ -610,14 +844,17 @@ export async function commandLoad( flags, { log, positiveInt } ) {
 			const startup = ready.startupIssues.filter( ( i ) => i.code !== 'asset.unreachable' );
 			if ( startup.length ) log( `  ${YELLOW}${side.label} started with issues${RESET}${DIM}: ${startup.map( ( i ) => i.code ).join( ', ' )}${RESET}` );
 			if ( ready.network.length ) throw new Error( `${side.label} reached for the network at startup: ${ready.network.join( ', ' )}` );
-			if ( chrome && ! ready.storage ) log( `  ${YELLOW}${side.label} has no on-disk storage${RESET}${DIM}: its loads skip the storage paths${RESET}` );
-			if ( chrome && ! ready.crossOriginIsolated ) log( `  ${YELLOW}${side.label} is not cross-origin isolated${RESET}${DIM}: no shared memory, unlike the app${RESET}` );
+			if ( browser && ! ready.storage ) log( `  ${YELLOW}${side.label} has no on-disk storage${RESET}${DIM}: its loads skip the storage paths${RESET}` );
+			// The app is not isolated in Safari either: it has no COEP credentialless.
+			if ( browser && ! ready.crossOriginIsolated && browser !== 'safari' ) log( `  ${YELLOW}${side.label} is not cross-origin isolated${RESET}${DIM}: no shared memory, unlike the app${RESET}` );
+			// Safari runs one automation session at a time.
+			if ( sides.length > 1 ) await side.close();
 
 		}
 
-		log( `${DIM}  ${sides[ 0 ].startup.adapter} · ${chrome ? sides[ 0 ].startup.browser : `node ${sides[ 0 ].startup.node}`} · per model and side, ` +
-			`${sides.length > 1 ? `${rounds} rounds of ${warmup} warm-up + 1 measured load in a fresh ${chrome ? 'browser' : 'process'}` : `${warmup} warm-up + ${rounds} measured loads`}${RESET}` );
-		if ( sides.length > 1 ) for ( const side of sides ) await side.close();
+		log( `${DIM}  ${sides[ 0 ].startup.adapter} · ${browser ? sides[ 0 ].startup.browser : `node ${sides[ 0 ].startup.node}`}` +
+			`${browser && ! sides[ 0 ].startup.crossOriginIsolated ? ', not cross-origin isolated' : ''} · per model and side, ` +
+			`${sides.length > 1 ? `${rounds} rounds of ${warmup} warm-up + 1 measured load in a fresh ${browser ? 'browser' : 'process'}` : `${warmup} warm-up + ${rounds} measured loads`}${RESET}` );
 
 		const { results, cases } = await runLoads( sides, models, { rounds, warmup, log } );
 
@@ -667,7 +904,7 @@ export async function commandLoad( flags, { log, positiveInt } ) {
 			await fs.writeFile( path.resolve( String( flags.json ) ), `${JSON.stringify( {
 				at: new Date().toISOString(), loadAverage: os.loadavg(), cores: os.cpus().length,
 				sides: sides.map( ( s ) => ( { label: s.label, tree: s.tree, adapter: s.startup?.adapter } ) ),
-				runtime: chrome ? 'chrome' : 'node', gates: LOAD.gates, rounds, warmup, skipped, models: cases, results, comparisons,
+				runtime: browser ?? 'node', gates: LOAD.gates, rounds, warmup, skipped, models: cases, results, comparisons,
 			}, null, '\t' )}\n` );
 
 		}

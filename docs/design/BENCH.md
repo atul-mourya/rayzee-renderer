@@ -433,14 +433,16 @@ Every other suite loads procedural scenes of a few thousand triangles, so nothin
 `bench:calibrate` times one model only to check the browser's CPU speed, and `perf.jsonl`'s `loadMs` is the corpus.
 Both of 2026-09-30's load bugs were found by hand — Zero-Day's shared-`.ply` crash (shipped since 9.1.0) and Node
 packing textures on the main thread (4.5 → 2.1 s once moved to workers). `bench:load` loads a list of real models in
-Node on Dawn, or in Chrome with `--chrome`, and fails on a load error or a recorded engine issue; against another
-checkout it gates every phase.
+Node on Dawn, or in a browser (`--chrome`, `--firefox`, `--safari`), and fails on a load error or a recorded engine
+issue; against another checkout it gates every phase.
 
 ```bash
 npm run bench:load                                   # this checkout: medians by phase, fails on errors and issues
 npm run bench:load -- --ab main                      # A/B against a git ref (a temporary worktree, removed after)
 npm run bench:load -- --chrome                       # in Chrome: image decoding, the background compile, storage
-npm run bench:load -- --chrome --ab main             # every other flag works the same in Chrome
+npm run bench:load -- --chrome --ab main             # every other flag works the same in a browser
+npm run bench:load -- --firefox                      # in Firefox, in a window of its own
+npm run bench:load -- --safari                       # in Safari (Developer settings: Allow remote automation)
 npm run bench:load -- --base-dir ../baseline         # A/B against any checkout; --head-dir picks the other side
 npm run bench:load -- --only crown,zero-day --rounds 5
 npm run bench:load -- --heavy                        # also the models marked heavy (kroken: 40M triangles)
@@ -478,6 +480,23 @@ the kernels (`compile`, below). Each load starts with the cache areas emptied, a
 something (only a scene that took the engine 10 s or more to build) is then measured again, as `<model> reopened`:
 its warm-up, a first open in a fresh browser, stores; the measured load opens from that.
 
+**In Firefox** (`--firefox`) the same page runs in a Firefox of its own through Puppeteer (WebDriver BiDi), in a window:
+headless Firefox has no GPU process, so no WebGPU. It is started as native arm64 (`nativeLaunchOptions`), as Chrome
+is: from an Intel parent (Homebrew's `timeout`) it came up under Rosetta, drawing in software with no WebGPU. Requests elsewhere are seen and fail the run, but
+not refused; the page has no `gc()`, so loads are not collected in between.
+
+**In Safari** (`--safari`) the page runs through `safaridriver` (W3C WebDriver), which needs Safari's Developer setting
+"Allow remote automation" once. A session is an automation window of the user's own Safari, and only one runs at a
+time, so an A/B starts its sides in turn. Files reach the input through Send Keys, disk-backed as in Chrome (a file not
+readable by every user is refused). Safari counts a window others cover as hidden and slows its timers ~20× (262 → 13
+`setTimeout` turns in 2 s): a load's first frame took 218 s instead of 0.6. The driver maximises the window at the start
+and before each load, and the page times how long it was hidden (`hiddenMs`): such a load is marked "throttled" and
+the side warns. Firefox's window is watched the same way. The driver
+sees neither the console nor requests, so the page keeps both (`__load.log()`, `__load.network()`: resource timing,
+the page's own requests only). The page is not cross-origin isolated, as the app is not in Safari (no COEP
+`credentialless`), and has no `gc()`. Safari runs the page in a content process it started ahead of time, so memory is
+the content process that grew most during the load plus Safari's GPU process, which the user's own tabs share.
+
 **The phases** (`LOAD_PHASES` in `lib/load.js`), nested as they run:
 
 | phase | from |
@@ -489,10 +508,10 @@ its warm-up, a first open in a fresh browser, stores; the measured load opens fr
 | `upload` | `buildBVH` end → `setupMaterial` (buffers and texture buckets to the GPU) |
 | `kernels`, `finish` | `setupMaterial` (the wavefront kernels' graphs), then the environment table and settings |
 | `firstFrame` | `loadFile` returned → one sample done: the kernels compile at first dispatch in Node, so this is the shader compile; in Chrome the compile runs in the background and its pipelines are cached for the browser's life |
-| `store` | Chrome: `ready` → the storage writes the load started (a BLAS or scene store) have committed; only when there were any |
-| `compile` | Chrome: the `firstFrame` of the browser's first load, the kernels compiled cold — every later load's carries it |
+| `store` | A browser: `ready` → the storage writes the load started (a BLAS or scene store) have committed; only when there were any |
+| `compile` | A browser: the `firstFrame` of the browser's first load, the kernels compiled cold — every later load's carries it |
 
-In Chrome `decode` is not measured: images decode as the textures pack (inside `textures`) and in the pbrt build. macOS keeps compiled
+In a browser `decode` is not measured: images decode as the textures pack (inside `textures`) and in the pbrt build. macOS keeps compiled
 Metal shaders across browsers, so `compile` is a cold compile only the first time this machine sees a kernel; after
 that it is WGSL translation and pipeline creation (classroom's first ever: 2.9 s; then 0.4–0.6 s).
 
@@ -554,8 +573,31 @@ Times are wall clock on the CPU, from a process that shares the machine — anot
 The paired rounds cancel what both sides of a round share; what they cannot cancel shows as a wide floor, and the
 floor is printed on every line.
 
-**Not covered.** Image decoding in Chrome on its own (it is inside `textures` and `pbrtBuild`); a reopened scene unless a model of the
-list is slow enough for the engine to store it (kroken, with `--heavy`); Firefox and Safari.
+**Firefox and Safari** (2026-11-14, the same Mac, load average 2–6; the default list's five models plus watercolor and
+transparent-machines, 1 warm-up + 3 loads each):
+
+- **Firefox 149 loads all seven cleanly**, with storage on and cross-origin isolated: 519 s. Chrome, the same list
+  straight after: 279 s.
+- **Firefox against Chrome** (medians, Chrome → Firefox): `ready` 1.2–4.2× (moana-hibiscus 3.62 → 4.47 s, crown
+  1.67 → 3.28 s, 24155522 1.31 → 5.43 s, watercolor 29.1 → 42.5 s). Most of it is `upload`, 6–11× wherever the
+  geometry is large (24155522 0.24 → 2.19 s, zero-day 0.13 → 1.41 s, transparent-machines 0.28 → 2.15 s),
+  `extraction` (2.0–2.5×) and the first frame (2.4–4×). `blas` reads the same within 25 %, but for 24155522 (0.30 →
+  1.57 s), whose 91 images decode on the same workers (`textures` 0.47 → 1.73 s); `pbrtBuild` 1.0–1.4×.
+- **The WebAssembly BLAS build (4c42ef1b) holds in Firefox.** Against 1f605fe7 (given the device-limit fix, without
+  which Firefox ran neither), 3 rounds: `blas` crown −73 %, classroom −70 %, zero-day −46 %, 24155522 −24 %; Chrome on
+  2026-11-12 read −74 %, −70 %, −55 % and −39 %. Nothing slower.
+- **Chrome failed one load**: watercolor reopened, the third load in one page, `texture.build_failed` (a map could
+  not be read again from the archive). Firefox loaded it four times without one.
+- **Safari 26.5 rendered nothing** until WebKit's 8 KB cap on a WGSL function's own variables was met (Shade had 30–50
+  KB; PATH_TRACER_SHADER_ARCHITECTURE.md, "A function's own variables"). Since then, window in view, no load
+  throttled: 24155522 3.34 s, classroom 0.49 s, crown 2.76 s, zero-day 5.03 s, transparent-machines 6.95 s — between
+  Chrome and Firefox. watercolor loads in a fresh page (52–58 s; reopened from storage 21.6 s), but a second load of it
+  in the same page runs out of memory (`RangeError: Out of memory`, or Safari closes the window); Safari gives the page
+  no `gc()`. The Moana folder fails at its first read (`NotReadableError`, 14,732 files through the file input); a
+  24-file folder loads.
+
+**Not covered.** Image decoding in a browser on its own (it is inside `textures` and `pbrtBuild`); a reopened scene unless a model of the
+list is slow enough for the engine to store it (kroken, with `--heavy`); in Safari, the Moana folder.
 
 ### Denoisers — a ratio, so there is nothing to bless away
 

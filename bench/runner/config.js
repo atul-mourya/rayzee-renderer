@@ -57,6 +57,14 @@ export const CHROME = {
 	],
 };
 
+export const FIREFOX = {
+	executablePath: process.env.FIREFOX_PATH || '/Applications/Firefox.app/Contents/MacOS/firefox',
+};
+
+export const SAFARI = {
+	driver: process.env.SAFARIDRIVER_PATH || 'safaridriver',
+};
+
 export const TIMEOUTS = {
 	// Generous: ground-truth renders are thousands of samples.
 	boot: 180_000,

@@ -149,7 +149,8 @@ export async function measureLoad( app, model, runtime ) {
 		issues: app.issues.slice( issuesBefore ).map( ( { code, severity, message } ) => ( { code, severity, message } ) ),
 	};
 
-	if ( error ) result.error = String( error?.stack ?? error );
+	// Only V8 starts a stack with the message.
+	if ( error ) result.error = error?.stack?.includes( error.message ) ? error.stack : `${error}\n${error?.stack ?? ''}`.trim();
 
 	try {
 

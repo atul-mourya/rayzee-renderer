@@ -15,11 +15,17 @@
   `feat/tiled-output`), a variance layer in the EXR. Assessment:
   ~/RayzeeScratch/night/2026-11-13/headless-api/ASSESSMENT.md
 - Deploy the docs site (`npm run docs` serves it locally)
+- Safari: the Moana `pbrt-v4` folder (14,732 files, 32 GB) fails at its first read, `NotReadableError`, handed to the
+  page's file input by `bench:load -- --safari`; a 24-file folder loads. Try a drop of the folder in the app
+- Safari: a second load of watercolor (24.7M triangles) in one page runs out of memory (`RangeError: Out of memory`, or
+  Safari kills the page and closes its window); a fresh page loads it in 52–58 s. Check the app's reload of a large scene
 
 ### Follow-ups from the Rust/WebAssembly night (2026-11-11)
-- [ ] `bench:load -- --chrome` with the WebAssembly BLAS: done against 1f605fe7 (blas crown −74 %, classroom −70 %,
-  zero-day −55 %, 24155522 −39 %). watercolor: ready 33.0 s cold (pbrtBuild 15.1, textures 8.3), 21.8 s reopened;
-  transparent-machines: load 4.4 s (pbrtBuild 2.65, blas 0.58). Safari / Firefox: no bench driver for them
+- [ ] Firefox loads 1.2–4.2× slower than Chrome (`bench:load -- --firefox`, 2026-11-14): `upload` 6–11× wherever the
+  geometry is large (24155522 0.24 → 2.19 s, transparent-machines 0.28 → 2.15 s), `extraction` 2–2.5×, the first frame
+  2.4–4×. Check whether the paced uploads wait on a slow `onSubmittedWorkDone` there
+- [ ] Chrome: watercolor reopened, third load in one page, `texture.build_failed` (a map could not be read again from
+  the archive; `bench:load -- --chrome` with watercolor and transparent-machines, 2026-11-14). Firefox did not
 - [ ] Moana island phases (Chrome, textured): USD read 30 s, USD build 50 s, extraction + BLAS 57 s, placing and
   measuring copies 11 s, grouping 12 s, top-level tree 12 s, writing the tree 8 s, assembling 10 s, copy records
   13 s, upload + compact 23–32 s
@@ -113,6 +119,9 @@
 - [ ] **Fast Navigation flaps on heavy scenes at 1080p** (NRD, or no live denoiser): full-size frames take the GPU past 100 ms a frame, interaction mode times out between them, and the pending drop to half size does not take hold. 24155522.glb at 1920×1080 under NRD: half size reached only after 4.1 s of moving.
   Could not reproduce 2026-11-07 (27977388): a 5 s drag (`controls.rotateLeft` every 8 ms) dropped to half size after
   118 ms under NRD, 96 ms with none, 12 ms under OIDN, and held it to the end, one drop and one restore each.
+- [ ] **A flaky unit test**: `seekableArchives.test.js` › "loads a scene from a .tar.gz, unpacked to storage…" failed
+  2 of 7 full `npm test` runs on 2026-11-14 (the second load found no stored copy: `cached: false`), and passes every
+  time alone. Likely timing under the parallel run; of the code it covers, only the log calls changed that night.
 
 
 ---
@@ -132,6 +141,7 @@
 
 ### General
 
+- [ ] docs to include more visual elements like graphs, charts, images etc
 - [ ] deno compile for dedicated destop app
 - [ ] export/import option for settings
 - [ ] transform control redesign
@@ -212,8 +222,10 @@
 - [ ] **Displacement** (`texture displacement` + `edgelength`): dice to the edge length and displace along the normal at
   load, as pbrt does — kroken's rug pile, cushion tufting, bricks, rocks. Needs a per-shape triangle cap.
 - [ ] **Texture classes**: `dots` (needs pbrt's Perlin noise); `fbm`, `wrinkled`, `windy`, `marble` (3D procedural);
-  `directionmix` on shapes other than triangle meshes (a triangle mesh is split by face). 2D `checkerboard` and `bilerp` are baked since 2026-10-05. `ptex` is not read on main:
-  the 2026-10-06 reader was lost, and its rebuild (pbrt and USD) is on branch `feat/island-geometry-and-ptex` (36806b04).
+  `directionmix` on shapes other than triangle meshes (a triangle mesh is split by face since 6facbd12, a commit no
+  second reader has gone over yet). 2D `checkerboard` and `bilerp` are baked since 2026-10-05. `ptex` is not read on
+  main: the 2026-10-06 reader was lost, and its rebuild (pbrt and USD) is on branch `feat/island-geometry-and-ptex`
+  (36806b04).
 - [ ] **Ptex past 1,024 files** (the rebuild on `feat/island-geometry-and-ptex` packs shared atlas pages): each .ptx is a texture of its own, and past 1,024 for one map type the engine renders
   the rest untextured — Moana's isCoral names 2,273, isDunesA 755. Pack small atlases onto shared pages (distinct
   Texture objects over one `source`: the extractor counts sources); the scene-graph codec would then have to store a
@@ -241,7 +253,9 @@
 - [ ] **One table per directive**: pbrt-v4's parameter names, types, defaults and the `file:line` they come from, the
   translators and their tests derived from it (`pbrt/defaults.test.js` checks the defaults by hand today).
 - [ ] `bench:pbrt` — each pbrt-v4-scenes camera against its reference image, with the reference's own post applied
-  (`docs/design/SCENE_IMPORT.md` → Extending it), over a local copy (skip what is not downloaded).
+  (`docs/design/SCENE_IMPORT.md` → Extending it), over a local copy (skip what is not downloaded). A local pbrt-v4
+  build renders references offline: `~/RayzeeScratch/pbrt-build-arm/pbrt` (arm64; it checked the screen window's
+  framing on 2026-11-14).
 
 ---
 
@@ -256,6 +270,9 @@
   fits (the spill turns on by itself); without storage (a private window) the budget is 45M and a quarter of the meshes
   are cut.
 - [ ] **Ocean** — clear turquoise in RenderMan from `deepWaterVolume.vdb` and PxrSurface's diffuse transmission; dark here.
+- [ ] **PxrSurface's specular, unchecked** — RenderMan's primary specular is likely off unless authored (its face and
+  edge colours default to black), while the importer keeps the engine's default specular on. No `PxrSurface.args` here
+  to confirm; Moana's one PxrSurface (the ocean) authors its specular, so nothing local changes.
 - [ ] **Scene cache** — the pbrt importer stores its parsed graph (`_storeGraph`); USD rebuilds every time.
 - [ ] Skeletal animation, NURBS and points prims, UDIM textures, and `.usdz` through this importer.
 

@@ -29,7 +29,7 @@ npm run bench:kernels      # per-kernel GPU time (--only <scene>; --shipping, --
 npm run bench:ab -- main    # gate perf against another git ref (`-- <base> --head <ref>` for two refs; `--model /models/x.glb` for real models)
 npm run bench:release      # the newest release tag against the one before it, logged for the trend
 npm run bench:trend        # results/trend.html: the perf and A/B logs, one chart a scene
-npm run bench:load         # real models loaded by phase in Node (-- --chrome: in Chrome); -- --ab main, or --base-dir <checkout>, to gate
+npm run bench:load         # real models loaded by phase in Node (-- --chrome, --firefox or --safari: in that browser); -- --ab main, or --base-dir <checkout>, to gate
 npm run bench:exposure     # auto (and local) exposure against neither, wall clock (--size 1024x1024)
 npm run bench:storage       # raw OPFS throughput
 npm run bench:examples     # every example in rayzee/examples runs to the end
@@ -129,7 +129,7 @@ These are public engine API, not bench-only helpers — any host doing offline r
 | `bench:perf` | nothing: GPU milliseconds of the compute passes, logged to `baselines/perf.jsonl` as a trend, and OIDN's network time |
 | `bench:ab` | the perf gate: both trees in one browser, measured in alternating rounds; logged to `baselines/ab.jsonl` |
 | `bench:node` | the corpus in plain Node on Dawn against the Chrome goldens; `-- --core` the core against the full engine, byte for byte |
-| `bench:load` | real models loaded by phase in Node, or in Chrome (`--chrome`): fails on a load error or engine issue; against another checkout, gates each phase |
+| `bench:load` | real models loaded by phase in Node, or in Chrome, Firefox or Safari (`--chrome`, `--firefox`, `--safari`): fails on a load error or engine issue; against another checkout, gates each phase |
 | `bench:storage` | nothing: OPFS throughput, with and without cross-origin isolation |
 | `bench:examples` | every example in `rayzee/examples/` runs to the end with no error or warning |
 
