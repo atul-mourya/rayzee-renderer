@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { HalfFloatType, NoToneMapping, DataUtils } from 'three';
+import { HalfFloatType, NoToneMapping, DataUtils, PerspectiveCamera, OrthographicCamera, Matrix4, Vector3, Vector4 } from 'three';
 import { RayzeeRenderer } from '@/core/RayzeeRenderer.js';
 import { IssueLog, EngineIssueError, ISSUE_CODES } from '@/core/EngineIssues.js';
-import { DISPLAY_CHROMATICITIES } from '@/core/output/ImageEncoders.js';
+import { DISPLAY_CHROMATICITIES, exrCameraMatrices } from '@/core/output/ImageEncoders.js';
 import { VERSION } from '@/core/Version.js';
 import { whiteBalanceMatrix } from '@/core/color/WhiteBalance.js';
 
@@ -629,6 +629,103 @@ describe( 'exportImage as light', () => {
 		gpu.depth = new Float32Array( 2 ).fill( 7 );
 		expect( ( await app.exportImage( { format: 'exr', passes: [ 'depth' ] } ) ).passes ).toEqual( [ 'depth' ] );
 		expect( last( 'exr' ).channels.at( - 1 ) ).toMatchObject( { name: 'depth.Z', type: 'float' } );
+
+	} );
+
+	it( 'records the camera as OpenEXR\'s worldToCamera and worldToNDC; a panorama has no NDC; nothing without metadata', async () => {
+
+		const app = makeApp();
+		let projection = 'perspective';
+		const get = app.settings.get;
+		app.settings = { get: key => ( key === 'cameraProjection' ? projection : get( key ) ) };
+		app.camera = new PerspectiveCamera( 50, 2, 0.1, 100 );
+		app.camera.position.set( 1, 2, 3 );
+		app.camera.lookAt( 0, 0, 0 );
+		app.camera.updateMatrixWorld();
+		const { worldToCamera, worldToNDC } = exrCameraMatrices( app.camera.matrixWorldInverse.elements, app.camera.projectionMatrix.elements );
+
+		await app.exportImage( { format: 'exr' } );
+		expect( last( 'exr' ).matrices.worldToCamera.map( v => v + 0 ) ).toEqual( worldToCamera.map( v => expect.closeTo( v, 9 ) ) );
+		expect( last( 'exr' ).matrices.worldToNDC.map( v => v + 0 ) ).toEqual( worldToNDC.map( v => expect.closeTo( v, 9 ) ) );
+
+		projection = 'equalArea';
+		await app.exportImage( { format: 'exr' } );
+		expect( Object.keys( last( 'exr' ).matrices ) ).toEqual( [ 'worldToCamera' ] );
+
+		await app.exportImage( { format: 'exr', metadata: false } );
+		expect( last( 'exr' ).matrices ).toEqual( {} );
+
+	} );
+
+	// OpenEXR's reading: a row vector times the matrix, then divided by w.
+	const times = ( p, m ) => {
+
+		const o = [ 0, 1, 2, 3 ].map( c => p[ 0 ] * m[ c ] + p[ 1 ] * m[ 4 + c ] + p[ 2 ] * m[ 8 + c ] + m[ 12 + c ] );
+		return o.slice( 0, 3 ).map( v => v / o[ 3 ] );
+
+	};
+
+	const uniform = value => ( { value } );
+
+	it( 'writes the camera as traced: the stage\'s copies over the live camera, a scaled camera through its world matrix', async () => {
+
+		const app = makeApp();
+		const get = app.settings.get;
+		app.settings = { get: key => ( key === 'cameraProjection' ? 'perspective' : get( key ) ) };
+		app.camera = new PerspectiveCamera( 50, 2, 0.1, 100 );
+		app.camera.updateMatrixWorld();
+		// What was traced: an orthographic camera on a node scaled 0.01, looking along −z from ( 3, 1, 5 ).
+		const traced = new OrthographicCamera( - 2, 2, 1, - 1, 0.1, 100 );
+		traced.position.set( 3, 1, 5 );
+		traced.scale.setScalar( 0.01 );
+		traced.updateMatrixWorld();
+		Object.assign( app.stages.pathTracer, {
+			cameraWorldMatrix: uniform( traced.matrixWorld.clone() ),
+			cameraProjectionMatrix: uniform( traced.projectionMatrix.clone() ),
+			cameraProjection: uniform( 2 ),
+		} );
+
+		await app.exportImage( { format: 'exr' } );
+		const { worldToNDC, worldToCamera } = last( 'exr' ).matrices;
+		// The traced image plane's corners, built as cameraRayOrigin builds them.
+		const corner = ( x, y ) => {
+
+			const onPlane = new Vector4( x, y, 0, 1 ).applyMatrix4( traced.projectionMatrixInverse );
+			return new Vector3( onPlane.x, onPlane.y, 0 ).applyMatrix4( traced.matrixWorld ).toArray();
+
+		};
+
+		expect( times( corner( - 1, 1 ), worldToNDC ).slice( 0, 2 ) ).toEqual( [ 0, 0 ].map( v => expect.closeTo( v, 5 ) ) );
+		expect( times( corner( 1, - 1 ), worldToNDC ).slice( 0, 2 ) ).toEqual( [ 1, 1 ].map( v => expect.closeTo( v, 5 ) ) );
+		expect( times( [ 3, 1, 4.99 ], worldToCamera )[ 2 ] ).toBeGreaterThan( 0 );
+
+	} );
+
+	it( 'writes a levelled lat-long\'s camera space as its rays are drawn: the yaw alone, world up as +y', async () => {
+
+		const app = makeApp();
+		let level = 1;
+		const camera = new PerspectiveCamera();
+		camera.position.set( 1, 2, 3 );
+		camera.rotation.set( - 0.35, 0.5, 0, 'YXZ' ); // yaw 0.5, pitched 20° down
+		camera.updateMatrixWorld();
+		app.camera = camera;
+		Object.assign( app.stages.pathTracer, { cameraWorldMatrix: uniform( camera.matrixWorld.clone() ), cameraProjection: uniform( 1 ) } );
+		Object.defineProperty( app.stages.pathTracer, 'panoLevelHorizon', { get: () => uniform( level ) } );
+
+		await app.exportImage( { format: 'exr' } );
+		const { worldToCamera } = last( 'exr' ).matrices;
+		expect( Object.keys( last( 'exr' ).matrices ) ).toEqual( [ 'worldToCamera' ] );
+		const ahead = new Vector3( - Math.sin( 0.5 ), 0, - Math.cos( 0.5 ) ).multiplyScalar( 4 ).add( camera.position );
+		expect( times( ahead.toArray(), worldToCamera ) ).toEqual( [ 0, 0, 4 ].map( v => expect.closeTo( v, 5 ) ) );
+		expect( times( [ 1, 3, 3 ], worldToCamera ) ).toEqual( [ 0, 1, 0 ].map( v => expect.closeTo( v, 5 ) ) );
+
+		// Unlevelled, the camera's own pitch.
+		level = 0;
+		await app.exportImage( { format: 'exr' } );
+		const tilted = times( [ 1, 3, 3 ], last( 'exr' ).matrices.worldToCamera );
+		expect( tilted[ 1 ] ).toBeCloseTo( Math.cos( 0.35 ), 5 );
+		expect( tilted[ 2 ] ).toBeCloseTo( - Math.sin( 0.35 ), 5 ); // looking down: up leans away from the view
 
 	} );
 

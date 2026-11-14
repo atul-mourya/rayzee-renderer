@@ -2,6 +2,7 @@ import { DataTexture, FileLoader, HalfFloatType, RGBAFormat } from 'three';
 import { EXRLoader } from 'three/addons/loaders/EXRLoader.js';
 import EXRWorker from './EXRWorker.js?worker&inline';
 import { createWorker, hardwareThreads, hasWorkers } from '../Platform.js';
+import { withoutWarning } from '../Logger.js';
 
 const MAX_WORKERS = 4;
 const idle = [];
@@ -10,7 +11,8 @@ let running = 0;
 
 function parseHere( buffer, { type, outputFormat, part } ) {
 
-	return new EXRLoader().setDataType( type ).setOutputFormat( outputFormat ).setPart( part ).parse( buffer );
+	// three skips OpenEXR's camera matrices (m44f), as it should, with a warning each.
+	return withoutWarning( '\'m44f\'', () => new EXRLoader().setDataType( type ).setOutputFormat( outputFormat ).setPart( part ).parse( buffer ) );
 
 }
 

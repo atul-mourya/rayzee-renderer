@@ -11,7 +11,7 @@
 - App colours under WCAG AA's 4.5:1: `primary` as text on the hover grey reads 4.0:1 in dark, `muted-foreground` there
   4.3:1 in light (both shadcn's own)
 - Headless, from the pbrt comparison: a crop window with the pixel offset in the sampler's seed (on
-  `feat/tiled-output`), m44f `worldToCamera` / `worldToNDC` EXR attributes, a variance layer in the EXR. Assessment:
+  `feat/tiled-output`), a variance layer in the EXR. Assessment:
   ~/RayzeeScratch/night/2026-11-13/headless-api/ASSESSMENT.md
 - Deploy the docs site (`npm run docs` serves it locally)
 

@@ -96,7 +96,8 @@ JSON naming what produced the image: engine and three.js versions, the adapter, 
 samples, whether it ran headless, strict, deterministic or lockstepped, the denoisers (`denoise.live`, and
 `denoise.final`: the OIDN tier, weights file, precision and tile), and the camera as it was rendered (`camera`:
 `position`, `worldToCamera`, `projection` — three.js's column-major matrices, looking down −z, a mirrored camera's
-mirror kept — `fov`, `aspect`, `near`, `far`, `orthographic`; pbrt writes the same into its EXR as `worldToCamera`).
+mirror kept — `fov`, `aspect`, `near`, `far`, `orthographic`). An exported EXR also carries the camera as OpenEXR's
+standard `worldToCamera` and `worldToNDC` attributes (see Saving a file in rendering.md).
 Saved files carry it too. `mode.lockstep` says whether the current image was traced in lockstep, so it stays true
 after `renderUntilComplete` turns lockstep back off. Store it beside each render and "what made this?" has an answer without rendering
 again.

@@ -509,6 +509,42 @@ function le( build, size ) {
 
 }
 
+// a · b, both column-major as three.js keeps them.
+function multiply4( a, b ) {
+
+	const out = new Array( 16 );
+	for ( let c = 0; c < 4; c ++ ) for ( let r = 0; r < 4; r ++ ) {
+
+		let sum = 0;
+		for ( let k = 0; k < 4; k ++ ) sum += a[ k * 4 + r ] * b[ c * 4 + k ];
+		out[ c * 4 + r ] = sum;
+
+	}
+
+	return out;
+
+}
+
+// Clip space (three.js: x right, y up, −w…w) to OpenEXR's NDC: (0, 0) the picture's top left, (1, 1) its bottom right.
+const CLIP_TO_NDC = [ 0.5, 0, 0, 0, 0, - 0.5, 0, 0, 0, 0, 1, 0, 0.5, 0.5, 0, 1 ];
+
+/**
+ * OpenEXR's standard camera attributes (ImfStandardAttributes.h) from a three.js camera: `worldToCamera` into
+ * RenderMan's camera space (left-handed: x right, y up, z ahead) and `worldToNDC` onto the picture, (0, 0) its top left
+ * and (1, 1) its bottom right. Both in Imath's order: a point is a row vector times the matrix, then divided by w. A
+ * column-major three.js matrix read row by row is its transpose, Imath's form, so the elements carry over in place.
+ * @param {ArrayLike<number>} view - world to camera, column-major (`Matrix4.elements`), looking down −z
+ * @param {?ArrayLike<number>} projection - camera to clip, column-major; null where no matrix maps the picture (a panorama)
+ * @returns {{ worldToCamera: number[], worldToNDC?: number[] }}
+ */
+export function exrCameraMatrices( view, projection ) {
+
+	const worldToCamera = Array.from( view, ( v, i ) => ( i % 4 === 2 ? 0 - v : v ) );
+	if ( ! projection ) return { worldToCamera };
+	return { worldToCamera, worldToNDC: multiply4( CLIP_TO_NDC, multiply4( projection, view ) ) };
+
+}
+
 /**
  * One part, scanlines, top line first. Channels are written in name order, as the format requires; a layer's channels
  * share a prefix (`albedo.R`), and readers show the unprefixed R, G, B, A as the picture.
@@ -521,9 +557,11 @@ function le( build, size ) {
  * @param {'zip'|'none'} [image.compression='zip']
  * @param {?number[]} [image.chromaticities] - red, green, blue and white xy
  * @param {Object<string, string>} [image.text] - written as string attributes
+ * @param {Object<string, ArrayLike<number>>} [image.matrices] - written as m44f attributes, 16 numbers in Imath's order
+ *   (row vectors: a point times the matrix, translation in the last row); see {@link exrCameraMatrices}
  * @returns {Promise<Blob>}
  */
-export async function encodeEXR( { width, height, channels, compression = 'zip', chromaticities = null, text = {} } ) {
+export async function encodeEXR( { width, height, channels, compression = 'zip', chromaticities = null, text = {}, matrices = {} } ) {
 
 	const list = [ ...channels ].sort( ( a, b ) => ( a.name < b.name ? - 1 : a.name > b.name ? 1 : 0 ) );
 	const bytesPer = list.map( c => ( c.type === 'float' ? 4 : 2 ) );
@@ -559,6 +597,12 @@ export async function encodeEXR( { width, height, channels, compression = 'zip',
 	];
 	if ( chromaticities ) header.push( exrAttribute( 'chromaticities', 'chromaticities', le( v => chromaticities.forEach( ( n, i ) => v.setFloat32( i * 4, n, true ) ), 32 ) ) );
 	for ( const [ key, value ] of Object.entries( text ) ) header.push( exrAttribute( key, 'string', utf8( String( value ) ) ) );
+	for ( const [ key, m ] of Object.entries( matrices ) ) {
+
+		if ( m?.length !== 16 ) throw new Error( `encodeEXR: matrix "${key}" needs 16 numbers` );
+		header.push( exrAttribute( key, 'm44f', le( v => Array.from( m, ( n, i ) => v.setFloat32( i * 4, n, true ) ), 64 ) ) );
+
+	}
 
 	const rows = list.map( c => ( c.type === 'float' ? new FloatRow( width ) : new HalfRow( width ) ) );
 	const pack = b => {

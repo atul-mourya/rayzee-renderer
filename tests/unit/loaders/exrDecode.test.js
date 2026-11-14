@@ -78,6 +78,45 @@ describe( 'decodeEXR', () => {
 
 	}
 
+	for ( const workers of [ false, true ] ) {
+
+		it( `reads the camera matrices the engine writes without three's warning, other warnings kept, ${workers ? 'in a worker' : 'without workers'}`, async () => {
+
+			if ( workers ) configurePlatform( { Worker: class {} } );
+			const channels = [ 'R', 'G', 'B', 'A' ].map( ( name, offset ) => ( { name, data: rgba, stride: 4, offset, type: 'float' } ) );
+			const identity = [ 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 ];
+			const bytes = new Uint8Array( await ( await encodeEXR( { width, height, channels, matrices: { worldToCamera: identity, worldToNDC: identity } } ) ).arrayBuffer() );
+			const warn = vi.spyOn( console, 'warn' ).mockImplementation( () => {} );
+			try {
+
+				const want = new EXRLoader().setDataType( FloatType ).parse( bytes.slice().buffer );
+				expect( warn.mock.calls.filter( ( [ m ] ) => /'m44f'/.test( m ) ) ).toHaveLength( 2 );
+				warn.mockClear();
+				const got = await decodeEXR( bytes.slice().buffer, { type: FloatType } );
+				expect( got.data ).toEqual( want.data );
+				expect( warn ).not.toHaveBeenCalled();
+
+				const { withoutWarning } = await import( '@/core/Logger.js' );
+				withoutWarning( 'm44f', () => console.warn( 'something else' ) );
+				expect( warn ).toHaveBeenCalledWith( 'something else' );
+				expect( console.warn ).toBe( warn );
+				expect( () => withoutWarning( 'm44f', () => {
+
+					throw new Error( 'parse failed' );
+
+				} ) ).toThrow( 'parse failed' );
+				expect( console.warn ).toBe( warn );
+
+			} finally {
+
+				warn.mockRestore();
+
+			}
+
+		} );
+
+	}
+
 	it( 'shares up to four workers across a burst and rejects a file it cannot read', async () => {
 
 		configurePlatform( { Worker: class {} } );

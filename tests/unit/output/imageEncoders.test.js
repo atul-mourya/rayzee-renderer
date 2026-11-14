@@ -2,9 +2,9 @@ import { describe, it, expect, vi } from 'vitest';
 import { PNG } from 'pngjs';
 import { EXRLoader } from 'three/examples/jsm/loaders/EXRLoader.js';
 import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
-import { FloatType } from 'three';
+import { FloatType, PerspectiveCamera, OrthographicCamera, Vector3 } from 'three';
 import {
-	encodePNG, encodeEXR, encodeHDR, crc32, displayP3Profile, primariesToXYZ, canEncodeWithCanvas, encodeWithCanvas, standardChromaticities,
+	encodePNG, encodeEXR, encodeHDR, exrCameraMatrices, crc32, displayP3Profile, primariesToXYZ, canEncodeWithCanvas, encodeWithCanvas, standardChromaticities,
 	isoMetadata, jpegWithGainMap, heifFile, canEncodeStill, prepareStill, encodeGainMapJPEG, encodeStill,
 } from '@/core/output/ImageEncoders.js';
 
@@ -275,6 +275,20 @@ describe( 'encodeEXR', () => {
 
 	} );
 
+	it( 'writes matrices as m44f, sixteen little-endian floats in the order given', async () => {
+
+		const m = Array.from( { length: 16 }, ( _, i ) => i * 0.5 - 3 );
+		const channels = [ { name: 'R', data: rgba } ];
+		const attributes = header( await bytesOf( await encodeEXR( { width, height, channels, matrices: { worldToCamera: m } } ) ) );
+
+		expect( attributes.worldToCamera.type ).toBe( 'm44f' );
+		expect( attributes.worldToCamera.value.length ).toBe( 64 );
+		const v = new DataView( attributes.worldToCamera.value.buffer, attributes.worldToCamera.value.byteOffset );
+		expect( m.map( ( _, i ) => v.getFloat32( i * 4, true ) ) ).toEqual( m );
+		await expect( encodeEXR( { width, height, channels, matrices: { worldToNDC: [ 1, 2, 3 ] } } ) ).rejects.toThrow( /16 numbers/ );
+
+	} );
+
 	it( 'clamps half channels to the largest half and zeroes NaN', async () => {
 
 		const data = new Float32Array( [ 1e6, - 1e6, NaN, 1 ] );
@@ -339,6 +353,75 @@ describe( 'encodeEXR', () => {
 		}
 
 		if ( typeof Float16Array === 'function' ) expect( await bitsOf( await import( '@/core/output/ImageEncoders.js' ) ) ).toEqual( want );
+
+	} );
+
+} );
+
+describe( 'exrCameraMatrices', () => {
+
+	// OpenEXR's reading: a row vector times the matrix (Imath, row-major), then divided by w.
+	function times( p, m ) {
+
+		const out = [ 0, 1, 2, 3 ].map( c => p[ 0 ] * m[ c ] + p[ 1 ] * m[ 4 + c ] + p[ 2 ] * m[ 8 + c ] + m[ 12 + c ] );
+		return out.slice( 0, 3 ).map( v => v / out[ 3 ] );
+
+	}
+
+	function placed( camera ) {
+
+		camera.position.set( 1.5, 2, 5 );
+		camera.lookAt( - 0.5, 0.25, 0 );
+		camera.updateMatrixWorld();
+		camera.updateProjectionMatrix();
+		return camera;
+
+	}
+
+	const along = ( camera, x, y, z ) => new Vector3( x, y, z ).applyMatrix4( camera.matrixWorld );
+
+	it( 'puts the camera space RenderMan\'s way: x right, y up, z ahead, distances kept', () => {
+
+		const camera = placed( new PerspectiveCamera( 40, 1.6, 0.1, 100 ) );
+		const { worldToCamera } = exrCameraMatrices( camera.matrixWorldInverse.elements, camera.projectionMatrix.elements );
+
+		expect( times( camera.position.toArray(), worldToCamera ).map( v => v + 0 ) ).toEqual( [ 0, 0, 0 ].map( v => expect.closeTo( v, 6 ) ) );
+		expect( times( along( camera, 0, 0, - 3 ).toArray(), worldToCamera ) ).toEqual( [ 0, 0, 3 ].map( v => expect.closeTo( v, 5 ) ) );
+		expect( times( along( camera, 2, - 1, - 4 ).toArray(), worldToCamera ) ).toEqual( [ 2, - 1, 4 ].map( v => expect.closeTo( v, 5 ) ) );
+
+	} );
+
+	it( 'maps the picture to NDC with (0, 0) at its top left, as three.js projects it', () => {
+
+		for ( const camera of [ placed( new PerspectiveCamera( 40, 1.6, 0.1, 100 ) ), placed( new OrthographicCamera( - 3, 2, 1.5, - 1, 0.1, 100 ) ) ] ) {
+
+			const { worldToNDC } = exrCameraMatrices( camera.matrixWorldInverse.elements, camera.projectionMatrix.elements );
+			let seed = 3;
+			const random = () => ( seed = ( seed * 16807 ) % 2147483647 ) / 2147483647;
+			for ( let i = 0; i < 50; i ++ ) {
+
+				const p = along( camera, random() * 4 - 2, random() * 3 - 1.5, - 0.5 - random() * 20 );
+				const ndc = p.clone().project( camera );
+				const [ x, y ] = times( p.toArray(), worldToNDC );
+				expect( x ).toBeCloseTo( ( ndc.x + 1 ) / 2, 5 );
+				expect( y ).toBeCloseTo( ( 1 - ndc.y ) / 2, 5 );
+
+			}
+
+			// The frustum's top-left and bottom-right corners, at any depth.
+			const corner = ( x, y ) => times( new Vector3( x, y, 0.3 ).unproject( camera ).toArray(), worldToNDC ).slice( 0, 2 );
+			expect( corner( - 1, 1 ) ).toEqual( [ 0, 0 ].map( v => expect.closeTo( v, 5 ) ) );
+			expect( corner( 1, - 1 ) ).toEqual( [ 1, 1 ].map( v => expect.closeTo( v, 5 ) ) );
+
+		}
+
+	} );
+
+	it( 'has no NDC matrix without a projection (a panorama)', () => {
+
+		const camera = placed( new PerspectiveCamera() );
+		const matrices = exrCameraMatrices( camera.matrixWorldInverse.elements, null );
+		expect( Object.keys( matrices ) ).toEqual( [ 'worldToCamera' ] );
 
 	} );
 

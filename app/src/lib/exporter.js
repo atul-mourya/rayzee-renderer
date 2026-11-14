@@ -145,7 +145,22 @@ export async function exportSavedRender( { id, canvas, format, quality = 0.92, s
 	}
 
 	const [ { EXRLoader }, { FloatType } ] = await Promise.all( [ import( 'three/examples/jsm/loaders/EXRLoader.js' ), import( 'three' ) ] );
-	const { data, width, height } = new EXRLoader().setDataType( FloatType ).parse( await exr.arrayBuffer() );
+	const bytes = await exr.arrayBuffer();
+	// three skips the camera matrices the engine writes (m44f), as it should, with a warning each.
+	const warn = console.warn;
+	console.warn = ( first, ...rest ) => String( first ).includes( '\'m44f\'' ) || warn( first, ...rest );
+	let parsed;
+	try {
+
+		parsed = new EXRLoader().setDataType( FloatType ).parse( bytes );
+
+	} finally {
+
+		console.warn = warn;
+
+	}
+
+	const { data, width, height } = parsed;
 	// The loader hands rows bottom first.
 	const rows = new Float32Array( data.length );
 	for ( let y = 0; y < height; y ++ ) rows.set( data.subarray( ( height - 1 - y ) * width * 4, ( height - y ) * width * 4 ), y * width * 4 );

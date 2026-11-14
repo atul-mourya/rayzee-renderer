@@ -271,6 +271,28 @@ export function warnOnce( logger, key, ...args ) {
 
 }
 
+/** Runs `fn` with console.warn dropping lines that contain `text`: a library's warning about something expected. */
+export function withoutWarning( text, fn ) {
+
+	const warn = console.warn;
+	console.warn = ( first, ...rest ) => {
+
+		if ( ! String( first ).includes( text ) ) warn( first, ...rest );
+
+	};
+
+	try {
+
+		return fn();
+
+	} finally {
+
+		console.warn = warn;
+
+	}
+
+}
+
 /** Level name to hand to a worker so its `debug` lines follow the main thread. */
 export function workerLogLevel() {
 

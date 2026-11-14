@@ -72,7 +72,16 @@ Public renderer methods for offline rendering and reproducible output — on `Ra
   pixel centre, past culled faces and alpha cut-outs, view-axis distance, 1e10 for sky, always float. A Display P3 PNG
   carries cICP and a generated ICC v4 profile; EXR/HDR record chromaticities, snapped to the standard gamut
   (`standardChromaticities`) since OCIO reports them adapted to D65. Render details go in as PNG iTXt / EXR attributes
-  (provenance without scene or adapter). `exportInfo()` says what can be written now. `bench:node` runs
+  (provenance without scene or adapter). An EXR also gets OpenEXR's `worldToCamera` / `worldToNDC` (m44f,
+  `exrCameraMatrices`), as ImfStandardAttributes.h defines them: RenderMan's camera space (+z ahead), NDC y down, Imath's
+  row vectors. pbrt-v4 writes its own column-vector matrices there, y up: its files read transposed and flipped by that
+  definition. Both come from the stage's traced copies (`cameraWorldMatrix`, `cameraProjectionMatrix`), the view as the
+  world matrix's full inverse: rays leave through it, scale included, so a camera on a scaled node maps exactly. No
+  `worldToNDC` for a panorama (pbrt writes none for its spherical camera either); its camera space is the frame its rays
+  are drawn in, the yaw alone for a lat-long levelling its horizon (`cameraRayDirection`). three's EXRLoader warns
+  once per m44f and skips it; the engine's decodes (`EXRDecode`, `EXRWorker`) and the app's drop that warning
+  (`withoutWarning`, `Logger.js`). `export-check` projects the ball's centre through the file's matrices onto the
+  depth layer. `exportInfo()` says what can be written now. `bench:node` runs
   `bench/tools/export-check.mjs`, which reads every file back. ⚠️ In TSL an arrow `() => Break()` emits `break;` twice.
 - **`await app.renderUntilComplete( { reset, denoise, signal, drainEvery, onProgress } )`** — the
   production counterpart of `renderFrames`: adaptive sampling stays on, the loop stops on the

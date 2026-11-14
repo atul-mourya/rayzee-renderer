@@ -23,6 +23,9 @@ Object.assign( globalThis, globals );
 const gpu = create( [] );
 Object.defineProperty( globalThis.navigator, 'gpu', { value: gpu, configurable: true } );
 configurePlatform( nodePlatform() );
+// three's EXRLoader skips OpenEXR's camera matrices (m44f), as it should, with a warning each.
+const warn = console.warn;
+console.warn = ( first, ...rest ) => String( first ).includes( '\'m44f\'' ) || warn( first, ...rest );
 
 const out = process.argv[ 2 ] ?? 'export-check';
 await mkdir( out, { recursive: true } );
@@ -144,6 +147,25 @@ for ( const [ x, y ] of [ [ width / 2, height - 1 ], [ 40, height - 5 ], [ width
 
 check( checked === 3 && depthWorst < 1e-4, `depth on the floor, through a culled wall and a cut-out, matches the analytic distance (worst relative ${depthWorst.toExponential( 2 )})` );
 check( layers[ 'depth.Z' ][ 0 ] === 1e10, 'depth of the sky is 1e10' );
+
+// OpenEXR's camera matrices: a point times the matrix (Imath), divided by w. The ball's centre lands on the pixel where the
+// depth layer shows its front, worldToCamera's z there being that depth; NDC (0, 0) is the picture's top left.
+const matrices = readEXRMatrices( exr.bytes );
+const times = ( p, m ) => {
+
+	const o = [ 0, 1, 2, 3 ].map( c => p[ 0 ] * m[ c ] + p[ 1 ] * m[ 4 + c ] + p[ 2 ] * m[ 8 + c ] + m[ 12 + c ] );
+	return o.slice( 0, 3 ).map( v => v / o[ 3 ] );
+
+};
+
+const centre = ball.position.clone();
+const [ u, v ] = times( centre.toArray(), matrices.worldToNDC );
+const [ px, py ] = [ Math.floor( u * width ), Math.floor( v * height ) ];
+const front = camera.position.clone().addScaledVector( centre.clone().sub( camera.position ).normalize(), centre.distanceTo( camera.position ) - 0.6 );
+const frontDepth = times( front.toArray(), matrices.worldToCamera )[ 2 ];
+const seen = layers[ 'depth.Z' ][ py * width + px ];
+check( Math.abs( seen - frontDepth ) / frontDepth < 2e-3 && frontDepth > 0, `exr worldToNDC puts the ball's centre at pixel ${px},${py}, where the depth layer shows its front (${seen.toFixed( 4 )}, worldToCamera z ${frontDepth.toFixed( 4 )})` );
+check( Object.values( matrices ).every( m => m.length === 16 ) && Object.keys( matrices ).join() === 'worldToCamera,worldToNDC', 'exr carries worldToCamera and worldToNDC as m44f' );
 const n = [ 'X', 'Y', 'Z' ].map( c => layers[ `normal.${c}` ][ ( height - 1 ) * width + width / 2 ] );
 check( Math.abs( n[ 1 ] - 1 ) < 0.01 && Math.abs( n[ 0 ] ) < 0.01, `the floor's normal is up (${n.map( v => v.toFixed( 3 ) )})` );
 const a = [ 'R', 'G', 'B' ].map( c => layers[ `albedo.${c}` ][ ( height - 1 ) * width + width / 2 ] );
@@ -196,6 +218,37 @@ await renderer.exportImage( { format: 'jpeg' } ).then( () => check( false, 'jpeg
 renderer.dispose();
 console.log( failures.length ? `\n${failures.length} failed` : '\nall passed' );
 process.exit( failures.length ? 1 : 0 );
+
+/** An EXR header's m44f attributes, sixteen floats each. */
+function readEXRMatrices( bytes ) {
+
+	const view = new DataView( bytes.buffer, bytes.byteOffset );
+	let at = 8;
+	const str = () => {
+
+		let end = at;
+		while ( bytes[ end ] ) end ++;
+		const s = Buffer.from( bytes.subarray( at, end ) ).toString();
+		at = end + 1;
+		return s;
+
+	};
+
+	const out = {};
+	for ( ;; ) {
+
+		const name = str();
+		if ( ! name ) break;
+		const type = str();
+		const size = view.getUint32( at, true );
+		if ( type === 'm44f' ) out[ name ] = Array.from( { length: 16 }, ( _, i ) => view.getFloat32( at + 4 + i * 4, true ) );
+		at += 4 + size;
+
+	}
+
+	return out;
+
+}
 
 /** A single-part scanline EXR's channels as Float32Arrays, top row first (ZIP or none). */
 function readEXRChannels( bytes ) {

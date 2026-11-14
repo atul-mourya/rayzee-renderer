@@ -1,4 +1,4 @@
-import { HalfFloatType, RenderTarget, FloatType, RGBAFormat, NearestFilter, DataUtils } from 'three';
+import { HalfFloatType, RenderTarget, FloatType, RGBAFormat, NearestFilter, DataUtils, Matrix4, Vector3 } from 'three';
 import { readPixels, TextureReadback } from './TextureReadback.js';
 import { toneMapToRGBA8, toneMapToRGBA16, toneMapToDisplayLinear } from './ToneMapCPU.js';
 import { whiteBalanceMatrix } from '../color/WhiteBalance.js';
@@ -6,6 +6,7 @@ import { PackedToneMapper } from './ToneMapGPU.js';
 import { EngineIssueError, ISSUE_CODES } from '../EngineIssues.js';
 import { VERSION } from '../Version.js';
 import { createLogger } from '../Logger.js';
+import { CAMERA_PROJECTION_IDS, isPanoramaProjection } from '../EngineDefaults.js';
 
 const log = createLogger( 'engine' );
 
@@ -230,7 +231,7 @@ export async function exportImage( app, { format = 'png', bitDepth = 8, quality 
 		colorSpace: read.displayColorSpace, source: read.source, passes: [], ...rest,
 	} );
 
-	if ( light ) return exportLight( app, encoders, file, { format, precision, asShown, colorSpace, passes, source, alpha, text } );
+	if ( light ) return exportLight( app, encoders, file, { format, precision, asShown, colorSpace, passes, source, alpha, text, camera: !! metadata } );
 
 	const heif = format === 'heic' || format === 'avif';
 	if ( heif || ( format === 'jpeg' && gainMap ) ) {
@@ -289,7 +290,7 @@ export function exportInfo( app ) {
 }
 
 /** EXR or Radiance HDR: scene-referred float, with the EXR's extra layers. @private */
-async function exportLight( app, encoders, file, { format, precision, asShown, colorSpace, passes, source, alpha, text } ) {
+async function exportLight( app, encoders, file, { format, precision, asShown, colorSpace, passes, source, alpha, text, camera } ) {
 
 	let read, delivered, chromaticities;
 	if ( asShown ) {
@@ -364,7 +365,47 @@ async function exportLight( app, encoders, file, { format, precision, asShown, c
 
 	}
 
-	return file( await encoders.encodeEXR( { width, height, channels, chromaticities, text } ), read, { ...result, passes: written } );
+	const matrices = camera ? cameraMatrices( app, encoders ) : {};
+	return file( await encoders.encodeEXR( { width, height, channels, chromaticities, text, matrices } ), read, { ...result, passes: written } );
+
+}
+
+/**
+ * OpenEXR's worldToCamera and worldToNDC for the camera as traced: the stage's copies, else the camera's. Rays leave
+ * through the world matrix, scale included, so its inverse maps them back exactly. A panorama has no NDC matrix, and its
+ * camera space is the frame its rays are drawn in: unit axes, the yaw alone while a lat-long levels its horizon
+ * (`cameraRayDirection`). @private
+ */
+function cameraMatrices( app, encoders ) {
+
+	const camera = app.camera;
+	if ( ! camera ) return {};
+	const stage = app.stages?.pathTracer;
+	const world = stage?.cameraWorldMatrix?.value ?? camera.matrixWorld;
+	const projection = stage?.cameraProjection?.value ?? CAMERA_PROJECTION_IDS[ app.settings.get( 'cameraProjection' ) ];
+	if ( ! isPanoramaProjection( projection ) ) {
+
+		const view = new Matrix4().copy( world ).invert();
+		return encoders.exrCameraMatrices( view.elements, ( stage?.cameraProjectionMatrix?.value ?? camera.projectionMatrix ).elements );
+
+	}
+
+	const [ right, up, back ] = [ new Vector3(), new Vector3(), new Vector3() ];
+	world.extractBasis( right, up, back );
+	const levelled = projection === CAMERA_PROJECTION_IDS.equirectangular && !! ( stage?.panoLevelHorizon?.value ?? app.settings.get( 'panoramaLevelHorizon' ) );
+	if ( levelled ) {
+
+		const mirrored = right.clone().cross( up ).dot( back ) < 0;
+		const flat = new Vector3( back.x, 0, back.z );
+		if ( flat.lengthSq() < 1e-8 ) flat.set( up.x, 0, up.z );
+		back.copy( flat );
+		up.set( 0, 1, 0 );
+		right.crossVectors( up, back.normalize() ).multiplyScalar( mirrored ? - 1 : 1 );
+
+	}
+
+	const frame = new Matrix4().makeBasis( right.normalize(), up.normalize(), back.normalize() ).setPosition( new Vector3().setFromMatrixPosition( world ) );
+	return encoders.exrCameraMatrices( frame.invert().elements, null );
 
 }
 

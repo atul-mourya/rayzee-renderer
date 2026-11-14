@@ -195,7 +195,7 @@ import { mergeRenders, compareImages } from 'rayzee';
 
 // File writers behind exportImage(), for pixels a host already has (see Saving a file)
 import {
-  IMAGE_FORMATS, encodePNG, encodeEXR, encodeHDR, encodeWithCanvas, encodeGainMapJPEG,
+  IMAGE_FORMATS, encodePNG, encodeEXR, encodeHDR, exrCameraMatrices, encodeWithCanvas, encodeGainMapJPEG,
   encodeStill, canEncodeStill, prepareStill,
 } from 'rayzee/encoders';
 

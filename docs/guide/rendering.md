@@ -267,7 +267,10 @@ engine.exportInfo();   // what can be written now: { width, height, upscaled, hd
   Node too. `canEncodeStill('heic')` from `rayzee/encoders` says whether this browser can write HEIC or AVIF.
 - Render details (samples, size, view, settings, versions) go into the file, except a WebP, unless `metadata: false`.
   An EXR's also say how its picture was shown (the exposure, auto exposure's included, local exposure and a held
-  backdrop). The file writers download on the first export, not at startup.
+  backdrop), and it carries OpenEXR's standard camera matrices, which Nuke and other compositors read: `worldToCamera`
+  (x right, y up, z ahead, as RenderMan's camera space) and `worldToNDC` (the picture from (0, 0) at its top left to
+  (1, 1) at its bottom right; none for a panorama). Both are Imath's layout: a point is a row vector times the matrix,
+  then divided by w. The file writers download on the first export, not at startup.
 - **Showing a saved EXR again.** `await engine.createPictureView(canvas)` (the viewer, `PathTracerApp`) gives a
   picture view on a canvas of your own; `await view.show(exrBlob)` draws the raw EXR exactly as an HDR screen showed it,
   through the same view, exposure and local exposure, and returns `{ shown, reason }` (`reason`: the screen shows no HDR,
@@ -281,7 +284,7 @@ The writers are also a module of their own, `rayzee/encoders`, for pixels a host
 package, not an add-on: nothing to install, and importing it loads nothing else (9 KB compressed).
 
 ```js
-import { encodePNG, encodeEXR, encodeHDR, IMAGE_FORMATS } from 'rayzee/encoders';
+import { encodePNG, encodeEXR, encodeHDR, exrCameraMatrices, IMAGE_FORMATS } from 'rayzee/encoders';
 
 const png = await encodePNG({ data, width, height });   // RGBA, Uint8Array (8 bits) or Uint16Array (16), top row first
 const hdr = await encodeHDR({ data: floats, width, height });   // RGBA Float32Array
@@ -289,8 +292,12 @@ const exr = await encodeEXR({ width, height, channels: [
   { name: 'R', data: floats, stride: 4, offset: 0 },
   { name: 'G', data: floats, stride: 4, offset: 1 },
   { name: 'B', data: floats, stride: 4, offset: 2 },
-] });
+], matrices: exrCameraMatrices(view, projection) });   // e.g. engine.getProvenance().camera's worldToCamera, projection
 ```
+
+`exrCameraMatrices(view, projection)` turns a three.js camera's matrices (column-major `elements`, looking down −z) into
+OpenEXR's `worldToCamera` and `worldToNDC` (no `worldToNDC` when `projection` is null); `matrices` writes any `{ name: 16 numbers }` as 4×4 float
+attributes in Imath's order. three.js's own EXR reader skips them with a warning each; the engine's readers stay quiet.
 
 Chrome on macOS takes about 5 seconds to start its first hardware video encoder after the browser launches, and about
 2 ms after that. HEIC and MP4 both use it. `prepareStill('heic')` starts it ahead of time without encoding anything,
