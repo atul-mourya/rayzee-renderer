@@ -23,7 +23,7 @@ import {
 	NumberKeyframeTrack, BooleanKeyframeTrack, DirectionalLight, PointLight, SpotLight, FrontSide, DoubleSide,
 	RepeatWrapping, UnsignedByteType
 } from 'three';
-import { blackbodyRGB, buildMaterial, pBool, pFloat, pString, resolveSpectrum, sampledEmissionRGB } from './PBRTMaterials.js';
+import { blackbodyRGB, buildMaterial, illuminantRGB, pBool, pFloat, pString, resolveSpectrum, sampledEmissionRGB } from './PBRTMaterials.js';
 import { makeLayer, layerMean, planBake, bakeRows, bakeResult, combineOf, namedScalars, productOf, mixOf, srgbToLinear, linearToSRGB, hasAlpha, generateUV, uvKey } from './PBRTTextureBake.js';
 import BakeWorker from './BakeWorker.js?worker&inline';
 import { loopSubdivide } from './LoopSubdivision.js';
@@ -56,11 +56,12 @@ const LAMP_TYPES = new Set( [ 'distant', 'point', 'spot' ] );
 async function lightRGB( params, name, ctx ) {
 
 	const p = param( params, name );
-	if ( p?.type === 'spectrum' && typeof p.value[ 0 ] === 'string' && p.value[ 0 ].startsWith( 'stdillum' ) ) {
+	if ( p?.type === 'spectrum' && typeof p.value[ 0 ] === 'string' && /^(stdillum|illum)-/.test( p.value[ 0 ] ) ) {
 
-		// CIE illuminant A is a 2856 K blackbody. pbrt's other tables (D50, F1–F12) are not kept: white.
-		if ( p.value[ 0 ] === 'stdillum-A' ) return blackbodyRGB( 2856 );
-		if ( p.value[ 0 ] !== 'stdillum-D65' ) approximated( params, name );
+		// pbrt's tables (A, D50, D65, F1–F12, ACES D60), each at luminance 1.
+		const rgb = illuminantRGB( p.value[ 0 ] );
+		if ( rgb ) return rgb;
+		approximated( params, name );
 		return [ 1, 1, 1 ];
 
 	}
@@ -141,7 +142,7 @@ const DEFAULT_CURVE_TOLERANCE = 0.05;
 const CURVE_SPLIT_CURVES = 20000;
 
 /** Bumped whenever the same scene files build a different graph, so a stored graph is not reused. */
-export const PBRT_BUILD_REVISION = 38;
+export const PBRT_BUILD_REVISION = 39;
 
 // Ptex pages: all of a scene's Ptex colour maps in this much texture memory at most, on square pages this size.
 const DEFAULT_PTEX_MEMORY = 1024 * 2 ** 20;
@@ -2825,8 +2826,8 @@ export class PBRTSceneBuilder {
 		}
 
 		const ctx = this._materialContext();
-		const a = ( await resolveSpectrum( params, 'sigma_a', ctx, [ 1, 1, 1 ] ) ).rgb;
-		const s = ( await resolveSpectrum( params, 'sigma_s', ctx, [ 1, 1, 1 ] ) ).rgb;
+		const a = ( await resolveSpectrum( params, 'sigma_a', ctx, [ 1, 1, 1 ], { bounded: false } ) ).rgb;
+		const s = ( await resolveSpectrum( params, 'sigma_s', ctx, [ 1, 1, 1 ], { bounded: false } ) ).rgb;
 		const scale = pFloat( params, 'scale', 1 );
 		const sigma = [ 0, 1, 2 ].map( ( c ) => ( a[ c ] + s[ c ] ) * scale );
 		const max = Math.max( ...sigma );
@@ -2930,7 +2931,8 @@ export class PBRTSceneBuilder {
 		} else if ( def.class === 'constant' ) {
 
 			// pbrt-v4's value is 1 when none is given (FloatConstantTexture / SpectrumConstantTexture::Create).
-			result = { constant: ( await resolveSpectrum( def.params, 'value', this._materialContext(), [ 1, 1, 1 ] ) ).rgb ?? [ 1, 1, 1 ] };
+			// Unclamped: a constant may feed σa, σs, η or k as well as a colour.
+			result = { constant: ( await resolveSpectrum( def.params, 'value', this._materialContext(), [ 1, 1, 1 ], { bounded: false } ) ).rgb ?? [ 1, 1, 1 ] };
 
 		} else if ( def.class === 'checkerboard' || def.class === 'bilerp' ) {
 

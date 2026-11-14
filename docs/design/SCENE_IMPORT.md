@@ -114,8 +114,14 @@ subtree per element, and the whole thing rarely fits: Moana is 29 GB unpacked.
   them; stored in the scene cache). A non-RGB light spectrum (blackbody, named, sampled) is brought to luminance 1 as
   pbrt does, in pbrt's colour: a blackbody (Planck's law) or sampled spectrum summed every 1 nm against CIE 1931
   (`emissionRGB`; blackbodies within 0.002 of pbrt-v4's own render from 1000 to 40000 K, a negative channel clipped to 0
-  as the engine cannot emit one), `stdillum-A` a 2856 K blackbody, `stdillum-D65` white. pbrt's other illuminant tables
-  (D50, F1–F12) are not kept: white, reported. `.pfm` images load (`addons/archives/pbrt/PFM.js`). An area light is
+  as the engine cannot emit one); the named illuminants (`stdillum-A`, `-D50`, `-F1` … `-F12`, `illum-acesD60`) from
+  pbrt-v4's own tables (`ILLUMINANTS`, PBRTMaterials.js), `stdillum-D65` exactly white (pbrt's sRGB is built on it).
+  Against a reference from pbrt's 1 nm CIE tables: within 0.003; illuminant A within 0.0005 of pbrt's render. Kept as
+  their RGB (`ILLUMINANT_RGB`), only D65's table in the bundle. A reflectance given as ( λ, value ) samples (0 outside
+  them, as pbrt's PiecewiseLinearSpectrum), or a blackbody read as a surface colour (the curve peaking at 1, Wien's λ),
+  is what it reflects under a white light as an RGB film shows it: XYZ( r · D65 ) / Y( D65 ) (`reflectanceRGB`), each
+  wavelength clamped to [0, 1] as pbrt's materials clamp it; coefficients (σa, σs, mfp, a constant texture) unclamped.
+  A conductor's sampled η and k go through the normal-incidence Fresnel a wavelength at a time. `.pfm` images load (`addons/archives/pbrt/PFM.js`). An area light is
   one-sided unless `"bool twosided"`: a surface on both faces (`DoubleSide`) emitting from its front (`emissiveSide:
   FrontSide`), so from behind it is dark, never a hole, as in pbrt; its triangles rewound to face the vertex normals, or
   turned over by ReverseOrientation where it has none (`_facingEmission`). An area light's `power` scales its radiance

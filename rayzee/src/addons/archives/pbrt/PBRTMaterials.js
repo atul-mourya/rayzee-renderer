@@ -123,9 +123,48 @@ const CIE_1931 = [
 
 const XYZ_TO_REC709 = [ 3.2404542, - 1.5371385, - 0.4985314, - 0.9692660, 1.8760108, 0.0415560, 0.0556434, - 0.2040259, 1.0572252 ];
 
-// An emission spectrum s( λ nm ) as pbrt's default sensor sees it: linear Rec.709 at luminance 1, negatives clipped.
-// Summed every 1 nm: 5 nm steps miss a band's hard edges.
-function emissionRGB( s ) {
+// pbrt-v4's D65 table (src/pbrt/util/spectrum.cpp): the first wavelength in nm, then a value every 5 nm. The white a
+// reflectance is seen under.
+const D65_TABLE = [ 300, 0.0341, 1.6643, 3.2945, 11.765, 20.236, 28.645, 37.054, 38.501, 39.949, 42.43, 44.912, 45.775, 46.638, 49.364, 52.089, 51.032, 49.975, 52.312, 54.648, 68.701, 82.755, 87.12, 91.486, 92.459, 93.432, 90.057, 86.682, 95.774, 104.86, 110.94, 117.01, 117.41, 117.81, 116.34, 114.86, 115.39, 115.92, 112.37, 108.81, 109.08, 109.35, 108.58, 107.8, 106.3, 104.79, 106.24, 107.69, 106.05, 104.4, 104.22, 104.05, 102.02, 100, 98.167, 96.334, 96.061, 95.788, 92.237, 88.686, 89.346, 90.006, 89.803, 89.599, 88.649, 87.699, 85.494, 83.289, 83.494, 83.699, 81.863, 80.027, 80.121, 80.215, 81.246, 82.278, 80.281, 78.284, 74.003, 69.721, 70.665, 71.609, 72.979, 74.349, 67.977, 61.604, 65.745, 69.886, 72.486, 75.087, 69.34, 63.593, 55.005, 46.418, 56.612, 66.805, 65.094, 63.383, 63.843, 64.304, 61.878, 59.452, 55.705, 51.959, 54.7, 57.441, 58.876, 60.312 ];
+
+// pbrt-v4's other named illuminants as a light shows them (their tables through emissionRGB, at luminance 1); D65 is
+// exactly white, pbrt's sRGB being built on it.
+const ILLUMINANT_RGB = {
+	'stdillum-D65': [ 1, 1, 1 ],
+	'stdillum-A': [ 1.84527, 0.826118, 0.233466 ],
+	'stdillum-D50': [ 1.086816, 0.999465, 0.749663 ],
+	'illum-acesD60': [ 1.047073, 0.994546, 0.915416 ],
+	'stdillum-F1': [ 0.953707, 1.019564, 0.942514 ],
+	'stdillum-F2': [ 1.339282, 0.943359, 0.562031 ],
+	'stdillum-F3': [ 1.575461, 0.891514, 0.380144 ],
+	'stdillum-F4': [ 1.805109, 0.834737, 0.266341 ],
+	'stdillum-F5': [ 0.914967, 1.036452, 0.889304 ],
+	'stdillum-F6': [ 1.315431, 0.958147, 0.485769 ],
+	'stdillum-F7': [ 1.000163, 1.000337, 0.996178 ],
+	'stdillum-F8': [ 1.176732, 0.975815, 0.719166 ],
+	'stdillum-F9': [ 1.376719, 0.931575, 0.568522 ],
+	'stdillum-F10': [ 1.176478, 0.976085, 0.717241 ],
+	'stdillum-F11': [ 1.410726, 0.925289, 0.530647 ],
+	'stdillum-F12': [ 1.766656, 0.845767, 0.270309 ],
+};
+
+// A table as a spectrum: linear between its samples, held at its ends (pbrt's PiecewiseLinearSpectrum::FromInterleaved).
+function tableSpectrum( t ) {
+
+	const last = t.length - 2;
+	return ( lambda ) => {
+
+		const f = Math.min( Math.max( ( lambda - t[ 0 ] ) / 5, 0 ), last );
+		const i = Math.min( Math.floor( f ), last - 1 );
+		return t[ 1 + i ] + ( t[ 2 + i ] - t[ 1 + i ] ) * ( f - i );
+
+	};
+
+}
+
+// A spectrum s( λ nm ) to linear Rec.709 through the CIE 1931 observer, summed every 1 nm (5 nm steps miss a band's
+// hard edges).
+function spectrumRGB( s ) {
 
 	let x = 0, y = 0, z = 0;
 	for ( let lambda = 360; lambda <= 830; lambda ++ ) {
@@ -140,10 +179,42 @@ function emissionRGB( s ) {
 	}
 
 	const m = XYZ_TO_REC709;
-	const rgb = [ 0, 3, 6 ].map( r => m[ r ] * x + m[ r + 1 ] * y + m[ r + 2 ] * z );
-	const lum = 0.2126 * rgb[ 0 ] + 0.7152 * rgb[ 1 ] + 0.0722 * rgb[ 2 ];
+	return [ 0, 3, 6 ].map( r => m[ r ] * x + m[ r + 1 ] * y + m[ r + 2 ] * z );
+
+}
+
+const luminance = ( rgb ) => 0.2126 * rgb[ 0 ] + 0.7152 * rgb[ 1 ] + 0.0722 * rgb[ 2 ];
+
+// An emission spectrum as pbrt's default sensor sees it: linear Rec.709 at luminance 1, negatives clipped.
+function emissionRGB( s ) {
+
+	const rgb = spectrumRGB( s );
+	const lum = luminance( rgb );
 	// Clipped after: pbrt's luminance counts the negative channel, and its picture shows the others at that brightness.
 	return lum > 0 ? rgb.map( v => Math.max( 0, v / lum ) ) : [ 0, 0, 0 ];
+
+}
+
+const D65 = tableSpectrum( D65_TABLE );
+const D65_LUMINANCE = /*@__PURE__*/ luminance( spectrumRGB( D65 ) );
+
+// A reflectance spectrum as an RGB film shows it under a white (D65) light: XYZ( r · D65 ) / Y( D65 ), negatives
+// clipped. `bounded` clamps each wavelength to [0, 1] first, as pbrt's materials clamp a reflectance; a coefficient
+// (σa, σs, a mean free path) is weighed the same way, unclamped.
+function reflectanceRGB( s, bounded = true ) {
+
+	const r = bounded ? ( lambda ) => Math.min( 1, Math.max( 0, s( lambda ) ) ) : s;
+	return spectrumRGB( ( lambda ) => r( lambda ) * D65( lambda ) ).map( ( v ) => Math.max( 0, v / D65_LUMINANCE ) );
+
+}
+
+// Inline ( λ value ) samples as pbrt reads them: linear between, 0 outside (PiecewiseLinearSpectrum).
+const sampledSpectrum = ( v ) => ( lambda ) => ( lambda < v[ 0 ] || lambda > v[ v.length - ( v.length % 2 ) - 2 ] ? 0 : spectrumAt( v, lambda ) );
+
+/** A pbrt light spectrum by name (`stdillum-A`, `-D50`, `-D65`, `-F1` … `-F12`, `illum-acesD60`) at luminance 1, or null. */
+export function illuminantRGB( name ) {
+
+	return ILLUMINANT_RGB[ name ]?.slice() ?? null;
 
 }
 
@@ -151,7 +222,7 @@ function emissionRGB( s ) {
 export const blackbodyRGB = ( kelvin ) => emissionRGB( lambda => 1 / ( ( lambda / 100 ) ** 5 * Math.expm1( 1.4387769e7 / ( lambda * kelvin ) ) ) );
 
 // pbrt's sampled spectrum: 0 outside its samples (spectrumAt holds the end values, as an eta wants).
-export const sampledEmissionRGB = ( v ) => emissionRGB( lambda => lambda < v[ 0 ] || lambda > v[ v.length - ( v.length % 2 ) - 2 ] ? 0 : spectrumAt( v, lambda ) );
+export const sampledEmissionRGB = ( v ) => emissionRGB( sampledSpectrum( v ) );
 
 // ── param accessors ────────────────────────────────────────────────
 
@@ -224,9 +295,10 @@ export function pBool( params, name, dflt ) {
 /**
  * Resolve a spectrum/color/float-valued parameter to an RGB triple and/or a
  * texture. Returns `{ rgb, texture }` — exactly one is typically non-null.
+ * `bounded` false for a coefficient (σa, σs, mfp), which a sampled spectrum may give past 1.
  * @returns {Promise<{rgb:number[]|null, texture:import('three').Texture|null}>}
  */
-export async function resolveSpectrum( params, name, ctx, dfltRGB = null ) {
+export async function resolveSpectrum( params, name, ctx, dfltRGB = null, { bounded = true } = {} ) {
 
 	const p = param( params, name );
 	if ( ! p ) return { rgb: dfltRGB, texture: null };
@@ -259,20 +331,21 @@ export async function resolveSpectrum( params, name, ctx, dfltRGB = null ) {
 
 	if ( p.type === 'blackbody' ) {
 
-		// A light's is exact (lightRGB); pbrt reads any other as a reflectance, the curve peaking at 1.
-		approximated( params, name );
-		const rgb = blackbodyRGB( p.value[ 0 ] );
-		const max = Math.max( ...rgb );
-		return { rgb: max > 0 ? rgb.map( v => v / max ) : rgb, texture: null };
+		// A light's is lightRGB's; pbrt reads any other as a reflectance, the curve peaking at 1 (Wien's λ).
+		const kelvin = p.value[ 0 ];
+		if ( ! ( kelvin > 0 ) ) return { rgb: [ 0, 0, 0 ], texture: null };
+		const planck = ( lambda ) => 1 / ( ( lambda / 100 ) ** 5 * Math.expm1( 1.4387769e7 / ( lambda * kelvin ) ) );
+		const peak = planck( 2.8977721e6 / kelvin );
+		return { rgb: reflectanceRGB( ( lambda ) => planck( lambda ) / peak ), texture: null };
 
 	}
 
 	if ( p.type === 'spectrum' ) {
 
 		// Named spectrum (e.g. "metal-Au-eta") or sampled [lambda val ...].
-		approximated( params, name );
 		if ( typeof p.value[ 0 ] === 'string' ) {
 
+			approximated( params, name );
 			const key = namedMetalKey( p.value[ 0 ] );
 			if ( key && METAL_ALBEDO[ key ] ) return { rgb: METAL_ALBEDO[ key ].slice(), texture: null };
 			ctx.warn( `named spectrum "${p.value[ 0 ]}" approximated to gray` );
@@ -280,16 +353,9 @@ export async function resolveSpectrum( params, name, ctx, dfltRGB = null ) {
 
 		}
 
-		// Sampled spectrum → average value as gray (coarse).
-		let sum = 0, count = 0;
-		for ( let i = 1; i < p.value.length; i += 2 ) {
-
-			sum += p.value[ i ]; count ++;
-
-		}
-
-		const v = count ? sum / count : 0.5;
-		return { rgb: [ v, v, v ], texture: null };
+		// ( λ value ) samples: the colour they reflect under a white light, as pbrt's RGB film shows it.
+		if ( p.value.length < 2 ) return { rgb: dfltRGB ?? [ 0.5, 0.5, 0.5 ], texture: null };
+		return { rgb: reflectanceRGB( sampledSpectrum( p.value ), bounded ), texture: null };
 
 	}
 
@@ -389,7 +455,7 @@ async function spectrumMean( params, key, ctx, dflt ) {
 
 	}
 
-	return ( await resolveSpectrum( params, key, ctx, dflt ) ).rgb ?? dflt;
+	return ( await resolveSpectrum( params, key, ctx, dflt, { bounded: key === 'reflectance' } ) ).rgb ?? dflt;
 
 }
 
@@ -476,6 +542,7 @@ const oneMapping = ( a, b ) => a === b || ( a.repeat.x === ( b?.repeat.x ?? 1 ) 
 // pbrt-v4's default conductor, copper, as RGB.
 const COPPER_ETA = [ 0.2, 0.92, 1.1 ], COPPER_K = [ 3.9, 2.45, 2.14 ];
 const isNamedSpectrum = ( p ) => p?.type === 'spectrum' && typeof p.value[ 0 ] === 'string';
+const sampled = ( p ) => p?.type === 'spectrum' && typeof p.value[ 0 ] === 'number' && p.value.length >= 2;
 
 // A conductor's colour: `reflectance`; else the metal table for a named eta or k — exact for one metal's pair, and
 // standing for that metal's eta and k alike when alone (another metal's, or a number, beside it is unused); else
@@ -508,13 +575,36 @@ async function applyConductorColor( mat, params, ctx, prefix, applyAlbedo, setCo
 
 		}
 
+	} else if ( sampled( etaP ) || sampled( kP ) ) {
+
+		// pbrt's Fresnel at normal incidence at each wavelength, seen as a reflectance under white. η and k hold their end
+		// values outside their samples (a measured metal's cover the visible range); the other, if plain, is constant.
+		const along = async ( key, dflt ) => {
+
+			const p = param( params, key );
+			if ( sampled( p ) ) return ( lambda ) => spectrumAt( p.value, lambda );
+			const rgb = p ? ( await resolveSpectrum( params, key, ctx, dflt, { bounded: false } ) ).rgb ?? dflt : dflt;
+			if ( ! p || p.type === 'texture' ) approximated( params, key );
+			const mean = ( rgb[ 0 ] + rgb[ 1 ] + rgb[ 2 ] ) / 3;
+			return () => mean;
+
+		};
+
+		const eta = await along( etaKey, COPPER_ETA ), k = await along( kKey, COPPER_K );
+		setColor( reflectanceRGB( ( lambda ) => {
+
+			const n = eta( lambda ), kk = k( lambda );
+			return ( ( n - 1 ) ** 2 + kk ** 2 ) / ( ( n + 1 ) ** 2 + kk ** 2 );
+
+		} ) );
+
 	} else if ( etaP || kP ) {
 
 		// ((η-1)²+k²)/((η+1)²+k²); a texture's mean is not read here, so it takes copper's value.
 		const measured = async ( key, dflt ) => {
 
 			if ( ! params[ key ] ) return dflt;
-			const { rgb, texture } = await resolveSpectrum( params, key, ctx, dflt );
+			const { rgb, texture } = await resolveSpectrum( params, key, ctx, dflt, { bounded: false } );
 			if ( texture || ! rgb ) approximated( params, key );
 			return ( ! texture && rgb ) || dflt;
 

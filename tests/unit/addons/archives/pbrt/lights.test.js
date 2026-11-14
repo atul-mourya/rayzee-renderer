@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { DirectionalLight, PointLight, SpotLight, Vector3 } from 'three';
 import { loadPBRTScene } from '@/core/addons/archives/pbrt/index.js';
 import { decodePFM } from '@/core/addons/archives/pbrt/PFM.js';
-import { blackbodyRGB, sampledEmissionRGB } from '@/core/addons/archives/pbrt/PBRTMaterials.js';
+import { blackbodyRGB, resolveSpectrum, sampledEmissionRGB } from '@/core/addons/archives/pbrt/PBRTMaterials.js';
 
 const enc = new TextEncoder();
 
@@ -99,14 +99,46 @@ describe( 'pbrt lights', () => {
 
 	} );
 
-	// pbrt would reflect the curve itself, peaking at 1; kept as the hue, and reported.
-	it( 'gives a blackbody read as a surface colour its hue at most 1, reported', async () => {
+	// pbrt reflects the curve itself, peaking at 1 (at 2300 K in the infrared: dark), as an RGB film shows it under D65.
+	// Reference: pbrt-v4's 1 nm CIE tables and D65 table, sRGB from its primaries (night 2026-11-14 reference.py).
+	it( 'gives a blackbody or sampled spectrum read as a surface colour what it reflects under a white light', async () => {
 
 		const { group, parameters } = await build( `Material "diffuse" "blackbody reflectance" [ 2300 ]` );
 		const { color } = group.getObjectByProperty( 'isMesh', true ).material;
-		const want = PBRT_BLACKBODY[ 2300 ].map( v => v / PBRT_BLACKBODY[ 2300 ][ 0 ] );
-		expectRGB( [ color.r, color.g, color.b ], want, 0.002 );
-		expect( parameters.approximated ).toEqual( { 'Material diffuse: reflectance': 1 } );
+		expectRGB( [ color.r, color.g, color.b ], [ 0.23479, 0.09354, 0.01425 ], 0.002 );
+		expect( parameters.approximated ).toEqual( {} );
+
+		const colour = async ( material ) => {
+
+			const built = await build( `Material ${material}` );
+			const c = built.group.getObjectByProperty( 'isMesh', true ).material.color;
+			return { rgb: [ c.r, c.g, c.b ], approximated: built.parameters.approximated };
+
+		};
+
+		const sampled = await colour( '"diffuse" "spectrum reflectance" [ 400 0.1 500 0.8 600 0.3 700 0.9 ]' );
+		expectRGB( sampled.rgb, [ 0.28405, 0.61463, 0.46904 ], 0.002 );
+		expect( sampled.approximated ).toEqual( {} );
+		// 0 outside its samples, as pbrt's PiecewiseLinearSpectrum: a 500–600 nm band is green-yellow, not grey.
+		expectRGB( ( await colour( '"diffuse" "spectrum reflectance" [ 500 0.5 600 0.5 ]' ) ).rgb, [ 0.10652, 0.5146, 0 ], 0.002 );
+		// Clamped a wavelength at a time, as pbrt's diffuse clamps it: green stays past 1.
+		expectRGB( ( await colour( '"diffuse" "spectrum reflectance" [ 400 0.5 550 1.5 700 0.5 ]' ) ).rgb, [ 0.93672, 1.02378, 0.82564 ], 0.003 );
+		// A conductor's measured η and k: pbrt's Fresnel at normal incidence a wavelength at a time (k past 1 kept).
+		const metal = await colour( '"conductor" "spectrum eta" [ 400 0.2 700 0.2 ] "spectrum k" [ 400 3.9 700 3.9 ]' );
+		expectRGB( metal.rgb, [ 0.95195, 0.95195, 0.95195 ], 0.002 );
+		expect( metal.approximated ).toEqual( {} );
+		expectRGB( ( await colour( '"conductor" "spectrum eta" [ 400 0.2 700 1.2 ] "spectrum k" [ 400 3 700 4 ]' ) ).rgb, [ 0.77982, 0.81758, 0.88233 ], 0.003 );
+		// Steep, as a measured metal's: per wavelength 0.874, 0.493, 0.225; Fresnel on each channel's mean would give
+		// 0.850, 0.499, 0.242.
+		expectRGB( ( await colour( '"conductor" "spectrum eta" [ 400 3 700 0.2 ] "spectrum k" [ 400 0.2 700 5 ]' ) ).rgb, [ 0.87434, 0.49296, 0.22451 ], 0.004 );
+
+		// A coefficient is not a reflectance: a flat σa of 2 stays 2; read as a reflectance, it is white.
+		const flat = { sigma_a: { type: 'spectrum', value: [ 360, 2, 830, 2 ] } };
+		expectRGB( ( await resolveSpectrum( flat, 'sigma_a', {}, null, { bounded: false } ) ).rgb, [ 2, 2, 2 ], 0.004 );
+		expectRGB( ( await resolveSpectrum( flat, 'sigma_a', {}, null ) ).rgb, [ 1, 1, 1 ], 0.002 );
+
+		// 6500 K: the curve stays at or below 1, its colour's blue a little past it, as in pbrt.
+		expectRGB( ( await colour( '"diffuse" "blackbody reflectance" [ 6500 ]' ) ).rgb, [ 0.75594, 0.91941, 1.00713 ], 0.002 );
 
 	} );
 
@@ -151,8 +183,33 @@ describe( 'pbrt lights', () => {
 		const d65 = await colour( '"spectrum I" "stdillum-D65"' );
 		expectRGB( d65.rgb, [ 1, 1, 1 ], 1e-6 );
 		expect( d65.approximated ).toEqual( {} );
-		// pbrt's F2 is not white; its table is not kept, so the lamp is white and says so.
-		expect( ( await colour( '"spectrum I" "stdillum-F2"' ) ).approximated ).toEqual( { 'LightSource point: I': 1 } );
+		// pbrt's other tables: reference from its 1 nm CIE tables (night 2026-11-14 reference.py; A there 1.84504 0.82607
+		// 0.23337 against pbrt's render above).
+		for ( const [ name, want ] of [
+			[ 'stdillum-A', [ 1.84504, 0.82607, 0.23337 ]],
+			[ 'stdillum-D50', [ 1.08658, 0.99951, 0.74971 ]],
+			[ 'illum-acesD60', [ 1.04691, 0.99457, 0.91553 ]],
+			[ 'stdillum-F1', [ 0.95426, 1.01929, 0.94367 ]],
+			[ 'stdillum-F2', [ 1.34006, 0.94299, 0.56285 ]],
+			[ 'stdillum-F3', [ 1.57639, 0.89107, 0.38089 ]],
+			[ 'stdillum-F4', [ 1.80626, 0.8342, 0.26707 ]],
+			[ 'stdillum-F5', [ 0.91539, 1.03623, 0.89032 ]],
+			[ 'stdillum-F6', [ 1.31608, 0.95783, 0.4865 ]],
+			[ 'stdillum-F7', [ 1.00031, 1.00017, 0.9974 ]],
+			[ 'stdillum-F8', [ 1.17666, 0.97572, 0.72009 ]],
+			[ 'stdillum-F9', [ 1.37682, 0.9314, 0.56935 ]],
+			[ 'stdillum-F10', [ 1.17755, 0.97562, 0.71836 ]],
+			[ 'stdillum-F11', [ 1.41209, 0.92473, 0.53156 ]],
+			[ 'stdillum-F12', [ 1.76843, 0.84507, 0.27085 ]],
+		] ) {
+
+			const lamp = await colour( `"spectrum I" "${name}"` );
+			expectRGB( lamp.rgb, want, 0.003 );
+			expect( lamp.approximated ).toEqual( {} );
+
+		}
+
+		expect( ( await colour( '"spectrum I" "stdillum-Z9"' ) ).approximated ).toEqual( { 'LightSource point: I': 1 } );
 
 	} );
 

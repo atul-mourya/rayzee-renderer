@@ -1044,6 +1044,22 @@ describe( 'PBRT scene builder: pbrt-v4 fidelity', () => {
 
 	} );
 
+	it( 'reads a medium\'s sampled σ as a coefficient, past 1, never clamped as a colour', async () => {
+
+		const { meshes } = await meshesOf( `
+			MakeNamedMedium "ink" "string type" "homogeneous" "spectrum sigma_a" [ 400 4 700 4 ] "spectrum sigma_s" [ 400 0 700 0 ]
+			Material "dielectric"
+			AttributeBegin
+				MediumInterface "ink" ""
+				Shape "trianglemesh" ${TRI}
+			AttributeEnd
+		` );
+
+		// σt 4 a unit, flat: distance 1/4 (clamped as a colour it would be 1).
+		expect( meshes[ 0 ].material.attenuationDistance ).toBeCloseTo( 0.25, 2 );
+
+	} );
+
 	it( 'fills glass with its interior medium as attenuation', async () => {
 
 		const { meshes } = await meshesOf( `

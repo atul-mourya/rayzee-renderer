@@ -226,9 +226,8 @@
 - [ ] **Single-sheet dielectric**: kroken's picture glass is one quad of `dielectric`; the card behind it renders very
   noisy at 512 spp and OIDN turns the noise into a bumpy texture. See Known → `thickness` / thin-walled; check how the
   medium stack treats an open sheet against pbrt's per-interface orientation.
-- [ ] **Spectra, what is left**: pbrt's illuminant tables other than A and D65 (D50, F1–F12, `illum-acesD60`) and
-  spectra read from a file light white (reported); a reflectance given as ( λ, value ) samples reads as its mean grey,
-  and a blackbody one as its hue at 1 (pbrt reflects the curve itself, peaking at 1).
+- [ ] **Spectra, what is left**: a spectrum read from a file (a light's lights white, reported; a reflectance reads
+  grey); a named illuminant used as a reflectance reads grey.
 - [ ] **A second infinite light** is dropped; the engine has one environment. Not a loss in watercolor (checked
   2026-11-08): its two are the same image and scale, each limited to one window by `portal` (pbrt's
   `PortalImageInfiniteLight::Le` is 0 outside it), and one environment with the portal ignored lights both windows
