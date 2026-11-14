@@ -6,61 +6,120 @@
 	<meta name="viewport" content="width=device-width, initial-scale=1.0">
 	<meta name="description" content="Rayzee: a real-time path tracer in the browser. How to use the app, how to build on the engine, and how it works inside.">
 	<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='9' fill='%2352d1e9'/%3E%3C/svg%3E">
-	<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/docsify@4.13.1/lib/themes/dark.css">
+	<link rel="stylesheet" id="theme-light" href="https://cdn.jsdelivr.net/npm/docsify@4.13.1/lib/themes/vue.css">
+	<link rel="stylesheet" id="theme-dark" href="https://cdn.jsdelivr.net/npm/docsify@4.13.1/lib/themes/dark.css" disabled>
+	<script>
+		// Before the page draws, so the other theme never flashes.
+		function applyDocsTheme( theme ) {
+
+			document.documentElement.dataset.theme = theme;
+			document.getElementById( 'theme-light' ).disabled = theme !== 'light';
+			document.getElementById( 'theme-dark' ).disabled = theme !== 'dark';
+
+		}
+
+		( function () {
+
+			var stored = null;
+			try { stored = localStorage.getItem( 'rayzee-docs-theme' ); } catch ( e ) {}
+			applyDocsTheme( stored === 'dark' ? 'dark' : 'light' );
+
+		} )();
+	</script>
 	<style>
-		/* The app's dark theme (app/src/index.css). */
+		/* Dark takes the app's colours (app/src/index.css). */
+		:root { --theme-color: #2563eb; --line: #eaecef; --card: #fff; }
+		.markdown-section { max-width: min(80%, 960px); }
+		.markdown-section img { border-radius: 6px; }
+		/* Code as docsify 5 draws it (docsify.js.org). */
 		:root {
+			--code-bg: #f5f6f7;
+			--code-comment: #6e8090;
+			--code-function: #dd4a68;
+			--code-important: #c94922;
+			--code-keyword: #07a;
+			--code-operator: #a67f59;
+			--code-punctuation: #999;
+			--code-selector: #690;
+			--code-tag: #905;
+			--code-variable: #e90;
+		}
+		.markdown-section code, .markdown-section pre { border-radius: 3px; background-color: var(--code-bg); color: inherit; font-family: ui-monospace, "Cascadia Code", "Source Code Pro", Menlo, Consolas, "DejaVu Sans Mono", monospace; font-size: .875rem; }
+		.markdown-section code { margin: 0 .1em; padding: .2em .35em; }
+		.markdown-section pre { padding: 0; line-height: 1.6; }
+		.markdown-section > :not(h1):not(h2):not(h3):not(h4):not(h5):not(h6) code { font-size: .875rem; }
+		.markdown-section pre > code { overflow: auto; margin: 0; padding: 1.5rem; background: transparent; color: inherit; font-family: inherit; }
+		.markdown-section pre::after { top: .5rem; right: .5rem; height: auto; padding: 0; color: inherit; font-family: "Source Sans Pro", "Helvetica Neue", Arial, sans-serif; font-size: 11px; font-weight: 400; letter-spacing: .02em; line-height: 1; opacity: .5; }
+		.token.boolean, .token.constant, .token.deleted, .token.number, .token.property, .token.symbol, .token.tag { color: var(--code-tag); }
+		.token.attr-name, .token.builtin, .token.char, .token.inserted, .token.selector, .token.string { color: var(--code-selector); }
+		.language-css .token.string, .style .token.string, .token.entity, .token.operator, .token.url { color: var(--code-operator); }
+		.token.cdata, .token.comment, .token.doctype, .token.prolog { color: var(--code-comment); }
+		.token.atrule, .token.attr-value, .token.keyword { color: var(--code-keyword); }
+		.token.important, .token.regex, .token.variable { color: var(--code-variable); }
+		.token.function { color: var(--code-function); }
+		.token.important { color: var(--code-important); }
+		.token.punctuation { color: var(--code-punctuation); }
+		.token.control, .token.directive, .token.unit, .token.placeholder, .token.statement { color: inherit; }
+		.markdown-section pre.mermaid { background: none; border: none; text-align: center; }
+		.markdown-section .page-edit { margin: 0; text-align: right; font-size: 14px; }
+		.markdown-section .page-edit a { font-weight: 400; }
+		.sidebar-nav > ul > li > strong { display: block; margin-top: 18px; }
+		.app-nav .theme-switch { margin-left: 1rem; padding-left: 1rem; border-left: 1px solid var(--line); }
+		.app-nav button { background: none; border: 0; color: inherit; cursor: pointer; font: inherit; font-size: 16px; margin: 0 0 0 .75rem; padding: 5px 0; }
+		.app-nav button:first-child { margin-left: 0; }
+		.app-nav button:hover, .app-nav button[aria-pressed="true"] { color: var(--theme-color); }
+		.doors { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; margin: 1.5em 0; }
+		.door { border: 1px solid var(--line); border-radius: 8px; padding: 4px 20px 12px; background: var(--card); }
+		.door:hover { border-color: var(--theme-color); }
+		.door h2 { margin-top: 20px; }
+		@media (max-width: 768px) {
+			.markdown-section { max-width: none; padding: 20px 16px 40px; }
+			.app-nav > a { display: none; }
+			.app-nav .theme-switch { border-left: 0; padding-left: 0; }
+		}
+
+		html[data-theme="dark"] {
+			color-scheme: dark;
 			--theme-color: #3b82f6;
 			--bg: #181b20;
-			--panel: #181b20;
 			--raised: #1e293b;
 			--line: #1e293b;
+			--card: #181b20;
 			--text: #f8fafc;
 			--muted: #94a3b8;
 			--heading: #f8fafc;
+			--code-bg: #23262b;
+			--code-comment: #516e7a;
+			--code-function: #f07178;
+			--code-keyword: #c2e78c;
+			--code-operator: #ffcb6b;
+			--code-punctuation: #89ddff;
+			--code-selector: #ffcb6b;
+			--code-tag: #f07178;
+			--code-variable: #ffcb6b;
+
+			body, .sidebar { background-color: var(--bg); color: var(--text); }
+			.sidebar { border-right: 1px solid var(--line); }
+			.sidebar-toggle, body.close .sidebar-toggle { background-color: rgba(24, 27, 32, .9); }
+			.sidebar > h1 a { color: var(--heading); }
+			.sidebar ul li a { color: var(--text); }
+			.sidebar ul li a:hover, .sidebar ul li.active > a { color: var(--theme-color); }
+			.sidebar-nav > ul > li > strong { color: var(--heading); }
+			.markdown-section h1, .markdown-section h2, .markdown-section h3, .markdown-section h4, .markdown-section strong { color: var(--heading); }
+			.markdown-section blockquote { color: var(--muted); }
+			.markdown-section hr { border-bottom-color: var(--line); }
+			.markdown-section td, .markdown-section th { border-color: var(--line); }
+			.markdown-section tr { border-top-color: var(--line); }
+			.markdown-section tr:nth-child(2n) { background-color: var(--raised); }
+			.markdown-section kbd { border-color: var(--line); background: var(--raised); color: var(--heading); }
+			.markdown-section p.tip { background-color: var(--raised); color: var(--text); }
+			.markdown-section p.tip code { background-color: var(--bg); }
+			.markdown-section p.warn { background: rgba(238, 177, 84, .1); color: var(--text); }
+			input[type=search] { background: var(--raised); border-color: var(--line); color: var(--text); }
+			.search { border-bottom-color: var(--line); }
+			.app-nav a { color: var(--text); }
+			.app-nav li ul { background-color: var(--bg); border-color: var(--line); }
 		}
-		body, .sidebar { background-color: var(--bg); color: var(--text); }
-		.sidebar { background-color: var(--panel); border-right: 1px solid var(--line); }
-		.sidebar-toggle, body.close .sidebar-toggle { background-color: rgba(24, 27, 32, .9); }
-		.sidebar > h1 a { color: var(--heading); font-weight: 600; letter-spacing: .02em; }
-		.sidebar ul li a { color: var(--text); }
-		.sidebar ul li a:hover { color: var(--theme-color); }
-		.sidebar-nav > ul > li > strong { display: block; color: var(--heading); font-size: 13px; font-weight: 600; margin-top: 18px; }
-		.sidebar ul li.active > a { color: var(--theme-color); }
-		.markdown-section { max-width: 900px; }
-		.markdown-section h1, .markdown-section h2, .markdown-section h3, .markdown-section h4, .markdown-section strong { color: var(--heading); }
-		.markdown-section h2 { border-bottom: 1px solid var(--line); padding-bottom: .3em; }
-		.markdown-section p, .markdown-section li { line-height: 1.65; }
-		.markdown-section em { color: var(--muted); }
-		.markdown-section code { background-color: var(--raised); color: var(--heading); }
-		.markdown-section pre, .markdown-section pre > code { background-color: var(--panel); color: var(--text); }
-		.markdown-section pre { border: 1px solid var(--line); border-radius: 6px; }
-		.markdown-section blockquote { color: var(--muted); }
-		.markdown-section hr { border-bottom-color: var(--line); }
-		.markdown-section table { display: block; overflow-x: auto; }
-		.markdown-section td, .markdown-section th { border-color: var(--line); }
-		.markdown-section tr { border-top-color: var(--line); }
-		.markdown-section tr:nth-child(2n) { background-color: var(--raised); }
-		.markdown-section img { border-radius: 6px; }
-		.markdown-section kbd { border-color: var(--line); background: var(--raised); color: var(--heading); }
-		.markdown-section p.tip { background-color: var(--raised); color: var(--text); }
-		.markdown-section p.tip code { background-color: var(--bg); }
-		.markdown-section p.warn { background: rgba(238, 177, 84, .1); color: var(--text); }
-		.token.punctuation { color: var(--muted); }
-		.token.string, .token.attr-value { color: #a5d6a7; }
-		.token.keyword { color: var(--theme-color); }
-		.token.comment { color: #64748b; }
-		input[type=search] { background: var(--raised); border-color: var(--line); color: var(--text); }
-		.search { border-bottom-color: var(--line); }
-		.app-nav a { color: var(--text); }
-		.app-nav li ul { background-color: var(--panel); border-color: var(--line); }
-		.github-corner svg { color: var(--bg); }
-		.markdown-section .page-source { margin-top: 3em; font-size: 13px; color: var(--muted); border-top: 1px solid var(--line); padding-top: 1em; }
-		.markdown-section .page-source a { color: var(--muted); font-weight: 400; }
-		.markdown-section pre.mermaid { background: none; border: none; text-align: center; }
-		.doors { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; margin: 1.5em 0; }
-		.door { border: 1px solid var(--line); border-radius: 8px; padding: 4px 20px 12px; background: var(--panel); }
-		.door:hover { border-color: var(--theme-color); }
 	</style>
 </head>
 <body>
@@ -69,6 +128,7 @@
 		<a href="#/guide/getting-started">Engine guide</a>
 		<a href="#/design/CORE_AND_ADDONS">How it works</a>
 		<a href="https://atul-mourya.github.io/rayzee-renderer/" target="_blank" rel="noopener">Open the app</a>
+		<span class="theme-switch"><button type="button" data-theme-choice="light">Light</button><button type="button" data-theme-choice="dark">Dark</button></span>
 	</nav>
 	<div id="app">Loading…</div>
 	<script>
@@ -76,6 +136,7 @@
 
 			var REPO = 'atul-mourya/rayzee-renderer';
 			var BLOB = 'https://github.com/' + REPO + '/blob/main/';
+			var EDIT = 'https://github.com/' + REPO + '/edit/main/';
 
 			// GitHub's heading ids, so links written for GitHub land here too (docsify's own differ: '--' collapses, '&' reads 'amp').
 			function githubSlug( text ) {
@@ -116,6 +177,64 @@
 
 			}
 
+			var mermaidLoaded = null;
+
+			// Mermaid replaces its source with the drawing: kept to redraw on a theme switch.
+			function drawDiagrams() {
+
+				var nodes = document.querySelectorAll( '.markdown-section pre.mermaid' );
+				if ( ! nodes.length ) return;
+				nodes.forEach( function ( node ) {
+
+					if ( node.source === undefined ) node.source = node.textContent;
+					else {
+
+						node.removeAttribute( 'data-processed' );
+						node.textContent = node.source;
+
+					}
+
+				} );
+				if ( ! mermaidLoaded ) mermaidLoaded = new Promise( function ( resolve ) {
+
+					var s = document.createElement( 'script' );
+					s.src = 'https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.min.js';
+					s.onload = resolve;
+					document.head.appendChild( s );
+
+				} );
+				mermaidLoaded.then( function () {
+
+					var dark = document.documentElement.dataset.theme === 'dark';
+					window.mermaid.initialize( { startOnLoad: false, theme: dark ? 'dark' : 'default' } );
+					window.mermaid.run( { nodes: nodes } );
+
+				} );
+
+			}
+
+			function markTheme() {
+
+				var theme = document.documentElement.dataset.theme;
+				document.querySelectorAll( '[data-theme-choice]' ).forEach( function ( b ) {
+
+					b.setAttribute( 'aria-pressed', String( b.dataset.themeChoice === theme ) );
+
+				} );
+
+			}
+
+			document.addEventListener( 'click', function ( e ) {
+
+				var b = e.target.closest && e.target.closest( '[data-theme-choice]' );
+				if ( ! b ) return;
+				applyDocsTheme( b.dataset.themeChoice );
+				try { localStorage.setItem( 'rayzee-docs-theme', b.dataset.themeChoice ); } catch ( err ) {}
+				markTheme();
+				drawDiagrams();
+
+			} );
+
 			function rayzeePlugin( hook, vm ) {
 
 				var pageFile = function () {
@@ -147,34 +266,18 @@
 
 					} );
 					var file = pageFile();
-					var source = file ? '<p class="page-source"><a href="' + BLOB + 'docs/' + file + '" target="_blank" rel="noopener">This page on GitHub</a></p>' : '';
-					next( t.innerHTML + source );
+					var edit = file ? '<p class="page-edit"><a href="' + EDIT + 'docs/' + file + '" target="_blank" rel="noopener">Edit this page</a></p>' : '';
+					next( edit + t.innerHTML );
 
 				} );
 
-				hook.doneEach( function () {
-
-					var nodes = document.querySelectorAll( '.markdown-section pre.mermaid' );
-					if ( ! nodes.length ) return;
-					var run = function () {
-
-						window.mermaid.initialize( { startOnLoad: false, theme: 'dark' } );
-						window.mermaid.run( { nodes: nodes } );
-
-					};
-					if ( window.mermaid ) return run();
-					var s = document.createElement( 'script' );
-					s.src = 'https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.min.js';
-					s.onload = run;
-					document.head.appendChild( s );
-
-				} );
+				hook.mounted( markTheme );
+				hook.doneEach( drawDiagrams );
 
 			}
 
 			window.$docsify = {
 				name: 'Rayzee',
-				repo: REPO,
 				homepage: 'README.md',
 				loadSidebar: true,
 				alias: { '/.*/_sidebar.md': '/_sidebar.md' },
