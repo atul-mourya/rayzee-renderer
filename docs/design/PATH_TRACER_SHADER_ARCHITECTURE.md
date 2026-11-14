@@ -506,9 +506,17 @@ Shade uses it while `lightBVHNodeCount > 0` and falls back to the uniform-CDF pa
 `samplingTechnique` selects the generator:
 - `0` — PCG (general-purpose)
 - `1` — Halton (per-digit additive scrambling, each digit's offset from an LCG's high bits: its low bit only alternates,
-  and taken from there every pixel drew one of two base-2 sequences — `tests/gpu/haltonScramble.test.js`; fixing it took
-  spheres-gradient at 64 spp from 0.032 to 0.011 RMSE. Its dimensions still share bases 2 and 3, scrambled apart only:
-  at 64 spp it reads 0.2–0.7 % bright against Sobol's reference)
+  and taken from there every pixel drew one of two base-2 sequences). Every call draws bases 2, 3 (5, 7), so each
+  dimension takes the sequence in an order of its own (the frame Owen-shuffled by the dimension's scramble inside
+  `haltonScrambled`, as Sobol's padded dimensions are), which maps the first 2^m frames onto an aligned block of 2^m
+  points: each power of two of samples stays evenly spread, a count between two less so in base 3 (as Sobol's nets).
+  ⚠️ The shuffle is made per call: one shuffled index held across a sample's calls cost Shade 5 % on the clearcoat
+  scenes with Halton off (register pressure at the kernel's peak). A 1D dimension is scrambled apart from the 2D one
+  of the same index, and a value never reaches 1. With
+  one order, two dimensions differed by a fixed digit offset and moved in lockstep within a pixel: 256 samples of two 1D
+  dimensions filled 23 cells of a 16 × 16 grid (168 now), and one dimension 129–193 of its 256 strata (all now). Against a
+  2048-spp Sobol render at 64 spp: RMSE cornell-emissive 0.020 → 0.0097, spheres-gradient 0.011 → 0.0041, rough-diffuse
+  0.0039 → 0.0027 (Sobol 0.0087 / 0.0040 / 0.0022), and the 0.3 % bright mean gone (`tests/gpu/haltonScramble.test.js`)
 - `2` — Sobol (Owen-scrambled), the default
 
 The STBN blue-noise atlases were removed in 9.2.0; no live code path read them.

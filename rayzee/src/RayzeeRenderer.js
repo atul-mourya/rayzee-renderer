@@ -1830,7 +1830,7 @@ export class RayzeeRenderer extends EventDispatcher {
 		const stage = this.stages.pathTracer;
 		if ( ! stage ) throw new Error( 'renderFrames: app is not initialized' );
 		if ( ! ( count > 0 ) ) throw new Error( `renderFrames: count must be positive, got ${count}` );
-		// 2³¹: Halton reads the index as a signed int.
+		// 2³¹: set when Halton read the index as a signed int; every sampler reads it unsigned now.
 		if ( ! ( Number.isInteger( firstSample ) && firstSample >= 0 && firstSample + count <= 2 ** 31 ) ) {
 
 			throw new Error( `renderFrames: firstSample must be a whole number from 0, with firstSample + count ≤ 2³¹, got ${firstSample}` );

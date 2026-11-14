@@ -75,10 +75,6 @@
 
 ### Known
 
-- [ ] Halton (`samplingTechnique` 1, not the default) reuses bases 2 and 3 for every 2D dimension, told apart only by
-  the scramble: at 64 spp it reads 0.2–0.7 % bright against Sobol's reference, and twice Sobol's RMSE (its digit
-  scramble's one-bit base 2, fixed 2026-11-13, was most of the gap: spheres-gradient 0.032 →
-  0.011). Sobol is the default; a Halton that walks primes per dimension would be the fix.
 - [ ] Collada does not load in Node: three's ColladaParser needs a `DOMParser` (`DOMParser is not defined`), and
   `configurePlatform` has no seam for one (found 2026-11-08; the browser loads all 12 local `.dae` files).
 - [ ] A scene whose file asks for bidirectional and has glass loses light through the glass: glass blocks the

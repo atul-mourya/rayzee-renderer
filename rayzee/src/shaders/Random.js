@@ -171,38 +171,6 @@ export const SAMPLER_DIM_AUX_BASE = 4096;
 // -----------------------------------------------------------------------------
 // Low-discrepancy sequence generators
 // -----------------------------------------------------------------------------
-// Halton sequence generator with per-digit additive scrambling
-
-const haltonScrambled = /*@__PURE__*/ wgslFn( `
-	fn haltonScrambled( index: i32, base: i32, scramble: u32 ) -> f32 {
-
-		var result = 0.0f;
-		var f = 1.0f;
-		var i = index + 1;
-		var s = scramble;
-		var iter = 0;
-
-		while ( i > 0 && iter < 32 ) {
-
-			iter += 1;
-			f /= f32( base );
-
-			// Additive permutation per digit: (digit + s_k) mod base. s_k from the LCG's high bits: its low bit only alternates.
-			var digit = i % base;
-			digit = ( digit + i32( ( s >> 16u ) % u32( base ) ) ) % base;
-			result += f * f32( digit );
-			i /= base;
-
-			// Evolve scramble per digit position for position-dependent permutations
-			s = s * 747796405u + 2891336453u;
-
-		}
-
-		return result;
-
-	}
-` );
-
 // Owen scrambling — Burley 2020 "Practical Hash-based Owen Scrambling".
 //
 // The reverseBits sandwich is required, not decoration: Owen scrambling permutes a digit from the
@@ -221,6 +189,43 @@ const owen_scramble = /*@__PURE__*/ wgslFn( `
 
 	}
 ` );
+
+// Halton sequence generator with per-digit additive scrambling. Every call draws bases 2, 3 (5, 7), so each dimension
+// takes the sequence in an order of its own: the frame Owen-shuffled by the dimension's scramble, as Sobol's padded
+// dimensions are. With one order two dimensions differed by a fixed digit offset and moved in lockstep within a pixel.
+// The shuffle maps the first 2^m frames onto an aligned block of 2^m sequence points, so each power of two of samples
+// stays evenly spread. It is made here, per call: a shuffled index held across a sample's
+// calls stays live through Shade and slows it, Halton on or off.
+const haltonScrambled = /*@__PURE__*/ wgslFn( `
+	fn haltonScrambled( frame: u32, base: u32, scramble: u32 ) -> f32 {
+
+		var result = 0.0f;
+		var f = 1.0f;
+		var i = owen_scramble( frame, scramble ^ 0xa511e9b3u ) + 1u;
+		var s = scramble;
+		var iter = 0;
+
+		while ( i > 0u && iter < 32 ) {
+
+			iter += 1;
+			f /= f32( base );
+
+			// Additive permutation per digit: (digit + s_k) mod base. s_k from the LCG's high bits: its low bit only alternates.
+			var digit = i % base;
+			digit = ( digit + ( s >> 16u ) % base ) % base;
+			result += f * f32( digit );
+			i /= base;
+
+			// Evolve scramble per digit position for position-dependent permutations
+			s = s * 747796405u + 2891336453u;
+
+		}
+
+		// 32 digits can round up to 1.0, which a floor( u * n ) reads past its end.
+		return min( result, 0.99999994f );
+
+	}
+`, [ owen_scramble ] );
 
 // Sobol' direction vectors for the first two dimensions, advanced together so a 2D point costs
 // one pass. dim 0 is van der Corput (a bit reversal); dim 1 is the primitive polynomial x+1,
@@ -354,24 +359,23 @@ const getRandomSampleND = ( pixelCoord, sampleIndex, bounceIndex, rngState, dime
 		// sequence, which is a hash, not low-discrepancy sampling. The scramble is what separates pixels.
 		const pixelHash = pixelKey( pixelCoord, resolution );
 		const scramble = pcgHash( { state: pixelHash.bitXor( uint( bounceIndex ).mul( uint( 0x517cc1b7 ) ) ).bitXor( uint( sampleIndex ).mul( uint( 0x2545f491 ) ) ) } ).toVar();
-
-		result.x.assign( haltonScrambled( { index: int( frame ), base: int( 2 ), scramble } ) );
+		result.x.assign( haltonScrambled( { frame: uint( frame ), base: uint( 2 ), scramble } ) );
 
 		If( dimensions.greaterThan( int( 1 ) ), () => {
 
-			result.y.assign( haltonScrambled( { index: int( frame ), base: int( 3 ), scramble } ) );
+			result.y.assign( haltonScrambled( { frame: uint( frame ), base: uint( 3 ), scramble } ) );
 
 		} );
 
 		If( dimensions.greaterThan( int( 2 ) ), () => {
 
-			result.z.assign( haltonScrambled( { index: int( frame ), base: int( 5 ), scramble } ) );
+			result.z.assign( haltonScrambled( { frame: uint( frame ), base: uint( 5 ), scramble } ) );
 
 		} );
 
 		If( dimensions.greaterThan( int( 3 ) ), () => {
 
-			result.w.assign( haltonScrambled( { index: int( frame ), base: int( 7 ), scramble } ) );
+			result.w.assign( haltonScrambled( { frame: uint( frame ), base: uint( 7 ), scramble } ) );
 
 		} );
 
@@ -445,8 +449,8 @@ export const getRandomSample2D = ( pixelCoord, sampleIndex, dimensionIndex, rngS
 		const pixelHash = pixelKey( pixelCoord, resolution );
 		const scramble = pcgHash( { state: pixelHash.bitXor( uint( dimensionIndex ).mul( uint( 0x517cc1b7 ) ) ).bitXor( uint( sampleIndex ).mul( uint( 0x2545f491 ) ) ) } ).toVar();
 		result.assign( vec2(
-			haltonScrambled( { index: int( frame ), base: int( 2 ), scramble } ),
-			haltonScrambled( { index: int( frame ), base: int( 3 ), scramble } ),
+			haltonScrambled( { frame: uint( frame ), base: uint( 2 ), scramble } ),
+			haltonScrambled( { frame: uint( frame ), base: uint( 3 ), scramble } ),
 		) );
 
 	} ).Else( () => {
@@ -477,7 +481,8 @@ export const getRandomSample1D = ( pixelCoord, sampleIndex, dimensionIndex, rngS
 
 		const pixelHash = pixelKey( pixelCoord, resolution );
 		const scramble = pcgHash( { state: pixelHash.bitXor( uint( dimensionIndex ).mul( uint( 0x517cc1b7 ) ) ).bitXor( uint( sampleIndex ).mul( uint( 0x2545f491 ) ) ) } ).toVar();
-		result.assign( haltonScrambled( { index: int( frame ), base: int( 2 ), scramble } ) );
+		// Apart from the 2D dimension of the same index, which would otherwise give this as its x.
+		result.assign( haltonScrambled( { frame: uint( frame ), base: uint( 2 ), scramble: scramble.bitXor( uint( 0x68bc21eb ) ) } ) );
 
 	} ).Else( () => {
 

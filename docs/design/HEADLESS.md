@@ -144,7 +144,7 @@ never read by a live code path (the default sampler is Sobol), so the load was r
   only in deterministic mode or lockstep, to `stage._firstSample` (default 0). `renderFrames` sets it for the resets it
   makes and puts it back to 0 when it returns or throws, so no later reset (`app.reset()`, a load, a mode switch, a
   video frame) inherits it; `firstSample` needs deterministic mode, as lockstep alone leaves interaction mode (frames
-  that advance the tick without counting) and the pixel freeze on. Below 2³¹: Halton reads the index as a signed int. The stage records where the
+  that advance the tick without counting) and the pixel freeze on. Below 2³¹ (set when Halton read the index as a signed int). The stage records where the
   image starts at the reset (`accumulationFirstSample`, null when nothing rewound), provenance reports it as
   `render.firstSample`, and a render checkpoint keeps it. Merging parts is exact only for what reads `seedFrame`: the
   firefly clamp relaxes with √( accumulation frame + 1 ) (`calculateFireflyThreshold`), learned light visibility is
