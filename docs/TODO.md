@@ -126,8 +126,7 @@
 ### Regression bench (`bench/`)
 
 - [ ] PR CI workflow — there is no PR gate at all today, and CI never runs ESLint despite CONTRIBUTING requiring it
-- [ ] CPU-side vitest guards: shader-recompile contract, feature-combo compile smoke, BVH invariants for the
-  memory-spill and BLAS-cache builds (`tests/unit/bvh/bvhInvariants.test.js` walks the others)
+- [ ] CPU-side vitest guards: shader-recompile contract, feature-combo compile smoke
 - [ ] corpus gap: skeletal/morph animation — needs a committed .glb, which the all-procedural rule cannot supply
 
 

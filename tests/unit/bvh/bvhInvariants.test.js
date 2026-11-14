@@ -1,7 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
-	BoxGeometry, BufferGeometry, Float32BufferAttribute, Group, IcosahedronGeometry, InstancedMesh, Matrix4, Mesh, MeshStandardMaterial, PlaneGeometry,
-	Quaternion, SphereGeometry, TorusKnotGeometry, Vector3,
+	BoxGeometry, BufferGeometry, Float32BufferAttribute, Group, IcosahedronGeometry, Matrix4, Mesh, MeshStandardMaterial, SphereGeometry, Vector3,
 } from 'three';
 
 vi.mock( '@/core/bvh/BVHWorker.js?worker&inline', async () => {
@@ -34,7 +33,7 @@ vi.mock( '@/core/bvh/SplitBLAS.js', async importOriginal => {
 
 } );
 
-import { inspectBVH } from './bvhInvariants.js';
+import { inspectBVH, instanced, placed, scene } from './bvhInvariants.js';
 import { BVHBuilder } from '@/core/bvh/BVHBuilder.js';
 import { BVHRefitter } from '@/core/bvh/BVHRefitter.js';
 import { foldLeaves } from '@/core/bvh/BVHLeafFold.js';
@@ -78,60 +77,6 @@ function blas( data, { leaf = 4, depth = 30 } = {} ) {
 	builder.maxLeafSize = leaf;
 	const nodes = builder.flattenBVH( builder.buildSync( data, depth ) );
 	return { nodes, tris: builder.reorderedTriangleData };
-
-}
-
-function placed( object, position, rotation = null, scale = null ) {
-
-	object.position.set( ...position );
-	if ( rotation ) object.rotation.set( ...rotation );
-	if ( scale ) object.scale.set( ...scale );
-	return object;
-
-}
-
-function instanced( geometry, material, count, spread ) {
-
-	const mesh = new InstancedMesh( geometry, material, count );
-	const q = new Quaternion(), axis = new Vector3();
-	for ( let i = 0; i < count; i ++ ) {
-
-		q.setFromAxisAngle( axis.set( rand() - 0.5, rand() - 0.5, rand() - 0.5 ).normalize(), rand() * Math.PI * 2 );
-		const s = 0.5 + rand();
-		const at = new Vector3( rand() - 0.5, rand() - 0.5, rand() - 0.5 ).multiplyScalar( spread );
-		mesh.setMatrixAt( i, new Matrix4().compose( at, q, new Vector3( s, s, s * ( 0.5 + rand() ) ) ) );
-
-	}
-
-	return mesh;
-
-}
-
-/** Baked meshes, one geometry placed three ways (one mirrored), a one-leaf BLAS, and instanced, emissive and grouped copies. */
-function scene() {
-
-	const mat = new MeshStandardMaterial();
-	const sphere = new SphereGeometry( 1, 16, 12 );
-	const parts = {
-		knot: placed( new Mesh( new TorusKnotGeometry( 1, 0.3, 64, 8 ), mat ), [ 6, 0, 0 ] ),
-		sphereA: placed( new Mesh( sphere, mat ), [ - 6, 0, 0 ] ),
-		sphereB: placed( new Mesh( sphere, mat ), [ 0, 5, 0 ], [ 0.3, 0.2, 0.1 ], [ 1, 2, 0.5 ] ),
-		mirrored: placed( new Mesh( sphere, mat ), [ 0, - 5, 2 ], null, [ - 1, 1, 1 ] ),
-		plane: placed( new Mesh( new PlaneGeometry(), mat ), [ 0, 0, 7 ] ),
-		glow: instanced( new BoxGeometry(), new MeshStandardMaterial( { emissive: 0xffffff, emissiveIntensity: 2 } ), 3, 8 ),
-		crowd: instanced( new IcosahedronGeometry( 0.5, 1 ), mat, 6, 20 ),
-		trunk: instanced( new BoxGeometry( 0.4, 2, 0.4 ), mat, 6, 24 ),
-		leaves: new InstancedMesh( new SphereGeometry( 1, 8, 6 ), new MeshStandardMaterial(), 6 ),
-		fruit: new InstancedMesh( new IcosahedronGeometry( 0.3, 0 ), new MeshStandardMaterial(), 6 ),
-	};
-
-	parts.leaves.instanceMatrix = parts.fruit.instanceMatrix = parts.trunk.instanceMatrix;
-	const parent = placed( new Group(), [ 1, 2, 3 ], [ 0.4, - 0.3, 0.2 ] );
-	parent.add( parts.sphereB );
-	const root = new Group();
-	root.add( parent, ...Object.values( parts ).filter( p => p !== parts.sphereB ) );
-	root.updateMatrixWorld( true );
-	return { root, parts };
 
 }
 
