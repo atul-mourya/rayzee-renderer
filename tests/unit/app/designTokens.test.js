@@ -205,6 +205,58 @@ describe( 'design tokens', () => {
 
 	} );
 
+	// WCAG 2's contrast: relative luminance of sRGB, (lighter + 0.05) / (darker + 0.05).
+	function contrast( a, b ) {
+
+		const luminance = ( value ) => {
+
+			const [ h, s, l ] = value.split( /\s+/ ).map( parseFloat );
+			const k = n => ( n + h / 30 ) % 12, a_ = ( s / 100 ) * Math.min( l / 100, 1 - l / 100 );
+			const rgb = [ 0, 8, 4 ].map( n => l / 100 - a_ * Math.max( - 1, Math.min( k( n ) - 3, 9 - k( n ), 1 ) ) );
+			const linear = rgb.map( c => ( c <= 0.04045 ? c / 12.92 : ( ( c + 0.055 ) / 1.055 ) ** 2.4 ) );
+			return 0.2126 * linear[ 0 ] + 0.7152 * linear[ 1 ] + 0.0722 * linear[ 2 ];
+
+		};
+
+		const [ hi, lo ] = [ luminance( a ), luminance( b ) ].sort( ( x, y ) => y - x );
+		return ( hi + 0.05 ) / ( lo + 0.05 );
+
+	}
+
+	it( 'text reads at WCAG AA (4.5:1) on every surface and on the hover grey, in both themes', () => {
+
+		const low = [];
+		for ( const [ theme, tokens ] of [[ 'light', definedIn( block( ':root:not(.dark)', '--background:' ) ) ], [ 'dark', definedIn( block( '.dark', '--background:' ) ) ]] ) {
+
+			const pairs = [[ '--primary-foreground', '--primary' ]];
+			for ( const text of [ '--foreground', '--muted-foreground', '--primary' ] ) {
+
+				for ( const surface of [ '--background', '--card', '--popover', '--accent', '--muted', '--secondary' ] ) pairs.push( [ text, surface ] );
+
+			}
+
+			for ( const [ text, surface ] of pairs ) {
+
+				const ratio = contrast( tokens.get( text ), tokens.get( surface ) );
+				if ( ! ( ratio >= 4.5 ) ) low.push( `${theme} ${text} on ${surface}: ${ratio.toFixed( 2 )}` );
+
+			}
+
+		}
+
+		expect( low ).toEqual( [] );
+		// The focus ring and the blue fills are not text: 3:1 against the page.
+		for ( const tokens of [ definedIn( block( ':root:not(.dark)', '--background:' ) ), definedIn( block( '.dark', '--background:' ) ) ] ) {
+
+			for ( const mark of [ '--ring', '--primary' ] ) expect( contrast( tokens.get( mark ), tokens.get( '--background' ) ) ).toBeGreaterThanOrEqual( 3 );
+
+		}
+
+		// The formula, against WebAIM's checker: #767676 on white is 4.54:1.
+		expect( contrast( '0 0% 46.27%', '0 0% 100%' ) ).toBeCloseTo( 4.54, 2 );
+
+	} );
+
 	it( 'the reference page shows every colour', () => {
 
 		const page = readFileSync( path.join( ROOT, 'components/DesignSystem.jsx' ), 'utf8' );

@@ -9,7 +9,13 @@ dark and light (the test names the few parts it leaves out, and why). It loads n
 The look is the app's own: shadcn's slate theme (blue-grey surfaces, a blue accent), PT Sans, `--radius` 0.3 rem. PT
 Sans is the installed face where there is one (macOS) and ships otherwise (`app/src/assets/fonts/`, regular and bold,
 Latin; OFL). Text passes WCAG AA in both themes (4.5:1, 3:1 for a field's edge, an icon or the focus ring): measured
-on the page's background and on the hover grey (`accent`).
+on the page's background and on the hover grey (`accent`). `designTokens.test.js` computes `foreground`,
+`muted-foreground` and `primary` on every surface, and `primary-foreground` on `primary`, from the stylesheet; shadcn's
+own dark `primary` (59.8 % lightness, 3.97:1 on the hover grey) is 64 % here (4.60:1), and light `muted-foreground` 45 %
+(4.34 → 4.64:1). Text on a blue fill is `primary-foreground` (dark 5.62:1, light 4.94): the colour field's hex and a
+slider's value once the fill reaches it (`foreground` there read 3.51 / 3.34). Blue text on a blue tint is the one
+exception left: the selected mode tab and active render button (`primary/20`, dark 4.05, light 3.90) and a selected
+light row (`primary/15`, dark 4.40, light 4.19).
 
 ## Tokens
 

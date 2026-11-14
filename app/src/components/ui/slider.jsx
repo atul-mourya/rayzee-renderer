@@ -311,6 +311,13 @@ const Slider = React.forwardRef( ( {
 		? Math.max( Math.min( ( currentValue - actualSliderMin ) / ( actualSliderMax - actualSliderMin ), 1 ), 0 ) * 100
 		: 0;
 
+	// The value sits at the right and the icon at the left: each is drawn in the fill's own text colour once the fill
+	// reaches its middle (the value's half-width taken as ~3.5 px a character of text-xs).
+	const shownValue = isNaN( currentValue ) ? "-" : formatValue ? formatValue( currentValue ) : `${+ ( currentValue || 0 ).toFixed( precision )}${unit}`;
+	const fillPx = disabled ? 0 : progressPercentage / 100 * sliderWidth;
+	const valueOnFill = sliderWidth > 0 && fillPx >= sliderWidth - 8 - String( shownValue ).length * 3.5;
+	const iconOnFill = fillPx >= 10;
+
 	// Keys only once the keyboard brought focus here: after a click, walk mode's arrows walk.
 	const handleKeyDown = e => {
 
@@ -400,7 +407,7 @@ const Slider = React.forwardRef( ( {
 				{/* Value display/editor */}
 				{isEditing && ! disabled ? (
 					<input
-						className="absolute right-2 h-full bg-transparent text-foreground outline-none text-xs text-right max-w-full"
+						className={cn( "absolute right-2 h-full bg-transparent outline-none text-xs text-right max-w-full", valueOnFill ? "text-primary-foreground" : "text-foreground" )}
 						type="number"
 						aria-label={typeof label === "string" ? label : undefined}
 						name={typeof label === "string" ? label : undefined}
@@ -421,15 +428,15 @@ const Slider = React.forwardRef( ( {
 				) : (
 					<span
 						data-value-display
-						className="text-xs absolute h-full right-2 cursor-text select-none text-foreground inline-flex items-center"
+						className={cn( "text-xs absolute h-full right-2 cursor-text select-none inline-flex items-center", valueOnFill ? "text-primary-foreground" : "text-foreground" )}
 					>
-						{isNaN( currentValue ) ? "-" : formatValue ? formatValue( currentValue ) : `${+ ( currentValue || 0 ).toFixed( precision )}${unit}`}
+						{shownValue}
 					</span>
 				)}
 
 				{/* Icon - Fixed to use JSX element syntax */}
 				{Icon && ! ( hideIconOnEditing && isEditing ) && (
-					<div className="absolute h-full left-1 inline-flex justify-start items-center">
+					<div className={cn( "absolute h-full left-1 inline-flex justify-start items-center", iconOnFill && "text-primary-foreground" )}>
 						{iconTooltip ? (
 							<div>
 								<Icon size={12} />

@@ -40,9 +40,9 @@ const ColorInput = ( { onChange, className, value, tip, ...props } ) => {
 						aria-label={typeof props.label === "string" ? `${props.label}, hex` : undefined}
 						value={color}
 						onChange={handleChange}
-						className="absolute h-full border-input bg-primary text-xs text-center tracking-widest rounded-full"
+						className="absolute h-full border-input bg-primary text-primary-foreground text-xs text-center tracking-widest rounded-full"
 					/>
-					<div className="h-full w-5 absolute left-0 text-center">
+					<div className="h-full w-5 absolute left-0 text-center text-primary-foreground">
 						<Paintbrush size={14} className="h-full w-full p-1"/>
 					</div>
 					<div
