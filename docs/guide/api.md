@@ -132,9 +132,24 @@ Logger.isEnabled('debug');      // gate expensive message construction
 Logger.only('bvh', 'gpu');      // restrict debug to these namespaces (implies setLevel('debug'))
 Logger.only();                  // clear the namespace filter
 Logger.refresh();               // re-read the level from globals/localStorage
+Logger.setSink(fn);             // take the lines instead of the console; null gives it back
 ```
 
 The chosen level persists in `localStorage` under `rayzeeLogLevel` (namespace filter: `rayzeeLogNamespaces`), so it survives a reload. The engine does not install a global itself — expose one from your host if you want console access without an import; the demo app does `globalThis.rayzee = { log: Logger, ... }`, which is what makes `rayzee.log.setLevel('debug')` work there.
+
+**Taking the lines yourself.** `Logger.setSink(({ level, namespace, message, args }) => …)` hands your function every
+line of the engine's own that passes the level and namespace filters, in place of the console: a render farm writing
+JSON lines, a test collecting warnings. `level` is `'error' | 'warn' | 'info' | 'debug'`, `message` the arguments as one
+string (an error as `name: message` with its stack, a WebGPU error too; plain objects as JSON, anything else, nested
+included, by its class), `args` as given. A `summary` arrives as its headline at `info` and its details at `debug`. A
+sink that throws has its lines printed instead (its error once); a line the sink itself logs goes to the console. Not
+included: what a worker prints (its own console; in Node, the process's output), `pipeline.logStats()` /
+`logInfo()`, which print when called, and what three.js and other libraries print themselves. The engine's own warnings worth acting on are also recorded as
+issues (`engine.issues`, `EngineEvents.ISSUE`), which is the place to branch on them.
+
+```js
+Logger.setSink(line => process.stderr.write(JSON.stringify({ level: line.level, ns: line.namespace, msg: line.message }) + '\n'));
+```
 
 `createLogger(namespace)` returns a channel with `error` / `warn` / `info` / `debug` plus `summary(headline, details)`, which prints one `info` line with the detail lines folded into a collapsed group. `fmt` holds the formatting helpers those summaries use — `n`, `ms`, `mb`, `px`, `count`, `list`. `LOG_LEVELS` is the name→severity map.
 

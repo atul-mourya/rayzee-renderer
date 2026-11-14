@@ -1,3 +1,7 @@
+import { createLogger } from '../Logger.js';
+
+const log = createLogger( 'emissive' );
+
 /**
  * LightBVHBuilder
  *
@@ -196,7 +200,7 @@ export class LightBVHBuilder {
 		const trimmedData = new Float32Array( nodeCount * 16 );
 		trimmedData.set( nodeData.subarray( 0, nodeCount * 16 ) );
 
-		console.log( `[LightBVHBuilder] Built BVH: ${nodeCount} nodes for ${n} emissive triangles` );
+		log.debug( `Built BVH: ${nodeCount} nodes for ${n} emissive triangles` );
 
 		return { nodeData: trimmedData, nodeCount, sortedPerm, bitTrails };
 

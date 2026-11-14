@@ -2,6 +2,9 @@ import { EventDispatcher, ACESFilmicToneMapping } from 'three';
 import { PackedToneMapper } from '../../output/ToneMapGPU.js';
 import { getAssetConfig, isAssetConfigured, ORT_JSPI_RUNTIME_URL } from '../../AssetConfig.js';
 import AIUpscalerWorker from './AIUpscalerWorker.js?worker&inline';
+import { createLogger } from '../../Logger.js';
+
+const log = createLogger( 'neural' );
 
 // ─── Model Configuration ───────────────────────────────────────────────────────
 // Quality presets reference relative paths against asset-config `upscalerModelBaseUrl`.
@@ -187,7 +190,7 @@ export class AIUpscaler extends EventDispatcher {
 
 						}
 
-						console.log( `AI Upscaler: ${this.scaleFactor}x model loaded, backend: ${e.data.backend}, tileSize: ${this.tileSize}` );
+						log.info( `AI Upscaler: ${this.scaleFactor}x model loaded, backend: ${e.data.backend}, tileSize: ${this.tileSize}` );
 						resolve();
 
 					} else if ( e.data.type === 'error' ) {
@@ -220,7 +223,7 @@ export class AIUpscaler extends EventDispatcher {
 
 		} catch ( error ) {
 
-			console.error( 'AI Upscaler: Failed to load model:', error );
+			log.error( 'AI Upscaler: Failed to load model:', error );
 			this.dispatchEvent( { type: 'error', error } );
 			throw error;
 
@@ -252,7 +255,7 @@ export class AIUpscaler extends EventDispatcher {
 
 			this.renderer?.resetState?.();
 			const duration = performance.now() - startTime;
-			console.log( `AI Upscaler: ${this.scaleFactor}x upscale completed in ${duration.toFixed( 1 )}ms` );
+			log.info( `AI Upscaler: ${this.scaleFactor}x upscale completed in ${duration.toFixed( 1 )}ms` );
 
 		}
 
@@ -324,11 +327,11 @@ export class AIUpscaler extends EventDispatcher {
 
 			if ( error.name === 'AbortError' ) {
 
-				console.log( 'AI Upscaler: Upscaling was aborted' );
+				log.debug( 'AI Upscaler: Upscaling was aborted' );
 
 			} else {
 
-				console.error( 'AI Upscaler: Upscaling error:', error );
+				log.error( 'AI Upscaler: Upscaling error:', error );
 				this.dispatchEvent( { type: 'error', error } );
 
 				// Restore canvas and input visibility on non-abort failure. The render shows again, not the overlay's copy of
@@ -379,7 +382,7 @@ export class AIUpscaler extends EventDispatcher {
 		this.state.isUpscaling = false;
 		this.dispatchEvent( { type: 'end' } );
 
-		console.log( 'AI Upscaler: Aborted' );
+		log.debug( 'AI Upscaler: Aborted' );
 
 	}
 
@@ -809,7 +812,7 @@ export class AIUpscaler extends EventDispatcher {
 
 		if ( ! MODEL_CONFIG.QUALITY_PRESETS[ value ] ) {
 
-			console.warn( `AIUpscaler: Invalid quality "${value}", must be fast/balanced/quality` );
+			log.warn( `AIUpscaler: Invalid quality "${value}", must be fast/balanced/quality` );
 			return;
 
 		}
@@ -823,7 +826,7 @@ export class AIUpscaler extends EventDispatcher {
 		scale = Number( scale );
 		if ( scale !== 2 && scale !== 4 ) {
 
-			console.warn( `AIUpscaler: Invalid scale factor ${scale}, must be 2 or 4` );
+			log.warn( `AIUpscaler: Invalid scale factor ${scale}, must be 2 or 4` );
 			return;
 
 		}
@@ -876,7 +879,7 @@ export class AIUpscaler extends EventDispatcher {
 		this._toneMapper?.dispose();
 		this._toneMapper = null;
 
-		console.log( 'AIUpscaler disposed' );
+		log.debug( 'AIUpscaler disposed' );
 
 	}
 

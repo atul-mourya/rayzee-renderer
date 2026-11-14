@@ -9,6 +9,8 @@
  *   2. localStorage.rayzeeLogLevel       — survives reloads (main thread only)
  *   3. 'info'
  *
+ * A host takes the lines instead of the console with `Logger.setSink( fn )` (main thread; workers print to their own).
+ *
  * From the devtools console:
  *   rayzee.log.setLevel( 'debug' )    // everything, including per-mesh/per-kernel detail
  *   rayzee.log.setLevel( 'warn' )     // problems only
@@ -28,6 +30,10 @@ const RESET_STYLE = 'color:inherit';
 // Cached so a hot log site is a numeric compare, not a storage read.
 let activeLevel = null;
 let namespaceFilter = null;
+let sink = null;
+let inSink = false;
+let sinkFailed = false;
+const LEVEL_NAMES = Object.keys( LOG_LEVELS );
 
 function readStorage( key ) {
 
@@ -95,11 +101,74 @@ function namespaceAllowed( ns, level ) {
 
 }
 
+const isPlain = value => Array.isArray( value ) || Object.getPrototypeOf( value ) === Object.prototype || Object.getPrototypeOf( value ) === null;
+const className = value => {
+
+	const name = value.constructor?.name ?? 'Object';
+	return ArrayBuffer.isView( value ) ? `[${name} ${value.length ?? value.byteLength}]`
+		: typeof value.name === 'string' && value.name ? `[${name} ${value.name}]` : `[${name}]`;
+
+};
+
+// Plain data copied for JSON, anything else (at any depth) by its class: JSON.stringify calls a nested object's toJSON
+// before any replacer runs, and a mesh's toJSON is a whole scene.
+function plainCopy( value, seen ) {
+
+	if ( value === null || typeof value !== 'object' ) return typeof value === 'bigint' ? String( value ) : value;
+	if ( ! isPlain( value ) ) return className( value );
+	if ( seen.has( value ) ) return '[circular]';
+	seen.add( value );
+	const out = Array.isArray( value ) ? value.map( v => plainCopy( v, seen ) )
+		: Object.fromEntries( Object.entries( value ).map( ( [ k, v ] ) => [ k, plainCopy( v, seen ) ] ) );
+	seen.delete( value );
+	return out;
+
+}
+
+// One argument as text: an error as `name: message` with the stack beneath (Firefox's and Safari's stacks leave the
+// message out; a GPUError is no Error but has one), plain data as JSON, anything else by its class.
+function argText( value ) {
+
+	if ( value === null || typeof value !== 'object' ) return String( value );
+	if ( typeof value.message === 'string' && ( value instanceof Error || ! isPlain( value ) ) ) {
+
+		const head = `${value.name || value.constructor?.name || 'Error'}: ${value.message}`;
+		const stack = typeof value.stack === 'string' ? value.stack : '';
+		return stack.startsWith( head ) ? stack : stack ? `${head}\n${stack}` : head;
+
+	}
+
+	return isPlain( value ) ? JSON.stringify( plainCopy( value, new Set() ) ) : className( value );
+
+}
+
 function emit( level, ns, args ) {
 
 	if ( level > resolveLevel() || ! namespaceAllowed( ns, level ) ) return;
 
-	const sink = level === LOG_LEVELS.error ? console.error
+	// A line logged from inside the sink goes to the console: handed back, it would never end.
+	if ( sink && ! inSink ) {
+
+		inSink = true;
+		try {
+
+			sink( { level: LEVEL_NAMES[ level ], namespace: ns, message: args.map( argText ).join( ' ' ), args } );
+			return;
+
+		} catch ( error ) {
+
+			if ( ! sinkFailed ) console.error( '[log] the host\'s sink threw; printing its lines here', error );
+			sinkFailed = true;
+
+		} finally {
+
+			inSink = false;
+
+		}
+
+	}
+
+	const out = level === LOG_LEVELS.error ? console.error
 		: level === LOG_LEVELS.warn ? console.warn
 			: console.log;
 
@@ -108,11 +177,11 @@ function emit( level, ns, args ) {
 	// Style only the prefix, and only when the first argument is a string we can splice into.
 	if ( typeof args[ 0 ] === 'string' ) {
 
-		sink( `%c${prefix}%c ${args[ 0 ]}`, PREFIX_STYLE, RESET_STYLE, ...args.slice( 1 ) );
+		out( `%c${prefix}%c ${args[ 0 ]}`, PREFIX_STYLE, RESET_STYLE, ...args.slice( 1 ) );
 
 	} else {
 
-		sink( `%c${prefix}`, PREFIX_STYLE, ...args );
+		out( `%c${prefix}`, PREFIX_STYLE, ...args );
 
 	}
 
@@ -199,6 +268,21 @@ export const Logger = {
 
 	},
 
+	/**
+	 * Hands every line that passes the level and namespace filters to `fn` instead of the console: `{ level, namespace,
+	 * message, args }`, `level` one of 'error' | 'warn' | 'info' | 'debug', `message` the arguments as one string.
+	 * `null` gives the console back. Main thread only: a worker prints to its own console. A sink that throws has the
+	 * line printed instead (the error once); a line the sink itself logs goes to the console.
+	 * @param {?function({level: string, namespace: string, message: string, args: Array}): void} fn
+	 */
+	setSink( fn ) {
+
+		if ( fn !== null && typeof fn !== 'function' ) throw new TypeError( 'Logger.setSink: a function or null' );
+		sink = fn;
+		sinkFailed = false;
+
+	},
+
 	/** Drops the cached level so the next log re-reads globals/storage. */
 	refresh() {
 
@@ -236,7 +320,7 @@ export function createLogger( namespace ) {
 
 			const lines = details.filter( Boolean );
 
-			if ( lines.length === 0 || ! console.groupCollapsed ) {
+			if ( lines.length === 0 || ! console.groupCollapsed || sink ) {
 
 				emit( LOG_LEVELS.info, namespace, [ headline ] );
 				lines.forEach( line => emit( LOG_LEVELS.debug, namespace, [ line ] ) );

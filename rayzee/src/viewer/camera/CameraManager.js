@@ -6,6 +6,9 @@ import { viewDepth } from './InteractionManager.js';
 import { ViewCamera, mirrorSign } from '../../scene/ViewCamera.js';
 import { WalkControls } from './WalkControls.js';
 import { toPortable, fromPortable } from '../../Portable.js';
+import { createLogger } from '../../Logger.js';
+
+const log = createLogger( 'camera' );
 
 // The horizontal turn follows a mirrored camera's picture (pan reads the camera's matrix already).
 // `_rotateLeft` is three's own: re-check on each upgrade.
@@ -287,7 +290,7 @@ export class CameraManager extends EventDispatcher {
 
 		if ( index < 0 || index >= this.cameras.length ) {
 
-			console.warn( `CameraManager: Invalid camera index ${index}. Using default camera.` );
+			log.warn( `CameraManager: Invalid camera index ${index}. Using default camera.` );
 			index = 0;
 
 		}

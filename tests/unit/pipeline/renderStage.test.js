@@ -335,7 +335,7 @@ describe( 'RenderStage', () => {
 			const spy = vi.spyOn( console, 'log' ).mockImplementation( () => {} );
 			const stage = new RenderStage( 'MyStage' );
 			stage.log( 'hello' );
-			expect( spy ).toHaveBeenCalledWith( '[MyStage]', 'hello' );
+			expect( spy.mock.calls[ 0 ][ 0 ] ).toMatch( /\[stage:MyStage\].* hello$/ );
 			spy.mockRestore();
 
 		} );
@@ -345,7 +345,7 @@ describe( 'RenderStage', () => {
 			const spy = vi.spyOn( console, 'warn' ).mockImplementation( () => {} );
 			const stage = new RenderStage( 'MyStage' );
 			stage.warn( 'warning' );
-			expect( spy ).toHaveBeenCalledWith( '[MyStage]', 'warning' );
+			expect( spy.mock.calls[ 0 ][ 0 ] ).toMatch( /\[stage:MyStage\].* warning$/ );
 			spy.mockRestore();
 
 		} );
@@ -355,7 +355,7 @@ describe( 'RenderStage', () => {
 			const spy = vi.spyOn( console, 'error' ).mockImplementation( () => {} );
 			const stage = new RenderStage( 'MyStage' );
 			stage.error( 'err' );
-			expect( spy ).toHaveBeenCalledWith( '[MyStage]', 'err' );
+			expect( spy.mock.calls[ 0 ][ 0 ] ).toMatch( /\[stage:MyStage\].* err$/ );
 			spy.mockRestore();
 
 		} );

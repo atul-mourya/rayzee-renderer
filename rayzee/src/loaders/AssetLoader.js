@@ -753,7 +753,7 @@ export class AssetLoader extends EventDispatcher {
 
 		} catch ( error ) {
 
-			console.error( `Error loading ${format.label}:`, error );
+			log.error( `Error loading ${format.label}:`, error );
 			this.dispatchEvent( { type: 'error', message: error.message, filename } );
 			throw error;
 
@@ -816,7 +816,7 @@ export class AssetLoader extends EventDispatcher {
 		} catch ( error ) {
 
 			if ( this._isCancellation( error ) ) throw this._cancellationError();
-			console.error( "Error loading environment:", error );
+			log.error( "Error loading environment:", error );
 			this.dispatchEvent( { type: 'error', message: error.message, filename: envUrl } );
 			throw error;
 
@@ -1038,7 +1038,7 @@ export class AssetLoader extends EventDispatcher {
 		} catch ( error ) {
 
 			if ( this._isCancellation( error ) ) throw this._cancellationError();
-			console.error( "Error loading model:", error );
+			log.error( "Error loading model:", error );
 			this.dispatchEvent( { type: 'error', message: error.message, filename: modelUrl } );
 			throw error;
 
@@ -1161,7 +1161,7 @@ export class AssetLoader extends EventDispatcher {
 
 		} catch ( error ) {
 
-			console.error( 'Error loading GLB:', error );
+			log.error( 'Error loading GLB:', error );
 			this.dispatchEvent( { type: 'error', message: error.message, filename } );
 			throw error;
 
@@ -1432,7 +1432,7 @@ export class AssetLoader extends EventDispatcher {
 
 			if ( ! object.parent ) continue;
 
-			console.log( 'Found multi-material mesh:', object.name );
+			log.debug( 'Found multi-material mesh:', object.name );
 			if ( shared ) object.geometry = standInForSplit( object.geometry );
 
 			const group = createMeshesFromMultiMaterialMesh( object );

@@ -1,6 +1,9 @@
 import { Vector3, Quaternion } from 'three';
 import { convertLinearTriple } from '../color/WorkingMatrix.js';
 import { LIGHT_FLOATS } from '../pathtracer/UniformManager.js';
+import { createLogger } from '../Logger.js';
+
+const log = createLogger( 'lights' );
 
 // Blackbody temperature → linear Rec.709 (= linear sRGB) RGB.
 //
@@ -400,19 +403,19 @@ export class LightSerializer {
 
 		if ( this.areaLightCache.length > 0 ) {
 
-			console.log( `Preprocessed ${this.areaLightCache.length} area lights by importance` );
+			log.debug( `Preprocessed ${this.areaLightCache.length} area lights by importance` );
 
 		}
 
 		if ( this.pointLightCache.length > 0 ) {
 
-			console.log( `Preprocessed ${this.pointLightCache.length} point lights by importance` );
+			log.debug( `Preprocessed ${this.pointLightCache.length} point lights by importance` );
 
 		}
 
 		if ( this.spotLightCache.length > 0 ) {
 
-			console.log( `Preprocessed ${this.spotLightCache.length} spot lights by importance` );
+			log.debug( `Preprocessed ${this.spotLightCache.length} spot lights by importance` );
 
 		}
 

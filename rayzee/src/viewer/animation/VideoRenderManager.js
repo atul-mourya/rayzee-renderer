@@ -10,6 +10,9 @@ import { EngineEvents, updateStats } from '../../EngineEvents.js';
 import { PRODUCTION_RENDER_CONFIG, modePresetSettings } from '../../EngineDefaults.js';
 import { getDisplaySamples } from '../../pipeline/CompletionTracker.js';
 import { takeFrameStep } from '../../RayzeeRenderer.js';
+import { createLogger } from '../../Logger.js';
+
+const log = createLogger( 'video' );
 
 // The video is Rec.709: drawing into a plain 2D canvas converts a Display P3 picture.
 function srgbCopy( canvas ) {
@@ -71,7 +74,7 @@ export class VideoRenderManager {
 		const clip = app.animationManager?.hasAnimations ? app.animationManager.clips[ clipIndex ] : null;
 		if ( ! clip && ! timeline?.animates ) {
 
-			console.warn( app.animationManager?.hasAnimations ? `VideoRenderManager: Invalid clip index ${clipIndex}` : 'VideoRenderManager: No animation clips or keyframes' );
+			log.warn( app.animationManager?.hasAnimations ? `VideoRenderManager: Invalid clip index ${clipIndex}` : 'VideoRenderManager: No animation clips or keyframes' );
 			onComplete?.( false );
 			return;
 
@@ -82,7 +85,7 @@ export class VideoRenderManager {
 		const frameDuration = 1 / fps;
 		if ( ! ( totalFrames > 0 ) ) {
 
-			console.warn( 'VideoRenderManager: No frames to render' );
+			log.warn( 'VideoRenderManager: No frames to render' );
 			onComplete?.( false );
 			return;
 
@@ -204,7 +207,7 @@ export class VideoRenderManager {
 
 		} catch ( error ) {
 
-			console.error( 'VideoRenderManager: Render error:', error );
+			log.error( 'VideoRenderManager: Render error:', error );
 			this._cancelled = true;
 
 		} finally {
@@ -304,7 +307,7 @@ export class VideoRenderManager {
 
 			timer = setTimeout( () => {
 
-				console.warn( 'VideoRenderManager: Denoise timed out, skipping' );
+				log.warn( 'VideoRenderManager: Denoise timed out, skipping' );
 				cleanup();
 				resolve();
 

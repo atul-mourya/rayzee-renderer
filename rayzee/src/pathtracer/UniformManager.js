@@ -9,6 +9,9 @@ import { uniform, uniformArray } from 'three/tsl';
 import { Vector2, Matrix4, Vector3, Vector4, Color, MathUtils } from 'three';
 import { samplingTechniqueUniform } from '../shaders/Random.js';
 import { ENGINE_DEFAULTS as DEFAULT_STATE, CAMERA_PROJECTION_IDS } from '../EngineDefaults.js';
+import { createLogger } from '../Logger.js';
+
+const log = createLogger( 'pathtracer' );
 
 /**
  * Map of uniform names to their WGSL shader names (where different).
@@ -87,7 +90,7 @@ export class UniformManager {
 		const node = this._uniforms.get( name );
 		if ( ! node ) {
 
-			console.warn( `UniformManager: Unknown uniform "${name}"` );
+			log.warn( `UniformManager: Unknown uniform "${name}"` );
 			return;
 
 		}
@@ -106,7 +109,7 @@ export class UniformManager {
 			if ( ! this._arrayWarned.has( name ) ) {
 
 				this._arrayWarned.add( name );
-				console.warn(
+				log.warn(
 					`UniformManager: "${name}" was set to [${value[ 0 ]}] but expects a scalar — ` +
 					'unwrapping. Fix the caller; a slider handler is probably forwarding its ' +
 					'array value unchanged.'

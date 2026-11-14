@@ -30,6 +30,9 @@ import { withHostWorker, getPlatform, nextTask, timeSlicer } from '../../Platfor
 import { platformImageFromBytes, platformImagePlaceholder, imageHeaderSize, IMAGE_HEADER_BYTES } from '../../loaders/PlatformImageLoader.js';
 import { setImageReader } from '../../materials/TextureCreator.js';
 import { updateLoading } from '../../EngineEvents.js';
+import { createLogger } from '../../Logger.js';
+
+const log = createLogger( 'archive' );
 
 const MTL_TEXTURE_TIMEOUT_MS = 30000;
 const MAIN_MODEL_FILES = [ 'scene.gltf', 'scene.glb', 'model.gltf', 'model.glb', 'main.gltf', 'main.glb', 'asset.gltf', 'asset.glb' ];
@@ -353,7 +356,7 @@ export class ArchiveImporter {
 		} catch ( error ) {
 
 			// A corrupt stream fails the same way in memory, where the error reads better.
-			console.warn( `Unpacking "${filename}" to storage failed, reading it in memory: ${error.message}` );
+			log.warn( `Unpacking "${filename}" to storage failed, reading it in memory: ${error.message}` );
 			return null;
 
 		}
@@ -431,7 +434,7 @@ export class ArchiveImporter {
 
 		} catch ( error ) {
 
-			if ( error?.code !== 'ARCHIVE_NEEDS_ELEMENT' ) console.error( 'Error loading archive:', error );
+			if ( error?.code !== 'ARCHIVE_NEEDS_ELEMENT' ) log.error( 'Error loading archive:', error );
 			throw error;
 
 		}
@@ -452,7 +455,7 @@ export class ArchiveImporter {
 		const totalBytes = source.listing.reduce( ( n, e ) => n + e.size, 0 );
 		if ( chosen.length === 0 ) this._requireElementChoice( folder.name, source.listing, totalBytes, promptBytes );
 
-		console.info(
+		log.info(
 			`Folder "${folder.name}": ${source.listing.length} files, ${( totalBytes / 1e9 ).toFixed( 1 )} GB` +
 			( chosen.length ? `, ${chosen.length} part${chosen.length > 1 ? 's' : ''} selected.` : '.' )
 		);
@@ -566,7 +569,7 @@ export class ArchiveImporter {
 			entry.release();
 			if ( failure ) {
 
-				console.warn( `The stored scene could not be used, parsing the archive instead: ${failure.message}` );
+				log.warn( `The stored scene could not be used, parsing the archive instead: ${failure.message}` );
 				this.loader._issues?.warn( ISSUE_CODES.STORAGE_ENTRY_CORRUPT, `stored scene unusable: ${failure.message}`, { key } );
 				area.remove( key ).catch( () => {} );
 
@@ -603,8 +606,8 @@ export class ArchiveImporter {
 
 		} catch ( error ) {
 
-			if ( error instanceof SceneGraphUnsupported ) console.info( `Scene not stored for next time: ${error.message}` );
-			else console.warn( 'Scene not stored for next time:', error );
+			if ( error instanceof SceneGraphUnsupported ) log.info( `Scene not stored for next time: ${error.message}` );
+			else log.warn( 'Scene not stored for next time:', error );
 			return;
 
 		}
@@ -684,7 +687,7 @@ export class ArchiveImporter {
 			} catch ( error ) {
 
 				await writer?.abort().catch( () => {} );
-				if ( ! store.signal.aborted ) console.warn( 'Storing the scene failed:', error );
+				if ( ! store.signal.aborted ) log.warn( 'Storing the scene failed:', error );
 
 			} finally {
 
@@ -735,7 +738,7 @@ export class ArchiveImporter {
 
 		if ( chosen.length === 0 ) this._requireElementChoice( filename, source.listing, totalBytes, promptBytes );
 
-		console.info(
+		log.info(
 			`Archive "${filename}": indexed ${source.indexed} entries, ` +
 			`${( totalBytes / 1e9 ).toFixed( 1 )} GB, none resident` +
 			( chosen.length ? `, ${chosen.length} part${chosen.length > 1 ? 's' : ''} selected.` : '.' )
@@ -836,7 +839,7 @@ export class ArchiveImporter {
 
 		if ( chosen.length ) {
 
-			console.info(
+			log.info(
 				`Archive "${filename}": loaded ${chosen.map( c => `"${c}"` ).join( ', ' )} — ` +
 				`${Object.keys( entries ).length} of ${listing.length} files, ${( retainedBytes / 1048576 ).toFixed( 1 )} MB.`
 			);
@@ -891,7 +894,7 @@ export class ArchiveImporter {
 		const { group, environment, animations, report, warnings, meshCount, entryPath: loadedEntry, candidates,
 			frames, parseMs, buildMs, triangleCount, placementCount, mergedShapes, skippedForBudget,
 			droppedNoTemplate, parameters, ptex } = built;
-		if ( stored ) console.info( `PBRT scene "${loadedEntry}" opened from storage in ${( buildMs / 1000 ).toFixed( 1 )} s, skipping the parse` );
+		if ( stored ) log.info( `PBRT scene "${loadedEntry}" opened from storage in ${( buildMs / 1000 ).toFixed( 1 )} s, skipping the parse` );
 
 		// Phase breakdown for scaling work; the engine's own build timings live in
 		// SceneProcessor.performanceMetrics.
@@ -908,7 +911,7 @@ export class ArchiveImporter {
 		const others = candidates.filter( p => ! loaded.has( p ) );
 		if ( others.length > 0 ) {
 
-			console.warn( `PBRT archive holds ${candidates.length} scenes; loaded "${loadedEntry}". Others: ${others.join( ', ' )}` );
+			log.warn( `PBRT archive holds ${candidates.length} scenes; loaded "${loadedEntry}". Others: ${others.join( ', ' )}` );
 			this.loader._issues?.record(
 				ISSUE_CODES.ASSET_AMBIGUOUS_ENTRY,
 				`archive holds ${candidates.length} pbrt scenes; loaded "${loadedEntry}"`,
@@ -920,20 +923,18 @@ export class ArchiveImporter {
 
 		if ( parameters ) this._reportParameters( parameters, loadedEntry );
 
-		// Diagnostics — surface what each mesh resolved to (helps debug black/wrong materials).
-		if ( report && report.length && typeof console.table === 'function' ) {
+		// Diagnostics — what each mesh resolved to (helps debug black/wrong materials), at debug.
+		if ( report?.length && log.isEnabled( 'debug' ) ) {
 
 			const shown = report.length < meshCount ? ` (first ${report.length} of ${meshCount})` : '';
-			console.groupCollapsed( `PBRT loader: ${meshCount} mesh(es) from "${loadedEntry}"${shown}` );
-			console.table( report );
-			console.groupEnd();
+			log.debug( `PBRT loader: ${meshCount} mesh(es) from "${loadedEntry}"${shown}`, report );
 
 		}
 
 		if ( warnings && warnings.length ) {
 
-			console.warn( `PBRT loader: ${warnings.length} warning(s) parsing "${loadedEntry}"` );
-			warnings.forEach( w => console.warn( '  •', w ) );
+			log.warn( `PBRT loader: ${warnings.length} warning(s) parsing "${loadedEntry}"` );
+			warnings.forEach( w => log.warn( '  •', w ) );
 
 		}
 
@@ -989,7 +990,7 @@ export class ArchiveImporter {
 			...Object.entries( unused ).map( ( [ key, count ] ) => `  ignored       ${key} ×${count}` ),
 			...Object.entries( approximated ).map( ( [ key, count ] ) => `  approximated  ${key} ×${count}` )
 		];
-		console.warn( `PBRT loader: ${message} (× directives that set it)\n${lines.join( '\n' )}` );
+		log.warn( `PBRT loader: ${message} (× directives that set it)\n${lines.join( '\n' )}` );
 		this.loader._issues?.warn( ISSUE_CODES.ASSET_PARAMETERS_IGNORED, message, { entry, unused, approximated } );
 
 	}
@@ -1081,7 +1082,7 @@ export class ArchiveImporter {
 		const entryPath = candidates[ 0 ];
 		if ( candidates.length > 1 ) {
 
-			console.warn( `${filename} holds ${candidates.length} top-level USD layers; loaded "${entryPath}". Others: ${candidates.slice( 1 ).join( ', ' )}` );
+			log.warn( `${filename} holds ${candidates.length} top-level USD layers; loaded "${entryPath}". Others: ${candidates.slice( 1 ).join( ', ' )}` );
 			this.loader._issues?.record(
 				ISSUE_CODES.ASSET_AMBIGUOUS_ENTRY,
 				`${filename} holds ${candidates.length} top-level USD layers; loaded "${entryPath}"`,
@@ -1144,8 +1145,8 @@ export class ArchiveImporter {
 		);
 		if ( warnings.length ) {
 
-			console.warn( `USD loader: ${warnings.length} warning(s) loading "${entryPath}"` );
-			warnings.forEach( w => console.warn( '  •', w ) );
+			log.warn( `USD loader: ${warnings.length} warning(s) loading "${entryPath}"` );
+			warnings.forEach( w => log.warn( '  •', w ) );
 
 		}
 
@@ -1310,19 +1311,19 @@ export class ArchiveImporter {
 
 		if ( objFiles.length > 0 && mtlFiles.length > 0 ) {
 
-			console.log( `Found ${objFiles.length} OBJ files and ${mtlFiles.length} MTL files in ZIP` );
+			log.debug( `Found ${objFiles.length} OBJ files and ${mtlFiles.length} MTL files in ZIP` );
 			const matches = this.findMatchingObjMtlPairs( objFiles, mtlFiles );
 
 			if ( matches.length > 0 ) {
 
-				console.log( `Found ${matches.length} matching OBJ+MTL pairs` );
+				log.debug( `Found ${matches.length} matching OBJ+MTL pairs` );
 				return await this.loadOBJMTLPairFromZip( matches[ 0 ].obj, matches[ 0 ].mtl, zip, filename );
 
 			}
 
 			if ( matches.length === 0 ) {
 
-				console.log( 'No matching pairs by name, using first OBJ and MTL files' );
+				log.info( 'No matching pairs by name, using first OBJ and MTL files' );
 				return await this.loadOBJMTLPairFromZip( objFiles[ 0 ], mtlFiles[ 0 ], zip, filename );
 
 			}
@@ -1383,7 +1384,7 @@ export class ArchiveImporter {
 		const kit = found.main ? null : kitPaths( models );
 		if ( kit ) {
 
-			console.info( `${filename} is a kit of ${kit.length} models, loaded side by side; ${models.length - kit.length} lower-detail or duplicate files left out` );
+			log.info( `${filename} is a kit of ${kit.length} models, loaded side by side; ${models.length - kit.length} lower-detail or duplicate files left out` );
 			updateLoading( { isLoading: true, status: `Processing ${kit.length} models from ${filename}...`, progress: 5 } );
 			const model = await this._loadZipModels( zip, kit, filename );
 			this.loader.dispatchEvent( { type: 'load', model, filename } );
@@ -1394,7 +1395,7 @@ export class ArchiveImporter {
 		const others = models.filter( p => p !== path && ! USD_LAYER.test( p ) );
 		if ( others.length > 0 ) {
 
-			console.warn( `${filename} holds ${others.length + 1} models; loaded "${path}". Others: ${others.join( ', ' )}` );
+			log.warn( `${filename} holds ${others.length + 1} models; loaded "${path}". Others: ${others.join( ', ' )}` );
 			this.loader._issues?.record(
 				ISSUE_CODES.ASSET_AMBIGUOUS_ENTRY,
 				`${filename} holds ${others.length + 1} models; loaded "${path}"`,
@@ -1404,7 +1405,7 @@ export class ArchiveImporter {
 
 		}
 
-		console.log( `Loading model file from ${filename}: ${path}` );
+		log.info( `Loading model file from ${filename}: ${path}` );
 		return await this.loadModelFromZipEntry( zip[ path ], path, path.split( '.' ).pop().toLowerCase(), zip, filename );
 
 	}
@@ -1439,7 +1440,7 @@ export class ArchiveImporter {
 
 		} catch ( error ) {
 
-			console.error( `Error loading ${extension} from ${from}:`, error );
+			log.error( `Error loading ${extension} from ${from}:`, error );
 			this.loader.dispatchEvent( { type: 'error', message: error.message, filename: filePath } );
 			throw error;
 
@@ -1793,7 +1794,7 @@ export class ArchiveImporter {
 
 		}
 
-		console.warn( `Resource not found in the archive: ${url}` );
+		log.warn( `Resource not found in the archive: ${url}` );
 		return url;
 
 	}

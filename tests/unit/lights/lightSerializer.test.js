@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { DirectionalLight, Group, PointLight, RectAreaLight, Scene, SpotLight } from 'three';
 import { LightSerializer } from '@/core/lights/LightSerializer.js';
+import { Logger } from '@/core/Logger.js';
 
 describe( 'LightSerializer', () => {
 
@@ -586,8 +587,24 @@ describe( 'LightSerializer with three.js lights', () => {
 		expect( material.uniforms.spotLights.value[ 9 ] ).toBeCloseTo( 50 / ( 4 * Math.PI ), 5 );
 		expect( material.uniforms.areaLights.value[ 3 ] ).toBeCloseTo( 2, 6 );
 		expect( material.needsUpdate ).toBe( true );
-		expect( log ).toHaveBeenCalledWith( 'Preprocessed 2 point lights by importance' );
+		// A detail line, at debug.
+		expect( log ).not.toHaveBeenCalled();
 		log.mockRestore();
+		const lines = [];
+		Logger.setLevel( 'debug' );
+		Logger.setSink( line => lines.push( line ) );
+		try {
+
+			serializer.processSceneLights( scene, material );
+
+		} finally {
+
+			Logger.setSink( null );
+			Logger.setLevel( 'info' );
+
+		}
+
+		expect( lines ).toContainEqual( expect.objectContaining( { level: 'debug', namespace: 'lights', message: 'Preprocessed 2 point lights by importance' } ) );
 
 	} );
 

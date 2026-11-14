@@ -256,7 +256,7 @@ describe( 'a replace-load', () => {
 		};
 
 		await expect( app.loadModel( 'a.glb' ) ).rejects.toBe( failure );
-		expect( warn ).toHaveBeenCalledWith( expect.stringContaining( 'could not clear the scene' ), expect.any( Error ) );
+		expect( warn.mock.calls.some( call => call[ 0 ].includes( 'could not clear the scene' ) && call.at( - 1 ) instanceof Error ) ).toBe( true );
 
 	} );
 

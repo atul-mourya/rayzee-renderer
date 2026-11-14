@@ -8,6 +8,9 @@
 import { Scene, Vector3 } from 'three';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { EngineEvents } from '../../EngineEvents.js';
+import { createLogger } from '../../Logger.js';
+
+const log = createLogger( 'overlay' );
 
 // Three.js "forward" convention (local -Z), used to derive a spot/directional
 // light's aim direction from its quaternion. Read-only — setFromUnitVectors()
@@ -363,7 +366,7 @@ export class TransformManager {
 
 		} catch ( err ) {
 
-			console.error( 'Transform refit error:', err );
+			log.error( 'Transform refit error:', err );
 
 		} finally {
 

@@ -62,6 +62,9 @@ The **renderer core** (`RayzeeRenderer`, `rayzee/core`), the **add-ons** (`rayze
   *review* (files).
 - A generated file is written whole by its generator (`shaders/DFGTable.js` by `npm run bench:lut`), never pasted.
 - A case-only rename needs `git rm --cached` of the old name: macOS hides it. *Check.*
+- Engine code on the page logs through `createLogger( namespace )`, never `console` itself: the level, the namespace
+  filter and a host's `Logger.setSink` see only what goes through it. Workers and the pipeline's explicit print helpers
+  (`logStats`, `logInfo`) print directly. *Test:* `logger.test.js` (any `console.` or `console[` outside those).
 
 ### 4. Big files
 

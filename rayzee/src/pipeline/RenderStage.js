@@ -1,3 +1,5 @@
+import { createLogger } from '../Logger.js';
+
 /**
  * Execution modes for pipeline stages in tile rendering
  *
@@ -376,13 +378,22 @@ export class RenderStage {
 
 	// ===== DEBUG UTILITIES =====
 
+	// A stage's lines go out under `stage:<name>`, made on first use (the name may be set after construction).
+	#logger = null;
+	_logger() {
+
+		if ( this.#logger?.namespace !== `stage:${this.name}` ) this.#logger = createLogger( `stage:${this.name}` );
+		return this.#logger;
+
+	}
+
 	/**
 	 * Log a message with stage name prefix
 	 * @param {...*} args - Arguments to log
 	 */
 	log( ...args ) {
 
-		console.log( `[${this.name}]`, ...args );
+		this._logger().info( ...args );
 
 	}
 
@@ -392,7 +403,7 @@ export class RenderStage {
 	 */
 	warn( ...args ) {
 
-		console.warn( `[${this.name}]`, ...args );
+		this._logger().warn( ...args );
 
 	}
 
@@ -402,7 +413,7 @@ export class RenderStage {
 	 */
 	error( ...args ) {
 
-		console.error( `[${this.name}]`, ...args );
+		this._logger().error( ...args );
 
 	}
 

@@ -2,7 +2,9 @@ import { DataTexture, FileLoader, HalfFloatType, RGBAFormat } from 'three';
 import { EXRLoader } from 'three/addons/loaders/EXRLoader.js';
 import EXRWorker from './EXRWorker.js?worker&inline';
 import { createWorker, hardwareThreads, hasWorkers } from '../Platform.js';
-import { withoutWarning } from '../Logger.js';
+import { createLogger, withoutWarning } from '../Logger.js';
+
+const log = createLogger( 'assets' );
 
 const MAX_WORKERS = 4;
 const idle = [];
@@ -112,7 +114,7 @@ export class WorkerEXRLoader extends EXRLoader {
 			this.manager.itemError( url );
 			this.manager.itemEnd( url );
 			if ( onError ) onError( error );
-			else console.error( error );
+			else log.error( error );
 
 		};
 

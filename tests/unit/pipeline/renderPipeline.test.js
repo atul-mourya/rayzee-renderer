@@ -591,7 +591,7 @@ describe( 'RenderPipeline', () => {
 			pipeline.addStage( stage );
 			pipeline.render();
 
-			expect( spy ).toHaveBeenCalledWith( expect.stringContaining( 'Skipped' ) );
+			expect( spy.mock.calls.some( ( [ line ] ) => /\[pipeline\].*Skipped stage 'Denoiser'/.test( line ) ) ).toBe( true );
 			spy.mockRestore();
 
 		} );

@@ -1,3 +1,7 @@
+import { createLogger } from '../Logger.js';
+
+const log = createLogger( 'pipeline' );
+
 /**
  * PipelineContext - Shared state and resource registry for pipeline stages
  *
@@ -415,7 +419,7 @@ export class PipelineContext {
 
 			} catch ( error ) {
 
-				console.error( `Error in state change callback for '${key}':`, error );
+				log.error( `Error in state change callback for '${key}':`, error );
 
 			}
 

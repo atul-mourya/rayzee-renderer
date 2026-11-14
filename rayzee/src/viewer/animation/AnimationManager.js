@@ -10,6 +10,9 @@
 import { AnimationMixer, EventDispatcher, Timer, Vector3, LoopRepeat, LoopOnce, PropertyBinding } from 'three';
 import { EngineEvents } from '../../EngineEvents.js';
 import { isDeformable } from '../../scene/GeometryExtractor.js';
+import { createLogger } from '../../Logger.js';
+
+const log = createLogger( 'animation' );
 
 /**
  * PropertyBinding.findNode from one walk of `root`: three walks the tree again for every track it binds. The first node
@@ -141,7 +144,7 @@ export class AnimationManager extends EventDispatcher {
 
 		if ( ! hasBoundTracks && mixerRoot !== scene ) {
 
-			console.log( '[AnimationManager] Tracks did not resolve from model root, retrying with scene root' );
+			log.debug( 'Tracks did not resolve from model root, retrying with scene root' );
 			this.mixer = new AnimationMixer( scene );
 			this._mixerRoot = scene;
 			actions = boundWith( scene, nodeFinder( scene ), () => animations.map( clip => this.mixer.clipAction( clip ) ) );
@@ -189,7 +192,7 @@ export class AnimationManager extends EventDispatcher {
 		this._lastMorphWeights = [];
 
 		const skinnedCount = meshes.filter( m => m.isSkinnedMesh ).length;
-		console.debug( `[AnimationManager] Init: ${animations.length} clips, ${meshes.length} meshes (${skinnedCount} skinned), ${offset} triangles, ${this._rigid ? 'rigid' : 'deforming'}` );
+		log.debug( `Init: ${animations.length} clips, ${meshes.length} meshes (${skinnedCount} skinned), ${offset} triangles, ${this._rigid ? 'rigid' : 'deforming'}` );
 
 	}
 

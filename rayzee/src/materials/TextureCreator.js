@@ -402,12 +402,12 @@ class SmartBufferPool {
 
 		if ( stats.utilizationPercentage > 90 ) {
 
-			console.warn( `Memory pool critical: ${ stats.utilizationPercentage.toFixed( 1 ) }% used (${ ( stats.currentUsage / ( 1024 * 1024 ) ).toFixed( 1 ) }MB / ${ ( stats.maxUsage / ( 1024 * 1024 ) ).toFixed( 1 ) }MB)` );
+			log.warn( `Memory pool critical: ${ stats.utilizationPercentage.toFixed( 1 ) }% used (${ ( stats.currentUsage / ( 1024 * 1024 ) ).toFixed( 1 ) }MB / ${ ( stats.maxUsage / ( 1024 * 1024 ) ).toFixed( 1 ) }MB)` );
 			return 'critical';
 
 		} else if ( stats.utilizationPercentage > 70 ) {
 
-			console.warn( `Memory pool high: ${ stats.utilizationPercentage.toFixed( 1 ) }% used (${ ( stats.currentUsage / ( 1024 * 1024 ) ).toFixed( 1 ) }MB / ${ ( stats.maxUsage / ( 1024 * 1024 ) ).toFixed( 1 ) }MB)` );
+			log.warn( `Memory pool high: ${ stats.utilizationPercentage.toFixed( 1 ) }% used (${ ( stats.currentUsage / ( 1024 * 1024 ) ).toFixed( 1 ) }MB / ${ ( stats.maxUsage / ( 1024 * 1024 ) ).toFixed( 1 ) }MB)` );
 			return 'high';
 
 		}
@@ -1760,7 +1760,7 @@ export class TextureCreator {
 
 		const { materials, maps, normalMaps, bumpMaps, roughnessMaps, metalnessMaps, emissiveMaps, displacementMaps } = params;
 
-		console.log( '[TextureCreator] Creating material textures only' );
+		log.debug( 'Creating material textures only' );
 		const startTime = performance.now();
 
 		try {
@@ -1842,13 +1842,13 @@ export class TextureCreator {
 			} );
 
 			const duration = performance.now() - startTime;
-			console.log( `[TextureCreator] Material texture creation complete (${duration.toFixed( 2 )}ms)` );
+			log.debug( `Material texture creation complete (${duration.toFixed( 2 )}ms)` );
 
 			return textures;
 
 		} catch ( error ) {
 
-			console.error( '[TextureCreator] Material texture creation error:', error );
+			log.error( 'Material texture creation error:', error );
 			throw new Error( `Material texture creation failed: ${error.message}` );
 
 		}
@@ -1985,7 +1985,7 @@ export class TextureCreator {
 			// All-compressed groups are handled by the CompressedArrayTexture path upstream.
 			if ( tex.isCompressedTexture ) {
 
-				console.warn( '[TextureCreator] GPU-compressed texture in mixed group — using placeholder' );
+				log.warn( 'GPU-compressed texture in mixed group — using placeholder' );
 				normalized.push( null );
 				continue;
 

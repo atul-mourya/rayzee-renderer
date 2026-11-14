@@ -1,4 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { readFileSync, readdirSync } from 'node:fs';
+import path from 'node:path';
 
 const memoryStorage = ( initial = {} ) => {
 
@@ -219,6 +221,138 @@ describe( 'Logger', () => {
 
 	} );
 
+	it( 'hands a host\'s sink each line that passes the filters, as text and as given, instead of the console', async () => {
+
+		const { createLogger, Logger } = await freshLogger();
+		const lines = [];
+		Logger.setSink( line => lines.push( line ) );
+		const scene = createLogger( 'scene' );
+		class Mesh {
+
+			constructor() {
+
+				this.name = 'floor';
+
+			}
+
+		}
+
+		const looped = { a: 1 };
+		looped.self = looped;
+		const failure = new Error( 'broken' );
+		scene.debug( 'hidden at info' );
+		scene.info( 'built', 3, { triangles: 12 }, [ 1, 2 ] );
+		scene.warn( 'odd', new Mesh(), looped, null );
+		scene.error( failure );
+
+		expect( lines ).toEqual( [
+			{ level: 'info', namespace: 'scene', message: 'built 3 {"triangles":12} [1,2]', args: [ 'built', 3, { triangles: 12 }, [ 1, 2 ]] },
+			{ level: 'warn', namespace: 'scene', message: 'odd [Mesh floor] {"a":1,"self":"[circular]"} null', args: expect.any( Array ) },
+			{ level: 'error', namespace: 'scene', message: failure.stack, args: [ failure ] },
+		] );
+		expect( [ log, warn, error ].every( spy => spy.mock.calls.length === 0 ) ).toBe( true );
+
+		// Namespaces narrow debug for the sink too; a summary arrives as its lines.
+		Logger.only( 'bvh' );
+		lines.length = 0;
+		scene.debug( 'filtered' );
+		createLogger( 'bvh:leaf' ).summary( 'BVH built', [ 'leaves 4', '', 'depth 9' ] );
+		expect( lines.map( l => [ l.level, l.message ] ) ).toEqual( [[ 'info', 'BVH built' ], [ 'debug', 'leaves 4' ], [ 'debug', 'depth 9' ]] );
+		expect( groupCollapsed ).not.toHaveBeenCalled();
+
+		Logger.setSink( null );
+		scene.warn( 'back on the console' );
+		expect( warn ).toHaveBeenCalledWith( '%c[scene]%c back on the console', 'color:#7c8494', 'color:inherit' );
+		expect( () => Logger.setSink( 'console' ) ).toThrow( TypeError );
+
+	} );
+
+	it( 'gives a sink an error\'s name and message, a stack that lacks them, and never a nested object\'s toJSON', async () => {
+
+		const { createLogger, Logger } = await freshLogger();
+		const lines = [];
+		Logger.setSink( line => lines.push( line.message ) );
+		const log = createLogger( 'gpu' );
+		class GPUValidationError {
+
+			constructor( message ) {
+
+				this.message = message;
+
+			}
+
+		}
+
+		const firefox = new Error( 'no adapter' );
+		firefox.stack = 'init@renderer.js:10:5\nboot@app.js:2:1';
+		const toJSON = vi.fn( () => ( { huge: true } ) );
+		class Mesh {
+
+			toJSON() {
+
+				return toJSON();
+
+			}
+
+		}
+
+		log.error( 'WebGPU uncaptured error:', new GPUValidationError( 'binding 3 out of range' ) );
+		log.error( firefox );
+		log.info( { mesh: new Mesh(), positions: new Float32Array( 9 ), list: [ new Mesh() ] } );
+		expect( lines ).toEqual( [
+			'WebGPU uncaptured error: GPUValidationError: binding 3 out of range',
+			'Error: no adapter\ninit@renderer.js:10:5\nboot@app.js:2:1',
+			'{"mesh":"[Mesh]","positions":"[Float32Array 9]","list":["[Mesh]"]}',
+		] );
+		expect( toJSON ).not.toHaveBeenCalled();
+		Logger.setSink( null );
+
+	} );
+
+	it( 'sends a line the sink itself logs to the console, and a failing sink\'s error once', async () => {
+
+		const { createLogger, Logger } = await freshLogger();
+		const scene = createLogger( 'scene' );
+		const lines = [];
+		Logger.setSink( line => {
+
+			lines.push( line.message );
+			scene.info( 'from inside the sink' );
+
+		} );
+		scene.warn( 'outer' );
+		expect( lines ).toEqual( [ 'outer' ] );
+		expect( log ).toHaveBeenCalledWith( '%c[scene]%c from inside the sink', 'color:#7c8494', 'color:inherit' );
+
+		Logger.setSink( () => {
+
+			throw new Error( 'sink down' );
+
+		} );
+		scene.warn( 'one' );
+		scene.warn( 'two' );
+		expect( error.mock.calls.filter( ( [ m ] ) => /sink threw/.test( m ) ) ).toHaveLength( 1 );
+		expect( warn ).toHaveBeenCalledTimes( 2 );
+		Logger.setSink( null );
+
+	} );
+
+	it( 'prints a line itself when the host\'s sink throws', async () => {
+
+		const { createLogger, Logger } = await freshLogger();
+		const broken = new Error( 'sink down' );
+		Logger.setSink( () => {
+
+			throw broken;
+
+		} );
+		createLogger( 'gpu' ).warn( 'lost' );
+		expect( error ).toHaveBeenCalledWith( expect.stringContaining( 'sink threw' ), broken );
+		expect( warn ).toHaveBeenCalledWith( '%c[gpu]%c lost', 'color:#7c8494', 'color:inherit' );
+		Logger.setSink( null );
+
+	} );
+
 	it( 'warns once per key', async () => {
 
 		const { createLogger, warnOnce } = await freshLogger();
@@ -260,6 +394,47 @@ describe( 'fmt', () => {
 		expect( fmt.count( 2000, 'map' ) ).toBe( '2,000 maps' );
 		expect( fmt.count( 2, 'mesh', 'meshes' ) ).toBe( '2 meshes' );
 		expect( fmt.list( [ 'a', false, null, 'b' ] ) ).toBe( 'a · b' );
+
+	} );
+
+} );
+
+// What a host's sink and the level see is only what goes through createLogger.
+describe( 'engine code on the page', () => {
+
+	const ROOT = path.resolve( __dirname, '../../../rayzee/src' );
+	const files = dir => readdirSync( dir, { withFileTypes: true } ).flatMap( entry => {
+
+		const full = path.join( dir, entry.name );
+		return entry.isDirectory() ? files( full ) : entry.name.endsWith( '.js' ) ? [ full ] : [];
+
+	} );
+
+	// Printed on purpose: the pipeline's logStats and logInfo, which a developer calls to see them.
+	const printHelpers = text => {
+
+		const from = text.indexOf( '\tlogStats() {' ), info = text.indexOf( '\tlogInfo() {' );
+		return from < 0 || info < 0 ? text : text.slice( 0, from ) + text.slice( text.indexOf( '\n\t}\n', info ) );
+
+	};
+
+	it( 'logs through createLogger, never the console (workers aside)', () => {
+
+		const found = [];
+		for ( const file of files( ROOT ) ) {
+
+			const name = path.relative( ROOT, file ).split( path.sep ).join( '/' );
+			if ( name === 'Logger.js' || /Worker\.js$/.test( name ) ) continue;
+			const text = name === 'pipeline/RenderPipeline.js' ? printHelpers( readFileSync( file, 'utf8' ) ) : readFileSync( file, 'utf8' );
+			text.split( '\n' ).forEach( ( line, i ) => {
+
+				if ( ! /^\s*(\*|\/\/)/.test( line ) && /\bconsole\s*[.[]/.test( line ) ) found.push( `${name}:${i + 1}` );
+
+			} );
+
+		}
+
+		expect( found ).toEqual( [] );
 
 	} );
 

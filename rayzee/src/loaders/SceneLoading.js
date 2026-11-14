@@ -6,7 +6,9 @@ import { SPILL_ENVIRONMENT_WIDTH } from '../memory/HostMemory.js';
 import { ISSUE_CODES } from '../EngineIssues.js';
 import { SETTING_SOURCE } from '../RenderSettings.js';
 import { BuildTimer } from '../scene/BuildTimer.js';
-import { fmt } from '../Logger.js';
+import { createLogger, fmt } from '../Logger.js';
+
+const log = createLogger( 'scene' );
 
 // The part of an archive a load chose, for sceneSource.
 const partOf = ( { element, pbrtEntry } = {} ) => ( {
@@ -304,7 +306,7 @@ export function discardFailedLoad( app ) {
 
 	} catch ( cleanupError ) {
 
-		console.warn( 'PathTracerApp: could not clear the scene after a failed load', cleanupError );
+		log.warn( 'could not clear the scene after a failed load', cleanupError );
 
 	}
 

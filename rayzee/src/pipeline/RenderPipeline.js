@@ -2,6 +2,9 @@ import { PipelineContext } from './PipelineContext.js';
 import { EventDispatcher } from './EventDispatcher.js';
 import { auditStageRender } from './BindingAudit.js';
 import { ISSUE_CODES } from '../EngineIssues.js';
+import { createLogger } from '../Logger.js';
+
+const log = createLogger( 'pipeline' );
 
 /**
  * RenderPipeline - Orchestrates execution of pipeline stages
@@ -43,7 +46,7 @@ export class RenderPipeline {
 	 */
 	_reportStageFailure( name, phase, error ) {
 
-		console.error( `[Pipeline] Error in stage '${name}' (${phase}):`, error );
+		log.error( `Error in stage '${name}' (${phase}):`, error );
 
 		const key = `${name}:${phase}`;
 		if ( this._reportedStageFailures.has( key ) ) return;
@@ -111,7 +114,7 @@ export class RenderPipeline {
 		// Log stage addition
 		if ( this.stats.enabled ) {
 
-			console.log( `[Pipeline] Added stage: ${stage.name}` );
+			log.info( `Added stage: ${stage.name}` );
 
 		}
 
@@ -226,7 +229,7 @@ export class RenderPipeline {
 				// Stage skipped - log in debug mode
 				if ( this.stats.enabled && this.stats.logSkipped ) {
 
-					console.log( `[Pipeline] Skipped stage '${stage.name}' (executionMode: ${stage.executionMode})` );
+					log.info( `Skipped stage '${stage.name}' (executionMode: ${stage.executionMode})` );
 
 				}
 
@@ -381,7 +384,7 @@ export class RenderPipeline {
 
 				} catch ( error ) {
 
-					console.error( `[Pipeline] Error resizing stage '${stage.name}':`, error );
+					log.error( `Error resizing stage '${stage.name}':`, error );
 
 				}
 
@@ -408,7 +411,7 @@ export class RenderPipeline {
 
 				} catch ( error ) {
 
-					console.error( `[Pipeline] Error disposing stage '${stage.name}':`, error );
+					log.error( `Error disposing stage '${stage.name}':`, error );
 
 				}
 

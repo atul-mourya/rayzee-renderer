@@ -150,7 +150,7 @@ describe( 'pbrt parameters the loader does not honour', () => {
 	it( 'records one warning a strict host does not throw on, and again on a cached open', async () => {
 
 		const warn = vi.spyOn( console, 'warn' ).mockImplementation( () => {} );
-		const info = vi.spyOn( console, 'info' ).mockImplementation( () => {} );
+		const info = vi.spyOn( console, 'log' ).mockImplementation( () => {} );
 		const folder = () => localFolder( { name: 'Scene', files: [ { path: 'Scene/scene.pbrt', file: new File( [ SCENE ], 'scene.pbrt' ) } ] } );
 		const { storage, stored } = memoryArea();
 

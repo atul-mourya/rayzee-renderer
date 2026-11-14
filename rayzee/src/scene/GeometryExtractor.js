@@ -949,7 +949,7 @@ export class GeometryExtractor {
 
 		if ( ! mesh.geometry || ! mesh.material ) {
 
-			console.warn( 'Skipping mesh with missing geometry or material:', mesh );
+			log.warn( 'Skipping mesh with missing geometry or material:', mesh );
 			return;
 
 		}
