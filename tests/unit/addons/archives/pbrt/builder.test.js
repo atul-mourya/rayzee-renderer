@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { BufferGeometry, DataTexture, DoubleSide, EquirectangularReflectionMapping, Float32BufferAttribute, FloatType, FrontSide, Matrix4, Mesh, NoColorSpace, OrthographicCamera, PerspectiveCamera, RGBAFormat, SRGBColorSpace, Texture, Vector3 } from 'three';
 import { loadPBRTScene, pickEntryPath, PBRTParser, PBRTSceneBuilder } from '@/core/addons/archives/pbrt/index.js';
 import { deriveAlphaMode } from '@/core/scene/GeometryExtractor.js';
+import { viewMatrixOf } from '@/core/scene/ViewCamera.js';
 import { srgbToLinear } from '@/core/addons/archives/pbrt/PBRTTextureBake.js';
 
 const enc = new TextEncoder();
@@ -130,8 +131,77 @@ describe( 'PBRT scene builder', () => {
 		expect( portrait.top ).toBeCloseTo( 800 / 600, 9 );
 		expect( portrait.right ).toBeCloseTo( 1, 9 );
 
-		const windowed = await load( 'Camera "orthographic" "float screenwindow" [ -3 3 -2 2 ]', 800, 600 );
-		expect( windowed.top ).toBe( 2 );
+		// A window pbrt stretches onto the film keeps its height, reported; one of the film's shape is exact.
+		const stretched = await loadPBRTScene( buildArgs( { vfs: { 'scene.pbrt': scene( 'Camera "orthographic" "float screenwindow" [ -3 3 -2 2 ]', 800, 600 ) } } ) );
+		expect( stretched.camera.top ).toBe( 2 );
+		expect( Object.keys( stretched.parameters.approximated ) ).toEqual( [ 'Camera orthographic: screenwindow' ] );
+		const fitted = await loadPBRTScene( buildArgs( { vfs: { 'scene.pbrt': scene( 'Camera "orthographic" "float screenwindow" [ -4 4 -3 3 ]', 800, 600 ) } } ) );
+		expect( [ fitted.camera.top, fitted.camera.right ] ).toEqual( [ 3, 4 ] );
+		expect( fitted.parameters.approximated ).toEqual( {} );
+
+	} );
+
+	it( 'frames a perspective camera by pbrt\'s screen window, its fov spanning screen space\'s [-1, 1]', async () => {
+
+		// Marker spheres where pbrt-v4 rendered them (480 × 201, centroids of its own render): the island's window puts
+		// the fov across the frame, 32.4° tall where the fov alone gave 69.5°.
+		const scene = ( window, x = 480, y = 201 ) => `LookAt 0 0 0  0 0 1  0 1 0
+			Camera "perspective" "float fov" 69.50461 ${window}
+			Film "rgb" "integer xresolution" ${x} "integer yresolution" ${y}
+			WorldBegin
+			AttributeBegin Translate 1.2 0.4 3 Shape "sphere" "float radius" 0.02 AttributeEnd
+			AttributeBegin Translate -0.3 -0.25 2 Shape "sphere" "float radius" 0.02 AttributeEnd`;
+		const load = ( ...args ) => loadPBRTScene( buildArgs( { vfs: { 'scene.pbrt': enc.encode( scene( ...args ) ) } } ) );
+		const pixels = ( { group, camera }, [ w, h ] = [ 480, 201 ] ) => {
+
+			group.updateMatrixWorld( true );
+			const view = viewMatrixOf( camera, new Matrix4() );
+			return group.children.filter( ( c ) => c.isMesh ).map( ( mesh ) => {
+
+				mesh.geometry.computeBoundingSphere();
+				const p = mesh.geometry.boundingSphere.center.clone().applyMatrix4( mesh.matrixWorld ).applyMatrix4( view ).applyMatrix4( camera.projectionMatrix );
+				return [ ( p.x + 1 ) / 2 * w, ( 1 - p.y ) / 2 * h ];
+
+			} );
+
+		};
+
+		const island = await load( '"float screenwindow" [ -1 1 -0.418945 0.418945 ] "float frameaspectratio" 2.386946' );
+		expect( island.camera.fov ).toBeCloseTo( 32.414, 3 );
+		const PBRT = [[ 378.41, 54.42 ], [ 188.12, 143.73 ]];
+		pixels( island ).forEach( ( [ x, y ], i ) => expect( [ x, y ] ).toEqual( [ expect.closeTo( PBRT[ i ][ 0 ], 0 ), expect.closeTo( PBRT[ i ][ 1 ], 0 ) ] ) );
+		// Stretched 0.05 % onto the film (2.387 against 2.388), under the 0.1 % reported.
+		expect( island.parameters.approximated ).toEqual( {} );
+		expect( Object.keys( island.parameters.unused ).filter( ( key ) => key.startsWith( 'Camera' ) ) ).toEqual( [] );
+
+		// No window: the fov spans the shorter side, landscape or portrait.
+		expect( ( await load( '' ) ).camera.fov ).toBeCloseTo( 69.50461, 9 );
+		const portrait = await load( '', 201, 480 );
+		expect( Math.tan( portrait.camera.fov * Math.PI / 360 ) ).toBeCloseTo( Math.tan( 69.50461 * Math.PI / 360 ) * 480 / 201, 9 );
+		// frameaspectratio alone sets the default window, then the film stretches it: the height is kept, and reported.
+		const square = await load( '"float frameaspectratio" 1' );
+		expect( square.camera.fov ).toBeCloseTo( 69.50461, 9 );
+		expect( Object.keys( square.parameters.approximated ) ).toEqual( [ 'Camera perspective: frameaspectratio' ] );
+		// Off centre (pbrt draws [-0.5, 1.5]): drawn centred, its height kept, and reported.
+		const shifted = await load( '"float screenwindow" [ -0.5 1.5 -0.5 0.5 ]', 480, 240 );
+		expect( shifted.camera.fov ).toBeCloseTo( 2 * Math.atan( 0.5 * Math.tan( 69.50461 * Math.PI / 360 ) ) * 180 / Math.PI, 9 );
+		expect( Object.keys( shifted.parameters.approximated ) ).toEqual( [ 'Camera perspective: screenwindow' ] );
+		// A portrait film's window, explicit: the fov across its width, twice that tall.
+		const tall = await load( '"float screenwindow" [ -1 1 -2 2 ]', 200, 400 );
+		expect( Math.tan( tall.camera.fov * Math.PI / 360 ) ).toBeCloseTo( 2 * Math.tan( 69.50461 * Math.PI / 360 ), 9 );
+		expect( tall.parameters.approximated ).toEqual( {} );
+		// Flipped: drawn upright, reported.
+		const flipped = await load( '"float screenwindow" [ -1 1 0.418945 -0.418945 ]' );
+		expect( flipped.camera.fov ).toBeCloseTo( island.camera.fov, 9 );
+		expect( Object.keys( flipped.parameters.approximated ) ).toEqual( [ 'Camera perspective: screenwindow' ] );
+		// pbrt's spherical and realistic cameras have no window: not read, so reported unused, and the fov unchanged.
+		for ( const type of [ 'spherical', 'realistic' ] ) {
+
+			const other = await loadPBRTScene( buildArgs( { vfs: { 'scene.pbrt': enc.encode( scene( '"float screenwindow" [ -1 1 -0.25 0.25 ]' ).replace( 'Camera "perspective"', `Camera "${type}"` ) ) } } ) );
+			expect( other.camera.fov ).toBeCloseTo( 69.50461, 9 );
+			expect( Object.keys( other.parameters.unused ) ).toContain( `Camera ${type}: screenwindow` );
+
+		}
 
 	} );
 

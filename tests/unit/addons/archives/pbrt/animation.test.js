@@ -392,6 +392,21 @@ describe( 'PBRT animation clip', () => {
 
 	} );
 
+	it( 'keys a zooming camera\'s fov through its screen window, as the first frame is drawn', async () => {
+
+		const zoom = ( fov ) => enc.encode( `LookAt 0 0 5  0 0 0  0 1 0
+			Camera "perspective" "float fov" ${fov} "float screenwindow" [ -1 1 -0.5 0.5 ]
+			Film "rgb" "integer xresolution" 200 "integer yresolution" 100
+			WorldBegin
+			Shape "sphere" "float radius" 1` );
+		const { animations, camera } = await loadPBRTScene( args( { vfs: { 'z/frame1.pbrt': zoom( 60 ), 'z/frame2.pbrt': zoom( 30 ) } } ) );
+		const track = animations[ 0 ].tracks.find( ( t ) => t.name.endsWith( '.fov' ) );
+		const vertical = ( fov ) => 2 * Math.atan( 0.5 * Math.tan( fov * Math.PI / 360 ) ) * 180 / Math.PI;
+		expect( Array.from( track.values ) ).toEqual( [ expect.closeTo( vertical( 60 ), 4 ), expect.closeTo( vertical( 30 ), 4 ) ] );
+		expect( camera.fov ).toBeCloseTo( track.values[ 0 ], 4 );
+
+	} );
+
 	it( 'builds the first frame, with later arrivals hidden, and plays to the last', async () => {
 
 		const { group, animations } = await loadPBRTScene( args() );

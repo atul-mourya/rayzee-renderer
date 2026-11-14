@@ -135,9 +135,13 @@ subtree per element, and the whole thing rarely fits: Moana is 29 GB unpacked.
   `phimax`, in pbrt's uv, facing ∂p/∂u × ∂p/∂v. A `bilinearmesh` patch's corners are p00, p10, p01, p11 (not a ring),
   one patch of four points needs no indices, and without uvs a patch takes its own — watercolor's floor spots had been
   dropped. A camera's `lensradius`/`focaldistance` become its own effects (`userData.__rayzeeEffects`, applied when it is
-  chosen): the same aperture radius in both DOF modes, focused by hand. The `Integrator` (as the engine's `integrator`:
-  bdpt → bidirectional, sppm → vcm), its maxdepth and `regularize` (`pathRegularization`; path, volpath, bdpt and mlt
-  take it), sppm's `radius` (`mergeRadius`, scene units), the Film's `maxcomponentvalue` (`sampleClamp`, over the imaging
+  chosen): the same aperture radius in both DOF modes, focused by hand. A perspective or orthographic camera is framed
+  by its screen window (`screenwindow`, else the default from `frameaspectratio`, else the film's aspect): `fov` spans
+  screen space's [-1, 1], which is the window's shorter side only by default — the island's [-1, 1] × [-0.42, 0.42]
+  puts its 69.5° across, 32.4° tall (read as tall, the view was 2.4× too wide). A window off centre, flipped, or
+  stretched onto the film by over 0.1 % keeps its height, centred, and is reported approximated. The `Integrator`
+  (as the engine's `integrator`: bdpt → bidirectional, sppm → vcm), its maxdepth and `regularize`
+  (`pathRegularization`; path, volpath, bdpt and mlt take it), sppm's `radius` (`mergeRadius`, scene units), the Film's `maxcomponentvalue` (`sampleClamp`, over the imaging
   ratio: pbrt caps sensor XYZ after it; none under sppm, which writes its image without the film's cap), a box or triangle
   `PixelFilter` (`pixelFilter`, `pixelFilterRadius`: box, triangle or Gaussian; none named is pbrt's Gaussian of 1.5; one
   radius, a different `yradius` reported approximated, a Gaussian's σ other than radius / 3 too; none under bdpt or sppm), `Sampler`

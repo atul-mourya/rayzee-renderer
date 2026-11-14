@@ -45,13 +45,14 @@ Shape "sphere" "float radius" 0.5
 const REPORT = {
 	unused: {
 		'AreaLightSource diffuse: filename': 1,
-		'Camera perspective: frameaspectratio': 1,
 		'Material coateddiffuse: thickness': 1,
 		'Option: disablepixeljitter': 1,
 		'Shape trianglemesh: edgelength': 2,
 		'Texture imagemap: wrap': 2,
 	},
 	approximated: {
+		// A 1.5 frame on a square film: pbrt squeezes it, the engine keeps the window's height.
+		'Camera perspective: frameaspectratio': 1,
 		'Material mix: amount': 1,
 	},
 };

@@ -109,6 +109,13 @@ function float32( values ) {
 
 }
 
+// pbrt's `fov` spans screen space's [-1, 1], `half` the window's half-height in those units; three's is vertical.
+function verticalFov( fov, half ) {
+
+	return 2 * Math.atan( half * Math.tan( fov * Math.PI / 360 ) ) * 180 / Math.PI;
+
+}
+
 // The per-mesh table is a debug aid; an instanced scene reaches tens of millions of rows.
 const MAX_REPORT_ROWS = 1000;
 // Triangles are chunked across several arrays now, so the 2 GB V8 cap no longer bounds them at
@@ -142,7 +149,7 @@ const DEFAULT_CURVE_TOLERANCE = 0.05;
 const CURVE_SPLIT_CURVES = 20000;
 
 /** Bumped whenever the same scene files build a different graph, so a stored graph is not reused. */
-export const PBRT_BUILD_REVISION = 40;
+export const PBRT_BUILD_REVISION = 41;
 
 // Ptex pages: all of a scene's Ptex colour maps in this much texture memory at most, on square pages this size.
 const DEFAULT_PTEX_MEMORY = 1024 * 2 ** 20;
@@ -1518,7 +1525,8 @@ export class PBRTSceneBuilder {
 
 			if ( camMotion.fov && camera.isPerspectiveCamera ) {
 
-				const fovs = Array.from( camMotion.fov, f => this._verticalFov( { fov: { type: 'float', value: [ f ] } }, camera.aspect ) );
+				const half = this._fovHalf( ir.camera, camera.aspect );
+				const fovs = Array.from( camMotion.fov, f => verticalFov( f, half ) );
 				tracks.push( new NumberKeyframeTrack( `${camera.name}.fov`, camMotion.times.slice(), fovs ) );
 
 			}
@@ -3528,14 +3536,12 @@ export class PBRTSceneBuilder {
 		let camera;
 		if ( cam.type === 'orthographic' ) {
 
-			// pbrt's default screen window spans [-1, 1] along the shorter image axis.
-			const window = param( cam.params, 'screenwindow' )?.value;
-			const half = window?.length === 4 ? ( window[ 3 ] - window[ 2 ] ) / 2 : Math.max( 1, 1 / aspect );
+			const half = this._screenHalf( cam.params, aspect );
 			camera = new OrthographicCamera( - half * aspect, half * aspect, half, - half, 0.01, 10000 );
 
 		} else {
 
-			camera = new PerspectiveCamera( this._verticalFov( cam.params, aspect ), aspect, 0.01, 10000 );
+			camera = new PerspectiveCamera( verticalFov( pFloat( cam.params, 'fov', 90 ), this._fovHalf( cam, aspect ) ), aspect, 0.01, 10000 );
 
 		}
 
@@ -3584,15 +3590,35 @@ export class PBRTSceneBuilder {
 
 	}
 
-	// pbrt `fov` is the angle along the SHORTER image axis. THREE uses vertical fov.
-	_verticalFov( params, aspect ) {
+	/**
+	 * The screen window's half-height a camera's fov is drawn over: its own for a perspective camera, the shorter side's
+	 * for the cameras pbrt gives none (spherical, realistic). @private
+	 */
+	_fovHalf( cam, aspect ) {
 
-		const pbrtFov = pFloat( params, 'fov', 90 );
-		if ( aspect >= 1 ) return pbrtFov; // landscape: shorter axis is vertical
-		// portrait: pbrt fov is horizontal → convert to vertical
-		const h = pbrtFov * Math.PI / 180;
-		const v = 2 * Math.atan( Math.tan( h / 2 ) / aspect );
-		return v * 180 / Math.PI;
+		return cam.type === 'perspective' ? this._screenHalf( cam.params, aspect ) : Math.max( 1, 1 / aspect );
+
+	}
+
+	/**
+	 * Half the height of pbrt's screen window: in tan( fov / 2 ) for a perspective camera, scene units for an
+	 * orthographic one. [-frame, frame] × [-1, 1] for a wide frame, else [-1, 1] × [-1/frame, 1/frame]; `screenwindow`
+	 * overrides it (and may put the fov across the frame). The engine draws a window centred on the view at the film's
+	 * aspect: one off centre, stretched by over 0.1 % or flipped is approximated. @private
+	 */
+	_screenHalf( params, aspect ) {
+
+		const frame = pFloat( params, 'frameaspectratio', aspect );
+		const window = param( params, 'screenwindow' )?.value;
+		const [ x0, x1, y0, y1 ] = window?.length === 4 ? window : frame > 1 ? [ - frame, frame, - 1, 1 ] : [ - 1, 1, - 1 / frame, 1 / frame ];
+		const w = x1 - x0, h = y1 - y0;
+		if ( ! ( w > 0 && h > 0 ) || Math.abs( x0 + x1 ) > 1e-3 * w || Math.abs( y0 + y1 ) > 1e-3 * h || Math.abs( w / h / aspect - 1 ) > 1e-3 ) {
+
+			approximated( params, window?.length === 4 ? 'screenwindow' : 'frameaspectratio' );
+
+		}
+
+		return Math.abs( h ) / 2 || 1;
 
 	}
 

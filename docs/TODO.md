@@ -64,7 +64,7 @@
 - [ ] PixelFilter: box, triangle and Gaussian are drawn (`pixelFilter`, 2026-11-10; a file naming none gets pbrt's
   Gaussian); Mitchell and Lanczos are not (negative lobes: a weight of ±1 a sample, which a plain average cannot carry),
   and none under the bidirectional integrators (light tracing would need splats spread by the filter)
-- [ ] Not read, not in the catalog: realistic cameras, perspective `screenwindow`, `frameaspectratio`, shutter (motion blur), Film sensor response curves (approximated: its white balance is read) / `cropwindow`, CameraMedium and space-filling media, non-homogeneous media, scattering inside media (σs folds into absorption)
+- [ ] Not read, not in the catalog: realistic cameras, an off-centre `screenwindow` or a `screenwindow` / `frameaspectratio` the film stretches (drawn centred at the film's aspect; an orthographic one off centre could be exact, a sideways move of the camera), shutter (motion blur), Film sensor response curves (approximated: its white balance is read) / `cropwindow`, CameraMedium and space-filling media, non-homogeneous media, scattering inside media (σs folds into absorption)
 
 ### UX issue
 - Because Diffuse Roughness is only built into the renderer when a material uses it, the first move of its slider off 0 makes the renderer rebuild, so the picture stalls for a few seconds.
