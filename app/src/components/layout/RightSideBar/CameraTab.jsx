@@ -224,8 +224,8 @@ const CameraTab = () => {
 							/>
 						</Row>
 
-						<RangeRows label="Longitude" tip={[ "How far to the left the panorama reaches, in degrees.", "How far to the right the panorama reaches, in degrees." ]} limit={180} value={panoramaLonRange} onChange={handlePanoramaLonRangeChange} />
-						<RangeRows label="Latitude" tip={[ "How far down the panorama reaches, in degrees.", "How far up the panorama reaches, in degrees." ]} limit={90} value={panoramaLatRange} onChange={handlePanoramaLatRangeChange} />
+						<RangeRows label="Longitude" tip={[ "How far to the left the panorama reaches, in degrees.", "How far to the right the panorama reaches, in degrees." ]} limit={CAMERA_RANGES.panoramaLon.limit} value={panoramaLonRange} onChange={handlePanoramaLonRangeChange} />
+						<RangeRows label="Latitude" tip={[ "How far down the panorama reaches, in degrees.", "How far up the panorama reaches, in degrees." ]} limit={CAMERA_RANGES.panoramaLat.limit} value={panoramaLatRange} onChange={handlePanoramaLatRangeChange} />
 					</>
 				)}
 

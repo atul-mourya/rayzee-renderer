@@ -31,7 +31,8 @@ A selected object gets a move, turn and scale handle in the view. More in [Keybo
 | **Camera Position** | (Default Camera, Orbit) Drag the dot to swing the camera around. The marks are front, side, top and bottom views. |
 
 For a panorama: **Level Horizon** keeps the horizon straight however the camera tilts, and **Longitude Min/Max** and
-**Latitude Min/Max** crop how far it reaches, in degrees.
+**Latitude Min/Max** crop how far it reaches, in degrees. Longitude goes to ±360, so a pbrt scene's panorama, which runs
+from 90 down to −270, shows as it is and keeps its other end when you move one.
 
 ### Depth of field
 

@@ -827,6 +827,11 @@ describe( 'what a scene\'s file asks for', () => {
 		const PANORAMA = { cameraProjection: 'equirectangular', panoramaLonRange: [ 90, - 270 ], panoramaLatRange: [ - 90, 90 ], panoramaLevelHorizon: false };
 		pt().applySceneRequest( { ...PANORAMA, aspect: 2 } );
 		expect( view() ).toEqual( [ 'equirectangular', [ 90, - 270 ], [ - 90, 90 ], false ] );
+		const { CAMERA_RANGES } = await import( '@/Constants' );
+		// The framing pbrt's importer asks for (builder.test.js) lies inside the Camera tab's slider limits: shown as it is,
+		// not clamped to the old ±180, so moving one end leaves the other.
+		expect( pt().panoramaLonRange.every( v => Math.abs( v ) <= CAMERA_RANGES.panoramaLon.limit ) ).toBe( true );
+		expect( pt().panoramaLatRange.every( v => Math.abs( v ) <= CAMERA_RANGES.panoramaLat.limit ) ).toBe( true );
 		const sent = Object.fromEntries( app.settings.set.mock.calls.filter( ( [ key ] ) => key in PANORAMA ) );
 		// What it already had (the full latitude range) is not sent again.
 		expect( sent ).toEqual( { cameraProjection: 'equirectangular', panoramaLonRange: [ 90, - 270 ], panoramaLevelHorizon: false } );

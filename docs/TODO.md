@@ -67,8 +67,6 @@
 - [ ] Not read, not in the catalog: realistic cameras, perspective `screenwindow`, `frameaspectratio`, shutter (motion blur), Film sensor response curves (approximated: its white balance is read) / `cropwindow`, CameraMedium and space-filling media, non-homogeneous media, scattering inside media (σs folds into absorption)
 
 ### UX issue
-- The 360° panorama's longitude sliders run −180…180 with min below max: a pbrt spherical camera's framing (90 to −270,
-  backwards) shows clamped there, and touching either slider loses it.
 - Because Diffuse Roughness is only built into the renderer when a material uses it, the first move of its slider off 0 makes the renderer rebuild, so the picture stalls for a few seconds.
 
 ### Deferred

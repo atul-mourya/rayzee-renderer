@@ -94,7 +94,10 @@ export const CAMERA_RANGES = {
 		min: 0,
 		max: 200,
 		default: DEFAULT_STATE.focalLength
-	}
+	},
+	// Degrees either way. Longitude goes a full turn past ±180: pbrt's spherical camera runs from 90 down to −270.
+	panoramaLon: { limit: 360 },
+	panoramaLat: { limit: 90 },
 };
 
 // `exposure` (EV) makes up about two thirds of the light a lower sun loses, as a photographer
