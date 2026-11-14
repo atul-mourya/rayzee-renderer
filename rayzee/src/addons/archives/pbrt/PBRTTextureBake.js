@@ -434,6 +434,8 @@ export function combineOf( spec ) {
 		}
 
 		case 'channel': return ( values ) => values[ spec.term ][ 0 ];
+		// a → b by a term's first channel (a mix's specular intensity, into its surface map's alpha).
+		case 'lerp': return ( values ) => spec.a + ( spec.b - spec.a ) * values[ spec.term ][ 0 ];
 		default: return null;
 
 	}

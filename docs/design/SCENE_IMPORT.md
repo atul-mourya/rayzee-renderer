@@ -199,7 +199,15 @@ subtree per element, and the whole thing rarely fits: Moana is 29 GB unpacked.
   heights of up to one scene unit, as their files say.
   Textures the engine has no node for are baked on the CPU (`PBRTTextureBake.js`) into 8-bit sRGB DataTextures in
   their image's uv mapping: `mix`, `scale` by a texture, an imagemap's `scale` above 1 or `invert`, and a `mix`
-  material with a textured amount (its colours baked, everything else weighed by the amount's mean). Each colour
+  material with a textured amount (its colours baked, and its clear coat, roughness and metalness into one linear map,
+  R, G, B as three.js reads them, set as `clearcoatMap` / `roughnessMap` / `metalnessMap` with factors 1, where neither
+  material has such a map of its own and the two differ, with specular intensity in alpha (pbrt's diffuse has none; a
+  mix had MeshPhysicalMaterial's full lobe even of two diffuse sides); IOR, transmission and the rest weighed by the
+  amount's mean:
+  crown's gold inlays on red or white enamel had been 94 % and 69 % metal everywhere). The coat map is set only where
+  it shares the colour map's transform (the engine reads it through that one); the coat's roughness is weighed by the
+  coat each side brings; a mix of a mix reads the inner one's own values (`userData.pbrtSurface`), not the 1s under its
+  map; and a surface on another uv set is left at each channel's mean (`_inOneUVSet`). Each colour
   input is clamped to [0, 1] before mixing, as pbrt clamps an albedo. A float texture reads an image's alpha where it has
   one, else the mean of its colour, as pbrt does. 2D `checkerboard` and `bilerp` are baked too (`_proceduralTexture`).
   The baker is half the pbrt build on texture-heavy scenes, so its loops avoid per-texel work that changes nothing: at

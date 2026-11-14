@@ -141,7 +141,7 @@ const DEFAULT_CURVE_TOLERANCE = 0.05;
 const CURVE_SPLIT_CURVES = 20000;
 
 /** Bumped whenever the same scene files build a different graph, so a stored graph is not reused. */
-export const PBRT_BUILD_REVISION = 37;
+export const PBRT_BUILD_REVISION = 38;
 
 // Ptex pages: all of a scene's Ptex colour maps in this much texture memory at most, on square pages this size.
 const DEFAULT_PTEX_MEMORY = 1024 * 2 ** 20;
@@ -493,8 +493,19 @@ function setMapping( texture, { su, sv, du, dv, uv = null } ) {
 }
 
 // Material maps in the order that picks a surface's one uv set: its base colour's, else the first it has.
-const UV_MAPS = [ 'map', 'roughnessMap', 'clearcoatRoughnessMap', 'normalMap', 'clearcoatNormalMap' ];
-const MAP_SCALARS = { roughnessMap: 'roughness', clearcoatRoughnessMap: 'clearcoatRoughness' };
+const UV_MAPS = [ 'map', 'roughnessMap', 'clearcoatRoughnessMap', 'normalMap', 'clearcoatNormalMap', 'metalnessMap', 'clearcoatMap', 'specularIntensityMap' ];
+// The factor a dropped map leaves its mean in, and the channel the engine reads (three.js's: a mix's surface map holds
+// clear coat, roughness and metalness in R, G and B).
+const MAP_SCALARS = { roughnessMap: [ 'roughness', 1 ], clearcoatRoughnessMap: [ 'clearcoatRoughness', 1 ], metalnessMap: [ 'metalness', 2 ], clearcoatMap: [ 'clearcoat', 0 ], specularIntensityMap: [ 'specularIntensity', 3 ] };
+
+// One channel's mean of a three-channel layer.
+function channelMean( { data }, channel ) {
+
+	let sum = 0;
+	for ( let i = channel; i < data.length; i += 3 ) sum += data[ i ];
+	return data.length ? sum / ( data.length / 3 ) : 0;
+
+}
 
 /** The position mapping a material's textures are read in, or null for the mesh's own uv. */
 function uvSetOf( material ) {
@@ -2529,11 +2540,14 @@ export class PBRTSceneBuilder {
 			if ( ! map || uvKey( map.userData.pbrtUV ) === uvKey( set ) ) continue;
 			if ( out === material ) out = cloneMaterial( material );
 			out[ slot ] = null;
-			const scalar = MAP_SCALARS[ slot ];
-			const layer = scalar && await this._textureLayer( map, 1 );
-			if ( layer ) out[ scalar ] *= layerMean( layer );
+			const [ scalar, channel ] = MAP_SCALARS[ slot ] ?? [];
+			// A mix's surface map: the means it was baked from (PBRTMaterials, `userData.pbrtSurface`).
+			const mean = material.userData.pbrtSurface?.[ scalar ];
+			const layer = scalar && mean === undefined && channel < 3 && await this._textureLayer( map, 3 );
+			if ( mean !== undefined ) out[ scalar ] = mean;
+			else if ( layer ) out[ scalar ] *= channelMean( layer, channel );
 			const message = `a ${slot} in ${what( map.userData.pbrtUV )} on a surface textured in ${what( set )}: ` +
-				`one uv set a surface — ${layer ? 'its mean used' : 'dropped'}`;
+				`one uv set a surface — ${layer || mean !== undefined ? 'its mean used' : 'dropped'}`;
 			if ( ! this._uvWarnings.has( message ) ) {
 
 				this._uvWarnings.add( message );
@@ -3371,8 +3385,9 @@ export class PBRTSceneBuilder {
 	}
 
 	/**
-	 * A mix material whose amount is a texture: its two materials' colours (map × colour) baked by that texture, and
-	 * the texture's mean to weigh everything else. Null when nothing here can read it.
+	 * A mix material whose amount is a texture: its two materials' colours (map × colour) baked by that texture, their
+	 * clear coat, roughness and metalness too (`surface`: R, G, B, as three.js reads them) where both are plain values,
+	 * and the texture's mean to weigh everything else. Null when nothing here can read it.
 	 * @private
 	 */
 	async _bakeMaterialMix( matA, matB, amountName ) {
@@ -3382,6 +3397,20 @@ export class PBRTSceneBuilder {
 		if ( ! amount.layer ) return { mean: amount.rgb[ 0 ], texture: null };
 
 		const mean = layerMean( amount.layer );
+		// Coat, roughness, metalness and specular intensity follow the mask texel by texel (R, G, B, A); pbrt's diffuse
+		// has no specular lobe.
+		const surfaceOf = ( m ) => [ m.clearcoat ?? 0, m.roughness, m.metalness, m.specularIntensity ?? 1 ];
+		const own = ( m ) => m.clearcoatMap || m.roughnessMap || m.metalnessMap || m.specularIntensityMap;
+		const sa = surfaceOf( matA ), sb = surfaceOf( matB );
+		let surface = null;
+		if ( ! own( matA ) && ! own( matB ) && sa.some( ( v, i ) => Math.abs( v - sb[ i ] ) > 1e-4 ) ) {
+
+			const alphaOf = { op: 'lerp', a: sa[ 3 ], b: sb[ 3 ], term: 2 };
+			const baked = await this._bake( `mix amount "${amountName}" (surface)`, [ { rgb: sa.slice( 0, 3 ) }, { rgb: sb.slice( 0, 3 ) }, amount ], { op: 'mix' }, { linear: true, alphaOf } );
+			surface = baked ? bakedTexture( baked, { srgb: false } ) : null;
+
+		}
+
 		const term = async ( m ) => {
 
 			if ( ! m.map ) return { rgb: m.color.toArray(), clamp: true };
@@ -3391,9 +3420,9 @@ export class PBRTSceneBuilder {
 		};
 
 		const a = await term( matA ), b = await term( matB );
-		if ( ! a || ! b ) return { mean, texture: null };
+		if ( ! a || ! b ) return { mean, texture: null, surface };
 		const baked = await this._bake( `mix amount "${amountName}"`, [ a, b, amount ], { op: 'mix' }, { perChannel: ! amount.layer } );
-		return { mean, texture: baked ? bakedTexture( baked ) : null };
+		return { mean, texture: baked ? bakedTexture( baked ) : null, surface };
 
 	}
 

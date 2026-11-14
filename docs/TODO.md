@@ -218,8 +218,9 @@
   the rest untextured — Moana's isCoral names 2,273, isDunesA 755. Pack small atlases onto shared pages (distinct
   Texture objects over one `source`: the extractor counts sources); the scene-graph codec would then have to store a
   page once, not once per texture.
-- [ ] **Mix material**: only its colours follow the amount texture; roughness, clear coat and metalness take the
-  texture's mean. Per-texel maps, or pbrt's own per-hit choice between the two materials.
+- [ ] **Mix material**: colours, clear coat, roughness and metalness follow the amount texture (baked per texel); the
+  surface stays the mean where either material has a roughness, metalness or coat map of its own, and IOR,
+  transmission and the rest always do. pbrt's own per-hit choice between the two materials would cover all of it.
 - [ ] **Participating media**: only absorption inside glass is mapped (σa + σs as attenuation). Scattering, a medium in a
   non-glass shape, the camera's medium and grid/nanovdb media need volumetric path tracing (Rendering → Volumetric).
 - [ ] **Single-sheet dielectric**: kroken's picture glass is one quad of `dielectric`; the card behind it renders very

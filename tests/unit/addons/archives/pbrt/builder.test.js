@@ -1596,7 +1596,7 @@ describe( 'PBRT scene builder: pbrt-v4 fidelity', () => {
 
 	} );
 
-	it( 'bakes a mix material\'s colours by its amount texture and weighs the rest by its mean', async () => {
+	it( 'bakes a mix material\'s colours and coat by its amount texture', async () => {
 
 		const { meshes } = await meshesOf( `
 			MakeNamedMaterial "blue" "string type" "coateddiffuse" "rgb reflectance" [ 0 0 1 ]
@@ -1609,7 +1609,134 @@ describe( 'PBRT scene builder: pbrt-v4 fidelity', () => {
 		const material = meshes[ 0 ].material;
 		expect( Array.from( material.map.image.data.slice( 0, 4 ) ) ).toEqual( [ 0, 0, 255, 255 ] );
 		expect( Array.from( material.map.image.data.slice( 12, 16 ) ) ).toEqual( [ 255, 255, 255, 255 ] );
-		expect( material.clearcoat ).toBeCloseTo( 0.75, 6 );
+		// The coat too: the blue's where the dots are dark, none where they are white.
+		expect( [ material.clearcoat, material.clearcoatMap ] ).toEqual( [ 1, material.roughnessMap ] );
+		expect( [ 0, 1, 2, 3 ].map( ( k ) => material.clearcoatMap.image.data[ k * 4 ] ) ).toEqual( [ 255, 255, 255, 0 ] );
+
+	} );
+
+	it( 'bakes a mix material\'s clear coat, roughness and metalness by its amount texture: gold only where the mask says', async () => {
+
+		const { meshes } = await meshesOf( `
+			MakeNamedMaterial "red" "string type" "coateddiffuse" "rgb reflectance" [ 0.6 0.025 0.025 ] "float roughness" 0.25
+			MakeNamedMaterial "gold" "string type" "conductor" "spectrum eta" "metal-Au-eta" "spectrum k" "metal-Au-k"
+			Texture "mask" "float" "imagemap" "string filename" "mask.png"
+			AttributeBegin NamedMaterial "red" Shape "trianglemesh" ${TRI} AttributeEnd
+			AttributeBegin NamedMaterial "gold" Shape "trianglemesh" ${TRI} AttributeEnd
+			Material "mix" "string materials" [ "red" "gold" ] "texture amount" "mask"
+			Shape "trianglemesh" ${TRI} "point2 uv" [ 0 0 1 0 0 1 ]
+		`, {}, { 'mask.png': image( 0, 255, 128, 255 ) } );
+
+		const [ red, gold, mix ] = meshes.map( ( mesh ) => mesh.material );
+		const surface = mix.roughnessMap;
+		expect( surface ).toBeTruthy();
+		expect( mix.metalnessMap ).toBe( surface );
+		expect( mix.clearcoatMap ).toBe( surface );
+		expect( [ mix.roughness, mix.metalness, mix.clearcoat ] ).toEqual( [ 1, 1, 1 ] );
+		expect( surface.colorSpace ).toBe( NoColorSpace );
+
+		// Each texel: clear coat (R), roughness (G), metalness (B) of red, gold, or between, as three.js reads them.
+		const at = ( m, t ) => [ m.clearcoat, m.roughness, m.metalness ].map( ( v, i ) => v + ( [ gold.clearcoat, gold.roughness, gold.metalness ][ i ] - v ) * t );
+		const texel = ( k ) => Array.from( surface.image.data.slice( k * 4, k * 4 + 3 ) ).map( ( v ) => v / 255 );
+		// An 8-bit image texture reads through the sRGB curve, as pbrt reads it: 128 is 0.216.
+		for ( const [ k, t ] of [[ 0, 0 ], [ 1, 1 ], [ 2, ( ( 128 / 255 + 0.055 ) / 1.055 ) ** 2.4 ], [ 3, 1 ]] ) {
+
+			texel( k ).forEach( ( v, i ) => expect( v ).toBeCloseTo( at( red, t )[ i ], 2 ) );
+
+		}
+
+		expect( red.metalness ).toBe( 0 );
+		expect( gold.metalness ).toBe( 1 );
+		expect( red.clearcoat ).toBeGreaterThan( 0 );
+
+	} );
+
+	it( 'leaves a mix\'s surface to the mean where a material has a map of its own, and bakes none where both agree', async () => {
+
+		const { meshes } = await meshesOf( `
+			MakeNamedMaterial "a" "string type" "diffuse" "rgb reflectance" [ 1 0 0 ]
+			MakeNamedMaterial "b" "string type" "diffuse" "rgb reflectance" [ 0 0 1 ]
+			Texture "mask" "float" "imagemap" "string filename" "mask.png"
+			Texture "rough" "float" "imagemap" "string filename" "mask.png"
+			MakeNamedMaterial "c" "string type" "conductor" "texture roughness" "rough"
+			Material "mix" "string materials" [ "a" "b" ] "texture amount" "mask"
+			Shape "trianglemesh" ${TRI} "point2 uv" [ 0 0 1 0 0 1 ]
+			Material "mix" "string materials" [ "a" "c" ] "texture amount" "mask"
+			Shape "trianglemesh" ${TRI} "point2 uv" [ 0 0 1 0 0 1 ]
+		`, {}, { 'mask.png': image( 0, 255, 0, 255 ) } );
+
+		const [ same, mapped ] = meshes.map( ( mesh ) => mesh.material );
+		expect( [ same.roughnessMap, same.metalnessMap ] ).toEqual( [ null, null ] );
+		// Two diffuse materials: no specular lobe, as neither has one (the material's own default is a full one).
+		expect( same.specularIntensity ).toBe( 0 );
+		expect( [ mapped.roughnessMap, mapped.metalnessMap ] ).toEqual( [ null, null ] );
+		expect( mapped.metalness ).toBeCloseTo( 0.5, 6 );
+
+	} );
+
+	it( 'gives a mix\'s coat the roughness of the side that has one, and no coat map where neither side has a coat', async () => {
+
+		const { meshes } = await meshesOf( `
+			MakeNamedMaterial "red" "string type" "coateddiffuse" "rgb reflectance" [ 0.6 0.025 0.025 ] "float roughness" 0.25
+			MakeNamedMaterial "white" "string type" "diffuse" "rgb reflectance" [ 0.7 0.7 0.7 ]
+			MakeNamedMaterial "gold" "string type" "conductor" "spectrum eta" "metal-Au-eta" "spectrum k" "metal-Au-k"
+			Texture "mask" "float" "imagemap" "string filename" "mask.png"
+			AttributeBegin NamedMaterial "red" Shape "trianglemesh" ${TRI} AttributeEnd
+			Material "mix" "string materials" [ "red" "gold" ] "texture amount" "mask"
+			Shape "trianglemesh" ${TRI} "point2 uv" [ 0 0 1 0 0 1 ]
+			Material "mix" "string materials" [ "white" "gold" ] "texture amount" "mask"
+			Shape "trianglemesh" ${TRI} "point2 uv" [ 0 0 1 0 0 1 ]
+		`, {}, { 'mask.png': image( 0, 255, 255, 255 ) } );
+
+		const [ red, coated, bare ] = meshes.map( ( mesh ) => mesh.material );
+		// The red's coat only, however little of it the mask leaves: pbrt's coat there is the red's.
+		expect( coated.clearcoatRoughness ).toBeCloseTo( red.clearcoatRoughness, 6 );
+		expect( [ bare.clearcoat, bare.clearcoatMap ] ).toEqual( [ 0, null ] );
+		expect( bare.metalnessMap ).toBe( bare.roughnessMap );
+		// pbrt's diffuse has no specular lobe: the white's texels none, the gold's full, in the surface map's alpha.
+		expect( bare.specularIntensityMap ).toBe( bare.roughnessMap );
+		expect( bare.specularIntensity ).toBe( 1 );
+		expect( [ 0, 1, 2, 3 ].map( ( k ) => bare.specularIntensityMap.image.data[ k * 4 + 3 ] ) ).toEqual( [ 0, 255, 255, 255 ] );
+
+	} );
+
+	it( 'mixes an inner mix by its own values, not the 1s under its surface map', async () => {
+
+		const { meshes } = await meshesOf( `
+			MakeNamedMaterial "red" "string type" "coateddiffuse" "rgb reflectance" [ 0.6 0.025 0.025 ]
+			MakeNamedMaterial "gold" "string type" "conductor" "spectrum eta" "metal-Au-eta" "spectrum k" "metal-Au-k"
+			MakeNamedMaterial "white" "string type" "diffuse" "rgb reflectance" [ 1 1 1 ]
+			Texture "mask" "float" "imagemap" "string filename" "mask.png"
+			MakeNamedMaterial "inner" "string type" "mix" "string materials" [ "red" "gold" ] "texture amount" "mask"
+			AttributeBegin NamedMaterial "inner" Shape "trianglemesh" ${TRI} "point2 uv" [ 0 0 1 0 0 1 ] AttributeEnd
+			Material "mix" "string materials" [ "inner" "white" ] "float amount" 0.5
+			Shape "trianglemesh" ${TRI} "point2 uv" [ 0 0 1 0 0 1 ]
+		`, {}, { 'mask.png': image( 0, 0, 0, 255 ) } );
+
+		const [ inner, outer ] = meshes.map( ( mesh ) => mesh.material );
+		expect( inner.metalness ).toBe( 1 );
+		expect( inner.userData.pbrtSurface.metalness ).toBeCloseTo( 0.25, 6 );
+		expect( outer.metalness ).toBeCloseTo( 0.125, 6 );
+		expect( outer.clearcoat ).toBeCloseTo( 0.375, 6 );
+
+	} );
+
+	it( 'leaves a mix\'s coat to its mean where the coat map would be read through another transform than it was baked in', async () => {
+
+		const { meshes } = await meshesOf( `
+			MakeNamedMaterial "red" "string type" "coateddiffuse" "texture reflectance" "paint"
+			MakeNamedMaterial "gold" "string type" "conductor" "spectrum eta" "metal-Au-eta" "spectrum k" "metal-Au-k"
+			Texture "paint" "spectrum" "imagemap" "string filename" "paint.png"
+			Texture "mask" "float" "imagemap" "string filename" "mask.png" "float uscale" 4
+			Material "mix" "string materials" [ "red" "gold" ] "texture amount" "mask"
+			Shape "trianglemesh" ${TRI} "point2 uv" [ 0 0 1 0 0 1 ]
+		`, {}, { 'mask.png': image( 0, 255, 0, 255 ), 'paint.png': image( ...Array.from( { length: 64 }, ( _, i ) => i * 4 ) ) } );
+
+		const mix = meshes[ 0 ].material;
+		expect( mix.metalnessMap ).toBeTruthy();
+		expect( mix.map.repeat.x ).not.toBe( mix.metalnessMap.repeat.x );
+		expect( mix.clearcoatMap ).toBeNull();
+		expect( mix.clearcoat ).toBeCloseTo( 0.5, 6 );
 
 	} );
 
