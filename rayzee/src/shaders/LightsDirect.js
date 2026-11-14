@@ -31,7 +31,7 @@ import { Ray, ShadowMaterial, HitInfo } from './Struct.js';
 import {
 	REC709_LUMINANCE_COEFFICIENTS, getShadowMaterial, instanceRows,
 	instanceFaceNormalToWorld, triangleRow, triangleGeoRows, shadowFlagsSettle, offsetRayOrigin,
-	getDatafromStorageBuffer, MATERIAL_SLOT, MATERIAL_SLOTS, transmissionTint,
+	getDatafromStorageBuffer, MATERIAL_SLOT, MATERIAL_SLOTS, transmissionTint, kernelFunction,
 } from './Common.js';
 import { fresnelDielectric } from './Fresnel.js';
 import { calculateBeerLawAbsorption } from './MaterialTransmission.js';
@@ -45,7 +45,9 @@ import { fogTransmittance } from './Fog.js';
 // The light that gets through, as a colour: glass tints it as a camera path through it is tinted. Where glass blocks
 // (`refractiveBlocks`) nothing is coloured, so the result is a float; in a scene without glass a number carries it.
 // Note: traverseBVH is passed as a parameter to avoid circular dependency
-const makeTraceShadowRay = ( refractiveBlocks ) => Fn( ( [
+const makeTraceShadowRay = ( refractiveBlocks ) => kernelFunction( 'traceShadowRay', {
+	origin: 'vec3', dir: 'vec3', maxDist: 'float', return: refractiveBlocks ? 'float' : 'vec3',
+}, ( [
 	origin, dir, maxDist,
 	// BVH traversal function and textures passed as parameters
 	traverseBVHShadowFn,

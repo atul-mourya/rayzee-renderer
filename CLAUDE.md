@@ -1230,3 +1230,8 @@ because `controls.update()` re-aims the camera at the target every frame. A held
    those takes the step first: the selection outline renders once per frame id, and `getKernelGPUTimings` reads the
    newest frame's passes. It reaches into `renderer._animation`: re-check on each three.js upgrade. ⚠️ r187 starts the
    loop from every `render()` and `compute()`, so `initWithoutFrameLoop` also blanks the instance's `start()`.
+19. **A WGSL function's own variables stay under 8 KB** (WebKit enforces it, Dawn does not; `let`s are free): TSL hoists
+   every `.toVar()` and inlines every `Fn`, and past it Safari refuses the kernel and draws nothing. `compactFunctionVariables`
+   (`shaders/ThreePatches.js`) rewrites each compute module first (set-once vars → `let`, the rest share slots);
+   `kernelFunction` (`shaders/Common.js`) declares a big repeated helper once (the shadow ray). `tests/gpu/functionVariables.test.js`
+   holds every kernel, all features on, under the limit. See PATH_TRACER_SHADER_ARCHITECTURE.md, "A function's own variables".

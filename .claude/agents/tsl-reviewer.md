@@ -51,6 +51,11 @@ You are a specialist reviewer for TSL (Three Shading Language) shader code used 
 ### 9. Triangle Reads
 - Read a triangle row only through `triangleRow( tris, triIndex, row )` (`shaders/Common.js`) and pass the hit's `instanceLeaf`: triangles of shared geometry are in object space, split across a geo and a shade buffer
 
+### 10. A Function's Own Variables (WebKit's 8 KB)
+- Safari refuses a WGSL function whose `var`s pass 8,192 bytes; every `Fn` without a layout is inlined, so its variables count against each caller
+- `shaders/ThreePatches.js` rewrites each compute module first (set-once vars become `let`s, the rest share slots); a big helper called from many sites becomes a `kernelFunction` (`shaders/Common.js`), its body reading only its parameters, buffers, uniforms and build context
+- `tests/gpu/functionVariables.test.js` must stay green
+
 ## Review Checklist
 For every TSL code change, verify:
 1. No separate `If()` blocks where `If/ElseIf/Else` chains should be used
@@ -64,3 +69,4 @@ For every TSL code change, verify:
 9. Camera matrices synced from PathTracer (not read independently)
 10. No module-level variable read inside a `Fn()` body for per-renderer data — use `sceneResources( builder )`
 11. Triangle data read through `triangleRow()`
+12. A big helper called from many sites is a `kernelFunction`, not pasted in at each (WebKit's 8 KB per function)

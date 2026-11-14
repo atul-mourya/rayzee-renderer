@@ -1,11 +1,13 @@
 /**
  * Rayzee patches for Three.js / TSL.
  *
- * Side-effect on import: installs two `WebGPUBackend.prototype` overrides —
+ * Side-effect on import: installs `WebGPUBackend.prototype` overrides —
  * `createNodeBuilder` (restores r183 function-scoped `var` emission for compute
  * shaders, preventing a register-allocation regression in the path tracer's hot
- * loop) and `initTimestampQuery` (enlarges the stats-gl timestamp query pool so
- * the wavefront tracer's high per-frame compute-pass count doesn't overflow it).
+ * loop), `createStorageAttribute` / `updateAttribute` (GPU-only storage),
+ * `initTimestampQuery` (enlarges the stats-gl timestamp query pool so the
+ * wavefront tracer's high per-frame compute-pass count doesn't overflow it) and
+ * `createProgram` (compute functions' own variables under WebKit's 8 KB).
  *
  * Exports `gpuOnlyStorageAttribute()`, a storage attribute with no CPU backing array.
  */
@@ -224,6 +226,255 @@ WebGPUBackend.prototype.updateAttribute = function ( attribute ) {
 //      descriptor. The reported compute ms briefly undercounts during the spike;
 //      rendering is never affected (timestamps don't gate compute correctness).
 const TIMESTAMP_POOL_MAX_QUERIES = 4096;
+
+// ---------------------------------------------------------------------------
+// 3. Compute functions' own variables under 8 KB
+// ---------------------------------------------------------------------------
+// WGSL caps the bytes of a function's `var`s at 8,192; WebKit enforces it, Dawn does not, and TSL declares every
+// `.toVar()` at the top of its function. A variable written once and read only after that, in its block, becomes a
+// `let`, which takes none; the rest share a slot with variables of their type whose uses never overlap. Only TSL's own
+// `nodeVar` names are touched.
+
+const VAR_DECLARATION = /^[ \t]*var (nodeVar\d+) : ([^;=\n]+);[ \t]*\n/gm;
+const VAR_USE = /(?<![\w.])(&\s*)?(nodeVar\d+)\b/g;
+const ASSIGNMENT = /^\s*(?:[-+*/%&|^]|<<|>>)?=(?!=)|^\s*(?:\+\+|--)/;
+
+/** Rewrites every function of a WGSL module so its own variables take as few bytes as they can. */
+function compactFunctionVariables( code ) {
+
+	let out = '';
+	let cursor = 0;
+	for ( const header of code.matchAll( /\bfn\s+\w+\s*\(/g ) ) {
+
+		const open = code.indexOf( '{', header.index );
+		if ( open < cursor ) continue;
+		let depth = 0;
+		let close = open;
+		for ( ; close < code.length; close ++ ) {
+
+			const c = code.charCodeAt( close );
+			if ( c === 123 ) depth ++;
+			else if ( c === 125 && -- depth === 0 ) break;
+
+		}
+
+		out += code.slice( cursor, open ) + compactBody( code.slice( open, close + 1 ) );
+		cursor = close + 1;
+
+	}
+
+	return out + code.slice( cursor );
+
+}
+
+function compactBody( body ) {
+
+	// Blocks in order of opening; a loop's starts at its header, which runs on every iteration.
+	const blocks = [];
+	const open = [];
+	for ( let i = 0; i < body.length; i ++ ) {
+
+		const c = body.charCodeAt( i );
+		if ( c === 123 ) {
+
+			const parent = open.at( - 1 ) ?? null;
+			const lineStart = Math.max( body.lastIndexOf( '\n', i ) + 1, parent ? parent.open + 1 : 0 );
+			const loop = /^\s*(?:for|loop|while)\b/.test( body.slice( lineStart, i ) );
+			const block = { open: i, close: body.length, from: loop ? lineStart : i, loop, parent };
+			blocks.push( block );
+			open.push( block );
+
+		} else if ( c === 125 ) open.pop().close = i;
+
+	}
+
+	// TSL declares them before any code: a slot's name must be in scope wherever it is used.
+	const vars = new Map();
+	const top = blocks[ 1 ]?.open ?? body.length;
+	for ( const m of body.matchAll( VAR_DECLARATION ) ) {
+
+		if ( m.index < top ) vars.set( m[ 1 ], { name: m[ 1 ], type: m[ 2 ].trim(), start: m.index, end: m.index + m[ 0 ].length, uses: [] } );
+
+	}
+
+	if ( vars.size === 0 ) return body;
+
+	const root = blocks[ 0 ];
+	let next = 0;
+	const active = [];
+	for ( const m of body.matchAll( VAR_USE ) ) {
+
+		const v = vars.get( m[ 2 ] );
+		if ( ! v || ( m.index >= v.start && m.index < v.end ) ) continue;
+		while ( next < blocks.length && blocks[ next ].from <= m.index ) {
+
+			while ( active.length && active.at( - 1 ).close < blocks[ next ].from ) active.pop();
+			active.push( blocks[ next ++ ] );
+
+		}
+
+		while ( active.length > 1 && active.at( - 1 ).close < m.index ) active.pop();
+
+		const at = m.index + m[ 0 ].length - m[ 2 ].length;
+		let end = m.index + m[ 0 ].length;
+		const atStatement = /^\s*$/.test( body.slice( body.lastIndexOf( '\n', m.index ) + 1, m.index ) );
+		const def = ! m[ 1 ] && atStatement && /^\s*=(?!=)/.test( body.slice( end, end + 3 ) );
+		end = skipMembers( body, end );
+		const kind = m[ 1 ] ? 'address' : def ? 'def' : ASSIGNMENT.test( body.slice( end, end + 4 ) ) ? 'write' : 'read';
+		v.uses.push( { at, kind, block: active.at( - 1 ), statementEnd: def ? body.indexOf( ';', end ) : at } );
+
+	}
+
+	const edits = [];
+	const rename = ( v, name ) => {
+
+		for ( const u of v.uses ) edits.push( { at: u.at, length: v.name.length, text: name } );
+
+	};
+
+	// Read in its own definition (`x = x + 1`), a definition is a write.
+	for ( const v of vars.values() ) {
+
+		for ( const d of v.uses ) if ( d.kind === 'def' && v.uses.some( ( u ) => u !== d && u.at > d.at && u.at < d.statementEnd ) ) d.kind = 'write';
+
+	}
+
+	const startsBlock = ( v ) => {
+
+		const first = v.uses[ 0 ];
+		return first.kind === 'def' && v.uses.every( ( u ) => u === first || ( u.at > first.statementEnd && u.at < first.block.close ) );
+
+	};
+
+	const shared = [];
+	for ( const v of vars.values() ) {
+
+		if ( v.uses.length === 0 ) {
+
+			edits.push( { at: v.start, length: v.end - v.start, text: '' } );
+			continue;
+
+		}
+
+		if ( v.uses.some( ( u ) => u.kind === 'address' ) ) continue;
+
+		if ( startsBlock( v ) && v.uses.filter( ( u ) => u.kind !== 'read' ).length === 1 ) {
+
+			edits.push( { at: v.start, length: v.end - v.start, text: '' }, { at: v.uses[ 0 ].at, length: v.name.length, text: `let ${v.name} : ${v.type}` } );
+			continue;
+
+		}
+
+		let lo;
+		let scope = null;
+		if ( startsBlock( v ) ) lo = v.uses[ 0 ].at;
+		else {
+
+			// Read before it is written on some path: zero it where its uses begin, unless a loop could carry it.
+			scope = v.uses[ 0 ].block;
+			while ( scope && ! v.uses.every( ( u ) => u.at > scope.open && u.at < scope.close ) ) scope = scope.parent;
+			let looped = false;
+			for ( let b = scope; b; b = b.parent ) looped ||= b.loop;
+			if ( ! scope || looped ) continue;
+			lo = scope.open;
+			if ( scope === root ) scope = null;
+
+		}
+
+		let hi = v.uses.at( - 1 ).at;
+		for ( const u of v.uses ) {
+
+			for ( let b = u.block; b; b = b.parent ) if ( b.loop && ! ( lo > b.from && lo < b.close ) ) hi = Math.max( hi, b.close );
+
+		}
+
+		shared.push( { v, lo, hi, scope } );
+
+	}
+
+	shared.sort( ( a, b ) => a.lo - b.lo );
+	const slots = new Map();
+	for ( const s of shared ) {
+
+		const free = slots.get( s.v.type ) ?? [];
+		slots.set( s.v.type, free );
+		const slot = free.find( ( f ) => f.hi < s.lo );
+		if ( ! slot ) {
+
+			free.push( { name: s.v.name, hi: s.hi } );
+			continue;
+
+		}
+
+		slot.hi = s.hi;
+		edits.push( { at: s.v.start, length: s.v.end - s.v.start, text: '' } );
+		rename( s.v, slot.name );
+		if ( s.scope ) edits.push( { at: s.scope.open + 1, length: 0, text: `\n${slot.name} = ${s.v.type}();` } );
+
+	}
+
+	// An insertion before a rename at the same place.
+	edits.sort( ( a, b ) => a.at - b.at || a.length - b.length );
+	let result = '';
+	let cursor = 0;
+	for ( const e of edits ) {
+
+		result += body.slice( cursor, e.at ) + e.text;
+		cursor = e.at + e.length;
+
+	}
+
+	return result + body.slice( cursor );
+
+}
+
+// Past `.member` and `[ index ]` accessors, to where an assignment would start.
+function skipMembers( body, i ) {
+
+	for ( ;; ) {
+
+		while ( body.charCodeAt( i ) === 32 || body.charCodeAt( i ) === 9 ) i ++;
+		if ( body[ i ] === '.' && /[A-Za-z_]/.test( body[ i + 1 ] ) ) {
+
+			i ++;
+			while ( /\w/.test( body[ i ] ) ) i ++;
+
+		} else if ( body[ i ] === '[' ) {
+
+			let depth = 0;
+			for ( ; i < body.length; i ++ ) {
+
+				if ( body[ i ] === '[' ) depth ++;
+				else if ( body[ i ] === ']' && -- depth === 0 ) break;
+
+			}
+
+			i ++;
+
+		} else return i;
+
+	}
+
+}
+
+const _origCreateProgram = WebGPUBackend.prototype.createProgram;
+
+WebGPUBackend.prototype.createProgram = function ( program ) {
+
+	if ( program.stage !== 'compute' ) return _origCreateProgram.call( this, program );
+	const code = program.code;
+	program.code = compactFunctionVariables( code );
+	try {
+
+		_origCreateProgram.call( this, program );
+
+	} finally {
+
+		program.code = code;
+
+	}
+
+};
 
 // Drop-in for the pool's allocateQueriesForContext minus the warnOnce on overflow
 // — returns null silently when full so the pass is cleanly skipped (see below).

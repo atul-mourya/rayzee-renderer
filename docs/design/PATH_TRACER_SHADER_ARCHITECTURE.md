@@ -469,6 +469,28 @@ Until 2026-10 the CPU sized each bounce from the curve, `1.5 × survivors + 1024
 - Miss: the environment or backdrop (background blur and colour, ground projection, transparent background), MIS-weighted against environment NEE (`environmentPdfExact`), then the sun disc, power-heuristic weighted against sun NEE when the sending vertex could have drawn that direction (`RAY_FLAG.SUN_NEE`). A primary ray can also hit the analytic shadow-catcher plane (`enableGroundCatcher`).
 - Hit: an `EMISSION_ONLY` segment ends at once on an opaque surface that does not glow. Otherwise: material textures (`sampleAllMaterialTextures`), aux G-buffer commits, emission (MIS-weighted against emissive NEE), transparency / transmission / medium stack / subsurface (`handleMaterialTransparency`), direct lighting (`calculateDirectLightingUnified`: lamp, environment and sun NEE), emissive-triangle NEE when `enableEmissiveTriangleSampling` is on (light BVH when `lightBVHNodeCount > 0`, else `calculateEmissiveTriangleContribution`), then the bounce (`generateSampledDirection` → `calculateIndirectLighting`), Russian roulette (`handleRussianRoulette`), and the continued ray.
 
+### A function's own variables: under 8 KB
+WGSL caps the bytes of a function's own `var`s at 8,192 (`let`s and parameters take none). WebKit enforces it; Dawn and
+Firefox do not. TSL declares every `.toVar()` at the top of its function and inlines every `Fn` without a layout into
+its caller, so Shade's `main` held ~2,400 variables, 32 KB on a one-plane scene and 50 KB with every feature compiled
+in. Safari 26.5 refused the kernel ("The combined byte size of all variables in this function exceeds 8192 bytes"), and
+three bidirectional kernels too (Connect 15.8 KB). What Safari counts, measured with test modules: every declared `var`
+(unused ones too), a `vec3` as 12 bytes, each function on its own — a callee's variables are not its caller's.
+
+Two things keep every function far under it:
+- **`compactFunctionVariables`** (`shaders/ThreePatches.js`, on `createProgram` for compute): before the module is
+  created, a `nodeVar` written once and read only after it in its block becomes a typed `let`; a variable never used is
+  dropped; the rest share a slot with variables of the same type whose uses do not overlap, a loop-carried value live
+  through its whole loop. A variable first written in a branch is zeroed where its uses begin, unless a loop encloses
+  them (it could carry a value between iterations); one whose address is taken is left alone. 20–40 ms a Shade build.
+- **`kernelFunction`** (`shaders/Common.js`): a helper declared once a kernel instead of inlined at each call. The
+  shadow ray (`traceShadowRay`) is one: Shade inlined its BVH walk at 8 call sites, a seventh of Shade's WGSL.
+
+Shade with every feature compiled in, path tracing: 49.8 → 3.7 KB, WGSL 1.32 → 1.10 MB; vcm's largest function
+3.3 KB. Renders on Dawn bit for bit the same on 24155522.glb, the one-plane scene and bidirectional/vcm, 11 of 12,288
+values one rounding step apart with every feature on. Safari against Dawn on the plane scene: largest difference 1.2e-7.
+`tests/gpu/functionVariables.test.js` holds every kernel, every feature on, under 8,192 bytes under both integrators.
+
 ### Bidirectional integrator
 Opt-in (`settings.set( 'integrator', 'bidirectional' | 'vcm' )`) and an add-on: `rayzee/addons/bidirectional` exports `BidirectionalIntegrator` (`addons/bidirectional/BidirectionalIntegrator.js`), installed with `pathTracer.registerIntegrator( [ 'bidirectional', 'vcm' ], pt => new BidirectionalIntegrator( pt ) )` (`PathTracerApp` does this). `setIntegrator()` picks it and rebuilds the kernels; an unregistered name records `capability.missing`. `'path'` builds exactly the unidirectional kernels.
 

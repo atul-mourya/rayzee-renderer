@@ -20,6 +20,50 @@ export const offsetRayOrigin = /*@__PURE__*/ wgslFn( `
 	}
 ` );
 
+// Per kernel, so a rebuild names its functions alike: the WGSL stays the same text and its pipeline cached.
+const kernelFunctionCount = new WeakMap();
+
+/**
+ * A TSL function a kernel declares once and calls, where a plain `Fn` is inlined at every call site, each copy's
+ * variables counted against its caller (WebKit holds a WGSL function's own to 8 KB). Built per kernel, as three's layout
+ * functions are cached across shaders: the body may read the kernel's buffers, uniforms and build context, but values
+ * of this invocation only through its parameters.
+ *
+ * @param {string} name - prefix of the WGSL function's name
+ * @param {Object<string, string>} layout - parameter types in call order, and `return`
+ * @param {function( Array, Object ): Node} body - `( [ ...parameters, ...extras ], builder )`; `extras` are the call's
+ *   arguments past the parameters (functions, buffers), and each set of them is a function of its own
+ * @returns {function( ...* ): Node}
+ */
+export function kernelFunction( name, layout, body ) {
+
+	const inputs = Object.keys( layout ).filter( ( key ) => key !== 'return' ).map( ( key ) => ( { name: key, type: layout[ key ] } ) );
+	const built = new WeakMap();
+
+	return Fn( ( args, builder ) => {
+
+		// Spread, not `args.slice()`: TSL's argument proxy hands a method call to the first argument.
+		const all = [ ...args ];
+		const extras = all.slice( inputs.length );
+		let fns = built.get( builder );
+		if ( ! fns ) built.set( builder, fns = [] );
+		let entry = fns.find( ( f ) => f.extras.length === extras.length && f.extras.every( ( e, i ) => e === extras[ i ] ) );
+		if ( ! entry ) {
+
+			const fn = Fn( ( params, b ) => body( [ ...params, ...extras ], b ), layout.return );
+			const id = kernelFunctionCount.get( builder ) ?? 0;
+			kernelFunctionCount.set( builder, id + 1 );
+			fn.setLayout( { name: `${name}${id}`, type: layout.return, inputs } );
+			fns.push( entry = { extras, fn } );
+
+		}
+
+		return entry.fn( ...all.slice( 0, inputs.length ) );
+
+	} );
+
+}
+
 // Whether `p` stands off the plane through `a` (unit normal `n`) by more than offsetRayOrigin's step: a point on an
 // emitter's plane gets none of its light, but rounding puts it a hair to either side, and from its front the emitter's
 // edge-on neighbours pass both side tests (the back of a one-sided light lit along its seams).
