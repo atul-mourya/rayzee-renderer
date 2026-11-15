@@ -24,8 +24,7 @@
 - [ ] Firefox loads 1.2–4.2× slower than Chrome (`bench:load -- --firefox`, 2026-11-14): `upload` 6–11× wherever the
   geometry is large (24155522 0.24 → 2.19 s, transparent-machines 0.28 → 2.15 s), `extraction` 2–2.5×, the first frame
   2.4–4×. Check whether the paced uploads wait on a slow `onSubmittedWorkDone` there
-- [ ] Chrome: watercolor reopened, third load in one page, `texture.build_failed` (a map could not be read again from
-  the archive; `bench:load -- --chrome` with watercolor and transparent-machines, 2026-11-14). Firefox did not
+- [ ] Chrome: decode a zipped image from its bytes, not `createImageBitmap( new Blob( [ bytes ] ) )`
 - [ ] Moana island phases (Chrome, textured): USD read 30 s, USD build 50 s, extraction + BLAS 57 s, placing and
   measuring copies 11 s, grouping 12 s, top-level tree 12 s, writing the tree 8 s, assembling 10 s, copy records
   13 s, upload + compact 23–32 s

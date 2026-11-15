@@ -40,6 +40,8 @@ const MAIN_MODEL_FILES = [ 'scene.gltf', 'scene.glb', 'model.gltf', 'model.glb',
 
 // An entry is bytes already read, or a Blob read only when a loader asks for it.
 const asBlob = entry => ( entry instanceof Blob ? entry : new Blob( [ entry ], { type: 'application/octet-stream' } ) );
+// Bytes that hold no larger buffer alive (an in-memory archive's view is copied out); a Blob as it is.
+const ownBytes = entry => ( entry instanceof Uint8Array && entry.byteLength !== entry.buffer.byteLength ? entry.slice() : entry );
 /** A compressed archive entry, inflated each time it is read: as a Blob it was inflated up front and held. */
 class PackedEntry {
 
@@ -1008,12 +1010,12 @@ export class ArchiveImporter {
 	/**
 	 * A texture map from an archive (`entry`: its bytes or Blob), tagged with its path so a stored scene can read it back.
 	 * Its pixels are decoded from the archive only while the texture arrays are packed: through `reread()` when given,
-	 * which keeps nothing of `entry`. A Blob of inflated bytes kept per image passed the 500 MB of blobs a fresh Chrome
-	 * profile holds, and every image past it failed to decode. @private
+	 * which keeps nothing of `entry`, else from what it keeps of `entry`. Kept as bytes, never a Blob (Chrome caps live
+	 * Blobs). @private
 	 */
 	async _archiveImage( entry, fname, reread = null ) {
 
-		const kept = reread ? null : asBlob( entry );
+		const kept = reread ? null : ownBytes( entry );
 		const read = async () => {
 
 			const bytes = await bytesOf( kept ?? await reread() );
@@ -1133,10 +1135,10 @@ export class ArchiveImporter {
 			maxTriangles: options.maxTriangles, maxPlacements: options.maxPlacements, mergeShapesAbove: options.mergeShapesAbove,
 			resolvePtex: async path => {
 
-				// Read by range for the scene's life: a compressed one inflated into a Blob, off the JavaScript heap.
-				const entry = entries[ path ] instanceof PackedEntry ? new Blob( [ await entries[ path ].read() ] ) : entries[ path ];
+				// Read by range for the scene's life; a compressed one as bytes, not a Blob (Chrome caps live Blobs).
+				const entry = entries[ path ];
 				if ( entry instanceof Blob ) return { read: async ( start, end ) => new Uint8Array( await entry.slice( start, end ).arrayBuffer() ) };
-				const bytes = await files.read( path );
+				const bytes = entry instanceof PackedEntry ? await entry.read() : await files.read( path );
 				return bytes && { read: async ( start, end ) => bytes.subarray( start, end ) };
 
 			},

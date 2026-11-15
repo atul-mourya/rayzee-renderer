@@ -7,7 +7,10 @@ import { openStorage } from '@/core/addons/storage/OpenStorage.js';
 import { createFakeOPFS } from '../../../__mocks__/opfs.js';
 import { makeTar, text } from './tarFixture.js';
 import { ArchiveImporter } from '@/core/addons/archives/ArchiveImporter.js';
+import { VirtualFS } from '@/core/addons/archives/pbrt/index.js';
 import { IssueLog, ISSUE_CODES, EngineIssueError } from '@/core/EngineIssues.js';
+import { configurePlatform } from '@/core/Platform.js';
+import { holdImages, releaseImages } from '@/core/materials/TextureCreator.js';
 
 const LONG = `deep/${'x'.repeat( 120 )}/mesh.ply`;
 const PAX = `pax/${'y'.repeat( 130 )}.pbrt`;
@@ -25,6 +28,36 @@ const FILES = [
 
 const regular = FILES.filter( f => ( f.type ?? '0' ) === '0' );
 const blob = bytes => new Blob( [ bytes ] );
+
+// How many Blobs `task` makes.
+async function blobsMade( task ) {
+
+	const Native = globalThis.Blob;
+	let made = 0;
+	globalThis.Blob = class extends Native {
+
+		constructor( ...args ) {
+
+			super( ...args );
+			made ++;
+
+		}
+
+	};
+
+	try {
+
+		await task();
+
+	} finally {
+
+		globalThis.Blob = Native;
+
+	}
+
+	return made;
+
+}
 
 describe( 'tar header index', () => {
 
@@ -268,6 +301,9 @@ describe( 'ZipReader', () => {
 		expect( new Uint8Array( await ( await zip.slice( 'a.txt' ) ).arrayBuffer() ) ).toEqual( a );
 		expect( await zip.readHead( 'b.bin', 6 ) ).toEqual( text( 'stored' ) );
 		expect( await zip.readHead( 'a.txt', 5 ) ).toEqual( text( 'hello' ) );
+		// A head longer than the entry is the entry, never the bytes after it.
+		expect( await zip.readHead( 'b.bin', 64 ) ).toEqual( text( 'stored bytes' ) );
+		expect( await zip.readHead( 'a.txt', 1000 ) ).toEqual( a );
 		expect( [ await zip.slice( 'missing' ), await zip.readHead( 'missing', 4 ) ] ).toEqual( [ null, null ] );
 
 	} );
@@ -278,6 +314,28 @@ describe( 'ZipReader', () => {
 		const zip = await openZip( blob( makeZip64( 'big/one.bin', body, deflateSync( body ) ) ) );
 		expect( zip.listing ).toEqual( [ { path: 'big/one.bin', size: body.length, offset: 0, packed: true } ] );
 		expect( await zip.read( 'big/one.bin' ) ).toEqual( body );
+
+	} );
+
+	it( 'reads a compressed entry for a pbrt scene without a Blob of it', async () => {
+
+		const packed = text( 'packed image '.repeat( 200 ) );
+		const stored = text( 'stored image' );
+		const zip = await openZip( blob( zipSync( { 'tex/a.png': [ packed, { level: 6 } ], 'tex/b.png': [ stored, { level: 0 } ] } ) ) );
+		const vfs = new VirtualFS( {}, zip );
+		expect( await blobsMade( async () => {
+
+			const head = await zip.readHead( 'tex/a.png', 7 );
+			expect( head ).toEqual( text( 'packed ' ) );
+			expect( head.buffer.byteLength ).toBe( 7 );
+			expect( await vfs.readBlob( 'tex/a.png' ) ).toEqual( packed );
+			expect( await ( await vfs.ranged( 'tex/a.png' ) ).read( 7, 12 ) ).toEqual( text( 'image' ) );
+
+		} ) ).toBe( 0 );
+
+		const slice = await vfs.readBlob( 'tex/b.png' );
+		expect( slice ).toBeInstanceOf( Blob );
+		expect( new Uint8Array( await slice.arrayBuffer() ) ).toEqual( stored );
 
 	} );
 
@@ -307,6 +365,49 @@ describe( 'ZipReader', () => {
 		const broken = offset => ( z64.slice().fill( 0, offset, offset + 4 ) );
 		await expect( readZipDirectory( blob( broken( locator ) ) ) ).rejects.toThrow( /ZIP64 locator missing/ );
 		await expect( readZipDirectory( blob( broken( record ) ) ) ).rejects.toThrow( /ZIP64 end record missing/ );
+
+	} );
+
+} );
+
+describe( 'archive images', () => {
+
+	// A 2 × 1 PNG's chunks, pixels aside: enough for its size to be read from the header.
+	const chunk = ( type, body ) => [ 0, 0, 0, body.length, ...[ ...type ].map( ( c ) => c.charCodeAt( 0 ) ), ...body, 0, 0, 0, 0 ];
+	const PNG = Uint8Array.from( [ 137, 80, 78, 71, 13, 10, 26, 10, ...chunk( 'IHDR', [ 0, 0, 0, 2, 0, 0, 0, 1, 8, 6, 0, 0, 0 ] ), ...chunk( 'IDAT', [ 9, 9 ] ), ...chunk( 'IEND', [] ) ] );
+
+	it( 'keeps an image it cannot read again as bytes of its own, not a Blob', async () => {
+
+		const decoded = [];
+		configurePlatform( { decodeImage: async ( bytes ) => {
+
+			decoded.push( bytes );
+			return { data: new Uint8Array( 8 ), width: 2, height: 1 };
+
+		} } );
+		const archives = new ArchiveImporter( { _issues: new IssueLog() } );
+		try {
+
+			expect( await blobsMade( async () => {
+
+				const archive = new Uint8Array( 4096 );
+				archive.set( PNG, 100 );
+				const texture = await archives._archiveImage( archive.subarray( 100, 100 + PNG.length ), 'tex/a.png' );
+				expect( texture.image ).toMatchObject( { width: 2, height: 1, data: null } );
+
+				await holdImages( [ texture ] );
+				expect( texture.image.width ).toBe( 2 );
+				expect( decoded[ 0 ] ).toEqual( PNG );
+				expect( decoded[ 0 ].buffer.byteLength ).toBe( PNG.length );
+				releaseImages( [ texture ] );
+
+			} ) ).toBe( 0 );
+
+		} finally {
+
+			configurePlatform( { decodeImage: null } );
+
+		}
 
 	} );
 

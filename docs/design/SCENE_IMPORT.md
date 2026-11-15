@@ -310,6 +310,10 @@ subtree per element, and the whole thing rarely fits: Moana is 29 GB unpacked.
   ⚠️ Chrome in a fresh profile holds 500 MB of live Blobs and fails reads past it (NotReadableError; `bench:load
   --chrome` lost 80 of watercolor's images on a second load): a zipped pbrt image is read again from the archive
   (`_archiveImage`'s `reread`), and a zipped USD keeps its deflated entries packed (`PackedEntry`) until a reader asks.
+  A deflated entry a pbrt scene reads comes back as bytes (`VirtualFS._sliceable`, `openZip`'s `readHead`), and an image
+  kept for a download is kept as bytes (`_archiveImage`): as Blobs, watercolor's 166 images made 1.8 GB a load, freed only
+  when collected, and a third load in one page failed some. The browser's decode still wraps each image in a Blob once
+  (`createImageBitmap` takes no bytes).
   A download loads `transient` (the cache may evict its file), so nothing is read again from it.
 
 - **Extending it.** Take each meaning and default from pbrt-v4's source, never from the scenes at hand: all eleven

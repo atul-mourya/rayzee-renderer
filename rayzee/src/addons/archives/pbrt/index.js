@@ -78,11 +78,11 @@ export class VirtualFS {
 		this.records = [];
 		this.byPath = new Map(); // normalized lowercase -> { key, norm, bytes }
 		this.byBase = new Map(); // basename lowercase -> [ { key, norm, bytes } ] (insertion order)
-		const add = ( key, bytes, lazy ) => {
+		const add = ( key, bytes, lazy, packed = false ) => {
 
 			const norm = normalizePath( key ).toLowerCase();
 			if ( this.byPath.has( norm ) ) return;
-			const rec = { key, norm, bytes, lazy };
+			const rec = { key, norm, bytes, lazy, packed };
 			this.records.push( rec );
 			this.byPath.set( norm, rec );
 			const base = norm.split( '/' ).pop();
@@ -93,7 +93,7 @@ export class VirtualFS {
 		};
 
 		for ( const key in entries ) add( key, entries[ key ], false );
-		for ( const e of source?.listing ?? [] ) if ( e.offset !== undefined ) add( e.path, null, true );
+		for ( const e of source?.listing ?? [] ) if ( e.offset !== undefined ) add( e.path, null, true, !! e.packed );
 
 	}
 
@@ -107,11 +107,18 @@ export class VirtualFS {
 
 	}
 
+	// A stored entry is sliced from the archive; a compressed one is read as bytes, not a Blob (Chrome caps live Blobs).
+	_sliceable( rec ) {
+
+		return rec && ! rec.bytes && rec.lazy && ! rec.packed && this.source?.slice;
+
+	}
+
 	/** A record as a Blob, when the source can give one without reading it; else its bytes. */
 	async readBlob( path ) {
 
 		const rec = this.findRecord( path );
-		if ( rec && ! rec.bytes && rec.lazy && this.source?.slice && ! this.source.transient ) return this.source.slice( rec.key );
+		if ( this._sliceable( rec ) && ! this.source.transient ) return this.source.slice( rec.key );
 		return this.read( rec );
 
 	}
@@ -120,7 +127,7 @@ export class VirtualFS {
 	async ranged( path ) {
 
 		const rec = this.findRecord( path );
-		if ( rec && ! rec.bytes && rec.lazy && this.source?.slice ) {
+		if ( this._sliceable( rec ) ) {
 
 			const blob = await this.source.slice( rec.key );
 			return { read: async ( start, end ) => new Uint8Array( await blob.slice( start, end ).arrayBuffer() ) };
