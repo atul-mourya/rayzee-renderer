@@ -205,6 +205,14 @@ describe( 'EmissiveTriangleBuilder', () => {
 
 		} );
 
+		it( 'leaves out a coloured emission at intensity 0, and black at any intensity', () => {
+
+			const triangleData = makeTriangleData( [ { ...UNIT_TRI, materialIndex: 0 }, { ...UNIT_TRI, materialIndex: 1 } ] );
+			const materials = [ { emissive: { r: 1, g: 0.5, b: 0 }, emissiveIntensity: 0 }, { emissive: { r: 0, g: 0, b: 0 }, emissiveIntensity: 9 } ];
+			expect( builder.extractEmissiveTriangles( triangleData, materials, 2 ) ).toBe( 0 );
+
+		} );
+
 		it( 'skips triangles with missing material', () => {
 
 			const triangleData = makeTriangleData( [ { ...UNIT_TRI, materialIndex: 99 } ] );
