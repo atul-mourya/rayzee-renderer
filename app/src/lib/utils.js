@@ -18,6 +18,16 @@ export function cn( ...inputs ) {
 
 }
 
+// `keys` of `object`, as a new object. With zustand's useShallow, a component reading a store through it redraws only
+// when one of those keys changes.
+export function pick( object, keys ) {
+
+	const out = {};
+	for ( const key of keys ) out[ key ] = object[ key ];
+	return out;
+
+}
+
 // remap a value from one range to another
 export function remap( value, fromLow, fromHigh, toLow, toHigh ) {
 

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { X, Loader2, ChevronDown, Thermometer } from 'lucide-react';
 import { Row } from '@/components/ui/row';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue, SelectGroup, SelectLabel, SelectSeparator } from '@/components/ui/select';
@@ -9,8 +9,9 @@ import { Separator } from '@/components/ui/separator';
 import { Input } from '@/components/ui/input';
 import { Exposure } from '@/assets/icons';
 import { getApp } from '@/lib/appProxy';
-import { cn } from '@/lib/utils';
+import { cn, pick } from '@/lib/utils';
 import { useLocalStorage } from '@/hooks/useLocalStorage';
+import { useShallow } from 'zustand/react/shallow';
 import { usePathTracerStore } from '@/store';
 import {
 	colorManagement, builtinConfigs, loadBuiltinConfig, loadConfigFromFiles, loadDefaultConfig, unloadConfig,
@@ -50,6 +51,14 @@ const FOLLOW_OPTIONS = [
 ];
 const followValue = strength => FOLLOW_OPTIONS.reduce( ( best, o ) => ( Math.abs( o.value - strength ) < Math.abs( best.value - strength ) ? o : best ) ).value;
 
+const trigger = ( title, placeholder ) => (
+	<SelectTrigger size="sm" className="max-w-32 pl-2" title={title}>
+		<SelectValue placeholder={placeholder} />
+	</SelectTrigger>
+);
+const item = o => <SelectItem key={o.value} value={o.value} title={o.description} hint={o.hint}>{o.label}</SelectItem>;
+const find = ( list, value ) => list.find( o => o.value === value );
+
 // Shows `text` as busy while `fn` runs, and its error after. Outside the component: React Compiler cannot compile a
 // try with a finally.
 async function runBusy( setBusy, setError, text, fn ) {
@@ -85,6 +94,14 @@ async function runBusy( setBusy, setError, text, fn ) {
  * (view), Style (look) and Screen (display), in the order they are reached for, each item with a hint.
  * The project settings are folded under Advanced: most scenes never change them.
  */
+// What this reads of the store: read whole, it redrew on every change to it, an exposure step included.
+const STORE_KEYS = [
+	'toneMapping', 'exposure', 'autoExposure', 'autoExposureStrength', 'localExposure',
+	'localExposureHighlightContrast', 'whiteBalance', 'whiteBalanceTemperature', 'handleToneMappingChange',
+	'handleExposureChange', 'handleAutoExposureChange', 'handleAutoExposureStrengthChange', 'handleLocalExposureChange',
+	'handleLocalExposureAmountChange', 'handleWhiteBalanceChange', 'handleWhiteBalanceEnabledChange'
+];
+
 const ColorManagementSection = () => {
 
 	const status = useColorStatus();
@@ -94,7 +111,7 @@ const ColorManagementSection = () => {
 		whiteBalanceTemperature, handleToneMappingChange, handleExposureChange, handleAutoExposureChange,
 		handleAutoExposureStrengthChange, handleLocalExposureChange, handleLocalExposureAmountChange, handleWhiteBalanceChange,
 		handleWhiteBalanceEnabledChange,
-	} = usePathTracerStore();
+	} = usePathTracerStore( useShallow( s => pick( s, STORE_KEYS ) ) );
 
 	const [ builtins, setBuiltins ] = useState( [] );
 	const [ busy, setBusy ] = useState( null );
@@ -316,33 +333,32 @@ const ColorManagementSection = () => {
 	const configOptions = [ DEFAULT_OPTION, ...presets ];
 	const knownConfig = config && configOptions.some( o => o.value === config.id );
 
-	const displayViews = config && activeDisplay ? config.views?.[ activeDisplay ] ?? [] : [];
-	const labels = viewLabels( displayViews );
-	const views = config
-		? displayViews.map( v => ( { value: v.name, label: labels.get( v.name ), hint: toneMappingHint( v.name ), description: v.description || v.name } ) )
-		: pending
-			? [ { value: activeView, label: activeView, hint: toneMappingHint( activeView ), description: status.activeView.name } ]
-			: transforms.filter( t => t.source === 'builtin' ).map( t => ( { value: String( t.id ), label: t.name, hint: toneMappingHint( t.name ), description: t.name } ) );
+	// The menus' lists, kept until their own inputs change: rebuilt every render, each exposure step redrew every item.
+	const views = useMemo( () => {
+
+		if ( pending && ! config ) return [ { value: activeView, label: activeView, hint: toneMappingHint( activeView ), description: status.activeView.name } ];
+		if ( ! config ) return transforms.filter( t => t.source === 'builtin' ).map( t => ( { value: String( t.id ), label: t.name, hint: toneMappingHint( t.name ), description: t.name } ) );
+		const displayViews = activeDisplay ? config.views?.[ activeDisplay ] ?? [] : [];
+		const labels = viewLabels( displayViews );
+		return displayViews.map( v => ( { value: v.name, label: labels.get( v.name ), hint: toneMappingHint( v.name ), description: v.description || v.name } ) );
+
+	}, [ config, pending, activeDisplay, activeView, status, transforms ] );
 	const viewValue = config || pending ? activeView ?? '' : String( toneMapping );
 
-	const { creative, technical } = config && activeView
+	const { creative, technical } = useMemo( () => ( config && activeView
 		? looksOf( config, activeView )
-		: { creative: [], technical: [] };
+		: { creative: [], technical: [] } ), [ config, activeView ] );
 
-	const { sdr: sdrDisplays, hdr: hdrDisplays } = config
-		? displaySections( config, { canvasFit: d => colorManagement()?.displayFit?.( d ) ?? displayCanvasFit( d ), isHdr: isHdrDisplay }, { p3: p3Screen } )
-		: { sdr: [], hdr: [] };
-	const displayColumns = [ { title: 'SDR', list: sdrDisplays }, { title: 'HDR', list: hdrDisplays } ].filter( c => c.list.length > 0 );
+	const { hdrDisplays, displayColumns } = useMemo( () => {
+
+		const { sdr, hdr } = config
+			? displaySections( config, { canvasFit: d => colorManagement()?.displayFit?.( d ) ?? displayCanvasFit( d ), isHdr: isHdrDisplay }, { p3: p3Screen } )
+			: { sdr: [], hdr: [] };
+		return { hdrDisplays: hdr, displayColumns: [ { title: 'SDR', list: sdr }, { title: 'HDR', list: hdr } ].filter( c => c.list.length > 0 ) };
+
+	}, [ config, p3Screen ] );
 
 	const workingSpaces = workingSpaceOptions( config, nativeSpace );
-
-	const trigger = ( title, placeholder ) => (
-		<SelectTrigger size="sm" className="max-w-32 pl-2" title={title}>
-			<SelectValue placeholder={placeholder} />
-		</SelectTrigger>
-	);
-	const item = o => <SelectItem key={o.value} value={o.value} title={o.description} hint={o.hint}>{o.label}</SelectItem>;
-	const find = ( list, value ) => list.find( o => o.value === value );
 
 	const systemSummary = [
 		config ? ( find( configOptions, config.id )?.label ?? configLabel( config, presets ) ) : pending ? DEFAULT_OPTION.label : 'None',

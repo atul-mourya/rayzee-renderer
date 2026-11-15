@@ -3,7 +3,9 @@ import { Slider } from "@/components/ui/slider";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ColorInput } from "@/components/ui/colorinput";
 import { Row } from "@/components/ui/row";
+import { useShallow } from 'zustand/react/shallow';
 import { usePathTracerStore } from '@/store';
+import { pick } from '@/lib/utils';
 import { SKY_PRESETS } from '@/Constants';
 
 const MONTHS = [ 'January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December' ];
@@ -25,6 +27,16 @@ const LabelledSelect = ( { label, tip, value, onValueChange, children } ) => (
 	</Select>
 );
 
+// What this reads of the store: read whole, it redrew on every change to it, an exposure step included.
+const STORE_KEYS = [
+	'skyPreset', 'skySunMode', 'skyTime', 'skyMonth', 'skyLatitude', 'skyNorthOffset', 'skySunAzimuth',
+	'skySunElevation', 'skySunStrength', 'skySunSize', 'skyTurbidity', 'skyOzone', 'skyAirDensity', 'skyGroundAlbedo',
+	'skyAltitude', 'handleSkyPresetChange', 'handleSkySunModeChange', 'handleSkyTimeChange', 'handleSkyMonthChange',
+	'handleSkyLatitudeChange', 'handleSkyNorthOffsetChange', 'handleSkySunAzimuthChange', 'handleSkySunElevationChange',
+	'handleSkySunStrengthChange', 'handleSkySunSizeChange', 'handleSkyTurbidityChange', 'handleSkyOzoneChange',
+	'handleSkyAirDensityChange', 'handleSkyGroundAlbedoChange', 'handleSkyAltitudeChange'
+];
+
 const PhysicalSkyControls = () => {
 
 	const {
@@ -36,7 +48,7 @@ const PhysicalSkyControls = () => {
 		handleSkySunElevationChange, handleSkySunStrengthChange, handleSkySunSizeChange,
 		handleSkyTurbidityChange, handleSkyOzoneChange, handleSkyAirDensityChange,
 		handleSkyGroundAlbedoChange, handleSkyAltitudeChange,
-	} = usePathTracerStore();
+	} = usePathTracerStore( useShallow( s => pick( s, STORE_KEYS ) ) );
 
 	const byTime = skySunMode === 'time';
 

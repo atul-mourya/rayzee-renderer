@@ -1,9 +1,18 @@
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Row } from "@/components/ui/row";
+import { useShallow } from 'zustand/react/shallow';
 import { usePathTracerStore } from '@/store';
+import { pick } from '@/lib/utils';
 import { SR_SCALE } from 'rayzee';
 import { RESOLUTION_PRESETS, aspectRatioLabel, isPanorama } from '@/Constants';
 
+
+// What this reads of the store: read whole, it redrew on every change to it, an exposure step included.
+const STORE_KEYS = [
+	'resolution', 'finalRenderResolution', 'aspectRatioPreset', 'sceneAspect', 'orientation', 'canvasWidth',
+	'canvasHeight', 'cameraProjection', 'enableUpscaler', 'upscalerScale', 'upscalerBackend', 'handleResolutionChange',
+	'handleFinalRenderResolutionChange'
+];
 
 const CanvasDimensionControls = ( { disabled = false, resolutionKey = 'resolution' } ) => {
 
@@ -22,7 +31,7 @@ const CanvasDimensionControls = ( { disabled = false, resolutionKey = 'resolutio
 
 		handleResolutionChange,
 		handleFinalRenderResolutionChange,
-	} = usePathTracerStore();
+	} = usePathTracerStore( useShallow( s => pick( s, STORE_KEYS ) ) );
 
 	const currentResolution = resolutionKey === 'finalRenderResolution' ? finalRenderResolution : resolution;
 	const onResolutionChange = resolutionKey === 'finalRenderResolution' ? handleFinalRenderResolutionChange : handleResolutionChange;

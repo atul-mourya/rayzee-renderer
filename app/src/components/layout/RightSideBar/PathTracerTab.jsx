@@ -5,7 +5,9 @@ import { Switch } from "@/components/ui/switch";
 import { NumberInput } from "@/components/ui/number-input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ColorInput } from "@/components/ui/colorinput";
+import { useShallow } from 'zustand/react/shallow';
 import { usePathTracerStore } from '@/store';
+import { pick } from '@/lib/utils';
 import { ControlGroup } from '@/components/ui/control-group';
 import NeuralPostControls from './NeuralPostControls';
 import ColorManagementSection from './ColorManagementSection';
@@ -108,12 +110,36 @@ const ConvergenceReadout = ( { showConverged, showTracing } ) => {
 
 };
 
+// What this reads of the store: read whole, it redrew on every change to it, an exposure step included.
+const STORE_KEYS = [
+	'enablePathTracer', 'enableAccumulation', 'bounces', 'transmissiveBounces', 'maxSubsurfaceSteps',
+	'maxTransparentBounces', 'maxTextureSize', 'fireflyThreshold', 'shadowTerminatorOffset', 'integrator', 'debugMode',
+	'debugThreshold', 'showInspector', 'oidnQuality', 'enableOIDN', 'enableEnvironment', 'showBackground',
+	'transparentBackground', 'backgroundIntensity', 'backgroundColor', 'backgroundBlurriness', 'backgroundBlurSamples',
+	'environmentIntensity', 'environmentRotation', 'groundProjectionEnabled', 'groundProjectionRadius',
+	'groundProjectionHeight', 'enableGroundCatcher', 'groundCatcherHeight', 'fog', 'fogThickness', 'fogColor',
+	'fogAnisotropy', 'fogHeight', 'environmentMode', 'solidSkyColor', 'enableAlphaShadows', 'useAdaptiveSampling',
+	'noiseThreshold', 'adaptiveMinSamples', 'convergenceOverlay', 'interactionModeEnabled', 'nrdQualityPreset',
+	'nrdDebugMode', 'nrdMaxAccumulatedFrameNum', 'nrdMaxBlurRadius', 'nrdPrepassBlurRadius', 'nrdAntiFirefly',
+	'denoiserStrategy', 'handlePathTracerChange', 'handleAccumulationChange', 'handleBouncesChange',
+	'handleTransmissiveBouncesChange', 'handleMaxSubsurfaceStepsChange', 'handleMaxTransparentBouncesChange',
+	'handleMaxTextureSizeChange', 'handleFireflyThresholdChange', 'handleShadowTerminatorOffsetChange',
+	'handleIntegratorChange', 'handleEnableAlphaShadowsChange', 'handleUseAdaptiveSamplingChange',
+	'handleNoiseThresholdChange', 'handleAdaptiveMinSamplesChange', 'handleConvergenceOverlayChange',
+	'handleOidnQualityChange', 'handleEnableOIDNChange', 'handleDebugThresholdChange', 'handleDebugModeChange',
+	'handleInspectorToggle', 'handleEnableEnvironmentChange', 'handleBackgroundTypeChange',
+	'handleBackgroundIntensityChange', 'handleBackgroundColorChange', 'handleBackgroundBlurrinessChange',
+	'handleBackgroundBlurSamplesChange', 'handleEnvironmentIntensityChange', 'handleEnvironmentRotationChange',
+	'handleGroundProjectionEnabledChange', 'handleGroundProjectionRadiusChange', 'handleGroundProjectionHeightChange',
+	'handleEnableGroundCatcherChange', 'handleGroundCatcherHeightChange', 'handleFogChange', 'handleFogThicknessChange',
+	'handleFogColorChange', 'handleFogAnisotropyChange', 'handleFogHeightChange', 'handleEnvironmentModeChange',
+	'handleSolidSkyColorChange', 'handleInteractionModeEnabledChange', 'handleNrdQualityPresetChange',
+	'handleNrdDebugModeChange', 'handleNrdMaxAccumulatedFrameNumChange', 'handleNrdMaxBlurRadiusChange',
+	'handleNrdPrepassBlurRadiusChange', 'handleNrdAntiFireflyChange', 'handleDenoiserStrategyChange'
+];
+
 const PathTracerTab = () => {
 
-	const pathTracerStore = usePathTracerStore();
-
-
-	// Destructure all state and handlers from the store
 	const {
 		// State
 		enablePathTracer,
@@ -219,7 +245,7 @@ const PathTracerTab = () => {
 		handleNrdAntiFireflyChange,
 		handleDenoiserStrategyChange,
 		// Auto-exposure handlers
-	} = pathTracerStore;
+	} = usePathTracerStore( useShallow( s => pick( s, STORE_KEYS ) ) );
 
 	// Backdrop mode derived from the two engine flags (single mutually-exclusive choice).
 	const backgroundType = transparentBackground ? 'transparent' : showBackground ? 'environment' : 'color';
