@@ -5,7 +5,7 @@
  *
  *   import { configurePlatform } from 'rayzee';
  *   import { nodePlatform } from 'rayzee/node';
- *   configurePlatform( nodePlatform( { decodeImage } ) );   // { Worker: NodeWorker, decodeImage }
+ *   configurePlatform( nodePlatform( { decodeImage } ) );   // { Worker: NodeWorker, decodeImage, readFile, DOMParser }
  *
  * Call before constructing PathTracerApp.
  */
@@ -21,6 +21,11 @@ const platform = {
 	decodeImage: null,
 	/** `( url: URL ) => Promise<Uint8Array>`: the bytes of a `file:` URL, which Node's `fetch` cannot open. */
 	readFile: null,
+	/**
+	 * A class with the DOMParser API for XML, `new DOMParser().parseFromString( text, 'application/xml' )`: three.js's
+	 * Collada and 3MF loaders call it themselves. A browser has its own; `nodePlatform()` gives one.
+	 */
+	DOMParser: null,
 	/**
 	 * Threads each of the engine's worker pools may use (pbrt's `--nthreads`), for hosts running several renders on one
 	 * machine: a whole number from 1, or null for every core. Pools that run at once (a load builds BVHs and packs
@@ -72,26 +77,25 @@ export function hasWorkers() {
 
 }
 
-/**
- * Starts one of the engine's bundled workers. Their bundled constructors call the global `Worker`
- * themselves, so the host's class stands in for it while one is constructed.
- * @param {new ( options?: Object ) => Worker} WorkerClass
- */
-let lent = 0;
+// Globals lent to three's loaders where the runtime has none: name → { value, holders }.
+const loans = new Map();
 
 /**
- * Runs `task` with the host's Worker as the global `Worker`, for code outside the engine that starts its
- * own after awaiting — three's DRACOLoader and KTX2Loader, during a glTF parse. Lent only where there is
- * no global one (a browser keeps its own); overlapping tasks share one loan.
+ * Runs `task` with each of `globals` set as a global where the runtime has none, for as long as any task holding it runs.
  * @template T
+ * @param {Object<string, *>} globals
  * @param {() => Promise<T>} task
  * @returns {Promise<T>}
  */
-export async function withHostWorker( task ) {
+export async function withHostGlobals( globals, task ) {
 
-	if ( ! platform.Worker || ( lent === 0 && typeof globalThis.Worker !== 'undefined' ) ) return task();
+	const taken = Object.entries( globals ).filter( ( [ name, value ] ) => value && ( loans.has( name ) || globalThis[ name ] === undefined ) ).map( ( [ name ] ) => name );
+	for ( const name of taken ) {
 
-	if ( lent ++ === 0 ) globalThis.Worker = platform.Worker;
+		if ( ! loans.has( name ) ) loans.set( name, { value: globalThis[ name ] = globals[ name ], holders: 0 } );
+		loans.get( name ).holders ++;
+
+	}
 
 	try {
 
@@ -99,12 +103,37 @@ export async function withHostWorker( task ) {
 
 	} finally {
 
-		if ( -- lent === 0 && globalThis.Worker === platform.Worker ) delete globalThis.Worker;
+		for ( const name of taken ) {
+
+			const loan = loans.get( name );
+			if ( -- loan.holders > 0 ) continue;
+			loans.delete( name );
+			if ( globalThis[ name ] === loan.value ) delete globalThis[ name ];
+
+		}
 
 	}
 
 }
 
+/**
+ * Runs `task` (a parse whose loaders start workers themselves: three's DRACOLoader and KTX2Loader) with the host's
+ * `Worker` as the global one where there is none.
+ * @template T
+ * @param {() => Promise<T>} task
+ * @returns {Promise<T>}
+ */
+export function withHostWorker( task ) {
+
+	return withHostGlobals( { Worker: platform.Worker }, task );
+
+}
+
+/**
+ * Starts one of the engine's bundled workers. Their bundled constructors call the global `Worker`
+ * themselves, so the host's class stands in for it while one is constructed.
+ * @param {new ( options?: Object ) => Worker} WorkerClass
+ */
 export function createWorker( WorkerClass, options ) {
 
 	const Host = platform.Worker;

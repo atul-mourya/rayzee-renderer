@@ -38,7 +38,7 @@ folder itself (`SessionDialog` asks only when access lapsed); `.rayzee` projects
   painted magenta (its fallback) a primitive whose material symbol the `<bind_material>` names otherwise ("default"
   against "mat0"). Now: no image (a texture naming it is none), a plain Lambert, the colour (f, f, f, f) — three's
   export comes back at its opacity — and the one material bound, when there is one (with more, the fallback stays).
-  4 of the 12 local `.dae` files failed; all load (2026-11-08). ⚠️ Collada needs a `DOMParser`: in Node it fails.
+  4 of the 12 local `.dae` files failed; all load (2026-11-08). In Node, Collada and 3MF read their XML through the platform's `DOMParser` (`nodePlatform()` gives `XMLDOMParser`).
 
 ## Asset kits
 `findAndLoadModelFromZip` takes an archive with no main file whose shallowest models sit in two or more folders as a

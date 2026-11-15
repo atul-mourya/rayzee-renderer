@@ -2,14 +2,20 @@
  * The core reads glTF and .hdr; every other format is registered on the asset loader (rayzee/addons/formats, or a host's
  * own), and glTF's compression decoders are imported only for a file that uses them.
  */
-import { describe, expect, it, vi } from 'vitest';
-import { Group, Mesh, PerspectiveCamera, Points, Scene, Vector3 } from 'three';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { DataTextureLoader, Group, Mesh, PerspectiveCamera, Points, Scene, TextureLoader, Vector3 } from 'three';
 import { AssetLoader } from '@/core/loaders/AssetLoader.js';
 import { allFormats, objFormat, stlFormat, plyFormat, exrFormat, fbxFormat, usdFormat, colladaFormat, threeMFFormat, vdbFormat } from '@/core/addons/formats.js';
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdtempSync, rmSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { decodersOnDemand } from '@/core/loaders/GLTFDecoders.js';
 import { configurePlatform } from '@/core/Platform.js';
+import { XMLDOMParser } from '@/core/node/XMLDOMParser.js';
+import { zipSync, strToU8 } from 'three/addons/libs/fflate.module.js';
 
 const stubControls = () => ( { target: new Vector3(), maxDistance: 0, saveState() {}, update() {} } );
 const newLoader = () => new AssetLoader( new Scene(), new PerspectiveCamera(), stubControls() );
@@ -21,7 +27,39 @@ const PLY_FACE = 'ply\nformat ascii 1.0\nelement vertex 3\nproperty float x\npro
 const FBX = '; FBX 7.4.0 project file\nFBXHeaderExtension:  {\n\tFBXVersion: 7400\n}\nObjects:  {\n}\nConnections:  {\n\tC: "OO",1,0\n}\n';
 const USDA = '#usda 1.0\ndef Xform "root"\n{\n\tdef Mesh "tri"\n\t{\n\t\tint[] faceVertexCounts = [3]\n\t\tint[] faceVertexIndices = [0, 1, 2]\n\t\tpoint3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]\n\t}\n}\n';
 
+// One triangle with an embedded texture.
+const PNG_URI = `data:image/png;base64,${Buffer.from( Uint8Array.of( 0x89, 0x50, 0x4E, 0x47, 13, 10, 26, 10 ) ).toString( 'base64' )}`;
+const COLLADA = `<?xml version="1.0" encoding="utf-8"?>
+<COLLADA xmlns="http://www.collada.org/2005/11/COLLADASchema" version="1.4.1">
+	<asset><up_axis>Y_UP</up_axis></asset>
+	<library_images><image id="img"><init_from>${PNG_URI}</init_from></image></library_images>
+	<library_effects><effect id="fx"><profile_COMMON>
+		<newparam sid="surf"><surface type="2D"><init_from>img</init_from></surface></newparam>
+		<newparam sid="samp"><sampler2D><source>surf</source></sampler2D></newparam>
+		<technique sid="common"><lambert><diffuse><texture texture="samp" texcoord="UV"/></diffuse></lambert></technique>
+	</profile_COMMON></effect></library_effects>
+	<library_materials><material id="mat" name="mat"><instance_effect url="#fx"/></material></library_materials>
+	<library_geometries><geometry id="g"><mesh>
+		<source id="pos"><float_array id="pa" count="9">0 0 0 1 0 0 0 1 0</float_array><technique_common><accessor source="#pa" count="3" stride="3"><param name="X" type="float"/><param name="Y" type="float"/><param name="Z" type="float"/></accessor></technique_common></source>
+		<source id="uv"><float_array id="ua" count="6">0 0 1 0 0 1</float_array><technique_common><accessor source="#ua" count="3" stride="2"><param name="S" type="float"/><param name="T" type="float"/></accessor></technique_common></source>
+		<vertices id="v"><input semantic="POSITION" source="#pos"/></vertices>
+		<triangles material="m" count="1"><input semantic="VERTEX" source="#v" offset="0"/><input semantic="TEXCOORD" source="#uv" offset="1" set="0"/><p>0 0 1 1 2 2</p></triangles>
+	</mesh></geometry></library_geometries>
+	<library_visual_scenes><visual_scene id="s"><node id="n" name="tri"><instance_geometry url="#g"><bind_material><technique_common><instance_material symbol="m" target="#mat"/></technique_common></bind_material></instance_geometry></node></visual_scene></library_visual_scenes>
+	<scene><instance_visual_scene url="#s"/></scene>
+</COLLADA>`;
+
+const THREE_MF = zipSync( {
+	'[Content_Types].xml': strToU8( '<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="model" ContentType="application/vnd.ms-package.3dmanufacturing-3dmodel+xml"/></Types>' ),
+	'_rels/.rels': strToU8( '<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Target="/3D/3dmodel.model" Id="rel0" Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/></Relationships>' ),
+	'3D/3dmodel.model': strToU8( '<?xml version="1.0" encoding="UTF-8"?><model unit="millimeter" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"><resources><object id="1" type="model"><mesh><vertices><vertex x="0" y="0" z="0"/><vertex x="1" y="0" z="0"/><vertex x="0" y="1" z="0"/></vertices><triangles><triangle v1="0" v2="1" v3="2"/></triangles></mesh></object></resources><build><item objectid="1"/></build></model>' ),
+} );
+
 describe( 'file formats', () => {
+
+	// Node has no DOMParser: Collada and 3MF read their XML through the host's, as nodePlatform() gives it.
+	beforeAll( () => configurePlatform( { DOMParser: XMLDOMParser } ) );
+	afterAll( () => configurePlatform( { DOMParser: null } ) );
 
 	it( 'reads only glTF, .hdr and images until a format is registered', () => {
 
@@ -288,12 +326,95 @@ describe( 'file formats', () => {
 
 	it( 'makes the Collada and 3MF loaders from three\'s', async () => {
 
-		// Both need a DOM to read their XML, so in Node only the loader is checked.
 		const cache = {};
-		await expect( colladaFormat.parse( new File( [ '<COLLADA/>' ], 'a.dae' ), { filename: 'a.dae', cache } ) ).rejects.toThrow();
 		await expect( threeMFFormat.parse( new File( [ '' ], 'a.3mf' ), { filename: 'a.3mf', cache } ) ).rejects.toThrow();
+		await colladaFormat.parse( new File( [ COLLADA ], 'a.dae' ), { filename: 'a.dae', cache } );
 		expect( cache.collada.constructor.name ).toBe( 'ColladaLoader' );
 		expect( cache.threemf.constructor.name ).toBe( 'ThreeMFLoader' );
+
+	} );
+
+	it( 'reads Collada in Node, its texture decoded by the platform, and lends no global past the parse', async () => {
+
+		const decodeImage = vi.fn( async () => ( { data: Uint8Array.of( 9, 8, 7, 255 ), width: 1, height: 1 } ) );
+		configurePlatform( { decodeImage } );
+		try {
+
+			const { model } = await colladaFormat.parse( new File( [ COLLADA ], 't.dae' ), { filename: 't.dae', cache: {} } );
+			const mesh = model.getObjectByName( 'tri' );
+			expect( [ ...mesh.geometry.attributes.position.array ] ).toEqual( [ 0, 0, 0, 1, 0, 0, 0, 1, 0 ] );
+			expect( mesh.material.map.image ).toMatchObject( { width: 1, height: 1, data: Uint8Array.of( 9, 8, 7, 255 ) } );
+			expect( decodeImage ).toHaveBeenCalledWith( expect.any( Uint8Array ), 'image/png' );
+			expect( [ typeof DOMParser, typeof Node ] ).toEqual( [ 'undefined', 'undefined' ] );
+
+		} finally {
+
+			configurePlatform( { decodeImage: null } );
+
+		}
+
+	} );
+
+	it( 'leaves a Collada texture it cannot read without an image, as a browser does', async () => {
+
+		const { model } = await colladaFormat.parse( new File( [ COLLADA.replace( PNG_URI, 'missing.png' ) ], 't.dae' ), { filename: 't.dae', cache: {} } );
+		const { map } = model.getObjectByName( 'tri' ).material;
+		expect( map.isTexture ).toBe( true );
+		expect( map.image ).toBeNull();
+
+	} );
+
+	// TGALoader fetches through a Request, which a relative URL throws in Node: the platform reads it instead.
+	it( 'reads a Collada TGA texture through the platform, and leaves one it cannot read without pixels', async () => {
+
+		const dir = mkdtempSync( join( tmpdir(), 'rayzee-tga-' ) );
+		const tga = join( dir, 'wood.tga' );
+		// 1 × 1, uncompressed true colour, 32 bits, top-left origin: B G R A.
+		writeFileSync( tga, Uint8Array.of( 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 32, 0x28, 30, 20, 10, 255 ) );
+		configurePlatform( { readFile: async ( url ) => new Uint8Array( await readFile( url ) ) } );
+		const loads = [ TextureLoader.prototype.load, DataTextureLoader.prototype.load ];
+		try {
+
+			const read = await colladaFormat.parse( new File( [ COLLADA.replace( PNG_URI, pathToFileURL( tga ).href ) ], 't.dae' ), { filename: 't.dae', cache: {} } );
+			expect( read.model.getObjectByName( 'tri' ).material.map.image ).toMatchObject( { width: 1, height: 1 } );
+			expect( [ ...read.model.getObjectByName( 'tri' ).material.map.image.data ] ).toEqual( [ 10, 20, 30, 255 ] );
+
+			const missing = await colladaFormat.parse( new File( [ COLLADA.replace( PNG_URI, 'textures/missing.tga' ) ], 'm.dae' ), { filename: 'm.dae', cache: {} } );
+			expect( missing.model.getObjectByName( 'tri' ).material.map.image.data ).toBeNull();
+			expect( [ TextureLoader.prototype.load, DataTextureLoader.prototype.load ] ).toEqual( loads );
+
+		} finally {
+
+			configurePlatform( { readFile: null } );
+			rmSync( dir, { recursive: true } );
+
+		}
+
+	} );
+
+	it( 'reads 3MF in Node', async () => {
+
+		const { model } = await threeMFFormat.parse( new File( [ THREE_MF ], 't.3mf' ), { filename: 't.3mf', cache: {} } );
+		const meshes = [];
+		model.traverse( ( o ) => o.isMesh && meshes.push( o ) );
+		expect( meshes.length ).toBe( 1 );
+		expect( meshes[ 0 ].geometry.attributes.position.count ).toBe( 3 );
+
+	} );
+
+	it( 'says what to configure where there is no DOMParser', async () => {
+
+		configurePlatform( { DOMParser: null } );
+		try {
+
+			await expect( colladaFormat.parse( new File( [ COLLADA ], 'a.dae' ), { filename: 'a.dae', cache: {} } ) ).rejects.toThrow( /no DOMParser.*configurePlatform/ );
+			await expect( threeMFFormat.parse( new File( [ THREE_MF ], 'a.3mf' ), { filename: 'a.3mf', cache: {} } ) ).rejects.toThrow( /no DOMParser/ );
+
+		} finally {
+
+			configurePlatform( { DOMParser: XMLDOMParser } );
+
+		}
 
 	} );
 

@@ -155,14 +155,29 @@ function pixelTexture( image, { width = image.width, height = image.height } = {
 
 }
 
-function decodeBytes( bytes, mimeType ) {
+// What the bytes are, where a URL does not say (a blob: URL) or says wrong: as a browser decodes an image.
+function sniffMimeType( bytes ) {
 
-	return getPlatform().decodeImage( mimeType === 'image/png' ? trimPNG( bytes ) : bytes, mimeType );
+	const at = ( i, ...magic ) => magic.every( ( b, k ) => bytes[ i + k ] === b );
+	if ( at( 0, 0x89, 0x50, 0x4E, 0x47 ) ) return 'image/png';
+	if ( at( 0, 0xFF, 0xD8, 0xFF ) ) return 'image/jpeg';
+	if ( at( 0, 0x52, 0x49, 0x46, 0x46 ) && at( 8, 0x57, 0x45, 0x42, 0x50 ) ) return 'image/webp';
+	return null;
 
 }
 
-async function fetchBytes( url ) {
+function decodeBytes( bytes, mimeType ) {
 
+	const type = sniffMimeType( bytes ) ?? mimeType;
+	return getPlatform().decodeImage( type === 'image/png' ? trimPNG( bytes ) : bytes, type );
+
+}
+
+/** A URL's bytes: a `file:` one through the platform's `readFile`, any other fetched. */
+export async function fetchBytes( url ) {
+
+	const { readFile } = getPlatform();
+	if ( readFile && String( url ).startsWith( 'file:' ) ) return readFile( new URL( url ) );
 	const response = await fetch( url );
 	if ( ! response.ok ) throw new Error( `HTTP ${response.status}` );
 	return new Uint8Array( await response.arrayBuffer() );

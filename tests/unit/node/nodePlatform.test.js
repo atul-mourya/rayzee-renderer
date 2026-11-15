@@ -1,6 +1,7 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { nodePlatform } from '@/core/node/NodePlatform.js';
 import { NodeWorker } from '@/core/node/NodeWorker.js';
+import { XMLDOMParser } from '@/core/node/XMLDOMParser.js';
 
 // Stands in for the `webgpu` package's queue: records what reaches Dawn.
 function installQueue() {
@@ -43,7 +44,7 @@ describe( 'nodePlatform', () => {
 
 	} );
 
-	it( 'hands over the worker class, the decoder and a file reader', () => {
+	it( 'hands over the worker class, the decoder, a file reader and a DOMParser', () => {
 
 		installQueue();
 		const decodeImage = async () => ( {} );
@@ -51,6 +52,7 @@ describe( 'nodePlatform', () => {
 		expect( platform.Worker ).toBe( NodeWorker );
 		expect( platform.decodeImage ).toBe( decodeImage );
 		expect( typeof platform.readFile ).toBe( 'function' );
+		expect( platform.DOMParser ).toBe( XMLDOMParser );
 		expect( nodePlatform().decodeImage ).toBeNull();
 		expect( new ProgressEvent( 'progress', { lengthComputable: true, loaded: 3, total: 9 } ) ).toMatchObject( { type: 'progress', loaded: 3, total: 9 } );
 

@@ -217,7 +217,7 @@ import {
 
 // Platform services for hosts without a browser (see Running in Node); `threads` sizes the worker pools, in any host
 import { configurePlatform, getPlatform } from 'rayzee';
-import { nodePlatform, NodeWorker } from 'rayzee/node';
+import { nodePlatform, NodeWorker, XMLDOMParser } from 'rayzee/node';
 
 // Configuration & presets
 import {

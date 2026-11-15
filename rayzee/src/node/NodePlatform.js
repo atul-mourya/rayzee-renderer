@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { NodeWorker } from './NodeWorker.js';
+import { XMLDOMParser } from './XMLDOMParser.js';
 
 // three.js's FileLoader constructs one on every chunk of a streamed download.
 class NodeProgressEvent extends Event {
@@ -69,8 +70,9 @@ function copySharedUploads() {
 
 /**
  * Everything the engine needs from Node, for `configurePlatform( nodePlatform( { decodeImage } ) )`:
- * the worker class, the host's image decoder — the engine carries none — and a reader for `file:` URLs, so
- * what the engine downloads itself (OIDN weights, IES profiles) can come from disk. It also defines
+ * the worker class, the host's image decoder — the engine carries none — a reader for `file:` URLs, so
+ * what the engine downloads itself (OIDN weights, IES profiles) can come from disk, and a DOMParser for the XML
+ * formats (Collada, 3MF). It also defines
  * `ProgressEvent` where the runtime lacks it, the one browser class three.js's loaders construct.
  * WebGPU itself is the host's: install the `webgpu` package's globals and `navigator.gpu` first, since
  * its queue is wrapped here to copy uploads out of shared memory.
@@ -84,6 +86,6 @@ export function nodePlatform( { decodeImage, threads } = {} ) {
 
 	globalThis.ProgressEvent ??= NodeProgressEvent;
 	copySharedUploads();
-	return { Worker: NodeWorker, decodeImage: decodeImage ?? null, readFile, ...( threads !== undefined && { threads } ) };
+	return { Worker: NodeWorker, decodeImage: decodeImage ?? null, readFile, DOMParser: XMLDOMParser, ...( threads !== undefined && { threads } ) };
 
 }

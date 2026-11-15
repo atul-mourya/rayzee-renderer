@@ -1,4 +1,6 @@
-import { FloatType, MathUtils, Mesh, MeshStandardMaterial, Points, PointsMaterial } from 'three';
+import { DataTexture, DataTextureLoader, FloatType, MathUtils, Mesh, MeshStandardMaterial, Points, PointsMaterial, Texture, TextureLoader } from 'three';
+import { getPlatform, withHostGlobals } from '../Platform.js';
+import { fetchBytes, loadPlatformImage } from '../loaders/PlatformImageLoader.js';
 
 /**
  * File formats beyond glTF and .hdr — `rayzee/addons/formats`: FBX, OBJ, STL, PLY, Collada, 3MF and USD models, OpenVDB
@@ -197,6 +199,83 @@ function repairCollada( { prototype: parser }, { prototype: composer } ) {
 
 }
 
+// The node types three's Collada parser compares against; a class, so `x instanceof Node` elsewhere is false, not a throw.
+const NODE_TYPES = class Node {
+
+	static ELEMENT_NODE = 1;
+	static ATTRIBUTE_NODE = 2;
+	static TEXT_NODE = 3;
+	static CDATA_SECTION_NODE = 4;
+	static PROCESSING_INSTRUCTION_NODE = 7;
+	static COMMENT_NODE = 8;
+	static DOCUMENT_NODE = 9;
+	static DOCUMENT_TYPE_NODE = 10;
+	static DOCUMENT_FRAGMENT_NODE = 11;
+
+};
+
+// three's XML loaders use the global DOMParser, lent from the platform where there is none. Without a DOM,
+// TextureLoader (an <img>) and TGALoader (a Request) read through the platform, for the synchronous parse only.
+async function parseXML( label, parse ) {
+
+	const pending = [];
+	const { DOMParser: hostParser } = getPlatform();
+	const result = await withHostGlobals( { DOMParser: hostParser, Node: hostParser && NODE_TYPES }, async () => {
+
+		if ( typeof DOMParser === 'undefined' ) throw new Error( `${label} is XML, and there is no DOMParser here: give configurePlatform one (nodePlatform() does)` );
+		if ( typeof document !== 'undefined' ) return parse();
+
+		const { load } = TextureLoader.prototype;
+		const { load: loadData } = DataTextureLoader.prototype;
+		TextureLoader.prototype.load = function ( url, onLoad, onProgress, onError ) {
+
+			const texture = new Texture();
+			pending.push( loadPlatformImage( this.manager.resolveURL( ( this.path ?? '' ) + url ) ).then( ( decoded ) => {
+
+				texture.image = decoded.image;
+				texture.flipY = decoded.flipY;
+				texture.needsUpdate = true;
+				onLoad?.( texture );
+
+			}, ( error ) => onError?.( error ) ) );
+			return texture;
+
+		};
+
+		DataTextureLoader.prototype.load = function ( url, onLoad, onProgress, onError ) {
+
+			const texture = new DataTexture();
+			pending.push( fetchBytes( this.manager.resolveURL( ( this.path ?? '' ) + url ) ).then( ( bytes ) => {
+
+				const data = this.parse( bytes.buffer.slice( bytes.byteOffset, bytes.byteOffset + bytes.byteLength ) );
+				texture.image = { data: data.data, width: data.width, height: data.height };
+				if ( data.flipY !== undefined ) texture.flipY = data.flipY;
+				texture.needsUpdate = true;
+				onLoad?.( texture, data );
+
+			} ).catch( ( error ) => onError?.( error ) ) );
+			return texture;
+
+		};
+
+		try {
+
+			return parse();
+
+		} finally {
+
+			TextureLoader.prototype.load = load;
+			DataTextureLoader.prototype.load = loadData;
+
+		}
+
+	} );
+
+	await Promise.all( pending );
+	return result;
+
+}
+
 export const colladaFormat = {
 	name: 'Collada', label: 'Collada', type: 'model', extensions: [ 'dae' ],
 	async parse( file, { filename, cache } ) {
@@ -208,28 +287,32 @@ export const colladaFormat = {
 		] );
 		const text = await file.text();
 
-		// The camera is built from the file's values, then cloned into the scene: what it carries, the clones do.
-		const buildCamera = ColladaComposer.prototype.buildCamera;
-		ColladaComposer.prototype.buildCamera = function ( data ) {
+		// Patched for the synchronous parse alone: three's prototypes are the page's.
+		const collada = await parseXML( 'Collada', () => {
 
-			const camera = buildCamera.call( this, data );
-			colladaCameraShape( camera, data.optics );
-			return camera;
+			// The camera is built from the file's values, then cloned into the scene: what it carries, the clones do.
+			const buildCamera = ColladaComposer.prototype.buildCamera;
+			ColladaComposer.prototype.buildCamera = function ( data ) {
 
-		};
+				const camera = buildCamera.call( this, data );
+				colladaCameraShape( camera, data.optics );
+				return camera;
 
-		const undoRepairs = repairCollada( ColladaParser, ColladaComposer );
-		let collada;
-		try {
+			};
 
-			collada = cache.collada.parse( text );
+			const undoRepairs = repairCollada( ColladaParser, ColladaComposer );
+			try {
 
-		} finally {
+				return cache.collada.parse( text );
 
-			ColladaComposer.prototype.buildCamera = buildCamera;
-			undoRepairs();
+			} finally {
 
-		}
+				ColladaComposer.prototype.buildCamera = buildCamera;
+				undoRepairs();
+
+			}
+
+		} );
 
 		collada.scene.name = filename;
 		return { model: collada.scene, result: collada };
@@ -242,7 +325,8 @@ export const threeMFFormat = {
 	async parse( file, { cache } ) {
 
 		cache.threemf ??= new ( await import( 'three/addons/loaders/3MFLoader.js' ) ).ThreeMFLoader();
-		return { model: cache.threemf.parse( await file.arrayBuffer() ) };
+		const data = await file.arrayBuffer();
+		return { model: await parseXML( '3MF', () => cache.threemf.parse( data ) ) };
 
 	},
 };

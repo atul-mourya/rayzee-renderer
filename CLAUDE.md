@@ -427,7 +427,7 @@ glTF with an HDR or PNG sky matched Chrome within 0.05 of a level per 16² block
   one): `createHeadlessCanvas()` gives three.js a WebGPU context over a plain texture, `wake()` is inert
   and `animate()` throws — drive it with `renderFrames` / `renderUntilComplete` — and the overlay renderer
   and gizmo are not built. The InteractionManager stays: auto-focus picks through it.
-- **`configurePlatform( { Worker, decodeImage, readFile } )`** is the seam (`readFile` serves `DownloadCache` the
+- **`configurePlatform( { Worker, decodeImage, readFile, DOMParser } )`** is the seam (`readFile` serves `DownloadCache` the
   `file:` URLs Node's `fetch` refuses: OIDN weights and IES profiles from disk); `rayzee/node` (plain source, exported
   from `src/`, never bundled) has `nodePlatform()` and `NodeWorker` (Web Worker over `worker_threads`,
   data:/blob:, module or classic). Every engine worker starts through `createWorker( Ctor )`, which

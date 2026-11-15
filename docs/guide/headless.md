@@ -203,7 +203,7 @@ app.dispose();
 - **No canvas means headless.** `new PathTracerApp(null)` — or `{ headless: true }` — makes its own
   canvas (a WebGPU context over a plain texture), runs no render loop (drive it with `renderFrames` or
   `renderUntilComplete`), and builds neither the overlay renderer nor the transform gizmo.
-- **`configurePlatform({ Worker, decodeImage, readFile })`** is where a host without a browser supplies what one
+- **`configurePlatform({ Worker, decodeImage, readFile, DOMParser })`** is where a host without a browser supplies what one
   would. `nodePlatform()` from `rayzee/node` fills it: `NodeWorker`, the Web Worker API over
   `worker_threads`, runs the engine's inlined workers; `decodeImage(bytes, mimeType)` is yours — PNG,
   JPEG or WebP to RGBA8, straight alpha, top row first — since the engine carries no decoder. It decodes
@@ -240,6 +240,13 @@ app.dispose();
   streaming; that is the only global it sets. three.js's own Draco and KTX2 loaders call the global
   `Worker`; the engine lends them `NodeWorker` for the length of each glTF parse, so a Draco or KTX2
   model loads with nothing set by the host.
+- **Collada and 3MF read XML through `configurePlatform({ DOMParser })`**: three.js's loaders call the global
+  `DOMParser` themselves, and the engine lends the host's (with the node types they compare against) for the length
+  of each parse. `nodePlatform()` gives `XMLDOMParser` (also exported from `rayzee/node`): elements, attributes and
+  namespaces, text, CDATA, comments, entities, and `querySelector` over type and attribute selectors; malformed XML
+  gives a document holding a `parsererror` element, which both loaders refuse, as in a browser. Their textures (TGA
+  included) are read and decoded by the platform, a `file:` URL through its `readFile`; one that cannot be fetched is
+  left without an image, as in a browser.
 
 Measured on this bench's corpus: all 29 scenes match the Chrome goldens (`npm run bench:node`, RMSE
 ≤ 0.0036, no pixel over 0.02 — the readback's tone map accounts for most of it), and a textured glTF with an

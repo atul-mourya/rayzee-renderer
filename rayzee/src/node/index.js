@@ -7,3 +7,4 @@
  */
 export { NodeWorker } from './NodeWorker.js';
 export { nodePlatform } from './NodePlatform.js';
+export { XMLDOMParser } from './XMLDOMParser.js';

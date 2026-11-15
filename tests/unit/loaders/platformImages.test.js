@@ -150,6 +150,29 @@ describe( 'platform image decoding', () => {
 
 	} );
 
+	// A blob: URL names no type (3MF's textures), and a file's name can be wrong: decoded as its bytes say, as a browser does.
+	it( 'decodes an image as its bytes say, and reads a file: URL through the platform', async () => {
+
+		const jpeg = Uint8Array.of( 0xFF, 0xD8, 0xFF, 0xE0 );
+		const decodeImage = vi.fn( async () => ( { data: new Uint8Array( 4 ), width: 1, height: 1 } ) );
+		const readFile = vi.fn( async () => jpeg );
+		vi.stubGlobal( 'fetch', async () => ( { ok: true, arrayBuffer: async () => jpeg.slice().buffer } ) );
+		configurePlatform( { decodeImage, readFile } );
+		try {
+
+			await loadPlatformImage( 'blob:nodedata:0f2a' );
+			await loadPlatformImage( 'file:///textures/wood.png' );
+			expect( decodeImage.mock.calls.map( ( call ) => call[ 1 ] ) ).toEqual( [ 'image/jpeg', 'image/jpeg' ] );
+			expect( readFile ).toHaveBeenCalledWith( new URL( 'file:///textures/wood.png' ) );
+
+		} finally {
+
+			configurePlatform( { readFile: null } );
+
+		}
+
+	} );
+
 	it( 'says what to configure where nothing can decode an image', async () => {
 
 		configurePlatform( { decodeImage: null } );
