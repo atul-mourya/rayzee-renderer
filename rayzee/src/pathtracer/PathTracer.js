@@ -638,6 +638,7 @@ export class PathTracer extends PathTracerStage {
 			if ( ! this._compiledGlass && this.materialData.hasTransmission() ) this._outputsChanged = true;
 			if ( ! this._compiledTransmissionMaps && this.materialData.hasTransmissionMaps() ) this._outputsChanged = true;
 			if ( ! this._compiledBumpMaps && this.materialData.hasBumpMaps() ) this._outputsChanged = true;
+			if ( ! this._compiledEmissionMaps && this.materialData.hasEmissionMaps() ) this._outputsChanged = true;
 			if ( ! this._compiledRelativeIOR && this.materialData.hasRelativeIOR() ) this._outputsChanged = true;
 			if ( ! this._compiledClearcoatNormals && this._clearcoatNormalsNeeded() ) this._outputsChanged = true;
 
@@ -2163,6 +2164,7 @@ export class PathTracer extends PathTracerStage {
 			glass: this._compiledGlass = this.materialData.hasTransmission(),
 			transmissionMaps: this._compiledTransmissionMaps = this.materialData.hasTransmissionMaps(),
 			bumpMaps: this._compiledBumpMaps = this.materialData.hasBumpMaps(),
+			emissionMaps: this._compiledEmissionMaps = this.materialData.hasEmissionMaps(),
 			relativeIOR: this._compiledRelativeIOR = this.materialData.hasRelativeIOR(),
 			clearcoatNormals: this._compiledClearcoatNormals = this._clearcoatNormalsNeeded(),
 			regularize: this._regularizeNeeded(),

@@ -17,6 +17,8 @@
  * @property {boolean} [transmissionMaps] - some material has a transmission map; false = shadow rays never sample one
  * @property {boolean} [clearcoatNormals] - some coated material has a normal or bump map; false = every coat follows N
  * @property {boolean} [bumpMaps] - some material has a bump map; false = no shading reads one
+ * @property {boolean} [emissionMaps] - some emitting material has an emission map; false = light sampling takes each
+ *   triangle's flat emission
  * @property {boolean} [relativeIOR] - some transmissive or subsurface material has a relative IOR; false = every IOR is absolute
  * @property {boolean} [regularize] - path regularization (path tracing only): past a rough bounce, smooth lobes are drawn
  *   rougher; false = every lobe as authored
@@ -101,6 +103,16 @@ export function usesTransmissionMaps( builder ) {
 export function usesClearcoatNormals( builder ) {
 
 	return builder.context[ KEY ]?.clearcoatNormals ?? true;
+
+}
+
+/**
+ * Whether the kernel's light sampling reads emitters' emission maps (else each triangle emits its flat colour). Outside a
+ * scene kernel (a test) it does not: the sampler then needs the scene data buffer the material block sits in.
+ */
+export function usesEmissionMaps( builder ) {
+
+	return builder.context[ KEY ]?.emissionMaps ?? false;
 
 }
 

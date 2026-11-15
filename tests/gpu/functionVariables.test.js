@@ -137,7 +137,7 @@ async function largestFunctions( integrator ) {
 	floor.rotation.x = - Math.PI / 2;
 	const glass = new Mesh( new SphereGeometry( 0.6, 16, 8 ), new MeshPhysicalMaterial( { transmission: 1, dispersion: 0.3, attenuationDistance: 2, transmissionMap: texture() } ) );
 	const coat = new Mesh( new SphereGeometry( 0.6, 16, 8 ), new MeshPhysicalMaterial( { clearcoat: 1, clearcoatNormalMap: texture(), sheen: 1, iridescence: 1, anisotropy: 0.5, map: texture(), alphaTest: 0.5 } ) );
-	const lamp = new Mesh( new BoxGeometry( 0.5, 0.5, 0.5 ), new MeshStandardMaterial( { emissive: 0xffffff, emissiveIntensity: 4 } ) );
+	const lamp = new Mesh( new BoxGeometry( 0.5, 0.5, 0.5 ), new MeshStandardMaterial( { emissive: 0xffffff, emissiveIntensity: 4, emissiveMap: texture() } ) );
 	glass.position.set( - 1, 0.6, 0 );
 	coat.position.set( 1, 0.6, 0 );
 	lamp.position.set( 0, 2, - 1 );

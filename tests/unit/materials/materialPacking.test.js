@@ -708,6 +708,21 @@ describe( 'MaterialDataManager', () => {
 
 	} );
 
+	it( 'knows whether light sampling has an emission map to read: an emitting material\'s', () => {
+
+		const manager = new MaterialDataManager( null );
+		const data = new Float32Array( 2 * F );
+		packMaterial( data, 0, { emissive: [ 1, 1, 1 ], emissiveIntensity: 2 } );
+		packMaterial( data, F, { emissiveMap: 0, emissiveIntensity: 0 } );
+		manager.setMaterialData( data );
+		expect( manager.hasEmissionMaps() ).toBe( false );
+
+		packMaterial( data, F, { emissive: [ 1, 1, 1 ], emissiveMap: 0, emissiveIntensity: 3 } );
+		manager.setMaterialData( data );
+		expect( manager.hasEmissionMaps() ).toBe( true );
+
+	} );
+
 	it( 'knows whether shadow rays cross glass, and says so when an edit makes a material transmit', () => {
 
 		const manager = new MaterialDataManager( null );

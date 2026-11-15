@@ -206,8 +206,7 @@ exactly the unidirectional kernels: everything bidirectional is JS-gated on `par
     (0.07). Cornell box, merging alone against bidirectional: −0.14 % (z 1.3). Where other strategies already
     work it costs more than it saves (Livspace and the classroom +7–8 % noise at equal time); it is for caustics
     seen in mirrors and through glass. Bench: `mirror-caustic-vcm` (truth from itself).
-- **Not covered:** emissive textures (NEE and light paths both use the per-triangle emission); a dispersion
-  wavelength shared between the subpaths. Without merging, specular–diffuse–specular paths from a lamp no camera
+- **Not covered:** a dispersion wavelength shared between the subpaths. Without merging, specular–diffuse–specular paths from a lamp no camera
   path can hit (a point, spot or sharp directional lamp) have no strategy at all — `'vcm'` covers them. Connections test the
   camera end against the facet, where NEE and the bounce leak guard use the interpolated normal: smooth
   meshes can differ at grazing directions.

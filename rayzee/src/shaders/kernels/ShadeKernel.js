@@ -33,7 +33,7 @@ import { traverseBVHShadow, triangleSide, emitterSide, sideAccepts } from '../BV
 import { visibilityCell } from '../LightVisibility.js';
 import { handleMaterialTransparency, MaterialInteractionResult } from '../MaterialTransmission.js';
 import { sampleChromaticCollision, sampleHenyeyGreenstein, subsurfaceCoefficients, CollisionSample, MediumCoeffs } from '../Subsurface.js';
-import { ALL_MATERIAL_LAYERS, usesClearcoatNormals, usesBumpMaps, usesRelativeIOR, usesRegularization } from '../SceneResources.js';
+import { ALL_MATERIAL_LAYERS, usesClearcoatNormals, usesBumpMaps, usesRelativeIOR, usesRegularization, usesEmissionMaps } from '../SceneResources.js';
 import { calculateIndirectLighting } from '../LightsIndirect.js';
 import {
 	IndirectLightingResult, sampleCone, LightSample, DirectionalLight, AreaLight, PointLight, SpotLight,
@@ -2050,6 +2050,8 @@ export function buildShadeKernel( params ) {
 			const position = vec3( 0.0 ).toVar();
 			const lightDir = vec3( 0.0 ).toVar();
 			const emission = vec3( 0.0 ).toVar();
+			// The light subpath's start density goes by the emitter's flat emission, not the map's texel.
+			const flatEmission = usesEmissionMaps( builder ) ? vec3( 0.0 ).toVar() : emission;
 			const lightPdf = float( 0.0 ).toVar();
 			const valid = tslBool( false ).toVar();
 			const lightTriangle = int( 0 ).toVar();
@@ -2060,6 +2062,7 @@ export function buildShadeKernel( params ) {
 				position.assign( e.position );
 				lightDir.assign( e.direction );
 				emission.assign( e.emission );
+				if ( flatEmission !== emission ) flatEmission.assign( e.flatEmission );
 				lightPdf.assign( e.pdf );
 				valid.assign( e.valid );
 				lightTriangle.assign( e.triangleIndex );
@@ -2103,7 +2106,7 @@ export function buildShadeKernel( params ) {
 					const reverse = calculateMaterialPDF( lightDir, V, facing( lightDir ), material );
 					// Emission density over NEE's, both seen from here; the light's cosine cancels.
 					const emissionOverDirect = select( bdpt.lightPaths.greaterThan( uint( 0 ) ),
-						emitterAreaPdf( emission, emissiveTotalPower, float( 1.0 ).sub( bdpt.sunPick ) )
+						emitterAreaPdf( flatEmission, emissiveTotalPower, float( 1.0 ).sub( bdpt.sunPick ) )
 							.mul( emitterSideProbability( side, dot( lightDir.negate(), windingN ) ) )
 							.mul( abs( dot( lightDir, exactFacetN ) ) ).div( lightPdf.mul( Math.PI ) ),
 						float( 0.0 ) );

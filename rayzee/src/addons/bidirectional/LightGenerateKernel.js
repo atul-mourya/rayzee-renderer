@@ -10,7 +10,8 @@ import {
 } from 'three/tsl';
 
 import { getRandomSample1D, getRandomSample2D, getDecorrelatedSeed, pcgHash, seededState } from '../../shaders/Random.js';
-import { sampleTriangle, fetchTriangleData, binarySearchCDF, TriangleData } from '../../shaders/EmissiveSampling.js';
+import { sampleTriangle, fetchTriangleData, binarySearchCDF, TriangleData, emissionMapAt } from '../../shaders/EmissiveSampling.js';
+import { usesEmissionMaps } from '../../shaders/SceneResources.js';
 import { cosineWeightedSample } from '../../shaders/MaterialSampling.js';
 import { offsetRayOrigin, triangleRow } from '../../shaders/Common.js';
 import { emitterSide } from '../../shaders/BVHTraversal.js';
@@ -47,7 +48,7 @@ export function buildLightGenerateKernel( params ) {
 	} = params;
 	const { lightPaths } = bidirectional;
 
-	return Fn( () => {
+	return Fn( ( builder ) => {
 
 		const tid = instanceIndex;
 
@@ -156,8 +157,11 @@ export function buildLightGenerateKernel( params ) {
 			If( cosLight.greaterThan( 1e-6 ).and( emissionPdf.greaterThan( 0.0 ) ), () => {
 
 				origin.assign( offsetRayOrigin( point, n ) );
-				// Le·cos / (pdfA·pdfW) = Le·π / pdfA.
-				throughput.assign( emission.xyz.mul( emissiveBoost ).mul( Math.PI ).div( areaPdf ) );
+				// Le·cos / (pdfA·pdfW) = Le·π / pdfA; Le the point's own where the emitter has a map, as NEE and a hit read it.
+				const le = usesEmissionMaps( builder )
+					? emission.xyz.mul( emissionMapAt( lightBuffer, triangleBuffer, triangle, tri.materialIndex, point, tri.v0, tri.v1, tri.v2 ) )
+					: emission.xyz;
+				throughput.assign( le.mul( emissiveBoost ).mul( Math.PI ).div( areaPdf ) );
 				// NEE's density for this point depends on the first hit; Shade multiplies it into dVCM there.
 				dVCM.assign( mis( float( 1.0 ).div( emissionPdf ) ) );
 				dVC.assign( mis( cosLight.div( emissionPdf ) ) );

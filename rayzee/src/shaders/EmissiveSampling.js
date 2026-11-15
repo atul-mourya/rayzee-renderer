@@ -26,8 +26,10 @@ import {
 	uintBitsToFloat,
 } from 'three/tsl';
 
+import { sceneResources, usesEmissionMaps } from './SceneResources.js';
+import { sampleBucket, getTransformedUV } from './TextureSampling.js';
 import {
-	MIN_PDF, getDatafromStorageBuffer, powerHeuristic, MATERIAL_SLOTS, MATERIAL_SLOT,
+	MIN_PDF, getDatafromStorageBuffer, powerHeuristic, MATERIAL_SLOTS, MATERIAL_SLOT, arrayToMat3,
 	computeDotProductsAniso, instanceRows, instanceNormalToWorld, instancePointToWorld,
 	unpackTriangleNormal, triangleRow, triangleGeoRows, SHADOW_END, passesLight, offPlane,
 } from './Common.js';
@@ -60,6 +62,8 @@ export const EmissiveSampleIndexed = struct( {
 	position: 'vec3',
 	normal: 'vec3',
 	emission: 'vec3',
+	// Before the emission map: what the emitter's start density is measured from (bidirectional MIS).
+	flatEmission: 'vec3',
 	direction: 'vec3',
 	distance: 'float',
 	pdf: 'float',
@@ -75,6 +79,7 @@ export const EmissiveSampleAnySide = struct( {
 	position: 'vec3',
 	normal: 'vec3',
 	emission: 'vec3',
+	flatEmission: 'vec3',
 	direction: 'vec3',
 	distance: 'float',
 	pdf: 'float',
@@ -289,6 +294,42 @@ export const barycentricFromPoint = Fn( ( [ point, v0, v1, v2 ] ) => {
 
 } );
 
+/**
+ * An emitter's emission map at `position` on its triangle (v0–v2 in the same space), or 1 where its material has none.
+ * Light sampling keeps each triangle's emission flat; this puts the map back on what the triangle lights. The draw stays
+ * by flat power: unbiased, a dark map only over-sampled. `lightData` is the scene data buffer, its material block at the
+ * front.
+ */
+export const emissionMapAt = Fn( ( [ lightData, triangleBuffer, triangleIndex, materialIndex, position, v0, v1, v2 ], builder ) => {
+
+	const { srgbBuckets } = sceneResources( builder );
+	const materials = lightData.isLightData ? lightData.node : lightData;
+	const tint = vec3( 1.0 ).toVar();
+	const mapIndex = int( getDatafromStorageBuffer( materials, materialIndex, int( MATERIAL_SLOT.MAP_INDICES_B ), MATERIAL_SLOTS ).x ).toVar();
+	If( mapIndex.greaterThanEqual( int( 0 ) ), () => {
+
+		// From areas, relative to the triangle's own: barycentricFromPoint's absolute floor flattens a millimetre triangle.
+		const n = cross( v1.sub( v0 ), v2.sub( v0 ) ).toVar();
+		const scale = float( 1.0 ).div( max( dot( n, n ), float( 1e-37 ) ) );
+		const d = position.sub( v0 ).toVar();
+		const bv = dot( cross( d, v2.sub( v0 ) ), n ).mul( scale );
+		const bw = dot( cross( v1.sub( v0 ), d ), n ).mul( scale );
+		const b = vec3( float( 1.0 ).sub( bv ).sub( bw ), bv, bw ).toVar();
+		const ab = uintBitsToFloat( triangleRow( triangleBuffer, triangleIndex, 3 ) ).toVar();
+		const c = uintBitsToFloat( triangleRow( triangleBuffer, triangleIndex, 4 ).xy );
+		const uv = ab.xy.mul( b.x ).add( ab.zw.mul( b.y ) ).add( c.mul( b.z ) );
+		const transform = arrayToMat3( {
+			data1: getDatafromStorageBuffer( materials, materialIndex, int( MATERIAL_SLOT.EMISSIVE_TRANSFORM_A ), MATERIAL_SLOTS ),
+			data2: getDatafromStorageBuffer( materials, materialIndex, int( MATERIAL_SLOT.EMISSIVE_TRANSFORM_B ), MATERIAL_SLOTS ),
+		} );
+		tint.assign( sampleBucket( srgbBuckets, mapIndex, getTransformedUV( { uv, transform } ) ).rgb );
+
+	} );
+
+	return tint;
+
+} );
+
 // Interpolate triangle normals using barycentric coordinates
 export const interpolateNormal = Fn( ( [ n0, n1, n2, xi ] ) => {
 
@@ -476,7 +517,7 @@ const makeSampleEmissiveTriangle = ( indexed, anySide = false ) => Fn( ( [
 	triangleBuffer, bvhBuffer,
 	// The surface passes light through diffusely: a point behind it is as good as one in front.
 	throughSurface,
-] ) => {
+], builder ) => {
 
 	const fields = {
 		position: vec3( 0.0 ),
@@ -489,8 +530,8 @@ const makeSampleEmissiveTriangle = ( indexed, anySide = false ) => Fn( ( [
 		cosThetaLight: float( 0.0 ),
 		valid: false,
 	};
-	const result = ( anySide ? EmissiveSampleAnySide( { ...fields, triangleIndex: int( - 1 ), faceNormal: vec3( 0.0 ), instance: int( - 1 ) } )
-		: indexed ? EmissiveSampleIndexed( { ...fields, triangleIndex: int( - 1 ), faceNormal: vec3( 0.0 ) } )
+	const result = ( anySide ? EmissiveSampleAnySide( { ...fields, flatEmission: vec3( 0.0 ), triangleIndex: int( - 1 ), faceNormal: vec3( 0.0 ), instance: int( - 1 ) } )
+		: indexed ? EmissiveSampleIndexed( { ...fields, flatEmission: vec3( 0.0 ), triangleIndex: int( - 1 ), faceNormal: vec3( 0.0 ) } )
 			: EmissiveSample( fields ) ).toVar();
 
 	// Check if we have emissive triangles
@@ -617,6 +658,14 @@ const makeSampleEmissiveTriangle = ( indexed, anySide = false ) => Fn( ( [
 				}
 
 			} );
+
+		} );
+
+		// The point's own emission: the list keeps each triangle's flat.
+		if ( usesEmissionMaps( builder ) ) If( result.valid, () => {
+
+			if ( indexed ) result.flatEmission.assign( result.emission );
+			result.emission.mulAssign( emissionMapAt( emissiveTriangleBuffer, triangleBuffer, triangleIndex, triData.materialIndex, result.position, triData.v0, triData.v1, triData.v2 ) );
 
 		} );
 

@@ -201,6 +201,15 @@ the shadow terminator, shadow-ray picking, sized lights and fog. CLAUDE.md keeps
   relief hit its own triangle again, or a neighbour past the edge, and each extra crossing stacked the glass's IOR
   (`furnace-displaced-glass` read 1.72). The relief traps light by total internal reflection, whose chance stays 1:
   clamped to 0.95 like a Fresnel pick, each one gained 5 % (the furnace read 1.0015).
+- **Emission maps in light sampling** (`emissionMapAt`, `shaders/EmissiveSampling.js`) — the light tree and the flat
+  list keep each emitting triangle's emission flat (emissive × intensity, its power for the draw); the point a sample
+  lands on reads the material's emission map there (barycentrics → UV → its transform → the sRGB bucket), as a ray that
+  hits the emitter does. Before, a map's black half lit the floor beneath it like its white half: `tests/gpu/
+  emissionMapLight.test.js` holds a mapped light to the same light built as two plain halves (within 1.4 %; flat, the
+  black half's floor read 2.8×; `buster_drone.glb` lit by its own emitters read 23.5× with NEE on against off, now
+  1.000). Compiled in only while some emitting material has a map (`hasEmissionMaps`, resource `emissionMaps`). The
+  bidirectional integrators read it in NEE and where a light path starts (`LightGenerateKernel`), so every strategy
+  sees the same emission; the test runs under all three.
 - **A light's own plane** — emissive NEE rejects a sample when the shading point lies on the sampled triangle's
   plane within offsetRayOrigin's step (`offPlane`, `shaders/Common.js`; both samplers, area and spherical). The back
   of a one-sided pbrt light faces exactly away from its own triangles, so both side tests are one dot product, and

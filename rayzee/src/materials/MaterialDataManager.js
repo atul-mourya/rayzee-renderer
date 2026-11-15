@@ -382,6 +382,22 @@ export class MaterialDataManager {
 
 	}
 
+	/** Whether some emitting material has an emission map: only then does light sampling read it. */
+	hasEmissionMaps() {
+
+		const data = this.materialStorageAttr?.array;
+		if ( ! data ) return false;
+		for ( let i = 0; i < this.materialCount; i ++ ) {
+
+			const base = i * M.FLOATS_PER_MATERIAL;
+			if ( data[ base + M.EMISSIVE_MAP_INDEX ] >= 0 && data[ base + M.EMISSIVE_INTENSITY ] > 0 ) return true;
+
+		}
+
+		return false;
+
+	}
+
 	/** Whether some material has a bump map: only then do the kernels read one. */
 	hasBumpMaps() {
 

@@ -21,6 +21,7 @@ import {
 	abs,
 } from 'three/tsl';
 import { MIN_PDF, offPlane } from './Common.js';
+import { usesEmissionMaps } from './SceneResources.js';
 import { sideAccepts } from './BVHTraversal.js';
 import { getRandomSample1D, getRandomSample2D } from './Random.js';
 import {
@@ -38,6 +39,7 @@ import {
 	triangleArea,
 	SphericalTriangleSampleResult,
 	sampleTriangleAnySide,
+	emissionMapAt,
 } from './EmissiveSampling.js';
 
 // Number of TSL structs / layout constants
@@ -126,7 +128,7 @@ const makeSampleLightBVHTriangle = ( indexed, anySide = false ) => Fn( ( [
 	triangleBuffer, bvhBuffer,
 	// The surface passes light through diffusely: a point behind it is as good as one in front.
 	throughSurface,
-] ) => {
+], builder ) => {
 
 	const fields = {
 		position: vec3( 0.0 ),
@@ -139,8 +141,8 @@ const makeSampleLightBVHTriangle = ( indexed, anySide = false ) => Fn( ( [
 		cosThetaLight: float( 0.0 ),
 		valid: false,
 	};
-	const result = ( anySide ? EmissiveSampleAnySide( { ...fields, triangleIndex: int( - 1 ), faceNormal: vec3( 0.0 ), instance: int( - 1 ) } )
-		: indexed ? EmissiveSampleIndexed( { ...fields, triangleIndex: int( - 1 ), faceNormal: vec3( 0.0 ) } )
+	const result = ( anySide ? EmissiveSampleAnySide( { ...fields, flatEmission: vec3( 0.0 ), triangleIndex: int( - 1 ), faceNormal: vec3( 0.0 ), instance: int( - 1 ) } )
+		: indexed ? EmissiveSampleIndexed( { ...fields, flatEmission: vec3( 0.0 ), triangleIndex: int( - 1 ), faceNormal: vec3( 0.0 ) } )
 			: EmissiveSample( fields ) ).toVar();
 
 	// Accumulated selection PDF (product of per-level choice probabilities)
@@ -381,6 +383,14 @@ const makeSampleLightBVHTriangle = ( indexed, anySide = false ) => Fn( ( [
 				}
 
 			} );
+
+		} );
+
+		// The point's own emission: the tree keeps each triangle's flat.
+		if ( usesEmissionMaps( builder ) ) If( result.valid, () => {
+
+			if ( indexed ) result.flatEmission.assign( result.emission );
+			result.emission.mulAssign( emissionMapAt( emissiveTriangleBuffer, triangleBuffer, triangleIndex, triData.materialIndex, result.position, triData.v0, triData.v1, triData.v2 ) );
 
 		} );
 
