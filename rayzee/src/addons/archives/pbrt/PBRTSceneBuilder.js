@@ -748,8 +748,11 @@ function quadric( phiMax, vSegments, at ) {
 
 }
 
-// What pbrt calls a shape's area when it scales an area light's `power`: a quadric's in its own space, a mesh's in the
-// scene's (pbrt keeps triangles transformed).
+/**
+ * The area pbrt's `power` is spread over: a quadric's whole, a mesh triangle's own (pbrt-v4 makes one light a triangle,
+ * each given the whole power), as their mean; `uniform` false when the triangles' areas differ, so one radiance for
+ * the mesh is not exact.
+ */
 function shapeArea( shape, geometry ) {
 
 	const params = shape.params;
@@ -758,21 +761,21 @@ function shapeArea( shape, geometry ) {
 		case 'sphere': {
 
 			const { radius, zMin, zMax, phiMax } = sphereParams( params );
-			return phiMax * radius * ( zMax - zMin );
+			return { area: phiMax * radius * ( zMax - zMin ), uniform: true };
 
 		}
 
 		case 'cylinder': {
 
 			const { radius, zMin, zMax, phiMax } = cylinderParams( params );
-			return phiMax * radius * ( zMax - zMin );
+			return { area: phiMax * radius * ( zMax - zMin ), uniform: true };
 
 		}
 
 		case 'disk': {
 
 			const { radius, inner, phiMax } = diskParams( params );
-			return phiMax * 0.5 * ( radius * radius - inner * inner );
+			return { area: phiMax * 0.5 * ( radius * radius - inner * inner ), uniform: true };
 
 		}
 
@@ -783,17 +786,21 @@ function shapeArea( shape, geometry ) {
 	const index = geometry.index;
 	const count = index ? index.count : position.count;
 	const a = new Vector3(), b = new Vector3(), c = new Vector3();
-	let area = 0;
+	let area = 0, least = Infinity, most = 0;
 	for ( let t = 0; t + 2 < count; t += 3 ) {
 
 		a.fromBufferAttribute( position, index ? index.getX( t ) : t ).applyMatrix4( world );
 		b.fromBufferAttribute( position, index ? index.getX( t + 1 ) : t + 1 ).applyMatrix4( world );
 		c.fromBufferAttribute( position, index ? index.getX( t + 2 ) : t + 2 ).applyMatrix4( world );
-		area += b.sub( a ).cross( c.sub( a ) ).length() / 2;
+		const one = b.sub( a ).cross( c.sub( a ) ).length() / 2;
+		area += one;
+		least = Math.min( least, one );
+		most = Math.max( most, one );
 
 	}
 
-	return area;
+	const triangles = Math.floor( count / 3 );
+	return { area: triangles ? area / triangles : 0, uniform: most <= least * 1.01 };
 
 }
 
@@ -1059,6 +1066,7 @@ export class PBRTSceneBuilder {
 		this._layers = new Map(); // an image map's file, encoding, scale, invert and mapping -> its layer
 		this._layerIds = new Map(); // layer -> its number in the keys below
 		this._floatMaps = new Map(); // what a float map computes from which layers and values -> Promise<DataTexture|null>
+		this._emissionMeans = new WeakMap(); // an area light's image map -> its mean linear value, for `power`
 		this._mediumMaterials = new Map(); // material -> Map(medium name -> material with its attenuation)
 		this._mediumWarnings = new Set();
 		this._alphaMaterials = new Map(); // material -> Map(alpha texture name or #value -> Promise<material>)
@@ -3113,7 +3121,7 @@ export class PBRTSceneBuilder {
 	_dedupeMaterial( material ) {
 
 		const c = material.color, e = material.emissive;
-		const key = `${c.r},${c.g},${c.b}|${e.r},${e.g},${e.b}|${material.emissiveIntensity}|` +
+		const key = `${c.r},${c.g},${c.b}|${e.r},${e.g},${e.b}|${material.emissiveIntensity}|${material.emissiveMap?.uuid ?? '-'}|` +
 			`${material.map ? material.map.uuid : '-'}|${material.roughness}|${material.roughnessMap?.uuid ?? '-'}|${material.metalness}|` +
 			`${material.transmission}|${material.ior}|${material.thickness}|` +
 			`${material.clearcoat}|${material.clearcoatRoughness}|${material.clearcoatRoughnessMap?.uuid ?? '-'}|${material.opacity}|${material.side}|${material.emissiveSide ?? '-'}|` +
@@ -3139,10 +3147,21 @@ export class PBRTSceneBuilder {
 
 		const power = pFloat( shape.areaLight.params, 'power', - 1 );
 		if ( ! ( power > 0 ) ) return material;
-		const area = shapeArea( shape, geometry ) * ( pBool( shape.areaLight.params, 'twosided', false ) ? 2 : 1 );
+		const lit = shapeArea( shape, geometry );
+		if ( ! lit.uniform ) approximated( shape.areaLight.params, 'power' );
+		const area = lit.area * ( pBool( shape.areaLight.params, 'twosided', false ) ? 2 : 1 );
 		if ( ! ( area > 0 ) ) return material;
+		// pbrt divides by an image's mean, as by L's luminance (1 here).
+		const mean = material.emissiveMap ? this._emissionMeans.get( material.emissiveMap ) : 1;
+		if ( ! ( mean > 0 ) ) {
+
+			approximated( shape.areaLight.params, 'power' );
+			return material;
+
+		}
+
 		const out = cloneMaterial( material );
-		out.emissiveIntensity = material.emissiveIntensity * power / ( Math.PI * area );
+		out.emissiveIntensity = material.emissiveIntensity * power / ( Math.PI * area * mean );
 		return out;
 
 	}
@@ -3150,10 +3169,23 @@ export class PBRTSceneBuilder {
 	async _applyAreaLight( material, areaLight, ctx ) {
 
 		this._usage?.open( areaLight.params, `AreaLightSource ${areaLight.type}` );
-		const rgb = await lightRGB( areaLight.params, 'L', ctx );
 		const scale = pFloat( areaLight.params, 'scale', 1 );
-		material.emissive.setRGB( rgb[ 0 ], rgb[ 1 ], rgb[ 2 ] );
-		material.emissiveIntensity = scale;
+		const image = await this._emissionImage( pString( areaLight.params, 'filename', null ), pFloat( areaLight.params, 'power', - 1 ) > 0 );
+		if ( image ) {
+
+			// pbrt-v4's DiffuseAreaLight: the image's RGB at the surface's uv is the radiance (it refuses `L` beside one).
+			material.emissive.setRGB( 1, 1, 1 );
+			material.emissiveMap = image.texture;
+			material.emissiveIntensity = scale * image.peak;
+
+		} else {
+
+			const rgb = await lightRGB( areaLight.params, 'L', ctx );
+			material.emissive.setRGB( rgb[ 0 ], rgb[ 1 ], rgb[ 2 ] );
+			material.emissiveIntensity = scale;
+
+		}
+
 		// pbrt's diffuse area light emits on one side unless "twosided" (_facingEmission turns the triangles); its back
 		// is still a surface, which camera rays meet.
 		material.side = DoubleSide;
@@ -3402,6 +3434,67 @@ export class PBRTSceneBuilder {
 		}
 
 		return pending;
+
+	}
+
+	/**
+	 * An area light's image as an sRGB map over its brightest channel (`peak`, past 1 only for a float image: a map holds
+	 * 0–1); its mean linear value kept for `power` (`withMean`: an 8-bit image is decoded for it). Null without one. Its
+	 * edges wrap where pbrt clamps them (texture arrays repeat): half a texel at the border.
+	 * @private
+	 */
+	async _emissionImage( filename, withMean ) {
+
+		if ( ! filename ) return null;
+		const image = await this._image( filename );
+		if ( ! image ) {
+
+			this.warn( `area light image not found: ${filename}` );
+			return null;
+
+		}
+
+		const pixels = withMean || ArrayBuffer.isView( image.image?.data ) ? await this._readPixels( image ) : null;
+		// pbrt-v4 divides `power` by the image's mean luminance (its colour space's; Rec.709 here).
+		const LUMINANCE = [ 0.2126, 0.7152, 0.0722 ];
+		let peak = 1, sum = 0, count = 0, channels = 4;
+		if ( pixels ) {
+
+			const { data, width, height, float } = pixels;
+			channels = data.length / ( width * height );
+			const linear = float ? ( v ) => v : image.colorSpace === SRGBColorSpace ? ( v ) => srgbToLinear( v / 255 ) : ( v ) => v / 255;
+			for ( let i = 0; i < width * height; i ++ ) {
+
+				for ( let c = 0; c < 3; c ++ ) {
+
+					// A grey image's one channel stands for all three.
+					const v = Math.max( 0, linear( data[ i * channels + Math.min( c, channels - 1 ) ] ) );
+					if ( v > peak ) peak = v;
+					sum += v * LUMINANCE[ c ];
+
+				}
+
+				count ++;
+
+			}
+
+		}
+
+		let source = image;
+		if ( peak > 1 ) {
+
+			const scaled = image.clone();
+			scaled.image = { ...image.image, data: image.image.data.map( ( v, i ) => ( i % channels === 3 ? v : v / peak ) ) };
+			source = scaled;
+
+		}
+
+		const color = eightBit( source, { srgb: true } );
+		const texture = color === image ? image.clone() : color;
+		texture.userData.pbrtImage = filename;
+		texture.needsUpdate = true;
+		this._emissionMeans.set( texture, count ? sum / count : null );
+		return { texture, peak };
 
 	}
 

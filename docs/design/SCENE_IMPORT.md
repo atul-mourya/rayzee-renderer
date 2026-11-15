@@ -143,7 +143,12 @@ subtree per element, and the whole thing rarely fits: Moana is 29 GB unpacked.
   one-sided unless `"bool twosided"`: a surface on both faces (`DoubleSide`) emitting from its front (`emissiveSide:
   FrontSide`), so from behind it is dark, never a hole, as in pbrt; its triangles rewound to face the vertex normals, or
   turned over by ReverseOrientation where it has none (`_facingEmission`). An area light's `power` scales its radiance
-  to that power over the shape's area (a quadric's in its own space, a mesh's in the scene's, as pbrt measures them). A
+  to that power over the shape's area: a quadric's whole, in its own space; a mesh triangle's own, in the scene's
+  (pbrt-v4 makes one light a triangle, each given the whole power; unequal triangles take their mean, reported
+  approximated); and over its image's mean when it has one. An area light's `filename` image is its emission (an
+  `emissiveMap` on a white emission; `L` beside it is not read, as pbrt refuses both), a float image stored over its
+  brightest channel with that peak in the intensity (a map holds 0–1). Against pbrt-v4 (a 4-colour image seen head-on,
+  the floor it lights, with `power`): 0.99–1.01 a quarter and channel; a float image's bright channels 0.99–1.03. A
   shape of `"float alpha" 0` is dropped: pbrt never hits it and an area light on it emits nothing (kroken's 90-unit
   "sun" sphere). Any other `alpha` is the engine's blend mode — a ray passes with chance 1 − α, shadow rays too — on a
   material per material and alpha (`_withAlpha`): a constant becomes `opacity`, a texture the colour map's alpha channel

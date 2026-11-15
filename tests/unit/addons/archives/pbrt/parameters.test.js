@@ -44,7 +44,6 @@ Shape "sphere" "float radius" 0.5
 // not honoured exactly. "spare" is never translated, so it reports nothing.
 const REPORT = {
 	unused: {
-		'AreaLightSource diffuse: filename': 1,
 		'Material coateddiffuse: thickness': 1,
 		'Option: disablepixeljitter': 1,
 		'Shape trianglemesh: edgelength': 2,

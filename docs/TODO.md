@@ -209,7 +209,7 @@
   noisy at 512 spp and OIDN turns the noise into a bumpy texture. See Known → `thickness` / thin-walled; check how the
   medium stack treats an open sheet against pbrt's per-interface orientation.
 - [ ] **Spectra, what is left**: a named illuminant used as a reflectance reads grey.
-- [ ] **Lights**: area light `filename` (an emitting image); `goniometric` → IES; `projection` → gobos; infinite `portal`.
+- [ ] **Lights**: `goniometric` → IES; `projection` → gobos; infinite `portal`.
 - [ ] **Cameras**: `realistic` (lens files). (`spherical` opens as the engine's panorama: lat-long for `equirectangular`,
   the equal-area projection for pbrt's default `equalarea`, 2026-11-09.)
 - [ ] **Materials**: `hair`, `measured` load as diffuse.

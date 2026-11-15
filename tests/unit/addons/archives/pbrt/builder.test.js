@@ -3,7 +3,7 @@ import { BufferGeometry, DataTexture, DoubleSide, EquirectangularReflectionMappi
 import { loadPBRTScene, pickEntryPath, PBRTParser, PBRTSceneBuilder } from '@/core/addons/archives/pbrt/index.js';
 import { deriveAlphaMode } from '@/core/scene/GeometryExtractor.js';
 import { viewMatrixOf } from '@/core/scene/ViewCamera.js';
-import { srgbToLinear } from '@/core/addons/archives/pbrt/PBRTTextureBake.js';
+import { srgbToLinear, linearToSRGB } from '@/core/addons/archives/pbrt/PBRTTextureBake.js';
 
 const enc = new TextEncoder();
 
@@ -1674,6 +1674,63 @@ describe( 'PBRT scene builder: pbrt-v4 fidelity', () => {
 		expect( disk.emissiveIntensity ).toBeCloseTo( 100 / ( Math.PI * Math.PI * 4 ), 9 );
 		// Scaled 2×: an area of 2, both sides.
 		expect( triangle.emissiveIntensity ).toBeCloseTo( 3 * 100 / ( Math.PI * 2 * 2 ), 9 );
+
+	} );
+
+	// pbrt-v4 makes one light a mesh triangle, each given the whole power.
+	it( 'gives every triangle of a mesh light pbrt\'s whole power, saying so when their areas differ', async () => {
+
+		const quad = '"point3 P" [ 0 0 0  2 0 0  2 2 0  0 2 0 ] "integer indices" [ 0 1 2  0 2 3 ]';
+		const { meshes, parameters } = await meshesOf( `AreaLightSource "diffuse" "float power" 10\nShape "trianglemesh" ${quad}` );
+		expect( meshes[ 0 ].material.emissiveIntensity ).toBeCloseTo( 10 / ( Math.PI * 2 ), 9 );
+		expect( parameters.approximated ).toEqual( {} );
+
+		const uneven = '"point3 P" [ 0 0 0  4 0 0  4 1 0  0 1 0  0 3 0 ] "integer indices" [ 0 1 2  0 2 4 ]';
+		const odd = await meshesOf( `AreaLightSource "diffuse" "float power" 10\nShape "trianglemesh" ${uneven}` );
+		expect( odd.meshes[ 0 ].material.emissiveIntensity ).toBeCloseTo( 10 / ( Math.PI * 4 ), 9 );
+		expect( odd.parameters.approximated ).toEqual( { 'AreaLightSource diffuse: power': 1 } );
+
+	} );
+
+	it( 'emits an area light\'s image: its map on a white emission, a float one over its peak, `power` over its mean', async () => {
+
+		const quad = '"point3 P" [ 0 0 0  1 0 0  1 1 0  0 1 0 ] "point2 uv" [ 0 0  1 0  1 1  0 1 ] "integer indices" [ 0 1 2  0 2 3 ]';
+		const png = image( 255, 0, 255, 0 );
+		const bright = new DataTexture( new Float32Array( [ 8, 0, 0, 1, 0, 2, 0, 1 ] ), 2, 1, RGBAFormat, FloatType );
+		const built = await meshesOf( `
+			AttributeBegin AreaLightSource "diffuse" "string filename" "glow.png" "rgb L" [ 9 9 9 ] "float scale" 3 Shape "trianglemesh" ${quad} AttributeEnd
+			AttributeBegin AreaLightSource "diffuse" "string filename" "hot.pfm" Shape "trianglemesh" ${quad} AttributeEnd
+			AttributeBegin AreaLightSource "diffuse" "string filename" "gone.png" "rgb L" [ 0.5 0.25 1 ] Shape "trianglemesh" ${quad} AttributeEnd
+			AttributeBegin AreaLightSource "diffuse" "string filename" "glow.png" "float power" 10 Shape "trianglemesh" ${quad} AttributeEnd
+		`, {}, { 'glow.png': png, 'hot.pfm': bright } );
+		const [ glow, hot, gone, powered ] = built.meshes.map( ( m ) => m.material );
+
+		expect( glow.emissiveMap?.image ).toBe( png.image );
+		expect( [ glow.emissive.toArray(), glow.emissiveIntensity ] ).toEqual( [[ 1, 1, 1 ], 3 ] );
+		// pbrt refuses L beside an image: it is not read.
+		expect( built.parameters.unused[ 'AreaLightSource diffuse: L' ] ).toBe( 1 );
+
+		// Stored over its peak, 8, as 8-bit sRGB: the red texel full, the green a quarter of it.
+		expect( hot.emissiveIntensity ).toBe( 8 );
+		expect( Array.from( hot.emissiveMap.image.data.slice( 0, 7 ) ) ).toEqual( [ 255, 0, 0, 255, 0, Math.round( 255 * linearToSRGB( 0.25 ) ), 0 ] );
+
+		expect( gone.emissiveMap ).toBeNull();
+		expect( gone.emissive.toArray() ).toEqual( [ 0.5, 0.25, 1 ] );
+		expect( built.warnings.some( ( w ) => /area light image not found: gone\.png/.test( w ) ) ).toBe( true );
+
+		// Mean luminance: half the texels white.
+		expect( powered.emissiveIntensity ).toBeCloseTo( 10 / ( Math.PI * 0.5 * 0.5 ), 6 );
+
+		// Two lights alike but for their images stay two materials; a coloured image's power is over its luminance.
+		const red = new DataTexture( new Uint8Array( [ 255, 0, 0, 255 ] ), 1, 1 );
+		const green = new DataTexture( new Uint8Array( [ 0, 255, 0, 255 ] ), 1, 1 );
+		const pair = await meshesOf( `
+			AttributeBegin AreaLightSource "diffuse" "string filename" "red.png" Shape "trianglemesh" ${quad} AttributeEnd
+			AttributeBegin AreaLightSource "diffuse" "string filename" "green.png" Shape "trianglemesh" ${quad} AttributeEnd
+			AttributeBegin AreaLightSource "diffuse" "string filename" "green.png" "float power" 10 Shape "trianglemesh" ${quad} AttributeEnd
+		`, {}, { 'red.png': red, 'green.png': green } );
+		expect( pair.meshes.map( ( m ) => m.material.emissiveMap.image ) ).toEqual( [ red.image, green.image, green.image ] );
+		expect( pair.meshes[ 2 ].material.emissiveIntensity ).toBeCloseTo( 10 / ( Math.PI * 0.5 * 0.7152 ), 5 );
 
 	} );
 
