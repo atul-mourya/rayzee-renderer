@@ -116,10 +116,6 @@
 - [ ] **Fast Navigation flaps on heavy scenes at 1080p** (NRD, or no live denoiser): full-size frames take the GPU past 100 ms a frame, interaction mode times out between them, and the pending drop to half size does not take hold. 24155522.glb at 1920×1080 under NRD: half size reached only after 4.1 s of moving.
   Could not reproduce 2026-11-07 (27977388): a 5 s drag (`controls.rotateLeft` every 8 ms) dropped to half size after
   118 ms under NRD, 96 ms with none, 12 ms under OIDN, and held it to the end, one drop and one restore each.
-- [ ] **A flaky unit test**: `seekableArchives.test.js` › "loads a scene from a .tar.gz, unpacked to storage…" failed
-  2 of 7 full `npm test` runs on 2026-11-14 (the second load found no stored copy: `cached: false`), and passes every
-  time alone. Likely timing under the parallel run; of the code it covers, only the log calls changed that night.
-
 
 ---
 

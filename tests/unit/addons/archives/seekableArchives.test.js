@@ -514,7 +514,9 @@ describe( 'ArchiveCache', () => {
 	it( 'loads a scene from a .tar.gz, unpacked to storage or read in memory without it', async () => {
 
 		const SCENE = 'WorldBegin\nShape "trianglemesh" "point3 P" [ 0 0 0  1 0 0  0 1 0 ] "integer indices" [ 0 1 2 ]\n';
-		const gz = () => new File( [ gzipSync( makeTar( [ { path: 'room/scene.pbrt', body: text( SCENE ) } ] ) ) ], 'room.tar.gz', { lastModified: 3 } );
+		// Gzipped once: the header holds the second it was made, and the stored copy is found by a hash of the bytes.
+		const bytes = gzipSync( makeTar( [ { path: 'room/scene.pbrt', body: text( SCENE ) } ] ) );
+		const gz = () => new File( [ bytes ], 'room.tar.gz', { lastModified: 3 } );
 
 		const load = async ( from ) => {
 
