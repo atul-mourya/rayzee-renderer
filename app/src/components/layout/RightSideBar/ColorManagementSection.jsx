@@ -15,7 +15,7 @@ import { usePathTracerStore } from '@/store';
 import {
 	colorManagement, builtinConfigs, loadBuiltinConfig, loadConfigFromFiles, loadDefaultConfig, unloadConfig,
 	useColorStatus, useViewTransforms, DEFAULT_COLOR_CONFIG, ensureDefaultConfig, isDefaultConfigPending,
-	useHdrScreen, applyHdrScreen, HDR_SCREEN_KEY,
+	useHdrScreen, useP3Screen, applyHdrScreen, HDR_SCREEN_KEY,
 } from '@/lib/colorManagement';
 import {
 	builtinConfigOptions, configLabel, viewLabels, looksForView, workingSpaceOptions, workingSpaceLabel,
@@ -50,6 +50,28 @@ const FOLLOW_OPTIONS = [
 ];
 const followValue = strength => FOLLOW_OPTIONS.reduce( ( best, o ) => ( Math.abs( o.value - strength ) < Math.abs( best.value - strength ) ? o : best ) ).value;
 
+// Shows `text` as busy while `fn` runs, and its error after. Outside the component: React Compiler cannot compile a
+// try with a finally.
+async function runBusy( setBusy, setError, text, fn ) {
+
+	setBusy( text );
+	setError( null );
+	try {
+
+		await fn();
+
+	} catch ( err ) {
+
+		setError( err.message );
+
+	} finally {
+
+		setBusy( null );
+
+	}
+
+}
+
 /**
  * Color Management, laid out the way OCIO applications lay it out.
  *
@@ -83,30 +105,13 @@ const ColorManagementSection = () => {
 	// Pipeline settings (colour system, render space, config variables) stay folded away unless opened.
 	const [ advancedOpen, setAdvancedOpen ] = useLocalStorage( 'rayzee-color-advanced-open', false );
 	const hdrScreen = useHdrScreen();
+	const p3Screen = useP3Screen();
 	const [ hdrOn, setHdrOn ] = useLocalStorage( HDR_SCREEN_KEY, true );
 	const fileInput = useRef( null );
 
 	const syncToneMapping = useCallback( id => usePathTracerStore.getState().setToneMapping( id ), [] );
 
-	const run = useCallback( async ( text, fn ) => {
-
-		setBusy( text );
-		setError( null );
-		try {
-
-			await fn();
-
-		} catch ( err ) {
-
-			setError( err.message );
-
-		} finally {
-
-			setBusy( null );
-
-		}
-
-	}, [] );
+	const run = useCallback( ( text, fn ) => runBusy( setBusy, setError, text, fn ), [] );
 
 	const config = status?.config ?? null;
 	// Startup shows the default view from a baked table; its config loads when this panel first opens.
@@ -325,7 +330,7 @@ const ColorManagementSection = () => {
 		: { creative: [], technical: [] };
 
 	const { sdr: sdrDisplays, hdr: hdrDisplays } = config
-		? displaySections( config, { canvasFit: d => colorManagement()?.displayFit?.( d ) ?? displayCanvasFit( d ), isHdr: isHdrDisplay }, { p3: matchMedia?.( '(color-gamut: p3)' )?.matches ?? false } )
+		? displaySections( config, { canvasFit: d => colorManagement()?.displayFit?.( d ) ?? displayCanvasFit( d ), isHdr: isHdrDisplay }, { p3: p3Screen } )
 		: { sdr: [], hdr: [] };
 	const displayColumns = [ { title: 'SDR', list: sdrDisplays }, { title: 'HDR', list: hdrDisplays } ].filter( c => c.list.length > 0 );
 

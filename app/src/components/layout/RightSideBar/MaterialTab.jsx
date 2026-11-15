@@ -188,6 +188,19 @@ const isFeatureEnabled = ( materialState, featureName ) => {
 
 };
 
+// The first volume in an object's tree, or null.
+function findVolume( object ) {
+
+	let volume = null;
+	object.traverse?.( o => {
+
+		if ( ! volume && o.isVolume ) volume = o;
+
+	} );
+	return volume;
+
+}
+
 const MaterialTab = () => {
 
 	const selectedObject = useStore( state => state.selectedObject );
@@ -650,8 +663,7 @@ const MaterialTab = () => {
 	}
 
 	// Smoke, a cloud or fire: its own controls (a .vdb file loads as a group holding one).
-	let volume = null;
-	selectedObject.traverse?.( ( o ) => void ( volume ??= o.isVolume ? o : null ) );
+	const volume = findVolume( selectedObject );
 	if ( volume ) {
 
 		return (

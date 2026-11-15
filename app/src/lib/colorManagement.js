@@ -177,22 +177,30 @@ function hdrPreferred() {
 
 const wantsHdr = () => !! hdrQuery()?.matches && hdrPreferred();
 
-/** Whether this screen shows HDR, following the window from screen to screen. */
-export function useHdrScreen() {
+// Whether a screen media query matches, following the window from screen to screen.
+function useScreenMatch( media ) {
 
 	return useSyncExternalStore(
 		onChange => {
 
-			const query = hdrQuery();
+			const query = media();
 			query?.addEventListener( 'change', onChange );
 			return () => query?.removeEventListener( 'change', onChange );
 
 		},
-		() => !! hdrQuery()?.matches,
+		() => !! media()?.matches,
 		() => false
 	);
 
 }
+
+const p3Query = () => ( typeof matchMedia === 'function' ? matchMedia( '(color-gamut: p3)' ) : null );
+
+/** Whether this screen shows HDR. */
+export const useHdrScreen = () => useScreenMatch( hdrQuery );
+
+/** Whether this screen shows Display P3's colours. */
+export const useP3Screen = () => useScreenMatch( p3Query );
 
 /**
  * Brighter-than-white highlights on the canvas while this screen shows HDR and the viewer has not turned them off.

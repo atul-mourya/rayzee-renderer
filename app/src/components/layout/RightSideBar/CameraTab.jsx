@@ -92,8 +92,7 @@ const CameraTab = () => {
 	} = useCameraStore();
 
 	// Projection lives in usePathTracerStore — switching it re-derives the output dimensions.
-	// Narrow selectors: that store takes a per-frame auto-exposure write, so a bare
-	// usePathTracerStore() here would re-render this whole panel every frame.
+	// Narrow selectors: a bare usePathTracerStore() would re-render this whole panel on every change to that store.
 	const cameraProjection = usePathTracerStore( s => s.cameraProjection );
 	const panoramaLonRange = usePathTracerStore( s => s.panoramaLonRange );
 	const panoramaLatRange = usePathTracerStore( s => s.panoramaLatRange );

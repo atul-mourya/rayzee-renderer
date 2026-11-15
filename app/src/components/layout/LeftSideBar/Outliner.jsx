@@ -136,9 +136,11 @@ const RemoveButton = memo( ( { uuid } ) => {
 	const handleRemove = useCallback( async ( e ) => {
 
 		e.stopPropagation();
+		const app = getApp();
+		if ( ! app ) return;
 		try {
 
-			await getApp()?.removeSceneObject( uuid );
+			await app.removeSceneObject( uuid );
 
 		} catch {
 

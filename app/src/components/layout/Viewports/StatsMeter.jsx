@@ -23,6 +23,22 @@ const StatChip = ( { active, onClick, title, children } ) => (
 	</span>
 );
 
+// Outside the component: React Compiler skips a component whose try/catch holds `?.`, and this one redraws every tick.
+function readSceneStats() {
+
+	try {
+
+		return getApp()?.getStatistics?.() ?? null;
+
+	} catch ( error ) {
+
+		console.warn( 'Could not get scene statistics:', error );
+		return null;
+
+	}
+
+}
+
 const formatBytes = ( bytes ) => {
 
 	if ( ! bytes ) return '0 MB';
@@ -106,48 +122,16 @@ const StatsMeter = ( { viewportMode } ) => {
 	const stats = useStore( state => state.stats );
 	const modelSize = useCameraStore( modelSizeMetres );
 
-	const [ sceneStats, setSceneStats ] = useState( null );
-
-	// Get scene statistics from the active app via app-level API
-	const updateSceneStats = useCallback( () => {
-
-		const app = getApp();
-		if ( app ) {
-
-			try {
-
-				const statistics = app.getStatistics?.();
-				setSceneStats( statistics ?? null );
-
-			} catch ( error ) {
-
-				console.warn( 'Could not get scene statistics:', error );
-				setSceneStats( null );
-
-			}
-
-		}
-
-	}, [] );
+	const [ sceneStats, setSceneStats ] = useState( readSceneStats );
 
 	// Update scene stats when the scene changes
 	useEffect( () => {
 
-		const handleSceneUpdate = () => updateSceneStats();
-
-		// Listen for scene rebuild events
+		const handleSceneUpdate = () => setSceneStats( readSceneStats() );
 		window.addEventListener( 'SceneRebuild', handleSceneUpdate );
+		return () => window.removeEventListener( 'SceneRebuild', handleSceneUpdate );
 
-		// Initial update
-		updateSceneStats();
-
-		return () => {
-
-			window.removeEventListener( 'SceneRebuild', handleSceneUpdate );
-
-		};
-
-	}, [ updateSceneStats ] );
+	}, [] );
 
 	// Handle editing max samples
 	const handleMaxSamplesEdit = useCallback( ( value ) => {

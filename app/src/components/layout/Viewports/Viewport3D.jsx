@@ -14,6 +14,7 @@ import { docsUrl } from '@/lib/help';
 import { useStore, usePathTracerStore, useCameraStore, useAnimationStore, useLightStore } from '@/store';
 import { saveRender, startRenderMaintenance } from '@/lib/database';
 import { useAutoFitScale } from '@/hooks/useAutoFitScale';
+import { useActiveApp } from '@/hooks/useActiveApp';
 import { usePanZoom } from '@/hooks/usePanZoom';
 import { generateViewportStyles } from '@/lib/viewport';
 import { PathTracerApp, configureAssets } from 'rayzee';
@@ -30,6 +31,161 @@ const DEFAULT_COLOR_WAIT_MS = 2000;
 // The Results view's zoom range.
 const MIN_ZOOM = 5;
 const MAX_ZOOM = 300;
+
+// Starts the engine and opens the startup scene, once. Outside the component: React Compiler cannot compile a
+// component holding import() or a try/catch with conditions in it.
+async function startApp( { canvas, container, appRef, engineCleanupRef, setLoading, toast } ) {
+
+	// The neural model is not on the CDN; a local copy is served only where this is set.
+	const neuralAssetBaseUrl = import.meta.env.VITE_NEURAL_ASSET_BASE_URL;
+	if ( neuralAssetBaseUrl ) configureAssets( { neuralAssetBaseUrl } );
+
+	const app = new PathTracerApp( canvas, {
+		container,
+		memorySpill: memorySpillPreference(),
+	} );
+	appRef.current = app;
+	setLoading( { isLoading: true, title: "Starting", status: "Initializing WebGPU...", progress: 30 } );
+	await app.init();
+	// Loading resets, and a reset restarts rendering unless paused: nothing may draw
+	// before the scene and the colour view are in.
+	app.pause();
+
+	// Register with appProxy so getApp() works globally
+	setApp( app );
+	ensureAppAreas( app.storage );
+	startRenderMaintenance();
+
+	// Bridge engine events → Zustand stores
+	engineCleanupRef.current = connectEngineToStore( app, { useStore, useCameraStore, usePathTracerStore, useAnimationStore, useLightStore } );
+
+	// Startup opens on Preview without a tab change, and only a tab change applies a preset.
+	usePathTracerStore.getState().handleConfigureForPreview();
+	usePathTracerStore.getState().applyPanelToEngine();
+	app.settings.set( 'dofMode', useCameraStore.getState().dofMode, { reset: false } );
+
+	setLoading( { isLoading: true, title: "Starting", status: "Loading Assets...", progress: 60 } );
+
+	const { EnvironmentService } = await import( '@/services/EnvironmentService' );
+	const { DEFAULT_STATE } = await import( '@/Constants' );
+
+	// Model first, environment second. A model can carry its own environment in its
+	// metadata; loading the default first would fetch a ~1.6 MB HDRI, build its CDF,
+	// upload it, and then throw all of it away — and make the engine build a second
+	// CDF for the same texture during the scene rebuild. Nothing renders until
+	// app.resume() below, so the scene is never visible without an environment.
+	const urlParams = new URLSearchParams( window.location.search );
+	const modelUrl = urlParams.get( 'model' );
+	setLoading( { isLoading: true, title: "Starting", status: "Loading Model...", progress: 65 } );
+	// The default look downloads alongside the model and is applied once the scene is in,
+	// before the first frame.
+	const { fetchStartupColor, showStartupColor } = await import( '@/lib/colorManagement' );
+	const colorDownload = fetchStartupColor();
+
+	// A failed model or sky is reported and startup carries on: the sky and the look
+	// still load, and another model can be opened.
+	const reportLoadFailure = ( title, err ) => {
+
+		if ( err?.code === 'LOAD_CANCELLED' ) {
+
+			toast( { title: "Loading Cancelled", description: "The download was cancelled." } );
+			return;
+
+		}
+
+		console.error( `${title}:`, err );
+		toast( { title, description: err?.message, variant: "destructive" } );
+
+	};
+
+	try {
+
+		if ( modelUrl && isArchiveUrl( modelUrl ) ) {
+
+			try {
+
+				await app.loadFile( modelUrl );
+
+			} catch ( err ) {
+
+				if ( err?.code !== 'ARCHIVE_NEEDS_ELEMENT' || ! err.file ) throw err;
+				useStore.getState().setArchivePrompt( { file: err.file, elements: err.elements, totalBytes: err.totalBytes } );
+
+			}
+
+		} else if ( modelUrl ) {
+
+			await app.loadModel( modelUrl );
+
+		} else {
+
+			const { MODEL_FILES } = await import( '@/Constants' );
+			const { url } = MODEL_FILES[ DEFAULT_STATE.model ];
+			await ( isArchiveUrl( url ) ? app.loadFile( url ) : app.loadExampleModels( DEFAULT_STATE.model, MODEL_FILES ) );
+
+		}
+
+	} catch ( err ) {
+
+		reportLoadFailure( "Error Loading Model", err );
+
+	}
+
+	// Gate on what actually got installed, not on the metadata: an authored
+	// environment that failed to fetch must still fall back to the default.
+	if ( ! app.scene?.environment ) {
+
+		const defaultEnv = EnvironmentService.getEnvironmentById( DEFAULT_STATE.environment );
+		if ( defaultEnv?.url ) {
+
+			setLoading( { isLoading: true, title: "Starting", status: "Loading Environment...", progress: 90 } );
+			try {
+
+				await app.loadEnvironment( defaultEnv.url );
+
+			} catch ( err ) {
+
+				reportLoadFailure( "Error Loading Environment", err );
+
+			}
+
+		}
+
+	}
+
+	// Wait briefly for it: switching views after the first frames reads as a colour jump.
+	// A slow CDN starts on the built-in AgX and switches when the config lands.
+	setLoading( { isLoading: true, title: "Starting", status: "Loading colour config...", progress: 95 } );
+	const defaultColor = showStartupColor( colorDownload );
+	defaultColor.catch( err => console.warn( `Default colour config unavailable, keeping the built-in view: ${err.message}` ) );
+	const applyView = ( { view } ) => usePathTracerStore.getState().setToneMapping( view.id );
+	const early = await Promise.race( [
+		defaultColor.catch( () => null ),
+		new Promise( resolve => setTimeout( resolve, DEFAULT_COLOR_WAIT_MS ) ),
+	] );
+	if ( early ) applyView( early );
+	else if ( early === undefined ) defaultColor.then( applyView, () => {} );
+
+	setLoading( { isLoading: true, title: "Starting", status: "Setup Complete!", progress: 100 } );
+
+	app.resume();
+	app.reset();
+	loadLightLibraries( app );
+
+	// An unfinished render is offered; saved sessions wait in Open Recent. Saving starts once
+	// the offer is answered, so the startup scene is never saved over the render's session.
+	const { startSessionKeeper } = await import( '@/lib/session' );
+	const keeper = await startSessionKeeper( app, [ usePathTracerStore, useCameraStore, useLightStore, useAnimationStore ] );
+	const { VideoJob } = await import( '@/lib/videoJob' );
+	const { startStillCheckpointer, unfinishedStill } = await import( '@/lib/stillJob' );
+	startStillCheckpointer( app );
+	const [ video ] = await VideoJob.unfinished( app.storage ).catch( () => [] );
+	const still = video?.job.session ? null : await unfinishedStill( app.storage ).catch( () => null );
+	if ( video?.job.session ) useStore.getState().setSessionRequest( { origin: 'video', job: video, record: video.job.session } );
+	else if ( still ) useStore.getState().setSessionRequest( { origin: 'still', still, record: still.job.session } );
+	else keeper.setEnabled( true );
+
+}
 
 const Viewport3D = forwardRef( ( { viewportMode = "preview" }, _ref ) => {
 
@@ -50,6 +206,7 @@ const Viewport3D = forwardRef( ( { viewportMode = "preview" }, _ref ) => {
 	const [ canvasReady, setCanvasReady ] = useState( false );
 	const [ renderResolution, setRenderResolution ] = useState( { width: 512, height: 512 } );
 	const [ isAppInitialized, setIsAppInitialized ] = useState( false );
+	const activeApp = useActiveApp();
 
 	// Store subscriptions
 	const isDenoising = useStore( state => state.isDenoising );
@@ -181,6 +338,8 @@ const Viewport3D = forwardRef( ( { viewportMode = "preview" }, _ref ) => {
 
 		const app = getApp();
 		if ( ! app ) return;
+		// Read at save: a subscription re-rendered this whole view on every frame's stats.
+		const renderTime = useStore.getState().stats?.timeElapsed || 0;
 
 		try {
 
@@ -215,8 +374,7 @@ const Viewport3D = forwardRef( ( { viewportMode = "preview" }, _ref ) => {
 					exposure: 0,
 				},
 				timestamp: new Date(),
-				// Read at save: a subscription re-rendered this whole view on every frame's stats.
-				renderTime: useStore.getState().stats?.timeElapsed || 0,
+				renderTime,
 				isEdited: true
 			};
 
@@ -251,158 +409,9 @@ const Viewport3D = forwardRef( ( { viewportMode = "preview" }, _ref ) => {
 
 			setLoading( { isLoading: true, title: "Starting", status: "Setting up Scene...", progress: 0 } );
 
-			const initApp = async () => {
-
-				// The neural model is not on the CDN; a local copy is served only where this is set.
-				const neuralAssetBaseUrl = import.meta.env.VITE_NEURAL_ASSET_BASE_URL;
-				if ( neuralAssetBaseUrl ) configureAssets( { neuralAssetBaseUrl } );
-
-				const app = new PathTracerApp( canvasRef.current, {
-					container: containerRef.current,
-					memorySpill: memorySpillPreference(),
-				} );
-				appRef.current = app;
-				setLoading( { isLoading: true, title: "Starting", status: "Initializing WebGPU...", progress: 30 } );
-				await app.init();
-				// Loading resets, and a reset restarts rendering unless paused: nothing may draw
-				// before the scene and the colour view are in.
-				app.pause();
-
-				// Register with appProxy so getApp() works globally
-				setApp( app );
-				ensureAppAreas( app.storage );
-				startRenderMaintenance();
-
-				// Bridge engine events → Zustand stores
-				engineCleanupRef.current = connectEngineToStore( app, { useStore, useCameraStore, usePathTracerStore, useAnimationStore, useLightStore } );
-
-				// Startup opens on Preview without a tab change, and only a tab change applies a preset.
-				usePathTracerStore.getState().handleConfigureForPreview();
-				usePathTracerStore.getState().applyPanelToEngine();
-				app.settings.set( 'dofMode', useCameraStore.getState().dofMode, { reset: false } );
-
-				setLoading( { isLoading: true, title: "Starting", status: "Loading Assets...", progress: 60 } );
-
-				const { EnvironmentService } = await import( '@/services/EnvironmentService' );
-				const { DEFAULT_STATE } = await import( '@/Constants' );
-
-				// Model first, environment second. A model can carry its own environment in its
-				// metadata; loading the default first would fetch a ~1.6 MB HDRI, build its CDF,
-				// upload it, and then throw all of it away — and make the engine build a second
-				// CDF for the same texture during the scene rebuild. Nothing renders until
-				// app.resume() below, so the scene is never visible without an environment.
-				const urlParams = new URLSearchParams( window.location.search );
-				const modelUrl = urlParams.get( 'model' );
-				setLoading( { isLoading: true, title: "Starting", status: "Loading Model...", progress: 65 } );
-				// The default look downloads alongside the model and is applied once the scene is in,
-				// before the first frame.
-				const { fetchStartupColor, showStartupColor } = await import( '@/lib/colorManagement' );
-				const colorDownload = fetchStartupColor();
-
-				// A failed model or sky is reported and startup carries on: the sky and the look
-				// still load, and another model can be opened.
-				const reportLoadFailure = ( title, err ) => {
-
-					if ( err?.code === 'LOAD_CANCELLED' ) {
-
-						toast( { title: "Loading Cancelled", description: "The download was cancelled." } );
-						return;
-
-					}
-
-					console.error( `${title}:`, err );
-					toast( { title, description: err?.message, variant: "destructive" } );
-
-				};
-
-				try {
-
-					if ( modelUrl && isArchiveUrl( modelUrl ) ) {
-
-						try {
-
-							await app.loadFile( modelUrl );
-
-						} catch ( err ) {
-
-							if ( err?.code !== 'ARCHIVE_NEEDS_ELEMENT' || ! err.file ) throw err;
-							useStore.getState().setArchivePrompt( { file: err.file, elements: err.elements, totalBytes: err.totalBytes } );
-
-						}
-
-					} else if ( modelUrl ) {
-
-						await app.loadModel( modelUrl );
-
-					} else {
-
-						const { MODEL_FILES } = await import( '@/Constants' );
-						const { url } = MODEL_FILES[ DEFAULT_STATE.model ];
-						await ( isArchiveUrl( url ) ? app.loadFile( url ) : app.loadExampleModels( DEFAULT_STATE.model, MODEL_FILES ) );
-
-					}
-
-				} catch ( err ) {
-
-					reportLoadFailure( "Error Loading Model", err );
-
-				}
-
-				// Gate on what actually got installed, not on the metadata: an authored
-				// environment that failed to fetch must still fall back to the default.
-				if ( ! app.scene?.environment ) {
-
-					const defaultEnv = EnvironmentService.getEnvironmentById( DEFAULT_STATE.environment );
-					if ( defaultEnv?.url ) {
-
-						setLoading( { isLoading: true, title: "Starting", status: "Loading Environment...", progress: 90 } );
-						try {
-
-							await app.loadEnvironment( defaultEnv.url );
-
-						} catch ( err ) {
-
-							reportLoadFailure( "Error Loading Environment", err );
-
-						}
-
-					}
-
-				}
-
-				// Wait briefly for it: switching views after the first frames reads as a colour jump.
-				// A slow CDN starts on the built-in AgX and switches when the config lands.
-				setLoading( { isLoading: true, title: "Starting", status: "Loading colour config...", progress: 95 } );
-				const defaultColor = showStartupColor( colorDownload );
-				defaultColor.catch( err => console.warn( `Default colour config unavailable, keeping the built-in view: ${err.message}` ) );
-				const applyView = ( { view } ) => usePathTracerStore.getState().setToneMapping( view.id );
-				const early = await Promise.race( [
-					defaultColor.catch( () => null ),
-					new Promise( resolve => setTimeout( resolve, DEFAULT_COLOR_WAIT_MS ) ),
-				] );
-				if ( early ) applyView( early );
-				else if ( early === undefined ) defaultColor.then( applyView, () => {} );
-
-				setLoading( { isLoading: true, title: "Starting", status: "Setup Complete!", progress: 100 } );
-
-				app.resume();
-				app.reset();
-				loadLightLibraries( app );
-
-				// An unfinished render is offered; saved sessions wait in Open Recent. Saving starts once
-				// the offer is answered, so the startup scene is never saved over the render's session.
-				const { startSessionKeeper } = await import( '@/lib/session' );
-				const keeper = await startSessionKeeper( app, [ usePathTracerStore, useCameraStore, useLightStore, useAnimationStore ] );
-				const { VideoJob } = await import( '@/lib/videoJob' );
-				const { startStillCheckpointer, unfinishedStill } = await import( '@/lib/stillJob' );
-				startStillCheckpointer( app );
-				const [ video ] = await VideoJob.unfinished( app.storage ).catch( () => [] );
-				const still = video?.job.session ? null : await unfinishedStill( app.storage ).catch( () => null );
-				if ( video?.job.session ) useStore.getState().setSessionRequest( { origin: 'video', job: video, record: video.job.session } );
-				else if ( still ) useStore.getState().setSessionRequest( { origin: 'still', still, record: still.job.session } );
-				else keeper.setEnabled( true );
-
-			};
+			const initApp = () => startApp( {
+				canvas: canvasRef.current, container: containerRef.current, appRef, engineCleanupRef, setLoading, toast,
+			} );
 
 			initApp()
 				.catch( ( err ) => {
@@ -454,15 +463,14 @@ const Viewport3D = forwardRef( ( { viewportMode = "preview" }, _ref ) => {
 	// Compute whether to show save controls
 	const shouldShowSaveControls = useMemo( () => {
 
-		const app = getApp();
-		if ( ! app ) return false;
+		if ( ! activeApp ) return false;
 		if ( viewportMode !== "final-render" ) return false;
 		if ( ! isRenderComplete ) return false;
 		if ( isDenoising ) return false;
 		if ( isUpscaling ) return false;
-		return app.isComplete();
+		return activeApp.isComplete();
 
-	}, [ isRenderComplete, isDenoising, isUpscaling, viewportMode, isAppInitialized ] );
+	}, [ activeApp, isRenderComplete, isDenoising, isUpscaling, viewportMode ] );
 
 	// Memoize style objects
 	const { wrapperStyle: baseWrapperStyle, containerStyle, canvasStyle } = useMemo( () =>
@@ -506,7 +514,7 @@ const Viewport3D = forwardRef( ( { viewportMode = "preview" }, _ref ) => {
 			{viewportMode !== 'results' && (
 				<>
 					<StatusBarPortal slot="left">
-						{isAppInitialized && <StatsPanel app={appRef.current} />}
+						{isAppInitialized && activeApp && <StatsPanel app={activeApp} />}
 					</StatusBarPortal>
 					<StatusBarPortal slot="center">
 						<DimensionDisplay dimension={renderResolution} />
