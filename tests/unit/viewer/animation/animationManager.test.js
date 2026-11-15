@@ -209,6 +209,11 @@ describe( 'AnimationManager', () => {
 			name: 'Scene',
 			updateMatrixWorld: vi.fn(),
 			getObjectByName: vi.fn( () => null ),
+			traverse( visit ) {
+
+				visit( this );
+
+			},
 		};
 
 		mockMixerRoot = {
@@ -220,6 +225,12 @@ describe( 'AnimationManager', () => {
 			} } ],
 			getObjectByName: vi.fn( ( name ) => name === 'Bone1' ? {} : undefined ),
 			updateMatrixWorld: vi.fn(),
+			traverse( visit ) {
+
+				visit( this );
+				this.children.forEach( ( c ) => c.traverse( visit ) );
+
+			},
 		};
 
 		// Mock mesh with geometry

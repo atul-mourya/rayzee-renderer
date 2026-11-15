@@ -357,6 +357,118 @@ describe( 'LightManager in a three.js scene', () => {
 
 	} );
 
+	it( 'moves the copies of lights an animation moved, and their targets, and nothing else', () => {
+
+		const { scene, tracer, manager } = setup();
+		const model = new Scene();
+		const group = new Group();
+		group.scale.setScalar( 2 );
+		model.add( group );
+		const panel = new RectAreaLight( 0xffffff, 5, 1, 3 );
+		const spot = new SpotLight();
+		spot.position.set( 0, 0, 0 );
+		const aim = new Object3D();
+		spot.target = aim;
+		const lamp = new PointLight();
+		group.add( panel, spot, aim );
+		model.add( lamp );
+		manager.transferSceneLights( model );
+		const [ panelCopy, spotCopy, lampCopy ] = lightsOf( scene );
+		tracer.updateLights.mockClear();
+
+		group.position.set( 5, 0, 0 );
+		group.scale.setScalar( 3 );
+		aim.position.set( 0, - 1, 0 );
+		model.updateMatrixWorld( true );
+		expect( manager.followSources( [ panel, spot ] ) ).toBe( true );
+
+		expect( panelCopy.position.toArray() ).toEqual( [ 5, 0, 0 ] );
+		expect( [ panelCopy.width, panelCopy.height ] ).toEqual( [ 3, 9 ] );
+		expect( panelCopy.scale.toArray() ).toEqual( [ 1, 1, 1 ] );
+		expect( spotCopy.position.toArray() ).toEqual( [ 5, 0, 0 ] );
+		expect( spotCopy.target.position.toArray() ).toEqual( [ 5, - 3, 0 ] );
+		expect( lampCopy.position.toArray() ).toEqual( [ 0, 0, 0 ] );
+		expect( tracer.updateLights ).toHaveBeenCalledOnce();
+
+		// A pose that moved nothing changes nothing.
+		tracer.updateLights.mockClear();
+		expect( manager.followSources( [ panel, spot ] ) ).toBe( false );
+		expect( tracer.updateLights ).not.toHaveBeenCalled();
+
+		// Turned, and a host's edit of the size kept through the next scale.
+		group.rotation.set( 0, Math.PI / 2, 0 );
+		panelCopy.width = 6;
+		group.scale.setScalar( 1.5 );
+		model.updateMatrixWorld( true );
+		expect( manager.followSources( [ panel ] ) ).toBe( true );
+		expect( panelCopy.quaternion.toArray().map( ( v ) => + v.toFixed( 6 ) ) ).toEqual( [ 0, + Math.SQRT1_2.toFixed( 6 ), 0, + Math.SQRT1_2.toFixed( 6 ) ] );
+		expect( [ panelCopy.width, panelCopy.height ] ).toEqual( [ 3, 4.5 ] );
+
+		// A light not copied in (a host's own), or whose copy is gone, moves nothing.
+		expect( manager.followSources( [ new PointLight() ] ) ).toBe( false );
+		manager.transferSceneLights( new Scene() );
+		expect( manager.followSources( [ panel ] ) ).toBe( false );
+
+	} );
+
+	it( 'still moves a model light\'s copy after a saved session restores the lights', () => {
+
+		const { scene, manager } = setup();
+		const model = new Scene();
+		const rig = new Group();
+		const lamp = new PointLight();
+		lamp.name = 'lamp';
+		rig.add( lamp );
+		model.add( rig );
+		manager.transferSceneLights( model );
+		manager.addLight( 'PointLight' );
+
+		const [ restored, host ] = manager.restore( manager.serialize() );
+		rig.position.set( 0, 0, 4 );
+		model.updateMatrixWorld( true );
+		expect( manager.followSources( [ lamp ] ) ).toBe( true );
+		expect( restored.position.toArray() ).toEqual( [ 0, 0, 4 ] );
+		expect( host.position.toArray() ).toEqual( [ 0, 2, 0 ] );
+		expect( lightsOf( scene ) ).toEqual( [ restored, host ] );
+
+	} );
+
+	it( 'leaves a copy the host removed, and relinks restored copies by name', () => {
+
+		const { scene, tracer, manager } = setup();
+		const model = new Scene();
+		const rigs = [ 'a', 'b' ].map( ( name ) => {
+
+			const rig = new Group();
+			const lamp = new PointLight();
+			lamp.name = name;
+			rig.add( lamp );
+			model.add( rig );
+			return { rig, lamp };
+
+		} );
+		manager.transferSceneLights( model );
+		const [ copyA ] = lightsOf( scene );
+
+		// Removed by the host: an animation no longer moves it, nor uploads.
+		manager.removeLight( copyA.uuid );
+		tracer.updateLights.mockClear();
+		rigs[ 0 ].rig.position.set( 1, 0, 0 );
+		model.updateMatrixWorld( true );
+		expect( manager.followSources( [ rigs[ 0 ].lamp ] ) ).toBe( false );
+		expect( copyA.position.toArray() ).toEqual( [ 0, 0, 0 ] );
+		expect( tracer.updateLights ).not.toHaveBeenCalled();
+
+		// Saved without it: the one restored copy is b's, by name, not the first of its type.
+		const [ restored ] = manager.restore( manager.serialize() );
+		rigs[ 1 ].rig.position.set( 0, 3, 0 );
+		model.updateMatrixWorld( true );
+		expect( manager.followSources( [ rigs[ 0 ].lamp ] ) ).toBe( false );
+		expect( manager.followSources( [ rigs[ 1 ].lamp ] ) ).toBe( true );
+		expect( restored.position.toArray() ).toEqual( [ 0, 3, 0 ] );
+
+	} );
+
 	it( 'empties the light scene for a model without lights and still uploads', () => {
 
 		const { scene, helpers, tracer, manager } = setup();

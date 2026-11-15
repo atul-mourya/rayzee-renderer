@@ -96,7 +96,7 @@ export class AnimationManager extends EventDispatcher {
 		this.onFinished = null; // callback when a non-looping clip ends
 
 		this._rigid = false;
-		this._plans = null; // per clip: { meshes: Int32Array, visibility: boolean, cameras: Camera[] }
+		this._plans = null; // per clip: { meshes: Int32Array, visibility: boolean, cameras: Camera[], lights: Light[] }
 		this._allPlan = null;
 		this._activeClip = 0;
 		this._slotOf = null; // meshIndex -> row in the two caches below, or -1
@@ -108,7 +108,7 @@ export class AnimationManager extends EventDispatcher {
 		/** Injected by PathTracerApp — wakes the render loop after play/resume. */
 		this.wakeCallback = null;
 
-		/** Injected by PathTracerApp — receives `{ meshIndices, visibilityChanged, cameras }`. */
+		/** Injected by PathTracerApp — receives `{ meshIndices, visibilityChanged, cameras, lights }`. */
 		this.applyPoseCallback = null;
 
 	}
@@ -196,11 +196,14 @@ export class AnimationManager extends EventDispatcher {
 
 	}
 
-	/** Which meshes and cameras each clip moves, directly or through an ancestor. @private */
+	/** Which meshes, cameras and lights each clip moves, directly or through an ancestor. @private */
 	_planClips( animations ) {
 
 		const root = this._mixerRoot;
 		const find = nodeFinder( root );
+
+		const lights = [];
+		root.traverse( o => o.isLight && lights.push( o ) );
 
 		this._plans = animations.map( clip => {
 
@@ -242,7 +245,15 @@ export class AnimationManager extends EventDispatcher {
 			const cameras = new Set();
 			for ( const node of animated ) node.traverse( o => o.isCamera && cameras.add( o ) );
 
-			return { meshes: Int32Array.from( meshes ), visibility, cameras: [ ...cameras ], nodes: unresolved ? null : animated, roots: unresolved ? null : subtreeRoots( animated, root ) };
+			// A light moves with its node, and turns with its target's.
+			const moves = ( o ) => {
+
+				for ( ; o; o = o.parent ) if ( animated.has( o ) ) return true;
+				return false;
+
+			};
+
+			return { meshes: Int32Array.from( meshes ), visibility, cameras: [ ...cameras ], lights: lights.filter( l => moves( l ) || moves( l.target ) ), nodes: unresolved ? null : animated, roots: unresolved ? null : subtreeRoots( animated, root ) };
 
 		} );
 
@@ -267,20 +278,21 @@ export class AnimationManager extends EventDispatcher {
 
 		if ( ! this._allPlan ) {
 
-			const meshes = new Set(), cameras = new Set();
+			const meshes = new Set(), cameras = new Set(), lights = new Set();
 			let visibility = false;
 			let nodes = new Set();
 			for ( const plan of this._plans ) {
 
 				plan.meshes.forEach( m => meshes.add( m ) );
 				plan.cameras.forEach( c => cameras.add( c ) );
+				plan.lights.forEach( l => lights.add( l ) );
 				visibility ||= plan.visibility;
 				if ( nodes && plan.nodes ) plan.nodes.forEach( n => nodes.add( n ) );
 				else nodes = null;
 
 			}
 
-			this._allPlan = { meshes: Int32Array.from( meshes ), visibility, cameras: [ ...cameras ], nodes, roots: nodes ? subtreeRoots( nodes, this._mixerRoot ) : null };
+			this._allPlan = { meshes: Int32Array.from( meshes ), visibility, cameras: [ ...cameras ], lights: [ ...lights ], nodes, roots: nodes ? subtreeRoots( nodes, this._mixerRoot ) : null };
 
 		}
 
@@ -338,9 +350,9 @@ export class AnimationManager extends EventDispatcher {
 
 		}
 
-		if ( moved.length || visibilityChanged || plan.cameras.length ) {
+		if ( moved.length || visibilityChanged || plan.cameras.length || plan.lights.length ) {
 
-			this.applyPoseCallback?.( { meshIndices: moved, visibilityChanged, cameras: plan.cameras } );
+			this.applyPoseCallback?.( { meshIndices: moved, visibilityChanged, cameras: plan.cameras, lights: plan.lights } );
 
 		}
 
@@ -558,7 +570,7 @@ export class AnimationManager extends EventDispatcher {
 		}
 
 		const plan = this._planFor( this._activeClip );
-		if ( plan?.cameras.length ) this.applyPoseCallback?.( { meshIndices: [], visibilityChanged: false, cameras: plan.cameras } );
+		if ( plan?.cameras.length || plan?.lights.length ) this.applyPoseCallback?.( { meshIndices: [], visibilityChanged: false, cameras: plan.cameras, lights: plan.lights } );
 
 		// Decided once per reader: an expanded instanced emitter asks for one mesh several times.
 		const moved = new Int8Array( this._meshes.length );

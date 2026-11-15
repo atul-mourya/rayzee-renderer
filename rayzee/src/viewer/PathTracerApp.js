@@ -766,8 +766,8 @@ export class PathTracerApp extends RayzeeRenderer {
 
 	}
 
-	/** Apply a pose from AnimationManager: placements, visibility, and a followed camera. @private */
-	_applyAnimationPose( { meshIndices, visibilityChanged, cameras } ) {
+	/** Apply a pose from AnimationManager: placements, visibility, lights, and a followed camera. @private */
+	_applyAnimationPose( { meshIndices, visibilityChanged, cameras, lights = [] } ) {
 
 		if ( ! this._sdf?.instanceTable ) return;
 		let changed = false;
@@ -798,9 +798,13 @@ export class PathTracerApp extends RayzeeRenderer {
 
 		}
 
+		// A moved light changes every pixel's light: the denoisers' motion history cannot follow it.
+		const lit = lights.length > 0 && this.lightManager?.followSources( lights );
+
 		if ( cameras.length > 0 && this._followAnimatedCamera( cameras ) ) changed = true;
 
-		if ( changed ) this.reset( false, { motion: true } );
+		if ( lit ) this.reset();
+		else if ( changed ) this.reset( false, { motion: true } );
 
 	}
 

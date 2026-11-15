@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { Group, Mesh, BoxGeometry, MeshBasicMaterial, AnimationClip, VectorKeyframeTrack, BooleanKeyframeTrack, PropertyBinding } from 'three';
+import { Group, Mesh, BoxGeometry, MeshBasicMaterial, AnimationClip, VectorKeyframeTrack, BooleanKeyframeTrack, PropertyBinding, PointLight, SpotLight, Object3D } from 'three';
 import { AnimationManager } from '@/core/viewer/animation/AnimationManager.js';
 
 // Duplicate names at several depths, so which one a track binds depends on the walk's order.
@@ -58,6 +58,41 @@ describe( 'animation tracks bound from one walk', () => {
 		expect( bound.find( ( [ p ] ) => p === 'twin.position' )[ 1 ] ).toBe( root.children[ 0 ].children[ 0 ].children[ 0 ] );
 		expect( PropertyBinding.findNode ).toBe( search );
 		manager.dispose();
+
+	} );
+
+} );
+
+describe( 'lights a clip moves', () => {
+
+	it( 'are handed over with a pose: a light under an animated node, and one whose target is animated', () => {
+
+		const root = new Group();
+		root.name = 'root';
+		const mesh = new Mesh( new BoxGeometry(), new MeshBasicMaterial() );
+		const rig = new Group();
+		rig.name = 'rig';
+		const lamp = new PointLight();
+		rig.add( lamp );
+		const spot = new SpotLight();
+		const aim = new Object3D();
+		aim.name = 'aim';
+		spot.target = aim;
+		const still = new PointLight();
+		root.add( mesh, rig, spot, aim, still );
+
+		const clip = new AnimationClip( 'move', 1, [
+			new VectorKeyframeTrack( 'rig.position', [ 0, 1 ], [ 0, 0, 0, 4, 0, 0 ] ),
+			new VectorKeyframeTrack( 'aim.position', [ 0, 1 ], [ 0, 0, 0, 0, - 2, 0 ] ),
+		] );
+		const manager = new AnimationManager();
+		const poses = [];
+		manager.applyPoseCallback = ( pose ) => poses.push( pose );
+		manager.init( root, root, [ mesh ], [ clip ] );
+		manager.seekTo( 0.5 );
+
+		expect( poses.at( - 1 ).lights ).toEqual( [ lamp, spot ] );
+		expect( lamp.getWorldPosition( lamp.position.clone() ).x ).toBe( 2 );
 
 	} );
 

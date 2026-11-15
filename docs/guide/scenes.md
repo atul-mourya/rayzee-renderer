@@ -242,7 +242,9 @@ engine.lightManager.showHelpers(true)       // Toggle visual helpers
 
 The path tracer traces **copies** of a model's lights, made when the model loads. Changing a light
 inside the loaded model does nothing; change the copy — `getLight(uuid)` with a UUID from `getAll()` —
-and call `sync()`, or use `setIntensity()`.
+and call `sync()`, or use `setIntensity()`. A model's own clip that moves a light, or its target, moves the copy with
+it during playback and in a video export, over any move of the copy (an edit of its size is kept); intensity, colour and
+visibility tracks do not reach it.
 
 Light `intensity` follows Blender: radiant power in watts for point, spot and area lights, irradiance in W/m² for directional. Dividing power by area only means something in metres, so the engine assumes **one world unit is one metre**; scenes authored in cm or mm must carry that scale in their node transforms, as glTF exporters do. glTF `RectAreaLightPlaceholder` nodes author `intensity` as three.js radiance (their `power` field is `intensity · width · height · π`); the importer converts it to power through the light's world area so the authored radiance is reproduced exactly, then applies the profile's `areaLightIntensityScale`.
 

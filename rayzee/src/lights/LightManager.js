@@ -10,6 +10,32 @@ const USER_LIGHT = '__rayzeeUserLight';
 
 const LIGHT_TYPES = { DirectionalLight, PointLight, SpotLight, RectAreaLight };
 
+// A model light's copy at its source's world transform, an area light's scale taken into its size (`base`, before any
+// scale). Returns the world scale applied, for the next placement's base.
+function placeCopy( source, copy, base ) {
+
+	source.updateWorldMatrix( true, false );
+	source.getWorldPosition( copy.position );
+	source.getWorldQuaternion( copy.quaternion );
+	source.getWorldScale( copy.scale );
+	const scale = [ copy.scale.x, copy.scale.y ];
+
+	if ( copy.isRectAreaLight ) {
+
+		copy.width = base[ 0 ] * scale[ 0 ];
+		copy.height = base[ 1 ] * scale[ 1 ];
+		copy.scale.set( 1, 1, 1 );
+
+	}
+
+	copy.updateMatrixWorld();
+	return scale;
+
+}
+
+// What a placement can change on a copy.
+const placement = ( copy ) => [ ...copy.matrixWorld.elements, copy.width, copy.height, ...( copy.target?.position.toArray() ?? [] ) ];
+
 /**
  * Manages scene lights: add, remove, transfer from mesh scene to WebGPU
  * scene, sync helpers, and update GPU uniform buffers.
@@ -35,6 +61,8 @@ export class LightManager extends EventDispatcher {
 		this.pathTracer = pathTracer;
 		this._onReset = options.onReset || null;
 		this._onLightRemoved = options.onLightRemoved || null;
+		// A model light → { its copy, the source's world scale last applied to the copy's size }.
+		this._copies = new Map();
 
 	}
 
@@ -216,19 +244,7 @@ export class LightManager extends EventDispatcher {
 		for ( const light of sourceLights ) {
 
 			const cloned = light.clone();
-
-			light.updateWorldMatrix( true, false );
-			light.getWorldPosition( cloned.position );
-			light.getWorldQuaternion( cloned.quaternion );
-			light.getWorldScale( cloned.scale );
-
-			if ( cloned.isRectAreaLight ) {
-
-				cloned.width *= cloned.scale.x;
-				cloned.height *= cloned.scale.y;
-				cloned.scale.set( 1, 1, 1 );
-
-			}
+			this._copies.set( light, { copy: cloned, scale: placeCopy( light, cloned, [ cloned.width, cloned.height ] ) } );
 
 			if ( ( light.isSpotLight || light.isDirectionalLight ) && light.target ) {
 
@@ -246,6 +262,40 @@ export class LightManager extends EventDispatcher {
 
 		this.updateLights();
 		this._syncHelpers();
+
+	}
+
+	/**
+	 * Moves the copies of model lights an animation moved (`sources`: the model's own lights, their world matrices
+	 * current) to where their sources now are, and aims them at their targets. A host's edit to a copy's size is kept;
+	 * its place and aim follow the source.
+	 * @param {import('three').Light[]} sources
+	 * @returns {boolean} whether any copy changed
+	 */
+	followSources( sources ) {
+
+		let moved = false;
+		for ( const source of sources ) {
+
+			const entry = this._copies.get( source );
+			if ( ! entry || entry.copy.parent !== this.scene ) continue;
+			const { copy } = entry;
+			const before = placement( copy );
+			entry.scale = placeCopy( source, copy, [ copy.width / ( entry.scale[ 0 ] || 1 ), copy.height / ( entry.scale[ 1 ] || 1 ) ] );
+			if ( source.target && copy.target && copy.target !== source.target ) {
+
+				source.target.updateWorldMatrix( true, false );
+				source.target.getWorldPosition( copy.target.position );
+				copy.target.updateMatrixWorld();
+
+			}
+
+			if ( placement( copy ).some( ( v, i ) => v !== before[ i ] ) ) moved = true;
+
+		}
+
+		if ( moved ) this.updateLights();
+		return moved;
 
 	}
 
@@ -307,6 +357,8 @@ export class LightManager extends EventDispatcher {
 	restore( records ) {
 
 		this.sceneHelpers?.clear();
+		// A model light's restored copy is matched to it by type and name, in order, so its animation still moves it.
+		const linked = [ ...this._copies ].map( ( [ source, entry ] ) => ( { source, entry } ) );
 		this._removeAllLights();
 
 		const lights = [];
@@ -342,6 +394,13 @@ export class LightManager extends EventDispatcher {
 
 			this.scene.add( light );
 			lights.push( light );
+			const at = light.userData[ USER_LIGHT ] ? - 1 : linked.findIndex( ( { entry } ) => entry.copy.type === light.type && entry.copy.name === light.name );
+			if ( at >= 0 ) {
+
+				const [ { source, entry } ] = linked.splice( at, 1 );
+				this._copies.set( source, { copy: light, scale: entry.scale } );
+
+			}
 
 		}
 
@@ -429,6 +488,8 @@ export class LightManager extends EventDispatcher {
 			this.scene.remove( light );
 
 		} );
+
+		for ( const [ source, { copy } ] of this._copies ) if ( copy.parent !== this.scene ) this._copies.delete( source );
 
 	}
 

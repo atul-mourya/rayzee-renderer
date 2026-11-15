@@ -15,7 +15,7 @@ model replaced Zero-Day's 6,177 animated meshes. ⚠️ Never refit a mesh that 
 **Animation data flow**:
 1. `AssetLoader` preserves `data.animations` from GLTFLoader (or the pbrt builder's clip, or `loadObject3D`'s object's)
 2. `AnimationManager.init()` creates mixer on the model root (with fallback to scene root for track resolution)
-3. Per frame: `mixer.update(delta)` → `mixerRoot.updateMatrixWorld(true)` → deforming: `getVertexPosition()` per vertex → `refitBVH(positions)` via worker; rigid: `applyPoseCallback` → `updateMeshTransforms` + TLAS range upload
+3. Per frame: `mixer.update(delta)` → `mixerRoot.updateMatrixWorld(true)` → deforming: `getVertexPosition()` per vertex → `refitBVH(positions)` via worker; rigid: `applyPoseCallback` → `updateMeshTransforms` + TLAS range upload. Either way a light under an animated node, or aimed at one, is handed over too (`lights`) and `lightManager.followSources` moves its copy (position, rotation, an area light's size, the target; a full reset, as no motion history follows moved light); intensity, colour and visibility tracks do not reach the copy, and a saved session's restored copies are re-linked by type and name
 4. Deforming: `PathTracer.updateTriangleData()` / `updateBVHData()` — fast GPU buffer writes (no reallocation). Moved emitters' light BVH is rebuilt once motion stops (pause/stop/finish/seek), not per playback frame.
 
 **Transform data flow**:

@@ -185,7 +185,7 @@
 
 ### Animation
 
-- [ ] animating lights support
+- [ ] animate light intensity, colour and visibility
 - [ ] Timeline scrubber for animation control
 - [ ] Multi-clip blending - cross-fade between animation clips with configurable transition duration
 - [ ] sequence caching for smooth playback / scrubbing
