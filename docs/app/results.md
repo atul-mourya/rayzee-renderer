@@ -10,17 +10,27 @@ The left panel, **Saved Renders**, lists them newest first, each with the date, 
 - Click a render to show it.
 - The bin deletes it, after you confirm. Its HDR copy and AI versions go with it.
 - With AI versions made, **All** and **With AI** filter the list. A purple badge shows how many versions a render has.
+- The **⋯** menu on a render has **Copy edits** and **Paste edits**: everything from the Adjust, Tool and Filters tabs
+  but the crop, straightening and turns, which belong to the picture they were made for.
 
-In the view, drag to pan and scroll to zoom. **Press & Hold to See Original** shows the render without your adjustments.
+In the view, drag to pan and scroll to zoom. **Press & Hold to See Original** shows the render without any of your edits.
 The toolbar in the status bar has **Auto-fit**, the zoom controls, **Export Render** (see
 [Pictures](render-and-export.md#pictures)) and **Fullscreen**.
 
 To move renders to another browser or computer, use **File → Export Saved Renders…** and **File → Import Saved Renders…**: one zip
 file with every render, its HDR copy and its AI versions. Renders already there are skipped.
 
-## Adjust
+## Editing a render
 
-The **Adjust** tab on the right edits how a saved render looks, without changing the stored picture:
+The **Adjust**, **Tool** and **Filters** tabs on the right edit how a saved render looks, without changing the stored
+picture. Every change is kept with the render as you make it: there is nothing to save. **Undo** and **Redo** (bottom
+left of the view, or <kbd>Cmd</kbd>/<kbd>Ctrl</kbd> + <kbd>Z</kbd> and <kbd>Shift</kbd> + <kbd>Cmd</kbd>/<kbd>Ctrl</kbd>
++ <kbd>Z</kbd>) step through your changes to each render until you leave the page. **Reset** at the top of a tab sets
+that tab's edits back to none.
+
+Exports and AI edits start from the edited picture: cropped, turned and with every look and effect.
+
+### Adjust
 
 | Slider | What it does |
 |---|---|
@@ -31,13 +41,27 @@ The **Adjust** tab on the right edits how a saved render looks, without changing
 | **Exposure** | Like a camera's exposure: 100 doubles the light, −100 halves it. Black stays black. |
 | **Gamma** | Brightens or darkens the mid-tones. 2.2 leaves the picture as it was. |
 
-**Save** (top right of the view) keeps the adjustments with the render. **Reset** in the panel sets every slider back to
-neutral; the round button at the bottom left of the view (**Reset Processing**) goes back to the render's saved
-adjustments.
+### Tool
 
-If the render kept an HDR copy and your screen shows HDR, the Results page shows that copy, with its highlights.
+- **Crop & Straighten**: pick a **Shape** (**Free**, **Original**, **1:1**, **4:5**, **3:2**, **16:9**, **9:16**) or
+  click **Crop**, then drag the frame on the picture to move it and its corners or edges to size it. **Straighten**
+  turns the picture up to 45° either way to level a tilted horizon; the crop shrinks so no corner is left empty.
+  <kbd>Enter</kbd> or **Done** keeps the crop, <kbd>Esc</kbd> or **Cancel** goes back to how it was.
+- **Turn & Flip**: turn left or right a quarter, flip left to right or upside down.
+- **Watermark**: type a name or note under **Text** to put it in a corner of the picture; choose the **Corner**, its
+  **Size** and **Opacity**. Empty text shows none.
 
-The **Tool** and **Filters** tabs are not built yet.
+### Filters
+
+- **Looks**: **Warm**, **Cool**, **Vivid**, **Punchy**, **Matte**, **Film** and **B&W**, each shown on your render.
+  **Amount** sets how strongly the chosen look applies; **None** takes it off.
+- **Detail**: **Sharpen** makes fine detail crisper (zoom in to 100 % to judge it); **Clarity** gives textures and
+  mid-tones more punch, or softens them below 0.
+- **Effects**: **Vignette** darkens the edges below 0 and lightens them above; its **⋮** has **Size** and **Softness**.
+  **Grain** adds film-like grain, the same in every export; its **⋮** has **Size**.
+
+If the render kept an HDR copy and your screen shows HDR, the Results page shows that copy, with its highlights and
+your edits.
 
 ## AI edits
 
@@ -67,7 +91,7 @@ Each edit sends the picture (and any reference pictures) to Google, and Google b
 7. Click **Generate v1** (the button names the next version). It usually takes 20 to 50 seconds. You can switch tabs or renders meanwhile; the version is added
    when it is ready. **Cancel** stops it.
 
-The next edit starts from whatever is on screen: the render (with its adjustments) or a version. Click the **Render**
+The next edit starts from whatever is on screen: the render (with your edits) or a version. Click the **Render**
 tile or a **v** tile to choose.
 
 ### Comparing versions

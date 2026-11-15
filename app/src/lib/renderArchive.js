@@ -104,6 +104,7 @@ export async function importRenders( file ) {
 			hdr: await blob( RENDER_FILES.HDR ),
 			aiVersions: details.aiVersions ? aiVersions : undefined,
 			aiGeneratedImage: await blob( RENDER_FILES.AI ),
+			edits: details.edits,
 			colorCorrection: details.colorCorrection,
 			renderTime: details.renderTime,
 			isEdited: details.isEdited,

@@ -363,22 +363,7 @@ const Viewport3D = forwardRef( ( { viewportMode = "preview" }, _ref ) => {
 
 			}
 
-			const saveData = {
-				image,
-				hdr,
-				colorCorrection: {
-					brightness: 0,
-					contrast: 0,
-					saturation: 0,
-					hue: 0,
-					exposure: 0,
-				},
-				timestamp: new Date(),
-				renderTime,
-				isEdited: true
-			};
-
-			const id = await saveRender( saveData );
+			const id = await saveRender( { image, hdr, timestamp: new Date(), renderTime } );
 			window.dispatchEvent( new CustomEvent( 'render-saved', { detail: { id } } ) );
 			setIsRenderComplete( false );
 

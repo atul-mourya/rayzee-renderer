@@ -41,7 +41,8 @@ export const VIDEO_QUALITY = Object.freeze( { standard: 0.1, high: 0.2, best: 0.
 
 export const videoBitrate = ( width, height, fps, quality = 'high' ) => Math.round( width * height * fps * ( VIDEO_QUALITY[ quality ] ?? VIDEO_QUALITY.high ) );
 
-export const DEFAULT_PICTURE = Object.freeze( { format: 'png', bitDepth: 8, quality: 0.92, hdr: true, precision: 'half', asShown: true, passes: [], upscaled: true } );
+// `longEdge`: a saved render's picture scaled down to this long side, in pixels; 0 keeps its size.
+export const DEFAULT_PICTURE = Object.freeze( { format: 'png', bitDepth: 8, quality: 0.92, hdr: true, precision: 'half', asShown: true, passes: [], upscaled: true, longEdge: 0 } );
 export const DEFAULT_VIDEO = Object.freeze( { format: 'mp4', quality: 'high', fps: 30, bitDepth: 8, precision: 'half', asShown: true, passes: [] } );
 export const PICTURE_SETTINGS_KEY = 'rayzee-export-picture';
 export const VIDEO_SETTINGS_KEY = 'rayzee-export-video';
@@ -106,14 +107,43 @@ export async function exportPicture( { format, bitDepth, quality, hdr, precision
 
 const canvasBlob = ( canvas, type, quality ) => new Promise( ( resolve, reject ) => canvas.toBlob( blob => ( blob ? resolve( blob ) : reject( new Error( 'The picture could not be encoded.' ) ) ), type, quality ) );
 
+/** Long sides a saved render's picture can be exported at, below its own. */
+export const LONG_EDGES = [ 3840, 2560, 1920, 1280, 1080 ];
+
+/** `width` × `height` scaled down, shape kept, to a long side of `edge` pixels; 0 or a larger edge keeps it. */
+export function sizeForLongEdge( width, height, edge ) {
+
+	const long = Math.max( width, height );
+	if ( ! edge || edge >= long ) return { width, height };
+	return { width: Math.max( 1, Math.round( width * edge / long ) ), height: Math.max( 1, Math.round( height * edge / long ) ) };
+
+}
+
+function scaledDown( canvas, edge ) {
+
+	const { width, height } = sizeForLongEdge( canvas.width, canvas.height, edge );
+	if ( width === canvas.width && height === canvas.height ) return canvas;
+	const scaled = document.createElement( 'canvas' );
+	scaled.width = width;
+	scaled.height = height;
+	const ctx = scaled.getContext( '2d' );
+	ctx.imageSmoothingQuality = 'high';
+	ctx.drawImage( canvas, 0, 0, width, height );
+	return scaled;
+
+}
+
 /**
  * A render from the Results library as a file: a picture of it (edited, as rendered, or the AI version) as PNG, JPEG
- * or WebP, or the full-range copy it kept — EXR as saved, or converted to Radiance HDR.
- * @param {{id: number, canvas?: HTMLCanvasElement, format: string, quality?: number, suffix?: string}} options `suffix` goes after the id in the file name
+ * or WebP, scaled down to `longEdge` when given, or the full-range copy it kept — EXR as saved, or converted to
+ * Radiance HDR.
+ * @param {{id: number, canvas?: HTMLCanvasElement, format: string, quality?: number, suffix?: string, longEdge?: number}} options
+ *   `suffix` goes after the id in the file name
  */
-export async function exportSavedRender( { id, canvas, format, quality = 0.92, suffix = '' } ) {
+export async function exportSavedRender( { id, canvas, format, quality = 0.92, suffix = '', longEdge = 0 } ) {
 
 	const { IMAGE_FORMATS, encodeHDR, encodeStill } = await import( 'rayzee/encoders' );
+	if ( canvas && longEdge && ! holdsLight( format ) ) canvas = scaledDown( canvas, longEdge );
 	const { mimeType, extension } = IMAGE_FORMATS[ format ];
 	const name = `render-${id}${suffix}.${extension}`;
 

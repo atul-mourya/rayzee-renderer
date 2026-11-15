@@ -472,13 +472,15 @@ export class PathTracerApp extends RayzeeRenderer {
 
 	/**
 	 * A canvas of the host's that shows a saved render as an HDR screen showed it, from the EXR `exportImage` wrote
-	 * (`viewer/picture/PictureView.js`). Loaded on first use.
+	 * (`viewer/picture/PictureView.js`), or with `{ hdr: false }` an 8-bit picture on an ordinary canvas. Loaded on
+	 * first use.
 	 * @param {HTMLCanvasElement} canvas
+	 * @param {{hdr?: boolean}} [options]
 	 */
-	async createPictureView( canvas ) {
+	async createPictureView( canvas, options ) {
 
 		const { PictureView } = await import( './picture/PictureView.js' );
-		return new PictureView( { color: this.color, device: this.renderer.backend.device }, canvas ).init();
+		return new PictureView( { color: this.color, device: this.renderer.backend.device }, canvas, options ).init();
 
 	}
 

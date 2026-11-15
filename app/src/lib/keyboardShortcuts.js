@@ -1,6 +1,6 @@
-// What a key press means to the whole app: 'deselect' (Esc), 'resetCamera' (R), 'playPause' (Space), or null. A key
-// already handled (a menu's Esc or Space) does nothing more; Space does nothing on Results, and presses a control only
-// when the keyboard (Tab) reached it.
+// What a key press means to the whole app: 'deselect' (Esc), 'resetCamera' (R), 'playPause' (Space), 'undo' / 'redo'
+// (Cmd or Ctrl + Z, with Shift to redo; the Results page's edits), or null. A key already handled (a menu's Esc or
+// Space) does nothing more; Space does nothing on Results, and presses a control only when the keyboard (Tab) reached it.
 const TYPING = new Set( [ 'INPUT', 'TEXTAREA', 'SELECT' ] );
 const MENU_ITEM = '[role="menuitem"], [role="menuitemcheckbox"], [role="menuitemradio"], [role="option"]';
 const CONTROL = 'button, a[href], [role="button"], [role="switch"], [role="checkbox"], [role="radio"], [role="tab"]';
@@ -21,6 +21,14 @@ export function shortcutFor( event, { appMode } = {} ) {
 		case 'r':
 		case 'R':
 			return noModifiers ? 'resetCamera' : null;
+
+		case 'z':
+		case 'Z':
+			if ( appMode !== 'results' || ! ( event.metaKey || event.ctrlKey ) || event.altKey ) return null;
+			return event.shiftKey ? 'redo' : 'undo';
+
+		case 'y':
+			return appMode === 'results' && event.ctrlKey && ! event.metaKey && ! event.shiftKey && ! event.altKey ? 'redo' : null;
 
 		case ' ':
 			if ( appMode === 'results' ) return null;

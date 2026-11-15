@@ -1,7 +1,6 @@
 import { useMemo, memo, lazy, Suspense } from 'react';
 import { Sliders, Camera, Box, Sun, SwatchBook, Blend, PocketKnife, Bot, Film } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Separator } from '@/components/ui/separator';
 import { useStore } from '@/store';
 import FinalRenderPanel from './FinalRenderPanel';
 
@@ -14,6 +13,8 @@ const MaterialTab = lazy( () => import( './MaterialTab' ) );
 const AnimationTab = lazy( () => import( './AnimationTab' ) );
 const ColorCorrectionsTab = lazy( () => import( './ColorCorrectionsTab' ) );
 const AITab = lazy( () => import( './AITab' ) );
+const ToolTab = lazy( () => import( './ToolTab' ) );
+const FiltersTab = lazy( () => import( './FiltersTab' ) );
 
 // Loading fallback component
 const TabLoadingFallback = () => (
@@ -135,7 +136,9 @@ const ResultsModeTabs = memo( () => (
 		</TabsContent>
 
 		<TabsContent value="tool" className="relative h-full data-[state=inactive]:hidden data-[state=active]:flex flex-col overflow-y-auto mt-0">
-			<div><Separator className="bg-primary" /><p className="pt-4 text-sm text-center text-muted-foreground">Coming Soon !!</p></div>
+			<Suspense fallback={<TabLoadingFallback />}>
+				<ToolTab />
+			</Suspense>
 		</TabsContent>
 
 		<TabsContent value="ai" className="relative h-full data-[state=inactive]:hidden data-[state=active]:flex flex-col overflow-y-auto mt-0">
@@ -145,7 +148,9 @@ const ResultsModeTabs = memo( () => (
 		</TabsContent>
 
 		<TabsContent value="filters" className="relative h-full data-[state=inactive]:hidden data-[state=active]:flex flex-col overflow-y-auto mt-0">
-			<div><Separator className="bg-primary" /><p className="pt-4 text-sm text-center text-muted-foreground">Coming Soon !!</p></div>
+			<Suspense fallback={<TabLoadingFallback />}>
+				<FiltersTab />
+			</Suspense>
 		</TabsContent>
 	</Tabs>
 ) );

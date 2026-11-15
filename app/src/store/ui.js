@@ -98,64 +98,6 @@ export const useStore = create( set => ( {
 	setSelectedResult: imageData => set( { selectedResult: imageData } ),
 	resultsViewportRef: null,
 	setResultsViewportRef: ref => set( { resultsViewportRef: ref } ),
-	imageProcessing: { brightness: 0, contrast: 0, saturation: 0, hue: 0, exposure: 0, gamma: 0 },
-	setImageProcessingParam: ( param, val ) => set( s => ( { imageProcessing: { ...s.imageProcessing, [ param ]: val } } ) ),
-	resetImageProcessing: () => set( { imageProcessing: { brightness: 0, contrast: 0, saturation: 0, hue: 0, exposure: 0, gamma: 2.2 } } ),
-
-	// Enhanced reset function that also triggers immediate update
-	handleResetImageProcessing: () => {
-
-		const resetValues = { brightness: 0, contrast: 0, saturation: 0, hue: 0, exposure: 0, gamma: 2.2 };
-
-		// Update store state
-		useStore.setState( { imageProcessing: resetValues } );
-
-		// Apply immediate processing if image processor is available
-		const resultsViewport = useStore.getState().resultsViewportRef?.current;
-		if ( resultsViewport?.getImageProcessor ) {
-
-			const processor = resultsViewport.getImageProcessor();
-			if ( processor ) {
-
-				processor.setParameters( resetValues );
-				processor.render();
-
-			}
-
-		}
-
-	},
-
-	// Real-time color correction handlers for immediate visual feedback
-	handleImageProcessingParamChange: ( param ) => ( val ) => {
-
-		const value = Array.isArray( val ) ? val[ 0 ] : val;
-
-		// Update store state immediately
-		useStore.setState( s => ( {
-			imageProcessing: { ...s.imageProcessing, [ param ]: value }
-		} ) );
-
-		// Apply immediate processing if image processor is available
-		const resultsViewport = useStore.getState().resultsViewportRef?.current;
-		if ( resultsViewport?.getImageProcessor ) {
-
-			const processor = resultsViewport.getImageProcessor();
-			if ( processor ) {
-
-				// Get current state to ensure we have latest values
-				const currentState = useStore.getState().imageProcessing;
-				const updatedState = { ...currentState, [ param ]: value };
-
-				// Apply changes immediately without debouncing
-				processor.setParameters( updatedState );
-				processor.render();
-
-			}
-
-		}
-
-	},
 	toggleMeshVisibility: uuid => {
 
 		const app = getApp();

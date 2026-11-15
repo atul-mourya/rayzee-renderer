@@ -340,7 +340,12 @@ engine.exportInfo();   // what can be written now: { width, height, upscaled, hd
   pass, recorded as `getProvenance().display.overlay`), its colour config is not the one loaded, or a later `show()` took
   over). It reads the file's header first and decodes the pixels only of a file it shows. `view.setGrade(fn)` adds your
   own edit after the view, a TSL function of the shown colour; `view.redraw()` after its uniforms change;
-  `view.dispose()`.
+  `view.dispose()`. To draw the canvas yourself — crop it, blur it, run passes of your own — give it a finish:
+  `view.setFinish((picture, renderer) => …)` is called on every draw with `picture` = `{ texture, width, height,
+  light }`, the shown picture (after the view and the grade, as light: 1 = SDR white, the canvas's encoding undone);
+  you size the canvas (`renderer.setSize(w, h, false)`) and draw it with `renderer`. `createPictureView(canvas,
+  { hdr: false })` gives an ordinary 8-bit canvas, and `view.showImage(image)` shows a picture you already have (an
+  image, bitmap or canvas, its colours as the screen shows them: `light: false`) through the same finish.
 
 The writers are also a module of their own, `rayzee/encoders`, for pixels a host already has. It is part of the
 package, not an add-on: nothing to install, and importing it loads nothing else (9 KB compressed).

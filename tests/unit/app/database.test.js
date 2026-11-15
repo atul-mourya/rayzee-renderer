@@ -128,6 +128,7 @@ describe( 'saved renders', () => {
 
 		const view = await db.getRenderById( id );
 		expect( await textAt( view.image ) ).toBe( '1000x500' );
+		expect( view.edits.adjust.exposure ).toBe( 2 );
 		expect( await textAt( view.thumb ) ).toBe( 'thumb 320x160' );
 		expect( view.aiVersions ).toEqual( [] );
 		expect( view.hasHDR ).toBe( true );
@@ -249,6 +250,16 @@ describe( 'saved renders', () => {
 		expect( stored( id ) ).toMatchObject( { id, isEdited: true, colorCorrection: { contrast: 3 }, files } );
 		expect( stored( 99 ) ).toBeUndefined();
 		await expect( db.updateRender( 42, {} ) ).rejects.toThrow( 'Render with ID 42 not found' );
+
+	} );
+
+	it( 'keeps the edit stack a render comes with, and the Adjust values an older build reads', async () => {
+
+		withStorage();
+		const id = await db.saveRender( { image: png( 2, 2 ), edits: { adjust: { hue: 12 }, look: { id: 'film' }, geometry: { flipX: true } } } );
+		expect( stored( id ).edits ).toMatchObject( { adjust: { hue: 12, gamma: 2.2 }, look: { id: 'film' }, geometry: { flipX: true } } );
+		expect( stored( id ).colorCorrection ).toEqual( stored( id ).edits.adjust );
+		expect( ( await db.getRenderById( id ) ).edits.look.id ).toBe( 'film' );
 
 	} );
 

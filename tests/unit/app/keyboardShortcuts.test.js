@@ -39,6 +39,19 @@ describe( 'shortcutFor', () => {
 
 	} );
 
+	it( 'undoes and redoes the Results page\'s edits with Cmd or Ctrl + Z, there only', () => {
+
+		const results = { appMode: 'results' };
+		expect( shortcutFor( press( 'z', { mods: { metaKey: true } } ), results ) ).toBe( 'undo' );
+		expect( shortcutFor( press( 'z', { mods: { ctrlKey: true } } ), results ) ).toBe( 'undo' );
+		expect( shortcutFor( press( 'Z', { mods: { metaKey: true, shiftKey: true } } ), results ) ).toBe( 'redo' );
+		expect( shortcutFor( press( 'y', { mods: { ctrlKey: true } } ), results ) ).toBe( 'redo' );
+		expect( shortcutFor( press( 'z' ), results ) ).toBeNull();
+		expect( shortcutFor( press( 'z', { mods: { metaKey: true } } ), { appMode: 'preview' } ) ).toBeNull();
+		expect( shortcutFor( press( 'z', { tag: 'INPUT', mods: { metaKey: true } } ), results ) ).toBeNull();
+
+	} );
+
 	it( 'ignores keys typed into a field', () => {
 
 		for ( const tag of [ 'INPUT', 'TEXTAREA', 'SELECT' ] ) expect( shortcutFor( press( ' ', { tag } ) ) ).toBeNull();

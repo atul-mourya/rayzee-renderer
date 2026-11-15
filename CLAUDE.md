@@ -185,6 +185,12 @@ owns it), exports, test layout, docs and comments; how a cleanup is run; the aud
   and the app renders only after `crossOriginIsolate()` resolves. Chromium and desktop Firefox only (COEP
   `credentialless`); Safari stays unisolated. The dev server sends the same headers itself. The docs site beside the app
   (`docs/`) is left out of it.
+- **Results edits** (`lib/edits.js`, `store/edits.js`, `lib/ImageProcessor.js`): a saved render's edits are one stack in a
+  fixed order (geometry, adjust, look, detail, effects, overlay), saved with the render 300 ms after a change (`edits`;
+  `colorCorrection` too, which older builds read), undone per render in memory. `EditPipeline` draws it in TSL as a
+  `PictureView` finish, for the 8-bit picture (`createPictureView( canvas, { hdr: false } )`) and the HDR one alike.
+  ⚠️ An edit is written once, in `EditPipeline`: two implementations drifted. Its CPU twins in `lib/edits.js`
+  (`adjustColor`, `lookColor`, `sourceTransform`) are held to it by `tests/gpu/editPipeline.test.js`.
 - **Status bar** (`components/layout/StatusBar/StatusBar.jsx`): the viewport on screen fills it through `StatusBarPortal`
   (the stats strip, the picture's size, the toolbar). ⚠️ The live viewport stays mounted under Results: it portals only
   while `viewportMode !== 'results'`, or both pages' controls show.
@@ -681,10 +687,8 @@ the gradient sky is gone (`EnvironmentManager.restore` keeps an old session's on
   exposure, auto exposure's included, and a held backdrop — plus the viewer's `exposure.local`, in the file's `rayzee`
   attribute). The Results page shows it through `app.createPictureView( canvas )` (`viewer/picture/PictureView.js`): a renderer
   of its own on the main device running the same Compositor, LocalExposure and HDR version of the saved view
-  (`color.hdrVersionOf`: the screen's own table while held, so the startup's needs no config), then the panel's edits after the view
-  (`pictureGrade` in `app/src/lib/ImageProcessor.js`; `tests/gpu/pictureGrade.test.js` holds it to a JavaScript copy of
-  `ImageProcessorComposer`'s GLSL, which runs in WebGL and so in no test).
-  Against the live HDR canvas: mean 0.03 %, worst 3 %. A save from before this record, or under another config, shows
+  (`color.hdrVersionOf`: the screen's own table while held, so the startup's needs no config), then the Results edits
+  after the view (`EditPipeline`, a `PictureView` finish: see Results edits). Against the live HDR canvas: mean 0.03 %, worst 3 %. A save from before this record, or under another config, shows
   its 8-bit picture.
 - **Every display shows the light it would emit**: only sRGB and Display P3 are canvas encodings (`canvasFitOf()`
   measures it through the config); every other display's view is baked converted for the canvas (`ocio.emulated`,

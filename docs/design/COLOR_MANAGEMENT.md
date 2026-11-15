@@ -205,11 +205,14 @@ saying the environment was left converted.
   (it stopped 0.24–0.27 s at 2048² when the decode ran on the main thread). Not shown, with a reason, when the screen
   shows no HDR, the file predates the record, its config is not the one loaded, or a later `show()` took over; the
   page then shows its 8-bit picture.
-  - The panel's edits go after the view (`PictureView.setGrade`; `pictureGrade` in `app/src/lib/ImageProcessor.js`),
-    as on the 8-bit picture: brightness and contrast on the encoded colour, then saturation, hue and exposure on it
-    decoded with 2.2, encoded with the panel's gamma. Up to white they match `ImageProcessorComposer`'s GLSL, copied into
-    JavaScript, within half a level (`tests/gpu/pictureGrade.test.js`; the WebGL composer itself runs in no test); past white the colour carries on (hue turns it scaled down to white), and
-    below 0 — light outside the canvas's gamut — is kept, so the defaults change nothing (0.13 levels of rounding).
+  - The Results edits go after the view: the app's `EditPipeline` (`app/src/lib/ImageProcessor.js`) is the picture
+    view's finish (`PictureView.setFinish`), which receives the shown picture as light in a half-float target
+    (`Compositor.renderShown`), encodes it again and draws the canvas through the edit stack — the same nodes the 8-bit
+    picture runs on a picture view of its own (`{ hdr: false }`, `showImage()`). Adjust: brightness and contrast on
+    the encoded colour, then saturation, hue and exposure on it decoded with 2.2, encoded with the panel's gamma; up to
+    white within half a level of the WebGL editor it replaced (`tests/gpu/editPipeline.test.js`); past white the colour
+    carries on (hue and the looks scale it down to white and back), and below 0 — light outside the canvas's gamut — is
+    kept, so the defaults change nothing.
   - ⚠️ The compositor's held backdrop takes the exposure whenever it draws through a canvas transform, not by the
     renderer's view: the picture view's renderer has none.
 

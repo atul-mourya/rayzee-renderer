@@ -1,24 +1,27 @@
 import { useRef, useEffect, useState, forwardRef, useMemo, useCallback } from 'react';
-import { debounce } from '@/lib/utils';
-import { RotateCcw, Save, Eye } from "lucide-react";
+import { Eye, Redo2, Undo2 } from "lucide-react";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { Chip } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { TooltipProvider } from '@radix-ui/react-tooltip';
-import { useToast } from '@/hooks/use-toast';
-import { useStore, useAIStore } from '@/store';
+import { useStore, useAIStore, useEditStore, canUndo, canRedo } from '@/store';
 import { fitArea } from '@/lib/aiEdit';
 import { AreaLayer, CompareSwitch, SplitHandle } from './AIOverlay';
-import { ImageProcessorComposer, pictureGrade, hdrShowsPicture } from '@/lib/ImageProcessor';
+import { CropLayer } from './CropOverlay';
+import { EditPipeline, hdrShowsPicture } from '@/lib/ImageProcessor';
+import { effectiveCrop, normaliseEdits, orientedSize, outputSize } from '@/lib/edits';
 import ViewportToolbar from './ViewportToolbar';
 import DimensionDisplay from './DimensionDisplay';
 import { StatusBarPortal } from '@/components/layout/StatusBar/StatusBar';
-import { updateRender, getRenderHDR } from '@/lib/database';
-import { getApp } from '@/lib/appProxy';
+import { getRenderHDR } from '@/lib/database';
+import { useActiveApp } from '@/hooks/useActiveApp';
 import { useColorStatus, ensureDefaultConfig } from '@/lib/colorManagement';
 import { useAutoFitScale } from '@/hooks/useAutoFitScale';
 import { usePanZoom } from '@/hooks/usePanZoom';
 import { generateViewportStyles } from '@/lib/viewport';
+
+const NO_EDITS = normaliseEdits();
+const MAX_SHOWN = 1024;
 
 // Utility function to format render time (compact version)
 const formatRenderTime = ( timeInSeconds ) => {
@@ -46,16 +49,75 @@ const formatRenderTime = ( timeInSeconds ) => {
 
 };
 
+/**
+ * A picture view on `canvasRef`'s canvas drawn through `pipeline`, made while `enabled`. Its disposal waits a task, so
+ * StrictMode's second mount keeps the view rather than making a second renderer on the same canvas.
+ */
+function usePictureView( app, canvasRef, pipeline, { hdr = true, enabled = true, onDraw = null } = {} ) {
+
+	const [ view, setView ] = useState( null );
+	const holder = useRef( null );
+	const onDrawRef = useRef( onDraw );
+	useEffect( () => {
+
+		onDrawRef.current = onDraw;
+
+	} );
+
+	useEffect( () => {
+
+		if ( ! enabled || ! app?.createPictureView || ! canvasRef.current ) return;
+		let h = holder.current;
+		if ( h?.app !== app ) {
+
+			const finish = ( picture, renderer ) => {
+
+				onDrawRef.current?.( picture );
+				pipeline.draw( renderer, picture );
+
+			};
+
+			h = holder.current = { app, timer: null, view: app.createPictureView( canvasRef.current, { hdr } ).then( v => {
+
+				v.setFinish( finish );
+				return v;
+
+			} ) };
+
+		}
+
+		clearTimeout( h.timer );
+		let live = true;
+		h.view.then( v => live && setView( v ), error => console.warn( 'The picture cannot be shown:', error ) );
+		return () => {
+
+			live = false;
+			h.timer = setTimeout( () => {
+
+				if ( holder.current === h ) holder.current = null;
+				setView( null );
+				h.view.then( v => v.dispose(), () => {} );
+
+			} );
+
+		};
+
+	}, [ app, enabled, canvasRef, pipeline, hdr ] );
+
+	return view;
+
+}
+
 const ResultsViewport = forwardRef( function ResultsViewport( props, ref ) {
 
-	// Access store values directly to avoid selector issues
 	const imageData = useStore( state => state.selectedResult );
-	const imageProcessing = useStore( state => state.imageProcessing );
-	const setImageProcessingParam = useStore( state => state.setImageProcessingParam );
 	const setResultsViewportRef = useStore( state => state.setResultsViewportRef );
+	const app = useActiveApp();
 
-	// Hooks
-	const { toast } = useToast();
+	const edits = useEditStore( s => s.edits );
+	const cropping = useEditStore( s => !! s.cropping );
+	const undoable = useEditStore( canUndo );
+	const redoable = useEditStore( canRedo );
 
 	// Refs
 	const viewportRef = useRef( null );
@@ -65,26 +127,35 @@ const ResultsViewport = forwardRef( function ResultsViewport( props, ref ) {
 	const editedCanvasRef = useRef( null );
 	const aiCanvasRef = useRef( null );
 	const hdrCanvasRef = useRef( null );
-	const pictureViewRef = useRef( null );
-	const imageProcessorRef = useRef( null );
+	const hdrPictureRef = useRef( null );
 
-	// Dynamic canvas size based on loaded image dimensions
-	const [ actualCanvasWidth, setActualCanvasWidth ] = useState( 512 );
-	const [ actualCanvasHeight, setActualCanvasHeight ] = useState( 512 );
+	const [ editPipeline ] = useState( () => new EditPipeline() );
+	const [ hdrPipeline ] = useState( () => new EditPipeline() );
+	useEffect( () => () => {
+
+		editPipeline.dispose();
+		hdrPipeline.dispose();
+
+	}, [ editPipeline, hdrPipeline ] );
+
 	const [ pictureSize, setPictureSize ] = useState( null );
 	const [ imageLoadState, setImageLoadState ] = useState( { loaded: false, error: false } );
-	const [ isImageDrawn, setIsImageDrawn ] = useState( false );
 	const [ viewingOriginal, setViewingOriginal ] = useState( false );
-	const [ selectedImageId, setSelectedImageId ] = useState( null );
-	const [ originalSettings, setOriginalSettings ] = useState( null );
 	const longPressActiveRef = useRef( false );
 	const longPressTimeoutRef = useRef( null );
 	const [ isHovering, setIsHovering ] = useState( false );
 	const [ loadedId, setLoadedId ] = useState( null );
-	// The render's saved light, shown as an HDR screen showed it (`app.createPictureView`).
+	// The render's saved light, shown as an HDR screen showed it (`app.createPictureView`): the size it was drawn at.
 	const [ hdrShown, setHdrShown ] = useState( false );
-	const [ grade ] = useState( pictureGrade );
 	const hdrOn = !! useColorStatus()?.hdr?.on;
+	const hdrWanted = !! imageData?.hasHDR && hdrOn;
+
+	const editView = usePictureView( app, editedCanvasRef, editPipeline, { hdr: false } );
+	const hdrView = usePictureView( app, hdrCanvasRef, hdrPipeline, { enabled: hdrWanted, onDraw: picture => {
+
+		hdrPictureRef.current = { width: picture.width, height: picture.height };
+
+	} } );
 
 	const renderId = imageData?.id;
 	const renderImage = imageData?.image;
@@ -97,8 +168,22 @@ const ResultsViewport = forwardRef( function ResultsViewport( props, ref ) {
 	const version = imageData?.aiVersions?.find( v => v.n === shown ) ?? null;
 	const [ drawnVersion, setDrawnVersion ] = useState( null );
 	const showingVersion = !! version && drawnVersion === version.url && ! viewingOriginal;
-	const marking = where === 'part' && !! imageData && ! job;
+	const marking = where === 'part' && !! imageData && ! job && ! cropping;
 	const side = showingVersion && compare === 'side';
+	const croppingShown = cropping && imageLoadState.loaded && ! showingVersion && ! viewingOriginal;
+
+	// The edited picture's size, the whole turned frame while the crop is edited, or the picture as saved.
+	const editedSize = useMemo( () => pictureSize && outputSize( edits.geometry, pictureSize.width, pictureSize.height ), [ edits.geometry, pictureSize ] );
+	const shownSize = useMemo( () => {
+
+		if ( ! pictureSize ) return { width: 512, height: 512 };
+		if ( viewingOriginal || ! editView ) return pictureSize;
+		return outputSize( edits.geometry, pictureSize.width, pictureSize.height, { editing: cropping } );
+
+	}, [ pictureSize, viewingOriginal, editView, edits.geometry, cropping ] );
+	const fit = Math.min( MAX_SHOWN / shownSize.width, MAX_SHOWN / shownSize.height, 1 );
+	const actualCanvasWidth = Math.round( shownSize.width * fit );
+	const actualCanvasHeight = Math.round( shownSize.height * fit );
 
 	// Auto-fit scaling logic
 	const {
@@ -139,18 +224,6 @@ const ResultsViewport = forwardRef( function ResultsViewport( props, ref ) {
 
 	}, [ isManualScale, autoFitScale, resetPan ] );
 
-	// Calculate if changes have been made using useMemo for efficiency
-	const hasChanges = useMemo( () => {
-
-		if ( ! originalSettings || ! imageProcessing ) return false;
-
-		// Check if any property is different from original
-		return Object.keys( originalSettings ).some( key =>
-			originalSettings[ key ] !== imageProcessing[ key ]
-		);
-
-	}, [ originalSettings, imageProcessing ] );
-
 	const loadedIdRef = useRef( null );
 	useEffect( () => {
 
@@ -165,6 +238,13 @@ const ResultsViewport = forwardRef( function ResultsViewport( props, ref ) {
 
 	}, [ imageData ] );
 
+	const editViewRef = useRef( null );
+	useEffect( () => {
+
+		editViewRef.current = editView;
+
+	}, [ editView ] );
+
 	// Expose ref functions
 	useEffect( () => {
 
@@ -173,12 +253,32 @@ const ResultsViewport = forwardRef( function ResultsViewport( props, ref ) {
 		// In React 19, update the ref directly instead of using useImperativeHandle
 		ref.current = {
 			getCanvas: () => originalCanvasRef.current,
-			getEditedCanvas: () => editedCanvasRef.current,
+			// The edited picture, uncropped while the crop is edited, as a copy that stays when the view redraws.
+			getEditedCanvas: () => {
+
+				const view = editViewRef.current;
+				if ( ! view ) return originalCanvasRef.current;
+				const { edits: current, cropping: editing } = useEditStore.getState();
+				editPipeline.set( current );
+				view.redraw();
+				const canvas = editedCanvasRef.current;
+				const copy = document.createElement( 'canvas' );
+				copy.width = canvas.width;
+				copy.height = canvas.height;
+				copy.getContext( '2d' ).drawImage( canvas, 0, 0 );
+				if ( editing ) {
+
+					editPipeline.set( current, { editing: true } );
+					view.redraw();
+
+				}
+
+				return copy;
+
+			},
 			getLoadedId: () => loadedIdRef.current,
-			getImageProcessor: () => imageProcessorRef.current,
 		};
 
-		// Expose via store for real-time color correction (replaces window global)
 		setResultsViewportRef( ref );
 
 		// Cleanup store reference on unmount
@@ -193,81 +293,14 @@ const ResultsViewport = forwardRef( function ResultsViewport( props, ref ) {
 
 		};
 
-	}, [ ref ] );
+	}, [ ref, editPipeline ] );
 
-	// Initialize image processor when canvases are ready
-	useEffect( () => {
+	// Edits made here are written before the page closes; a crop left open is kept.
+	useEffect( () => () => {
 
-		if ( originalCanvasRef.current && editedCanvasRef.current && ! imageProcessorRef.current ) {
-
-			imageProcessorRef.current = new ImageProcessorComposer(
-				originalCanvasRef.current,
-				editedCanvasRef.current
-			);
-
-		}
-
-		return () => {
-
-			if ( imageProcessorRef.current ) {
-
-				imageProcessorRef.current.dispose();
-				imageProcessorRef.current = null;
-
-			}
-
-		};
-
-	}, [] );
-
-	// Apply current image processing settings
-	const applyImageProcessing = useCallback( () => {
-
-		if ( ! imageProcessorRef.current ) return;
-
-		const { brightness, contrast, saturation, hue, exposure, gamma } = imageProcessing;
-
-		// Update all parameters at once for better performance
-		imageProcessorRef.current.setParameters( {
-			brightness,
-			contrast,
-			saturation,
-			hue,
-			exposure,
-			gamma
-		} );
-
-		// Render the result
-		imageProcessorRef.current.render();
-
-	}, [ imageProcessing ] );
-
-	// Create debounced version using useEffect
-	const debouncedApplyRef = useRef();
-	useEffect( () => {
-
-		debouncedApplyRef.current = debounce( () => {
-
-			if ( ! imageProcessorRef.current ) return;
-
-			const { brightness, contrast, saturation, hue, exposure, gamma } = useStore.getState().imageProcessing;
-			imageProcessorRef.current.setParameters( {
-				brightness,
-				contrast,
-				saturation,
-				hue,
-				exposure,
-				gamma
-			} );
-			imageProcessorRef.current.render();
-
-		}, 50 );
-
-		return () => {
-
-			debouncedApplyRef.current?.cancel();
-
-		};
+		const store = useEditStore.getState();
+		store.finishCrop();
+		store.flush();
 
 	}, [] );
 
@@ -275,7 +308,8 @@ const ResultsViewport = forwardRef( function ResultsViewport( props, ref ) {
 	useEffect( () => {
 
 		const imageData = imageDataRef.current;
-		if ( ! originalCanvasRef.current || ! editedCanvasRef.current || ! imageData?.image ) return;
+		useEditStore.getState().open( imageData );
+		if ( ! originalCanvasRef.current || ! imageData?.image ) return;
 
 		const originalCanvas = originalCanvasRef.current;
 		const originalCtx = originalCanvas.getContext( '2d' );
@@ -283,65 +317,27 @@ const ResultsViewport = forwardRef( function ResultsViewport( props, ref ) {
 
 		// Clear canvases and reset state
 		originalCtx.clearRect( 0, 0, originalCanvas.width, originalCanvas.height );
-		setIsImageDrawn( false );
 		setImageLoadState( { loaded: false, error: false } );
 		setLoadedId( null );
 		resetPan();
 
-		// Create image with optimized loading
 		const img = new Image();
-		img.crossOrigin = 'anonymous'; // Enable CORS for 4K images
+		img.crossOrigin = 'anonymous';
 
-		// Direct image loading without complex async wrapper
 		img.onload = () => {
 
 			if ( abortController.signal.aborted ) return;
 
 			try {
 
-				// Set canvas buffer to match image dimensions (preserves aspect ratio and full resolution)
-				// Note: editedCanvas dimensions are handled by ImageProcessor.resize()
-				// to avoid disrupting its WebGL context
 				originalCanvas.width = img.width;
 				originalCanvas.height = img.height;
-				setPictureSize( { width: img.width, height: img.height } );
-
-				// Calculate display dimensions (capped for on-screen display)
-				const maxDim = 1024;
-				const scale = Math.min( maxDim / img.width, maxDim / img.height, 1 );
-				setActualCanvasWidth( Math.round( img.width * scale ) );
-				setActualCanvasHeight( Math.round( img.height * scale ) );
-
-				// Draw image at full size (canvas matches image, no letterboxing needed)
 				originalCtx.drawImage( img, 0, 0 );
-
-				setIsImageDrawn( true );
+				const size = { width: img.width, height: img.height };
+				setPictureSize( size );
+				useEditStore.getState().setPicture( size );
 				setImageLoadState( { loaded: true, error: false } );
-
-				// Resize and update image processor for new dimensions
-				if ( imageProcessorRef.current && ! abortController.signal.aborted ) {
-
-					imageProcessorRef.current.resize( img.width, img.height );
-					imageProcessorRef.current.quad.material.map.needsUpdate = true;
-
-				}
-
-				// Save the ID of the selected image for later use
-				setSelectedImageId( imageData.id );
 				setLoadedId( imageData.id );
-
-				// Store the original color correction settings
-				const settings = { ...imageData.colorCorrection, gamma: imageData.colorCorrection.gamma ?? 2.2 };
-				setOriginalSettings( settings );
-
-				// Update color correction parameters in the store
-				Object.keys( settings ).forEach( param => {
-
-					setImageProcessingParam( param, settings[ param ] );
-
-				} );
-
-				// Default to edited view
 				setViewingOriginal( false );
 
 			} catch ( error ) {
@@ -378,29 +374,47 @@ const ResultsViewport = forwardRef( function ResultsViewport( props, ref ) {
 
 		};
 
-	}, [ renderId, renderImage, setImageProcessingParam, resetPan ] );
+	}, [ renderId, renderImage, resetPan ] );
 
-	// The version shown, at the render's size; a version of another shape keeps its own, centred.
+	// The picture into the edited view, once both are there; then every edit redraws it.
+	useEffect( () => {
+
+		if ( ! editView || ! imageLoadState.loaded ) return;
+		const { edits: current, cropping: editing } = useEditStore.getState();
+		editPipeline.set( current, { editing: !! editing } );
+		editView.showImage( originalCanvasRef.current );
+
+	}, [ editView, loadedId, imageLoadState.loaded, editPipeline ] );
+
+	useEffect( () => {
+
+		if ( ! editView || ! imageLoadState.loaded ) return;
+		editPipeline.set( edits, { editing: cropping } );
+		editView.redraw();
+
+	}, [ edits, cropping, editView, imageLoadState.loaded, editPipeline ] );
+
+	// The version shown, at the edited picture's size; a version of another shape keeps its own, centred.
 	const versionUrl = version?.url;
+	const versionWidth = editedSize?.width, versionHeight = editedSize?.height;
 	useEffect( () => {
 
 		const canvas = aiCanvasRef.current;
-		if ( ! canvas || ! versionUrl || ! imageLoadState.loaded ) return;
+		if ( ! canvas || ! versionUrl || ! imageLoadState.loaded || ! versionWidth ) return;
 		let cancelled = false;
 		const img = new Image();
 		img.onload = () => {
 
 			if ( cancelled ) return;
-			const { width, height } = originalCanvasRef.current;
-			canvas.width = width;
-			canvas.height = height;
-			const scale = Math.min( width / img.width, height / img.height );
+			canvas.width = versionWidth;
+			canvas.height = versionHeight;
+			const scale = Math.min( versionWidth / img.width, versionHeight / img.height );
 			const w = img.width * scale;
 			const h = img.height * scale;
 			const ctx = canvas.getContext( '2d' );
 			ctx.fillStyle = 'black';
-			ctx.fillRect( 0, 0, width, height );
-			ctx.drawImage( img, ( width - w ) / 2, ( height - h ) / 2, w, h );
+			ctx.fillRect( 0, 0, versionWidth, versionHeight );
+			ctx.drawImage( img, ( versionWidth - w ) / 2, ( versionHeight - h ) / 2, w, h );
 			setDrawnVersion( versionUrl );
 
 		};
@@ -413,52 +427,30 @@ const ResultsViewport = forwardRef( function ResultsViewport( props, ref ) {
 
 		};
 
-	}, [ versionUrl, imageLoadState.loaded ] );
-
-	// Apply image processing when parameters change (debounced for 4K performance)
-	useEffect( () => {
-
-		if ( isImageDrawn && imageProcessorRef.current ) {
-
-			// Use direct application for immediate updates (real-time handlers will bypass this)
-			applyImageProcessing();
-
-		}
-
-		// Cleanup debounce on unmount
-		return () => {
-
-			debouncedApplyRef.current?.cancel();
-
-		};
-
-	}, [ imageProcessing, isImageDrawn, applyImageProcessing ] );
+	}, [ versionUrl, imageLoadState.loaded, versionWidth, versionHeight ] );
 
 	// The HDR picture: the render's EXR copy through the same view, exposure and local exposure the screen used.
 	useEffect( () => {
 
 		setHdrShown( false );
-		const app = getApp();
-		if ( ! imageData?.hasHDR || ! hdrOn || ! app?.createPictureView || ! hdrCanvasRef.current ) return;
+		if ( ! hdrView || ! hdrWanted || ! imageData?.id ) return;
 		let cancelled = false;
 
 		( async () => {
 
-			pictureViewRef.current ??= app.createPictureView( hdrCanvasRef.current );
-			const [ file, view ] = await Promise.all( [ getRenderHDR( imageData.id ), pictureViewRef.current ] );
+			const file = await getRenderHDR( imageData.id );
 			if ( ! file || cancelled ) return;
-			grade.set( useStore.getState().imageProcessing );
-			view.setGrade( grade.grade );
-			let result = await view.show( file );
+			const { edits: current, cropping: editing } = useEditStore.getState();
+			hdrPipeline.set( current, { editing: !! editing } );
+			let result = await hdrView.show( file );
 			if ( result.reason === 'needs-config' ) {
 
 				await ensureDefaultConfig();
-				if ( ! cancelled ) result = await view.show( file );
+				if ( ! cancelled ) result = await hdrView.show( file );
 
 			}
 
-			// Its size as drawn (pixel ratio 1): an upscaled save keeps its light at the render's size.
-			if ( ! cancelled ) setHdrShown( result.shown && { width: hdrCanvasRef.current.width, height: hdrCanvasRef.current.height } );
+			if ( ! cancelled ) setHdrShown( result.shown && hdrPictureRef.current );
 
 		} )().catch( error => console.warn( 'The render\'s HDR copy could not be shown:', error ) );
 
@@ -468,49 +460,34 @@ const ResultsViewport = forwardRef( function ResultsViewport( props, ref ) {
 
 		};
 
-	}, [ imageData?.id, imageData?.hasHDR, hdrOn, grade ] );
-
-	useEffect( () => () => {
-
-		pictureViewRef.current?.then( view => view.dispose() );
-		pictureViewRef.current = null;
-
-	}, [] );
+	}, [ imageData?.id, hdrWanted, hdrView, hdrPipeline ] );
 
 	// The edits on the HDR picture too; the original is the picture as saved.
 	useEffect( () => {
 
-		if ( ! hdrShown ) return;
-		grade.set( viewingOriginal ? {} : imageProcessing );
-		pictureViewRef.current?.then( view => view.redraw() );
+		if ( ! hdrShown || ! hdrView ) return;
+		hdrPipeline.set( viewingOriginal ? NO_EDITS : edits, { editing: cropping && ! viewingOriginal } );
+		hdrView.redraw();
 
-	}, [ hdrShown, imageProcessing, viewingOriginal, grade ] );
+	}, [ hdrShown, hdrView, edits, cropping, viewingOriginal, hdrPipeline ] );
 
 	const showHDR = hdrShowsPicture( hdrShown, pictureSize ) && imageLoadState.loaded && ! showingVersion;
 
 	// Long press handling for original/edited view toggling
 	const startLongPress = useCallback( () => {
 
-		// Clear any existing timeout
-		if ( longPressTimeoutRef.current ) {
-
-			clearTimeout( longPressTimeoutRef.current );
-
-		}
-
-		// Start a timeout to activate long press
+		if ( longPressTimeoutRef.current ) clearTimeout( longPressTimeoutRef.current );
 		longPressTimeoutRef.current = setTimeout( () => {
 
 			setViewingOriginal( true );
 			longPressActiveRef.current = true;
 
-		}, 200 ); // 200ms delay for long press to activate
+		}, 200 );
 
 	}, [] );
 
 	const endLongPress = useCallback( () => {
 
-		// Clear the timeout
 		if ( longPressTimeoutRef.current ) {
 
 			clearTimeout( longPressTimeoutRef.current );
@@ -518,7 +495,7 @@ const ResultsViewport = forwardRef( function ResultsViewport( props, ref ) {
 
 		}
 
-		// If long press was active, switch back to edited view (read ref to avoid stale closure)
+		// Read the ref: the state may be stale in this closure.
 		if ( longPressActiveRef.current ) {
 
 			setViewingOriginal( false );
@@ -540,18 +517,9 @@ const ResultsViewport = forwardRef( function ResultsViewport( props, ref ) {
 
 	}, [] );
 
-	// Cleanup timeout on unmount
-	useEffect( () => {
+	useEffect( () => () => {
 
-		return () => {
-
-			if ( longPressTimeoutRef.current ) {
-
-				clearTimeout( longPressTimeoutRef.current );
-
-			}
-
-		};
+		if ( longPressTimeoutRef.current ) clearTimeout( longPressTimeoutRef.current );
 
 	}, [] );
 
@@ -566,72 +534,6 @@ const ResultsViewport = forwardRef( function ResultsViewport( props, ref ) {
 		transform: `translate(${panOffset.x}px, ${panOffset.y}px) scale(${viewportScale / 100})`,
 	} ), [ baseWrapperStyle, panOffset.x, panOffset.y, viewportScale ] );
 
-	// UI handlers
-	const resetImageProcessing = () => {
-
-		// Check if we have original settings to reset to
-		if ( originalSettings ) {
-
-			// Reset each parameter to its original value
-			Object.keys( originalSettings ).forEach( param => {
-
-				useStore.getState().setImageProcessingParam( param, originalSettings[ param ] );
-
-			} );
-
-			toast( {
-				title: "Processing Reset",
-				description: "Image processing parameters have been reset to original values.",
-			} );
-
-		} else {
-
-			// If no original settings, use the default reset
-			useStore.getState().resetImageProcessing();
-
-			toast( {
-				title: "Processing Reset",
-				description: "Image processing parameters have been reset to defaults.",
-			} );
-
-		}
-
-	};
-
-	// Save edited image with color correction settings
-	const saveEditedImage = async () => {
-
-		if ( ! imageData || ! editedCanvasRef.current ) return;
-
-		try {
-
-			const colorCorrectionSettings = { ...imageProcessing };
-			await updateRender( selectedImageId, { colorCorrection: colorCorrectionSettings, isEdited: true } );
-
-			// Update originalSettings to match the newly saved settings
-			setOriginalSettings( { ...colorCorrectionSettings } );
-
-			toast( {
-				title: "Edited Image Saved",
-				description: "Image with color correction settings has been saved.",
-			} );
-
-			// Dispatch event to refresh the results panel
-			window.dispatchEvent( new Event( 'render-saved' ) );
-
-		} catch ( error ) {
-
-			console.error( "Error saving edited image:", error );
-			toast( {
-				title: "Error Saving Image",
-				description: "There was a problem saving your edited image.",
-				variant: "destructive",
-			} );
-
-		}
-
-	};
-
 	// Wrap auto-fit reset to also reset pan
 	const handleResetToAutoFitWithPan = useCallback( () => {
 
@@ -644,13 +546,30 @@ const ResultsViewport = forwardRef( function ResultsViewport( props, ref ) {
 	const resultsToolbarRef = useRef( null );
 
 	const ai = useAIStore.getState();
+	const editStore = useEditStore.getState();
 	const fitted = useMemo( () => {
 
-		if ( ! area || ! imageData?.width ) return area ?? null;
-		const { x, y, w, h } = fitArea( area, imageData.width, imageData.height );
-		return { x: x / imageData.width, y: y / imageData.height, w: w / imageData.width, h: h / imageData.height };
+		if ( ! area || ! editedSize ) return area ?? null;
+		const { x, y, w, h } = fitArea( area, editedSize.width, editedSize.height );
+		return { x: x / editedSize.width, y: y / editedSize.height, w: w / editedSize.width, h: h / editedSize.height };
 
-	}, [ area, imageData?.width, imageData?.height ] );
+	}, [ area, editedSize ] );
+
+	const historyButton = ( label, Icon, enabled, onClick ) => (
+		<Tooltip>
+			<TooltipTrigger asChild>
+				<Button variant="secondary" size="icon-sm" rounded aria-label={label} onClick={onClick} disabled={! enabled}>
+					<Icon size={12} className={enabled ? 'text-foreground/70' : 'text-foreground/30'} />
+				</Button>
+			</TooltipTrigger>
+			<TooltipContent>
+				<p className="text-xs">{label}</p>
+			</TooltipContent>
+		</Tooltip>
+	);
+
+	const showHistory = !! imageData && ( undoable || redoable ) && ! viewingOriginal;
+	const plainCanvas = { width: `${actualCanvasWidth}px`, height: `${actualCanvasHeight}px`, imageRendering: 'pixelated' };
 
 	return (
 		<div
@@ -659,7 +578,11 @@ const ResultsViewport = forwardRef( function ResultsViewport( props, ref ) {
 			style={{ cursor: isPanning ? 'grabbing' : ( imageData ? 'grab' : 'default' ) }}
 			onPointerDown={imageData ? handlePointerDown : undefined}
 		>
-			{imageData && ( isHovering || viewingOriginal ) && ! marking && (
+			{imageData && croppingShown && (
+				<Chip className="absolute top-2 left-1/2 -translate-x-1/2 z-20">Drag the frame or its corners · Enter keeps it, Esc cancels</Chip>
+			)}
+
+			{imageData && ( isHovering || viewingOriginal ) && ! marking && ! croppingShown && (
 				<Chip className="absolute top-2 left-1/2 -translate-x-1/2 z-20">
 					<Eye size={12} className="text-on-scrim-400" />
 					{viewingOriginal ? "Viewing Original" : "Press & Hold to See Original"}
@@ -679,41 +602,17 @@ const ResultsViewport = forwardRef( function ResultsViewport( props, ref ) {
 				</div>
 			)}
 
-			{/* Save button only appears when changes have been made */}
-			{imageData && hasChanges && ! viewingOriginal && ! showingVersion && (
-				<div className="absolute top-2 right-20 z-20 flex space-x-2">
-					<Button size="xs" rounded onClick={saveEditedImage}>
-						<Save size={12} className="mr-1" />
-						Save
-					</Button>
-				</div>
-			)}
-
-			{/* Reset Processing button - specific to image editing */}
-			{imageData && hasChanges && ! viewingOriginal && (
-				<div className="absolute bottom-2 left-2 z-20">
+			{showHistory && (
+				<div className="absolute bottom-2 left-2 z-20 flex gap-1">
 					<TooltipProvider>
-						<Tooltip>
-							<TooltipTrigger asChild>
-								<Button
-									variant="secondary" size="icon-sm" rounded
-									onClick={resetImageProcessing}
-									disabled={! imageData || viewingOriginal || ! hasChanges}
-								>
-									<RotateCcw size={12} className={`${( ! imageData || viewingOriginal || ! hasChanges ) ? 'text-foreground/30' : 'text-foreground/70'}`} />
-								</Button>
-							</TooltipTrigger>
-							<TooltipContent>
-								<p className="text-xs">Reset Processing</p>
-							</TooltipContent>
-						</Tooltip>
+						{historyButton( 'Undo', Undo2, undoable, editStore.undo )}
+						{historyButton( 'Redo', Redo2, redoable, editStore.redo )}
 					</TooltipProvider>
 				</div>
 			)}
 
-			{/* Render time display */}
 			{imageData && imageData.renderTime && ! viewingOriginal && (
-				<Chip className={`absolute ${hasChanges ? 'bottom-2 left-12' : 'bottom-2 left-2'} z-20`}>
+				<Chip className={`absolute ${showHistory ? 'bottom-2 left-20' : 'bottom-2 left-2'} z-20`}>
 					⏱ {formatRenderTime( imageData.renderTime )}
 				</Chip>
 			)}
@@ -764,27 +663,22 @@ const ResultsViewport = forwardRef( function ResultsViewport( props, ref ) {
 						</div>
 					)}
 
-					{/* Canvas for edited image - optimized for 4K */}
+					{/* The edited picture: every edit, drawn on the GPU */}
 					<canvas
 						ref={editedCanvasRef}
 						style={{
-							width: `${actualCanvasWidth}px`,
-							height: `${actualCanvasHeight}px`,
-							backgroundColor: 'black',
-							display: ( viewingOriginal || showHDR || ! imageLoadState.loaded || ( showingVersion && compare === 'version' ) ) ? 'none' : 'block',
-							imageRendering: 'pixelated' // Better for 4K images
+							...plainCanvas,
+							display: ( ! editView || viewingOriginal || showHDR || ! imageLoadState.loaded || ( showingVersion && compare === 'version' ) ) ? 'none' : 'block',
 						}}
 					/>
 
-					{/* Canvas for original image - optimized for 4K */}
+					{/* The picture as saved: held to see the original, or until the edited view is ready */}
 					<canvas
 						ref={originalCanvasRef}
 						style={{
-							width: `${actualCanvasWidth}px`,
-							height: `${actualCanvasHeight}px`,
+							...plainCanvas,
 							backgroundColor: 'black',
-							display: ( viewingOriginal && imageLoadState.loaded && ! showHDR ) ? 'block' : 'none',
-							imageRendering: 'pixelated' // Better for 4K images
+							display: ( ( viewingOriginal || ! editView ) && imageLoadState.loaded && ! showHDR ) ? 'block' : 'none',
 						}}
 					/>
 
@@ -794,7 +688,6 @@ const ResultsViewport = forwardRef( function ResultsViewport( props, ref ) {
 						style={{
 							width: `${actualCanvasWidth}px`,
 							height: `${actualCanvasHeight}px`,
-							backgroundColor: 'black',
 							display: showHDR ? 'block' : 'none',
 						}}
 					/>
@@ -813,8 +706,20 @@ const ResultsViewport = forwardRef( function ResultsViewport( props, ref ) {
 
 					{showingVersion && compare === 'slider' && <SplitHandle split={split} onChange={ai.setSplit} label={`Compare the render with v${version.n}`} />}
 
-					{where === 'part' && imageLoadState.loaded && ! side && (
+					{where === 'part' && imageLoadState.loaded && ! side && ! croppingShown && (
 						<AreaLayer fitted={fitted} editable={marking} onChange={next => ai.setArea( renderId, next )} />
+					)}
+
+					{croppingShown && pictureSize && (
+						<CropLayer
+							rect={effectiveCrop( edits.geometry, pictureSize.width, pictureSize.height )}
+							aspect={edits.geometry.aspect}
+							frame={orientedSize( edits.geometry, pictureSize.width, pictureSize.height )}
+							angle={edits.geometry.angle}
+							onChange={crop => editStore.setGeometry( { ...useEditStore.getState().edits.geometry, crop }, 'crop' )}
+							onDone={editStore.finishCrop}
+							onCancel={editStore.cancelCrop}
+						/>
 					)}
 
 					{/* Message when no image is selected */}
@@ -826,9 +731,9 @@ const ResultsViewport = forwardRef( function ResultsViewport( props, ref ) {
 				</div>
 			</div>
 
-			{pictureSize && imageLoadState.loaded && (
+			{editedSize && imageLoadState.loaded && (
 				<StatusBarPortal slot="center">
-					<DimensionDisplay dimension={pictureSize} />
+					<DimensionDisplay dimension={editedSize} />
 				</StatusBarPortal>
 			)}
 			<StatusBarPortal slot="right">

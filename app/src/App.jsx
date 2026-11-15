@@ -11,7 +11,7 @@ import {
 	ResizablePanel,
 	ResizablePanelGroup,
 } from "@/components/ui/resizable";
-import { useStore, useCameraStore } from '@/store';
+import { useStore, useCameraStore, useEditStore } from '@/store';
 import { getApp } from '@/lib/appProxy';
 import { createLogger } from 'rayzee';
 import { shortcutFor } from '@/lib/keyboardShortcuts';
@@ -71,6 +71,8 @@ const App = () => {
 			if ( action === 'deselect' ) handleDeselect();
 			else if ( action === 'resetCamera' ) useCameraStore.getState().handleResetCamera();
 			else if ( action === 'playPause' ) handleTogglePlayPause();
+			else if ( action === 'undo' ) useEditStore.getState().undo();
+			else if ( action === 'redo' ) useEditStore.getState().redo();
 
 		};
 

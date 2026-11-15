@@ -1,4 +1,6 @@
-import { DataTexture, HalfFloatType, NearestFilter, RGBAFormat } from 'three';
+import { DataTexture, HalfFloatType, LinearFilter, LinearSRGBColorSpace, NearestFilter, NoToneMapping, RGBAFormat, RenderTarget, Texture, UnsignedByteType } from 'three';
+import { MeshBasicNodeMaterial, QuadMesh } from 'three/webgpu';
+import { screenUV, texture as textureNode, vec4 } from 'three/tsl';
 import { Compositor } from '../../pipeline/Compositor.js';
 import { LocalExposure } from './LocalExposure.js';
 import { PipelineContext } from '../../pipeline/PipelineContext.js';
@@ -11,18 +13,21 @@ const HEADER_BYTES = 1 << 18;
 /**
  * A saved render shown again as an HDR screen showed it: the EXR `exportImage` wrote, through the same compositor,
  * local exposure and HDR version of the view, at the exposure the file records (`getProvenance().display`). It draws
- * on a canvas of its own with a renderer on the main one's device, so the live view is left as it is.
+ * on a canvas of its own with a renderer on the main one's device, so the live view is left as it is. With
+ * `{ hdr: false }` the canvas is an ordinary 8-bit one, for `showImage()`.
  *
  *   const view = await app.createPictureView( canvas );
  *   const { shown, reason } = await view.show( exrBlob );
  *   view.setGrade( c => c.mul( 1.1 ) );   // a host's own edit, on the shown (encoded, extended) colour
+ *   view.setFinish( ( picture, renderer ) => … );   // or the host draws the canvas from the shown picture itself
  */
 export class PictureView {
 
-	constructor( { color, device }, canvas ) {
+	constructor( { color, device }, canvas, { hdr = true } = {} ) {
 
 		this._color = color;
 		this._device = device;
+		this._hdr = hdr;
 		this.canvas = canvas;
 		this.renderer = null;
 		this._compositor = null;
@@ -34,12 +39,20 @@ export class PictureView {
 		this._grade = null;
 		this._applied = null;
 		this._ticket = 0;
+		// What is shown: null, 'exr' or 'image'; `_shown` is the picture a finish reads.
+		this._source = null;
+		this._size = null;
+		this._shown = null;
+		this._stale = false;
+		this._finish = null;
+		this._target = null;
+		this._copy = null;
 
 	}
 
 	async init() {
 
-		this.renderer = await createRendererOnDevice( this._device, { canvas: this.canvas, outputType: HalfFloatType, depth: false } );
+		this.renderer = await createRendererOnDevice( this._device, { canvas: this.canvas, outputType: this._hdr ? HalfFloatType : UnsignedByteType, depth: false } );
 		this._compositor = new Compositor( this.renderer );
 		this._local = new LocalExposure( this.renderer );
 		return this;
@@ -58,7 +71,7 @@ export class PictureView {
 
 		const ticket = ++ this._ticket;
 		const superseded = { shown: false, reason: 'superseded' };
-		if ( ! this._color?.hdrOutput ) return { shown: false, reason: 'hdr-off' };
+		if ( ! this._hdr || ! this._color?.hdrOutput ) return { shown: false, reason: 'hdr-off' };
 
 		const bytes = async end => new Uint8Array( file instanceof Blob ? await file.slice( 0, end ).arrayBuffer() : file.slice( 0, end ) );
 		let record = exrAttribute( await bytes( HEADER_BYTES ), 'rayzee' );
@@ -107,7 +120,6 @@ export class PictureView {
 		context.setTexture( 'pathtracer:color', texture );
 		context.setStates( { 'pathtracer:backdrop': display.backdrop ?? null, 'pathtracer:samples': details.render?.samples ?? 0 } );
 
-		renderer.setSize( width, height, false );
 		renderer.toneMappingExposure = display.exposure ?? 1;
 		holdCanvasColorSpace( this.canvas, table.ocio.canvas );
 
@@ -126,8 +138,46 @@ export class PictureView {
 		compositor.setDisplayGain( shaped ? this._gain : null );
 		this._tsl = table.tsl;
 		this._applyTransform();
-		takeFrameStep( this.renderer );
-		compositor.render( context );
+		this._source = 'exr';
+		this._size = { width, height };
+		this._stale = true;
+		this._present();
+
+	}
+
+	/**
+	 * An 8-bit picture shown as it is (an image, bitmap or canvas, its colours already encoded for the screen), through
+	 * the finish when one is set. The grade does not apply.
+	 * @param {HTMLImageElement|HTMLCanvasElement|ImageBitmap|OffscreenCanvas} image
+	 */
+	showImage( image ) {
+
+		this._ticket ++;
+		this._texture?.dispose();
+		const texture = this._texture = new Texture( image );
+		texture.flipY = false;
+		texture.minFilter = texture.magFilter = LinearFilter;
+		texture.generateMipmaps = false;
+		texture.needsUpdate = true;
+		this._source = 'image';
+		this._size = { width: image.width, height: image.height };
+		this._shown = { texture, width: image.width, height: image.height, light: false };
+		this._present();
+
+	}
+
+	/**
+	 * The host draws the canvas: `finish( picture, renderer )`, `picture` = { texture, width, height, light }, the shown
+	 * picture — `show()`'s after the view and the grade as light (1 = SDR white, the canvas's primaries, its encoding
+	 * undone), or `showImage()`'s as given (`light: false`). The finish sizes the canvas and draws it with `renderer`;
+	 * it is called again on every `redraw()`. Null draws the picture straight.
+	 */
+	setFinish( finish ) {
+
+		if ( finish === this._finish ) return;
+		this._finish = finish;
+		this._stale = true;
+		this._present();
 
 	}
 
@@ -140,16 +190,83 @@ export class PictureView {
 		if ( grade === this._grade ) return;
 		this._grade = grade;
 		this._applyTransform();
-		this.redraw();
+		this._stale = true;
+		this._present();
 
 	}
 
-	/** Draws the shown picture again, after a grade's uniforms changed. */
+	/** Draws the shown picture again, after a grade's or a finish's uniforms changed. */
 	redraw() {
 
-		if ( ! this._tsl ) return;
-		takeFrameStep( this.renderer );
-		this._compositor.render( this._context );
+		this._present();
+
+	}
+
+	_present() {
+
+		const renderer = this.renderer;
+		if ( ! this._source || ! renderer ) return;
+		takeFrameStep( renderer );
+
+		if ( this._source === 'exr' && ! this._finish ) {
+
+			renderer.setSize( this._size.width, this._size.height, false );
+			this._compositor.render( this._context );
+			return;
+
+		}
+
+		if ( this._source === 'exr' && this._stale ) {
+
+			if ( ! this._target ) {
+
+				this._target = new RenderTarget( 1, 1, { type: HalfFloatType, depthBuffer: false } );
+				this._target.texture.minFilter = this._target.texture.magFilter = LinearFilter;
+				this._target.texture.generateMipmaps = false;
+
+			}
+
+			const { width, height } = this._size;
+			this._target.setSize( width, height );
+			this._compositor.renderShown( this._context, this._target );
+			this._shown = { texture: this._target.texture, width, height, light: true };
+
+		}
+
+		this._stale = false;
+		if ( this._finish ) this._finish( this._shown, renderer );
+		else this._drawStraight( this._shown, renderer );
+
+	}
+
+	// Without a finish, an 8-bit picture as it is.
+	_drawStraight( picture, renderer ) {
+
+		if ( ! this._copy ) {
+
+			const material = new MeshBasicNodeMaterial();
+			const sample = textureNode( picture.texture, screenUV );
+			material.outputNode = vec4( sample.rgb.mul( sample.a ), sample.a );
+			this._copy = { material, sample, quad: new QuadMesh( material ) };
+
+		}
+
+		this._copy.sample.value = picture.texture;
+		renderer.setSize( picture.width, picture.height, false );
+		const { toneMapping, outputColorSpace } = renderer;
+		renderer.toneMapping = NoToneMapping;
+		renderer.outputColorSpace = LinearSRGBColorSpace;
+		try {
+
+			renderer.setRenderTarget( null );
+			this._copy.quad.render( renderer );
+
+		} finally {
+
+			renderer.toneMapping = toneMapping;
+			renderer.outputColorSpace = outputColorSpace;
+
+		}
 
 	}
 
@@ -169,8 +286,11 @@ export class PictureView {
 		this._compositor?.dispose();
 		this._local?.dispose();
 		this._texture?.dispose();
+		this._target?.dispose();
+		this._copy?.material.dispose();
 		disposeRenderer( this.renderer );
 		this.renderer = this._compositor = this._local = this._texture = this._tsl = this._grade = this._applied = this._color = null;
+		this._target = this._copy = this._finish = this._shown = this._source = null;
 
 	}
 

@@ -11,13 +11,15 @@ import { Row } from '@/components/ui/row';
 import { useToast } from '@/hooks/use-toast';
 import { useLocalStorage } from '@/hooks/useLocalStorage';
 import { useActiveApp } from '@/hooks/useActiveApp';
-import { useStore, useAnimationStore, useAIStore, videoDuration } from '@/store';
+import { useStore, useAnimationStore, useAIStore, useEditStore, videoDuration } from '@/store';
 import { useColorStatus, colorManagement, ensureDefaultConfig } from '@/lib/colorManagement';
 import { exportSpaceOptions, workingSpaceLabel } from '@/lib/colorLabels';
 import {
 	PICTURE_FORMATS, VIDEO_FORMATS, LAYERS, DEFAULT_PICTURE, PICTURE_SETTINGS_KEY,
 	holdsLight, takesGainMap, isLossy, isFrameSequence, canSaveUpscaled, exportPicture, exportSavedRender, canPickFolder, videoBitrate,
+	LONG_EDGES, sizeForLongEdge,
 } from '@/lib/exporter';
+import { outputSize } from '@/lib/edits';
 import { pickFramesFolder } from '@/lib/folders';
 import { getAIVersionFile } from '@/lib/database';
 
@@ -254,12 +256,34 @@ function SavedPicture( { settings, update, result, source, setSource, formats: a
 	const formats = available.map( f => ( holdsLight( f.value ) && ! result.hasHDR ? { ...f, disabled: true, hint: 'this render kept no full-range copy' } : f ) );
 	const format = holdsLight( settings.format ) && ! result.hasHDR ? 'png' : settings.format;
 
+	// The chosen picture's own size: the edited one is cropped.
+	const picture = useEditStore( s => s.picture );
+	const geometry = useEditStore( s => s.edits.geometry );
+	const version = result.aiVersions?.find( v => `v${v.n}` === source );
+	const full = version ? ( version.width ? { width: version.width, height: version.height } : null )
+		: picture && ( source === 'original' ? picture : outputSize( geometry, picture.width, picture.height ) );
+	const sizes = full && [
+		{ value: 0, label: 'Full size', hint: `${full.width} × ${full.height}` },
+		...LONG_EDGES.filter( edge => edge < Math.max( full.width, full.height ) ).map( edge => {
+
+			const scaled = sizeForLongEdge( full.width, full.height, edge );
+			return { value: edge, label: `${edge} px`, hint: `${scaled.width} × ${scaled.height}` };
+
+		} ),
+	];
+	const edge = sizes?.some( o => o.value === settings.longEdge ) ? settings.longEdge : 0;
+	const size = full && sizeForLongEdge( full.width, full.height, edge );
+
 	return (
 		<div className="space-y-3">
 			<Choice text="Format" value={format} options={formats} onChange={f => update( { format: f } )} />
 			{! holdsLight( format ) && <Choice text="Picture" value={source} options={sources} onChange={setSource} />}
+			{! holdsLight( format ) && sizes?.length > 1 && (
+				<Choice text="Size" tip="Scale the picture down for the web or email, its shape kept: the length of its long side." value={edge} options={sizes} onChange={v => update( { longEdge: Number( v ) } )} />
+			)}
 			{isLossy( format ) && <Quality value={settings.quality} onChange={quality => update( { quality } )} />}
 			{holdsLight( format ) && <p className="control-hint">{format === 'exr' ? 'The full-range copy, as it was saved.' : 'The full-range copy, converted to Radiance HDR.'}</p>}
+			{! holdsLight( format ) && size && summary( size.width, size.height, PICTURE_FORMATS.find( f => f.value === format )?.label )}
 		</div>
 	);
 
@@ -377,7 +401,7 @@ const ExportDialog = () => {
 				const version = savedSource.startsWith( 'v' ) ? Number( savedSource.slice( 1 ) ) : null;
 				const canvas = version ? await versionCanvas( result.id, version ) : savedSource === 'original' ? viewport?.getCanvas() : viewport?.getEditedCanvas();
 				const format = holdsLight( picture.format ) && ! result.hasHDR ? 'png' : picture.format;
-				const name = await exportSavedRender( { id: result.id, canvas, format, quality: picture.quality, suffix: version ? `-v${version}` : '' } );
+				const name = await exportSavedRender( { id: result.id, canvas, format, quality: picture.quality, suffix: version ? `-v${version}` : '', longEdge: picture.longEdge } );
 				toast( { title: 'Saved', description: name } );
 
 			} else {

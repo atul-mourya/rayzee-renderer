@@ -87,8 +87,10 @@ Other choices, depending on the format:
 A line at the bottom shows the size and what the file will hold. Press **Export**; the file downloads as
 `render-` followed by the date and time.
 
-For a saved render, **Picture** chooses **With your edits** (the Results page's adjustments), **As rendered**, or one of
-its AI versions. EXR and HDR are offered only when the render was saved with **Keep HDR copy**.
+For a saved render, **Picture** chooses **With your edits** (the Results page's edits: cropped, turned, with its looks
+and effects), **As rendered**, or one of its AI versions, and **Size** scales it down for the web or email: its long side
+at 3840, 2560, 1920, 1280 or 1080 pixels, shape kept (only sizes smaller than the picture are offered). EXR and HDR are
+offered only when the render was saved with **Keep HDR copy**, and hold its light as saved, without edits.
 
 ## Videos
 

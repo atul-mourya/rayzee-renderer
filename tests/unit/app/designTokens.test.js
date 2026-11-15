@@ -35,6 +35,7 @@ const ALLOWED = {
 const OWN_BUTTONS = {
 	'components/layout/RightSideBar/AITab.jsx': 2, // a reference's remove mark, a picture to start from
 	'components/layout/RightSideBar/ColorManagementSection.jsx': 1, // a section's disclosure row
+	'components/layout/RightSideBar/FiltersTab.jsx': 1, // a look's picture tile
 	'components/layout/RightSideBar/LightsTab.jsx': 3, // gobo and IES tiles and their picker
 	'components/layout/TopBar/RecentDialog.jsx': 1, // a recent scene's row
 	'components/layout/Viewports/StatsMeter.jsx': 1, // a value over the render, typed into when clicked

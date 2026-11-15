@@ -9,8 +9,9 @@ import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { AlertCircle, Clock, Loader2, Plus, Sparkles, Trash2, X } from 'lucide-react';
-import { useStore, useAIStore, nextVersionOf } from '@/store';
+import { useStore, useAIStore, useEditStore, nextVersionOf } from '@/store';
 import { IDEAS, MAX_REFERENCES, SCOPES, SIZES } from '@/lib/aiEdit';
+import { outputSize } from '@/lib/edits';
 
 const STUDIO_URL = 'https://aistudio.google.com/app/apikey';
 
@@ -311,13 +312,16 @@ function Editing( { render, where } ) {
 	const store = useAIStore.getState();
 	const versions = render.aiVersions ?? [];
 	const current = versions.find( v => v.n === shown );
-	const base = current ?? render;
+	// The render as edited: cropped and turned.
+	const picture = useEditStore( s => s.renderId === id ? s.picture : null );
+	const geometry = useEditStore( s => s.edits.geometry );
+	const edited = picture ? outputSize( geometry, picture.width, picture.height ) : render;
 
 	const title = current
 		? `v${current.n} · ${current.prompt || 'AI version'}`
 		: `Render · ${new Date( render.timestamp ).toLocaleDateString( undefined, { day: 'numeric', month: 'short' } )}`;
 	const meta = [
-		current ? describeVersion( current ) : base.width && `${base.width} × ${base.height} · Adjust edits included`,
+		current ? describeVersion( current ) : edited.width && `${edited.width} × ${edited.height} · your edits included`,
 		where === 'part' && 'the marked area',
 	].filter( Boolean ).join( ' · ' );
 
@@ -347,7 +351,7 @@ function Editing( { render, where } ) {
 	return (
 		<>
 			<div aria-label="Versions of this render" className="flex gap-2 overflow-x-auto p-0.5">
-				{tile( 'render', shown === 'render', () => store.show( id, 'render' ), render.thumb, 'Render', 'As rendered, with the Adjust tab’s edits' )}
+				{tile( 'render', shown === 'render', () => store.show( id, 'render' ), render.thumb, 'Render', 'As rendered, with your edits' )}
 				{versions.map( v => tile( v.n, shown === v.n, () => store.show( id, v.n ), v.url, `v${v.n}`, v.prompt ) )}
 				{job && (
 					<div className="flex flex-col gap-1 shrink-0" title={job.prompt}>

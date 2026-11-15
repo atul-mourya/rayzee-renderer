@@ -13,7 +13,7 @@ import { encodeEXR } from '@/core/output/ImageEncoders.js';
 import { setApp } from '@/lib/appProxy';
 import {
 	videoBitrate, holdsLight, takesGainMap, isLossy, isFrameSequence, canSaveUpscaled, readVideoSettings, fileStem, downloadBlob,
-	exportPicture, exportSavedRender, canPickFolder, frameName, openFrameSink, DEFAULT_VIDEO, VIDEO_SETTINGS_KEY,
+	exportPicture, exportSavedRender, sizeForLongEdge, canPickFolder, frameName, openFrameSink, DEFAULT_VIDEO, VIDEO_SETTINGS_KEY,
 } from '@/lib/exporter';
 
 let downloads, blobs;
@@ -282,6 +282,25 @@ describe( 'exportSavedRender', () => {
 		expect( downloads.map( d => d.name ) ).toEqual( [ 'render-3.jpg', 'render-3.png', 'render-3.webp' ] );
 		expect( blobOf( downloads[ 2 ].url ).type ).toBe( 'image/webp' );
 		expect( database.getRenderHDR ).not.toHaveBeenCalled();
+
+	} );
+
+	it( 'scales the picture down to a long side, shape kept, and never up', async () => {
+
+		const scaled = { width: 0, height: 0, getContext: () => ( { drawImage: vi.fn() } ), toBlob: vi.fn( ( callback, type ) => callback( new Blob( [ 'small' ], { type } ) ) ) };
+		const element = document.createElement;
+		document.createElement = tag => ( tag === 'canvas' ? scaled : element( tag ) );
+		canvas.width = 4000;
+		canvas.height = 1000;
+		await exportSavedRender( { id: 3, canvas, format: 'png', longEdge: 1920 } );
+		expect( [ scaled.width, scaled.height ] ).toEqual( [ 1920, 480 ] );
+		expect( scaled.toBlob ).toHaveBeenCalled();
+		expect( canvas.toBlob ).not.toHaveBeenCalled();
+
+		await exportSavedRender( { id: 3, canvas, format: 'png', longEdge: 8000 } );
+		expect( canvas.toBlob ).toHaveBeenCalledTimes( 1 );
+		expect( sizeForLongEdge( 1000, 3000, 1080 ) ).toEqual( { width: 360, height: 1080 } );
+		expect( sizeForLongEdge( 1000, 3000, 0 ) ).toEqual( { width: 1000, height: 3000 } );
 
 	} );
 

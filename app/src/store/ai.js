@@ -39,7 +39,7 @@ function writeKey( key ) {
 /** The number the next AI version of `render` gets. */
 export const nextVersionOf = render => render?.aiNext ?? ( render?.aiVersions ?? [] ).reduce( ( m, v ) => Math.max( m, v.n ), 0 ) + 1;
 
-/** The picture an edit starts from: the render as shown, Adjust edits included, or one of its versions. */
+/** The picture an edit starts from: the render as shown, its edits included, or one of its versions. */
 async function baseFor( render, from ) {
 
 	if ( from !== 'render' ) {

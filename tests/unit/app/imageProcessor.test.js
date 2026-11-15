@@ -1,138 +1,139 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+import { ACESFilmicToneMapping, DataUtils, LinearSRGBColorSpace, NoToneMapping, SRGBColorSpace, Texture } from 'three';
+import { EditPipeline, hdrShowsPicture } from '@/lib/ImageProcessor';
+import { lookTable, sourceTransform, normaliseEdits } from '@/lib/edits';
 
-const renderers = vi.hoisted( () => [] );
+// What the pipeline asks of a renderer, recorded: each draw's target and how it is set to write.
+function fakeRenderer( width = 1, height = 1 ) {
 
-vi.mock( 'three', async importOriginal => ( {
-	...await importOriginal(),
-	WebGLRenderer: class {
+	const r = { toneMapping: ACESFilmicToneMapping, outputColorSpace: SRGBColorSpace, size: { width, height }, target: null, draws: [] };
+	r.getSize = v => v.set( r.size.width, r.size.height );
+	r.setSize = vi.fn( ( w, h ) => {
 
-		constructor( parameters ) {
-
-			this.parameters = parameters;
-			this.setSize = vi.fn();
-			this.dispose = vi.fn();
-			renderers.push( this );
-
-		}
-
-		getPixelRatio() {
-
-			return 1;
-
-		}
-
-		getSize( target ) {
-
-			return target.set( 8, 4 );
-
-		}
-
-	},
-} ) );
-
-import { LinearFilter } from 'three';
-import { ImageProcessorComposer, hdrShowsPicture } from '@/lib/ImageProcessor';
-
-describe( 'ImageProcessorComposer', () => {
-
-	let input, output, processor;
-
-	beforeEach( () => {
-
-		renderers.length = 0;
-		input = { width: 8, height: 4 };
-		output = {};
-		processor = new ImageProcessorComposer( input, output );
+		r.size = { width: w, height: h };
 
 	} );
+	r.setRenderTarget = t => {
 
-	const uniforms = () => ( { ...processor.brightnessContrastPass.uniforms, ...processor.colorAdjustmentPass.uniforms } );
-	const values = names => Object.fromEntries( names.map( n => [ n, uniforms()[ n ].value ] ) );
+		r.target = t;
 
-	it( 'needs a picture to work on', () => {
+	};
 
-		expect( () => new ImageProcessorComposer( null ) ).toThrow( 'Input canvas is required' );
+	r.render = () => r.draws.push( { target: r.target, toneMapping: r.toneMapping, colorSpace: r.outputColorSpace } );
+	return r;
 
-	} );
+}
 
-	it( 'draws into the output canvas at the picture\'s size, keeping what it drew', () => {
+const picture = ( width, height ) => ( { texture: new Texture(), width, height, light: false } );
 
-		expect( output ).toMatchObject( { width: 8, height: 4 } );
-		expect( renderers[ 0 ].parameters ).toEqual( { canvas: output, preserveDrawingBuffer: true } );
-		expect( renderers[ 0 ].setSize ).toHaveBeenCalledWith( 8, 4, false );
-		expect( processor.quad.material.map.image ).toBe( input );
-		expect( processor.composer.passes ).toEqual( [ processor.renderPass, processor.brightnessContrastPass, processor.colorAdjustmentPass ] );
+describe( 'EditPipeline', () => {
+
+	it( 'takes the panel\'s percentages as fractions, hue in degrees and gamma as it is', () => {
+
+		const pipeline = new EditPipeline();
+		pipeline.set( { adjust: { brightness: 50, contrast: - 20, saturation: 10, hue: 30, exposure: 100, gamma: 1.8 }, detail: { sharpen: 0.4, clarity: - 0.2 } } );
+		const u = pipeline._u;
+		expect( [ u.brightness.value, u.contrast.value, u.saturation.value, u.hue.value, u.exposure.value, u.gamma.value ] ).toEqual( [ 0.5, - 0.2, 0.1, 30, 1, 1.8 ] );
+		expect( [ u.sharpen.value, u.clarity.value ] ).toEqual( [ 0.4, - 0.2 ] );
 
 	} );
 
 	it( 'starts with every edit off', () => {
 
-		expect( values( [ 'brightness', 'contrast', 'hue', 'saturation', 'exposure', 'gamma' ] ) ).toEqual( { brightness: 0, contrast: 0, hue: 0, saturation: 0, exposure: 0, gamma: 2.2 } );
+		const u = new EditPipeline()._u;
+		expect( [ u.brightness.value, u.contrast.value, u.saturation.value, u.hue.value, u.exposure.value, u.gamma.value ] ).toEqual( [ 0, 0, 0, 0, 0, 2.2 ] );
+		expect( [ u.lookAmount.value, u.sharpen.value, u.clarity.value, u.vignette.value.x, u.grain.value.x ] ).toEqual( [ 0, 0, 0, 0, 0 ] );
 
 	} );
 
-	it( 'takes the panel\'s percentages as fractions, hue in degrees and gamma as it is', () => {
+	it( 'loads a look\'s table at half precision, and reads none at amount 0', () => {
 
-		processor.setParameters( { brightness: 50, contrast: - 20, hue: 30, saturation: 40, exposure: 150, gamma: 2.4 } );
-
-		expect( values( [ 'brightness', 'contrast', 'hue', 'saturation', 'exposure', 'gamma' ] ) ).toEqual( { brightness: 0.5, contrast: - 0.2, hue: 30, saturation: 0.4, exposure: 1.5, gamma: 2.4 } );
-
-	} );
-
-	it( 'leaves an edit the call does not mention as it was', () => {
-
-		processor.setParameters( { brightness: 10, hue: 90 } );
-		processor.setParameters( { contrast: 30 } );
-		processor.setParameters();
-
-		expect( values( [ 'brightness', 'contrast', 'hue', 'gamma' ] ) ).toEqual( { brightness: 0.1, contrast: 0.3, hue: 90, gamma: 2.2 } );
+		const pipeline = new EditPipeline();
+		pipeline.set( { look: { id: 'mono', amount: 0.7 } } );
+		const table = lookTable( 'mono' );
+		const halves = pipeline._table.image.data;
+		for ( const i of [ 0, 4000, table.length - 4 ] ) expect( DataUtils.fromHalfFloat( halves[ i ] ) ).toBeCloseTo( table[ i ], 3 );
+		expect( pipeline._u.lookAmount.value ).toBe( 0.7 );
+		pipeline.set( { look: { id: 'mono', amount: 0 } } );
+		expect( pipeline._u.lookAmount.value ).toBe( 0 );
+		pipeline.set( {} );
+		expect( pipeline._u.lookAmount.value ).toBe( 0 );
 
 	} );
 
-	it( 'uploads the picture again on every render and returns the output canvas', () => {
+	it( 'turns the vignette\'s size and softness into the edges it fades between', () => {
 
-		const render = vi.spyOn( processor.composer, 'render' ).mockImplementation( () => {} );
-		const version = processor.quad.material.map.version;
-
-		expect( processor.render() ).toBe( output );
-		expect( processor.render() ).toBe( output );
-
-		expect( render ).toHaveBeenCalledTimes( 2 );
-		expect( processor.quad.material.map.version ).toBe( version + 2 );
+		const pipeline = new EditPipeline();
+		pipeline.set( { effects: { vignette: { amount: - 0.5, size: 1, softness: 0 } } } );
+		const v = pipeline._u.vignette.value;
+		expect( [ v.x, v.y ] ).toEqual( [ - 0.5, 0.9 ] );
+		expect( v.z ).toBeCloseTo( 0.95, 9 );
 
 	} );
 
-	it( 'takes a new texture of the picture at a new size, freeing the old one', () => {
+	it( 'draws the edited picture at its cropped size: the stage into its target, then the canvas', () => {
 
-		const old = processor.quad.material.map;
-		const disposed = vi.fn();
-		old.addEventListener( 'dispose', disposed );
-		const setSize = vi.spyOn( processor.composer, 'setSize' );
-		const materialVersion = processor.quad.material.version;
+		const pipeline = new EditPipeline();
+		const renderer = fakeRenderer();
+		const edits = { geometry: { crop: { x: 0.5, y: 0, w: 0.5, h: 0.5 } } };
+		pipeline.set( edits );
+		expect( pipeline.draw( renderer, picture( 400, 200 ) ) ).toEqual( { width: 200, height: 100 } );
+		expect( renderer.setSize ).toHaveBeenCalledWith( 200, 100, false );
+		expect( renderer.draws.map( d => d.target ) ).toEqual( [ pipeline._edited, null ] );
+		expect( renderer.draws.every( d => d.toneMapping === NoToneMapping && d.colorSpace === LinearSRGBColorSpace ) ).toBe( true );
+		expect( [ renderer.toneMapping, renderer.outputColorSpace ] ).toEqual( [ ACESFilmicToneMapping, SRGBColorSpace ] );
+		const m = sourceTransform( normaliseEdits( edits ).geometry, 400, 200 );
+		expect( [ ...pipeline._u.map0.value.toArray(), ...pipeline._u.map1.value.toArray() ] ).toEqual( m );
 
-		processor.resize( 16, 6 );
-
-		expect( disposed ).toHaveBeenCalledTimes( 1 );
-		const map = processor.quad.material.map;
-		expect( map ).not.toBe( old );
-		expect( map.image ).toBe( input );
-		expect( [ map.minFilter, map.magFilter ] ).toEqual( [ LinearFilter, LinearFilter ] );
-		expect( processor.quad.material.version ).toBe( materialVersion + 1 );
-		expect( renderers[ 0 ].setSize ).toHaveBeenLastCalledWith( 16, 6, false );
-		expect( setSize ).toHaveBeenCalledWith( 16, 6 );
-		expect( [ processor.width, processor.height ] ).toEqual( [ 16, 6 ] );
+		pipeline.draw( renderer, picture( 400, 200 ) );
+		expect( renderer.setSize ).toHaveBeenCalledTimes( 1 );
 
 	} );
 
-	it( 'frees the renderer and every pass on dispose', () => {
+	it( 'shows the whole turned frame while the crop is edited', () => {
 
-		const passes = processor.composer.passes.map( pass => vi.spyOn( pass, 'dispose' ) );
+		const pipeline = new EditPipeline();
+		pipeline.set( { geometry: { crop: { x: 0, y: 0, w: 0.5, h: 0.5 }, quarterTurns: 1 } }, { editing: true } );
+		expect( pipeline.draw( fakeRenderer(), picture( 400, 200 ) ) ).toEqual( { width: 200, height: 400 } );
 
-		processor.dispose();
+	} );
 
-		expect( renderers[ 0 ].dispose ).toHaveBeenCalledTimes( 1 );
-		passes.forEach( dispose => expect( dispose ).toHaveBeenCalledTimes( 1 ) );
-		expect( processor.composer ).toBeNull();
+	it( 'builds clarity\'s base only while clarity is on, halving to 128 pixels', () => {
+
+		const pipeline = new EditPipeline();
+		const renderer = fakeRenderer();
+		pipeline.draw( renderer, picture( 1000, 500 ) );
+		expect( renderer.draws ).toHaveLength( 2 );
+
+		renderer.draws.length = 0;
+		pipeline.set( { detail: { clarity: 0.5 } } );
+		pipeline.draw( renderer, picture( 1000, 500 ) );
+		expect( renderer.draws ).toHaveLength( 5 );
+		expect( pipeline._levels.map( l => [ l.rt.width, l.rt.height ] ) ).toEqual( [[ 500, 250 ], [ 250, 125 ], [ 125, 63 ]] );
+		expect( pipeline._u.baseTexel.value.toArray() ).toEqual( [ 1 / 125, 1 / 63 ] );
+
+	} );
+
+	it( 'draws into a target it is given and leaves the canvas alone', () => {
+
+		const pipeline = new EditPipeline();
+		const renderer = fakeRenderer();
+		const into = { isRenderTarget: true };
+		pipeline.draw( renderer, picture( 64, 32 ), into );
+		expect( renderer.setSize ).not.toHaveBeenCalled();
+		expect( renderer.draws.at( - 1 ).target ).toBe( into );
+
+	} );
+
+	it( 'reads the picture handed over, encoding it when it comes as light', () => {
+
+		const pipeline = new EditPipeline();
+		const shown = picture( 8, 8 );
+		pipeline.draw( fakeRenderer(), { ...shown, light: true } );
+		expect( pipeline._source.value ).toBe( shown.texture );
+		expect( pipeline._u.light.value ).toBe( 1 );
+		pipeline.draw( fakeRenderer(), shown );
+		expect( pipeline._u.light.value ).toBe( 0 );
 
 	} );
 

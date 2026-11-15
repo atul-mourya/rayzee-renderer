@@ -38,6 +38,7 @@ The camera cannot move in **Render** and **Results**.
 | <kbd>Space</kbd> | Pause or resume the render; once it is done, render again (not on the **Results** page). After you tab to a button, Space presses that button instead |
 | <kbd>R</kbd> | Reset the camera to where it started (same as **Reset Camera**) |
 | <kbd>Esc</kbd> | Deselect |
+| <kbd>Cmd</kbd>/<kbd>Ctrl</kbd> + <kbd>Z</kbd> | Undo an edit to a saved render (**Results** page); add <kbd>Shift</kbd> to redo |
 
 These do nothing while you type in a text box.
 
@@ -65,7 +66,7 @@ no focus point.
 |---|---|
 | Left drag | Pan the picture |
 | Scroll, or pinch on a trackpad | Zoom the picture (5–300 %) |
-| Press and hold (Results) | Show the render without your adjustments |
+| Press and hold (Results) | Show the render without your edits |
 
 This zoom only changes how large the picture shows, not the render. **Auto-fit** in the toolbar fits it to the view
 again.

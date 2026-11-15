@@ -44,8 +44,6 @@
   triangle-mesh Ptex is approximate
 
 ### MVP
-- [ ] Tools and filters features are missing from results page. Requirements, specification and system design (including
-  the overall Results tab) written 2026-11-10 (docs/internal/specs/results-tools-filters.md); implementation left
 - [ ] Coat darkening (OpenPBR `coat_darkening`), on its own and done properly: reverted (was 8f9e51f3, b119e0b1) — it
   darkened many scenes and brought artifacts. pbrt coateddiffuse's Lambertian base (no specular of its own) went with it.
 - [ ] https://github.com/DennisSmolek/Fsr3 (no FSR3 branch here any more)

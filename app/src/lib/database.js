@@ -2,6 +2,7 @@
 // in on-disk storage (`renders` area), or Blobs in the record when the browser offers no storage.
 import { createLogger } from 'rayzee';
 import { getStorage, APP_AREAS } from '@/lib/storage';
+import { readEdits } from '@/lib/edits';
 
 const log = createLogger( 'db' );
 
@@ -261,7 +262,7 @@ async function toView( record ) {
 	if ( typeof record.image === 'string' ) {
 
 		const { aiGeneratedImage, ...rest } = record;
-		return { ...rest, thumb: record.image, hasHDR: false, aiVersions: versions.map( v => ( { ...v, url: aiGeneratedImage } ) ) };
+		return { ...rest, thumb: record.image, hasHDR: false, edits: readEdits( record ), aiVersions: versions.map( v => ( { ...v, url: aiGeneratedImage } ) ) };
 
 	}
 
@@ -281,6 +282,7 @@ async function toView( record ) {
 		...withoutImages( record ),
 		image: urls.image,
 		thumb: urls.thumb ?? urls.image,
+		edits: readEdits( record ),
 		aiVersions: versions.map( v => ( { ...v, url: urls.versions[ v.n ] } ) ).filter( v => v.url ),
 		hasHDR: has( RENDER_FILES.HDR ),
 	};
@@ -289,8 +291,9 @@ async function toView( record ) {
 
 /**
  * Save a render.
- * @param {{image: Blob|string, hdr?: Blob|Uint8Array, colorCorrection?: Object, renderTime?: number,
+ * @param {{image: Blob|string, hdr?: Blob|Uint8Array, edits?: Object, colorCorrection?: Object, renderTime?: number,
  *   isEdited?: boolean, aiVersions?: Array<Object>, aiPrompt?: string, aiGeneratedImage?: Blob|string, timestamp?: Date}} data
+ *   `edits` is the Results page's stack (`edits.js`); a render from before it has only `colorCorrection`.
  *   `aiVersions` are the details `addAIVersion` keeps, each with its `blob`; an earlier export's single AI image comes as
  *   `aiGeneratedImage` and `aiPrompt`.
  * @returns {Promise<number>} the new render's id
@@ -324,6 +327,13 @@ export const saveRender = async ( data ) => {
 		width,
 		height,
 	};
+	if ( data.edits ) {
+
+		record.edits = readEdits( data );
+		record.colorCorrection = record.edits.adjust;
+
+	}
+
 	if ( versions.length ) {
 
 		record.aiVersions = versions.map( v => v.meta );
@@ -382,7 +392,7 @@ export const getRenderById = async ( id ) => {
 
 };
 
-/** Updates a render's details in place — colour correction, edited flag — keeping its images. */
+/** Updates a render's details in place — its edits, edited flag — keeping its images. */
 export const updateRender = async ( id, patch ) => {
 
 	const record = await getRecord( id );

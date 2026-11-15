@@ -1,8 +1,9 @@
-import { useStore, useAIStore } from '@/store';
+import { useStore, useAIStore, useEditStore } from '@/store';
 import { createContext, useContext, useEffect, useState, useCallback, useRef, memo, useMemo } from 'react';
 import { getAllRenders, deleteRender } from '@/lib/database';
 import { debounce } from '@/lib/utils';
-import { Trash2, AlertTriangle, Check, Sparkles, CalendarDays, Timer, Clock, Loader2 } from 'lucide-react';
+import { Trash2, AlertTriangle, Check, Sparkles, CalendarDays, Timer, Clock, Loader2, MoreHorizontal, Copy, ClipboardPaste } from 'lucide-react';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import {
 	AlertDialog,
 	AlertDialogAction,
@@ -616,6 +617,8 @@ const RenderItem = memo( ( {
 
 	const versions = image.aiVersions ?? [];
 	const job = useAIStore( s => s.jobs[ image.id ] );
+	const copied = useEditStore( s => !! s.copied );
+	const stop = useCallback( e => e.stopPropagation(), [] );
 
 	return (
 		<div
@@ -701,10 +704,27 @@ const RenderItem = memo( ( {
 										{image.renderTime ? formatRenderTime( image.renderTime ) : 'NA'}
 									</span>
 
-									{/* Delete button */}
-									<Button variant="quiet-destructive" size="icon-xs" onClick={handleDeleteClick} aria-label="Delete render">
-										<Trash2 size={14} />
-									</Button>
+									<div className="flex items-center">
+										{/* The menu is portalled, but its clicks still reach this card through React: stopped. */}
+										<DropdownMenu>
+											<DropdownMenuTrigger asChild>
+												<Button variant="ghost" size="icon-xs" onClick={stop} aria-label="Render options">
+													<MoreHorizontal size={14} />
+												</Button>
+											</DropdownMenuTrigger>
+											<DropdownMenuContent align="end" onClick={stop}>
+												<DropdownMenuItem onSelect={() => useEditStore.getState().copy( image )}>
+													<Copy size={14} />Copy edits
+												</DropdownMenuItem>
+												<DropdownMenuItem disabled={! copied} onSelect={() => useEditStore.getState().paste( image )}>
+													<ClipboardPaste size={14} />Paste edits
+												</DropdownMenuItem>
+											</DropdownMenuContent>
+										</DropdownMenu>
+										<Button variant="quiet-destructive" size="icon-xs" onClick={handleDeleteClick} aria-label="Delete render">
+											<Trash2 size={14} />
+										</Button>
+									</div>
 								</div>
 							</div>
 						</TooltipTrigger>
