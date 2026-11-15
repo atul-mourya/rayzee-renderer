@@ -42,8 +42,8 @@ turns it off or supplies a host manager; `openHeadless` defaults to off.
   nothing throws for lack of storage. A quota failure mid-download retries once in memory.
 - **Identity.** `fileIdentity( file )` = name, size, lastModified and a SHA-256 over the head, tail
   and 14 probes (~3 MB read at any size); `identityKey()` is the string form used in keys.
-- **Scene cache** (`SceneGraphCodec`, `BLASCache`): stored when the cold build took ≥ 10 s and the
-  read-back is under a third of it (`worthStoring`). A parse slow enough on its own is written
+- **Scene cache** (`SceneGraphCodec`, `BLASCache`): a pbrt or USD scene's built graph, stored when the cold build
+  took ≥ 10 s and the read-back is under a third of it (`worthStoring`). A parse slow enough on its own is written
   *during* the build, each array let go once written: held until the build ended, the encoded
   graph kept every array the build replaces (float normals, instance matrices) alive — ~1 GB at
   the peak on the whole Moana subset. Only the data goes early: the entry's `meta.json` (the commit)

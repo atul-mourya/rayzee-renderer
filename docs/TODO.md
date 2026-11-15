@@ -41,7 +41,7 @@
 - [ ] Textured island: preflight 8,811 MB against the 9,216 MB line; Ptex's per-face vertices add ~870 MB of geometry.
   A load in a tab that had held the island before failed narrowing the sky (`ArrayBuffer.transfer`'s smaller block):
   the narrowed texels now stay in place when that block cannot be had
-- [ ] Ptex: float Ptex (displacement) becomes its mean; a pbrt scene with Ptex is not stored as a graph;
+- [ ] Ptex: float Ptex (displacement) becomes its mean; a pbrt or USD scene with Ptex is not stored as a graph;
   triangle-mesh Ptex is approximate
 
 ### MVP
@@ -242,7 +242,6 @@
 - [ ] **PxrSurface's specular, unchecked** — RenderMan's primary specular is likely off unless authored (its face and
   edge colours default to black), while the importer keeps the engine's default specular on. No `PxrSurface.args` here
   to confirm; Moana's one PxrSurface (the ocean) authors its specular, so nothing local changes.
-- [ ] **Scene cache** — the pbrt importer stores its parsed graph (`_storeGraph`); USD rebuilds every time.
 - [ ] Skeletal animation, NURBS and points prims, UDIM textures, and `.usdz` through this importer.
 
 ## Scene scale (after grouped placements and buffer parts, 2026-10-08)

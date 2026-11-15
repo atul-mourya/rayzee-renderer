@@ -83,11 +83,15 @@ subtree per element, and the whole thing rarely fits: Moana is 29 GB unpacked.
   a template's small non-.ply shapes merge in its own space. ⚠️ Keep that grouping: without it each
   Moana Pandanus tree was ten overlapping instances and rendered 60 % slower. Anything that changes
   what the same files build bumps `PBRT_BUILD_REVISION`, or a stored graph of the old build is reused.
-  `tests/unit/addons/archives/pbrt/buildRevision.test.js` hashes every `.js` under `pbrt/` and `SceneGraphCodec.js`
-  (comment lines, blank lines and spacing aside; a comment at the end of a code line counts) and fails until the
-  recorded `{ revision, format, code }` matches, so a bump of `PBRT_BUILD_REVISION` or `SCENE_GRAPH_FORMAT` is decided
-  rather than remembered. Releases change the key anyway (the package version is in it); this guards graphs stored
-  between them. `npm test` runs in the release workflow, so an unrecorded change stops a release.
+  A USD scene opened from a folder or an archive, translated into the same builder, is stored and reopened the same way
+  (a lone `.usd` file is not: it has no archive identity). Its key adds the root layer and `USD_BUILD_REVISION`, bumped
+  when USD's translation alone changes; the dome light's rotation and intensity ride in the graph's stats, a MaterialX
+  UV transform in its texture's matrix. `tests/unit/addons/archives/pbrt/buildRevision.test.js` hashes every `.js` under
+  `pbrt/` and `usd/` and `SceneGraphCodec.js` (comment lines, blank lines and spacing aside; a comment at the end of a
+  code line counts) and fails until the recorded `{ revision, usd, format, code }` matches, so a bump of either
+  revision or of `SCENE_GRAPH_FORMAT` is decided rather than remembered. Releases change the key anyway (the package
+  version is in it); this guards graphs stored between them. `npm test` runs in the release workflow, so an
+  unrecorded change stops a release.
 - **Parse memory.** The entry is picked from each `.pbrt`'s first 4 MB (`listEntryPathsFrom`:
   WorldBegin may only follow the scene-wide options); reading every file whole was 15 GB and 40 s
   for a 17-part Moana archive. Heads naming no scene, or several, fall back to full reads. A dropped
@@ -280,8 +284,8 @@ subtree per element, and the whole thing rarely fits: Moana is 29 GB unpacked.
   213M texels; every face's texels on the page within 4/255 of the file's own mean; in Node (45M-triangle budget) the
   island loads in 61 s with them (its pages written and packed in 14 s beside a 23 s BVH build). The whole island in Chrome on a 24 GB Mac did not load with or without Ptex on
   2026-11-01 (12 GB already swapped); lava rocks and a mountain did, 12.8 s, pages written and packed in 5.8 s. A stored
-  pbrt graph is not kept for a scene with Ptex: its pages have no pixels when the graph is encoded. No reference library was built for
-  checks: tests write files laid out as `PtexWriter.cpp` writes them (`tests/unit/addons/archives/pbrt/ptexFixture.js`),
+  pbrt or USD graph is not kept for a scene with Ptex: its pages have no pixels when the graph is encoded. No reference
+  library was built for checks: tests write files laid out as `PtexWriter.cpp` writes them (`tests/unit/addons/archives/pbrt/ptexFixture.js`),
   and real files are held to their stored face means. pbrt-v4's island names its Ptex (`../textures/...`) but ships
   without it: put the USD package's `textures/` beside `pbrt-v4/`.
 - **Parameters it does not honour.** As pbrt's `ReportUnused`: a parameter is used when it is looked up through

@@ -20,7 +20,7 @@ import { ENGINE_AREAS, worthStoring } from '../../storage/StorageAreas.js';
 import { encodeSceneGraph, writeSceneGraph, decodeSceneGraph, SceneGraphUnsupported, SCENE_GRAPH_FORMAT, ARCHIVE_PATH, ARCHIVE_LOADER } from './SceneGraphCodec.js';
 import { VERSION } from '../../Version.js';
 import { loadPBRTScene, pickEntryPath, VirtualFS, PBRT_BUILD_REVISION, texturePixels } from './pbrt/index.js';
-import { loadUSDScene, listUSDRootLayers, listUSDParts, USDFiles, USDStage, USD_LAYER } from './usd/index.js';
+import { loadUSDScene, listUSDRootLayers, listUSDParts, USDFiles, USDStage, USD_LAYER, USD_BUILD_REVISION } from './usd/index.js';
 import { pfmTexture } from './pbrt/PFM.js';
 import { parseBinaryPLY } from './pbrt/BinaryPLY.js';
 import { extractSceneMetadata } from '../../loaders/SceneMetadata.js';
@@ -521,7 +521,7 @@ export class ArchiveImporter {
 		}
 
 		const result = usd
-			? await this.loadUSDScene( entries, filename, { ...pbrt, element, promptBytes, listing: source.listing, transient: source.transient } )
+			? await this.loadUSDScene( entries, filename, { ...pbrt, element, promptBytes, listing: source.listing, transient: source.transient, source } )
 			: await this._loadNonPBRTArchive( entries, filename );
 		this.loader._sourceKey = this.loader._keyed( kind, archiveId );
 		return result;
@@ -560,7 +560,9 @@ export class ArchiveImporter {
 			return {
 				...decoded.stats,
 				group: decoded.root,
-				environment: decoded.environment ? { texture: decoded.environment } : null,
+				environment: decoded.environment ? {
+					texture: decoded.environment, rotation: decoded.stats.environmentRotation ?? 0, intensity: decoded.stats.environmentIntensity ?? 1,
+				} : null,
 				animations: decoded.animations,
 				report: null,
 				parseMs: 0,
@@ -590,6 +592,13 @@ export class ArchiveImporter {
 
 	}
 
+	/** A stored scene's images that failed to decode at its build, reported again: a reopen reads like the first load. */
+	_replayImageFailures( stored ) {
+
+		for ( const { where, message } of stored?.imageFailures ?? [] ) this.loader._reportImageFailure( where, new Error( message ) );
+
+	}
+
 	/**
 	 * Stores a freshly parsed scene for the next open. Encoded here, before onModelLoad or the
 	 * build touch it; written in the background, and visible to an open only once the engine
@@ -611,7 +620,9 @@ export class ArchiveImporter {
 					meshCount: built.meshCount, entryPath: built.entryPath, candidates: built.candidates, frames: built.frames,
 					warnings: built.warnings, triangleCount: built.triangleCount, placementCount: built.placementCount,
 					mergedShapes: built.mergedShapes, skippedForBudget: built.skippedForBudget, droppedNoTemplate: built.droppedNoTemplate,
-					render: built.render ?? null, parameters: built.parameters ?? null,
+					render: built.render ?? null, parameters: built.parameters ?? null, fitNote: built.fitNote ?? null,
+					environmentRotation: built.environment?.rotation ?? null, environmentIntensity: built.environment?.intensity ?? null,
+					imageFailures: built.imageFailures ?? [],
 				},
 			} );
 
@@ -899,8 +910,11 @@ export class ArchiveImporter {
 			? this.loader._keyed( `pbrt:${SCENE_GRAPH_FORMAT}.${PBRT_BUILD_REVISION}:${VERSION}`, `${source.archiveId}|${entryPath ?? ''}|${[ ...( source.elements ?? [] ) ].sort().join( ',' )}|${JSON.stringify( shape )}` )
 			: null;
 
+		const failures = this._imageFailures = [];
 		const stored = graphKey ? await this._loadStoredGraph( graphKey, source, { imageFromBytes, envFromBytes } ) : null;
+		this._replayImageFailures( stored );
 		const built = stored ?? await loadPBRTScene( { vfs: zip, source, entryPath, plyParser, imageFromBytes, envFromBytes, ...shape, pause: this._buildPause( timeSlicer() ) } );
+		if ( ! stored ) built.imageFailures = failures;
 		this.loader._throwDeferred();
 
 		const { group, environment, animations, report, warnings, meshCount, entryPath: loadedEntry, candidates,
@@ -1047,6 +1061,7 @@ export class ArchiveImporter {
 			// As a glTF's image: its surfaces render untextured, and a strict host hears of it at the end of the load.
 			if ( error instanceof EngineIssueError ) throw error;
 			this.loader._reportImageFailure( fname, error );
+			this._imageFailures?.push( { where: fname, message: error?.message ?? String( error ) } );
 			return null;
 
 		}
@@ -1109,7 +1124,22 @@ export class ArchiveImporter {
 
 		const start = performance.now();
 		const slice = timeSlicer();
-		const built = await loadUSDScene( {
+		const source = options.source ?? null;
+		const rereads = !! source?.slice && ! source.transient;
+		const shape = {
+			maxTriangles: options.maxTriangles, maxPlacements: options.maxPlacements, mergeShapesAbove: options.mergeShapesAbove,
+			curveSteps: options.curveSteps, curveSides: options.curveSides, curveTolerance: options.curveTolerance, ptexMemory: options.ptexMemory,
+		};
+		const graphKey = source?.archiveId
+			? this.loader._keyed( `usd:${SCENE_GRAPH_FORMAT}.${PBRT_BUILD_REVISION}.${USD_BUILD_REVISION}:${VERSION}`, `${source.archiveId}|${entryPath}|${[ ...chosen ].sort().join( ',' )}|${JSON.stringify( shape )}` )
+			: null;
+		const failures = this._imageFailures = [];
+		const stored = graphKey ? await this._loadStoredGraph( graphKey, source, {
+			imageFromBytes: ( bytes, fname, reread ) => this._archiveImage( bytes, fname, rereads ? reread : null ),
+			envFromBytes: ( bytes, fname ) => this._archiveEnvironment( bytes, fname ),
+		} ) : null;
+		this._replayImageFailures( stored );
+		const built = stored ?? await loadUSDScene( {
 			files, entryPath,
 			pauseRead: ( prims, counting ) => {
 
@@ -1145,10 +1175,12 @@ export class ArchiveImporter {
 			curveSteps: options.curveSteps, curveSides: options.curveSides, curveTolerance: options.curveTolerance,
 			ptexMemory: options.ptexMemory,
 		} );
+		if ( ! stored ) built.imageFailures = failures;
 		this.loader._throwDeferred();
 
 		const { group, environment, render, warnings, triangleCount, placementCount, skippedForBudget, meshCount, parseMs, buildMs, fitNote } = built;
-		this.lastUSDStats = { parseMs, ...built.readTimings, buildMs, loaderMs: performance.now() - start, triangleCount, placementCount, skippedForBudget, meshCount, fitNote, ptex: built.ptex ?? null };
+		this.lastUSDStats = { parseMs, ...built.readTimings, buildMs, loaderMs: performance.now() - start, triangleCount, placementCount, skippedForBudget, meshCount, fitNote, ptex: built.ptex ?? null, fromStorage: !! stored };
+		if ( stored ) log.info( `USD scene "${entryPath}" opened from storage in ${( buildMs / 1000 ).toFixed( 1 )} s, skipping the read` );
 		if ( fitNote || skippedForBudget > 0 ) this.loader._issues?.record(
 			ISSUE_CODES.SCENE_MEMORY_BUDGET,
 			fitNote ?? `${skippedForBudget.toLocaleString()} placements past the scene budgets left out`,
@@ -1171,6 +1203,14 @@ export class ArchiveImporter {
 
 		group.name = entryPath.split( '/' ).pop();
 		this.loader.releaseTargetModel();
+		// Before onModelLoad and the build touch the new group; a task after the build's last step.
+		if ( graphKey && ! stored ) {
+
+			await nextTask();
+			this._storeGraph( graphKey, built, filename );
+
+		}
+
 		this.loader.targetModel = group;
 		this.loader.animations = [];
 		// Without a dome light the current environment stays: USD assets are usually lit by whatever views them.
@@ -1691,6 +1731,7 @@ export class ArchiveImporter {
 
 				if ( error instanceof EngineIssueError ) throw error;
 				this.loader._reportImageFailure( path, error );
+				this._imageFailures?.push( { where: path, message: error?.message ?? String( error ) } );
 				return null;
 
 			}

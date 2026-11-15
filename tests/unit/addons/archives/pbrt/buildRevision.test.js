@@ -1,7 +1,7 @@
 /**
- * A stored pbrt scene graph is reused while PBRT_BUILD_REVISION and SCENE_GRAPH_FORMAT stay the same, so a change that
- * builds or stores a different graph from the same files must bump one. This fails on any change to the pbrt loader's
- * or the graph codec's code (comment lines and spacing aside), so that bumping is a decision rather than something to
+ * A stored pbrt or USD scene graph is reused while its revisions and SCENE_GRAPH_FORMAT stay the same, so a change that
+ * builds or stores a different graph from the same files must bump one. This fails on any change to the pbrt or USD
+ * loader's or the graph codec's code (comment lines and spacing aside), so that bumping is a decision rather than something to
  * remember. Releases change the key anyway (the package version is in it): this guards stores made between them.
  */
 
@@ -12,12 +12,13 @@ import { dirname, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PBRT_BUILD_REVISION } from '@/core/addons/archives/pbrt/index.js';
 import { SCENE_GRAPH_FORMAT } from '@/core/addons/archives/SceneGraphCodec.js';
+import { USD_BUILD_REVISION } from '@/core/addons/archives/usd/index.js';
 
 // Updated together: the two numbers in the stored graph's key, and the code that builds and stores it.
-const RECORDED = { revision: 42, format: 3, code: 'bde214383a462c17' };
+const RECORDED = { revision: 42, usd: 1, format: 3, code: '64b19c34a3ca19a5' };
 
 const ARCHIVES = resolve( dirname( fileURLToPath( import.meta.url ) ), '../../../../../rayzee/src/addons/archives' );
-const SOURCES = [ 'pbrt', 'SceneGraphCodec.js' ];
+const SOURCES = [ 'pbrt', 'usd', 'SceneGraphCodec.js' ];
 
 // The code without comment lines, blank lines or a change of spacing.
 function codeOf( text ) {
@@ -66,24 +67,25 @@ function loaderCode() {
 
 }
 
-describe( 'PBRT_BUILD_REVISION', () => {
+describe( 'PBRT_BUILD_REVISION and USD_BUILD_REVISION', () => {
 
-	it( 'is reconsidered whenever the pbrt loader\'s or the graph codec\'s code changes', () => {
+	it( 'are reconsidered whenever the pbrt or USD loader\'s or the graph codec\'s code changes', () => {
 
-		const now = { revision: PBRT_BUILD_REVISION, format: SCENE_GRAPH_FORMAT, code: loaderCode() };
-		expect( now, 'the pbrt loader or the scene graph codec changed. If the same scene files now build a different ' +
-			'graph, bump PBRT_BUILD_REVISION (PBRTSceneBuilder.js); if a stored graph now reads differently, ' +
-			'SCENE_GRAPH_FORMAT (SceneGraphCodec.js). Either way record ' +
-			`{ revision: ${now.revision}, format: ${now.format}, code: '${now.code}' } in this test.` ).toEqual( RECORDED );
+		const now = { revision: PBRT_BUILD_REVISION, usd: USD_BUILD_REVISION, format: SCENE_GRAPH_FORMAT, code: loaderCode() };
+		expect( now, 'the pbrt or USD loader or the scene graph codec changed. If the same scene files now build a different ' +
+			'graph, bump PBRT_BUILD_REVISION (PBRTSceneBuilder.js), or USD_BUILD_REVISION (usd/index.js) for USD\'s translation ' +
+			'alone; if a stored graph now reads differently, SCENE_GRAPH_FORMAT (SceneGraphCodec.js). Either way record ' +
+			`{ revision: ${now.revision}, usd: ${now.usd}, format: ${now.format}, code: '${now.code}' } in this test.` ).toEqual( RECORDED );
 
 	} );
 
-	it( 'hashes the pbrt loader, its subfolders included, and the graph codec', () => {
+	it( 'hashes the pbrt and USD loaders, their subfolders included, and the graph codec', () => {
 
 		const files = sourceFiles();
 		expect( files ).toContain( 'SceneGraphCodec.js' );
 		expect( files ).toContain( 'pbrt/PBRTSceneBuilder.js' );
-		expect( files.every( ( file ) => file === 'SceneGraphCodec.js' || file.startsWith( 'pbrt/' ) ) ).toBe( true );
+		expect( files ).toContain( 'usd/USDScene.js' );
+		expect( files.every( ( file ) => file === 'SceneGraphCodec.js' || file.startsWith( 'pbrt/' ) || file.startsWith( 'usd/' ) ) ).toBe( true );
 
 	} );
 

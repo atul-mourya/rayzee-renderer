@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
 	AnimationClip, BufferAttribute, BufferGeometry, DataTexture, FloatType, Group, InstancedMesh, Matrix4, Mesh,
 	MeshPhysicalMaterial, PerspectiveCamera, RGBAFormat, RepeatWrapping, SRGBColorSpace, Texture, VectorKeyframeTrack, PointLight,
-	SpotLight, DirectionalLight, HemisphereLight, Vector3, BoxGeometry, SphereGeometry, Color, DoubleSide, BackSide, FrontSide,
+	SpotLight, DirectionalLight, HemisphereLight, RectAreaLight, Vector3, BoxGeometry, SphereGeometry, Color, DoubleSide, BackSide, FrontSide,
 } from 'three';
 import { createFakeOPFS } from '../../__mocks__/opfs.js';
 import { openStorage, acquireSharedStorage } from '@/core/addons/storage/OpenStorage.js';
@@ -188,7 +188,7 @@ describe( 'SceneGraphCodec', () => {
 
 	} );
 
-	it( 'stores lamps with their targets', async () => {
+	it( 'stores lights with their targets, and rect lights with their size', async () => {
 
 		const root = new Group();
 		const spot = new SpotLight( 0xff8800, 12.5, 0, 0.4, 0.25, 2 );
@@ -201,11 +201,15 @@ describe( 'SceneGraphCodec', () => {
 		sun.add( sun.target );
 		const point = new PointLight( 0x0000ff, 7 );
 		point.userData.__candelaConverted = true;
-		root.add( spot, sun, point );
+		const panel = new RectAreaLight( 0xffeedd, 4, 2.5, 0.75 );
+		panel.position.set( 0, 3, 0 );
+		panel.rotation.set( - Math.PI / 2, 0, 0 );
+		panel.userData.shape = 'disk';
+		root.add( spot, sun, point, panel );
 
 		const encoded = encodeSceneGraph( root );
 		const decoded = await decodeSceneGraph( JSON.parse( JSON.stringify( encoded.manifest ) ), new Blob( [] ), { loadTexture: async () => null } );
-		const [ s, d, p ] = decoded.root.children;
+		const [ s, d, p, r ] = decoded.root.children;
 		decoded.root.updateMatrixWorld( true );
 
 		expect( s.isSpotLight && d.isDirectionalLight && p.isPointLight ).toBe( true );
@@ -215,6 +219,9 @@ describe( 'SceneGraphCodec', () => {
 		expect( d.target.getWorldPosition( new Vector3() ).toArray() ).toEqual( [ 1, 0, 0 ] );
 		expect( p.intensity ).toBe( 7 );
 		expect( p.userData.__candelaConverted ).toBe( true );
+		expect( r.isRectAreaLight ).toBe( true );
+		expect( [ r.intensity, r.width, r.height, r.userData.shape ] ).toEqual( [ 4, 2.5, 0.75, 'disk' ] );
+		expect( [ r.position.toArray(), r.quaternion.toArray() ] ).toEqual( [[ 0, 3, 0 ], panel.quaternion.toArray() ] );
 
 	} );
 
@@ -351,6 +358,33 @@ describe( 'SceneGraphCodec', () => {
 		expect( maps[ 1 ].source ).toBe( maps[ 0 ].source );
 		expect( maps[ 2 ].source ).toBe( maps[ 0 ].source );
 		expect( Array.from( maps[ 2 ].image.data.subarray( 0, 4 ) ) ).toEqual( [ 7, 7, 7, 7 ] );
+
+	} );
+
+	it( 'keeps a texture\'s own UV matrix (MaterialX tiling) and leaves the others to repeat and offset', async () => {
+
+		const root = new Group();
+		const tiled = new DataTexture( new Uint8Array( 4 ).fill( 9 ), 1, 1 );
+		tiled.matrixAutoUpdate = false;
+		tiled.matrix.set( 4, 0, 0.5, 0, 4, 0.25, 0, 0, 1 );
+		const plain = new DataTexture( new Uint8Array( 4 ).fill( 3 ), 1, 1 );
+		plain.repeat.set( 2, 3 );
+		const geometry = new BufferGeometry();
+		geometry.setAttribute( 'position', new BufferAttribute( new Float32Array( 9 ), 3 ) );
+		root.add( new Mesh( geometry, new MeshPhysicalMaterial( { map: tiled, normalMap: plain } ) ) );
+
+		const encoded = encodeSceneGraph( root );
+		const data = new Uint8Array( encoded.byteLength );
+		for ( const { offset, array } of encoded.sections ) data.set( new Uint8Array( array.buffer, array.byteOffset, array.byteLength ), offset );
+		const decoded = await decodeSceneGraph( JSON.parse( JSON.stringify( encoded.manifest ) ), new Blob( [ data ] ), { loadTexture: async () => null } );
+		const { map, normalMap } = decoded.root.children[ 0 ].material;
+
+		expect( map.matrixAutoUpdate ).toBe( false );
+		expect( map.matrix.toArray() ).toEqual( tiled.matrix.toArray() );
+		expect( normalMap.matrixAutoUpdate ).toBe( true );
+		normalMap.updateMatrix();
+		plain.updateMatrix();
+		expect( normalMap.matrix.toArray() ).toEqual( plain.matrix.toArray() );
 
 	} );
 

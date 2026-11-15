@@ -6,6 +6,7 @@ import { AssetLoader } from '@/core/loaders/AssetLoader.js';
 import { ArchiveImporter } from '@/core/addons/archives/ArchiveImporter.js';
 import { RayzeeRenderer } from '@/core/RayzeeRenderer.js';
 import { localFolder } from '@/core/loaders/ArchiveFormats.js';
+import { usdFormat } from '@/core/addons/formats.js';
 
 // A parse (minMs 0) or a parse plus build (BUILD_MS) slow enough to store, whatever this machine's speed.
 const policy = vi.hoisted( () => ( { minMs: 0 } ) );
@@ -31,6 +32,45 @@ const room = ( stamp = 1 ) => localFolder( { files: [ { path: 'Room/room.pbrt', 
 	AttributeBegin Translate 1 0 0 ObjectInstance "tri" AttributeEnd
 ` ], 'room.pbrt', { lastModified: stamp } ) } ] } );
 
+const usdRoom = ( stamp = 1 ) => localFolder( { files: [ { path: 'Shop/shop.usda', file: new File( [ `#usda 1.0
+def Material "red"
+{
+    token outputs:surface.connect = </red/s.outputs:surface>
+    def Shader "s"
+    {
+        uniform token info:id = "UsdPreviewSurface"
+        color3f inputs:diffuseColor = (0.8, 0.1, 0.1)
+        float inputs:roughness = 0.4
+    }
+}
+def Xform "shelf"
+{
+    double3 xformOp:translate = (2, 0, -1)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+    def Mesh "board"
+    {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(-1, 0, -1), (1, 0, -1), (1, 0, 1), (-1, 0, 1)]
+        rel material:binding = </red>
+    }
+}
+def RectLight "panel"
+{
+    float inputs:intensity = 5
+    float inputs:width = 2
+    float inputs:height = 0.5
+    double3 xformOp:translate = (0, 3, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+def Camera "cam"
+{
+    float focalLength = 35
+    double3 xformOp:translate = (0, 1, 6)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+` ], 'shop.usda', { lastModified: stamp } ) } ] } );
+
 const summary = model => {
 
 	model.updateMatrixWorld( true );
@@ -41,6 +81,20 @@ const summary = model => {
 		world: o.matrixWorld.toArray(),
 		instances: o.isInstancedMesh ? [ ...o.instanceMatrix.array ] : null,
 		color: o.material.color.toArray(),
+	} ) );
+	return out;
+
+};
+
+const lightsAndCameras = model => {
+
+	model.updateMatrixWorld( true );
+	const out = [];
+	model.traverse( o => ( o.isLight || o.isCamera ) && out.push( {
+		type: o.type,
+		world: o.matrixWorld.toArray(),
+		values: [ o.intensity, o.width, o.height, o.fov, o.near, o.far ],
+		userData: { ...o.userData },
 	} ) );
 	return out;
 
@@ -170,6 +224,68 @@ describe( 'the archive scene cache across a load', () => {
 		await loadInto( app, room() );
 		expect( writes ).toHaveLength( 1 );
 		expect( summary( app.sceneModel ) ).toEqual( fresh );
+
+	} );
+
+	it( 'reports an image that failed at the build again when the scene is reopened from storage', async () => {
+
+		const recorded = [];
+		loader._issues = { record: ( code, message ) => recorded.push( { code, message } ), warn() {} };
+		const app = engineFor( loader );
+		const scene = () => localFolder( { files: [
+			{ path: 'Room/room.pbrt', file: new File( [ `
+				WorldBegin
+				Texture "t" "spectrum" "imagemap" "string filename" "bad.png"
+				Material "diffuse" "texture reflectance" "t"
+				Shape "trianglemesh" "point3 P" [ -2 0 -2  2 0 -2  2 0 2 ] "integer indices" [ 0 1 2 ] "point2 uv" [ 0 0 1 0 1 1 ]
+			` ], 'room.pbrt', { lastModified: 1 } ) },
+			{ path: 'Room/bad.png', file: new File( [ 'not an image' ], 'bad.png', { lastModified: 1 } ) },
+		] } );
+
+		await loadInto( app, scene() );
+		expect( await ended( 0 ) ).toBe( 'commit' );
+		const cold = recorded.filter( ( r ) => r.code === 'texture.build_failed' );
+		expect( cold ).toHaveLength( 1 );
+
+		recorded.length = 0;
+		await loadInto( app, scene() );
+		expect( writes ).toHaveLength( 1 );
+		expect( recorded.filter( ( r ) => r.code === 'texture.build_failed' ) ).toEqual( cold );
+
+	} );
+
+	it( 'stores a USD scene too, and the next open restores the same scene without reading it', async () => {
+
+		loader.registerFormat( usdFormat );
+		const app = engineFor( loader );
+		const usdLoads = vi.spyOn( ArchiveImporter.prototype, 'loadUSDScene' );
+		try {
+
+			await loadInto( app, usdRoom() );
+			const fresh = summary( app.sceneModel );
+			const freshLights = lightsAndCameras( app.sceneModel );
+			expect( fresh.map( ( m ) => m.color ) ).toEqual( [[ 0.8, 0.1, 0.1 ]] );
+			expect( freshLights.map( ( o ) => o.type ) ).toEqual( expect.arrayContaining( [ 'RectAreaLight', 'PerspectiveCamera' ] ) );
+			expect( await ended( 0 ) ).toBe( 'commit' );
+			const importer = usdLoads.mock.contexts[ 0 ];
+			expect( importer.lastUSDStats.fromStorage ).toBe( false );
+
+			await loadInto( app, usdRoom() );
+			expect( writes ).toHaveLength( 1 );
+			expect( importer.lastUSDStats.fromStorage ).toBe( true );
+			expect( summary( app.sceneModel ) ).toEqual( fresh );
+			expect( lightsAndCameras( app.sceneModel ) ).toEqual( freshLights );
+
+			// Another file is another scene.
+			await loadInto( app, usdRoom( 2 ) );
+			expect( importer.lastUSDStats.fromStorage ).toBe( false );
+			expect( await ended( 1 ) ).toBe( 'commit' );
+
+		} finally {
+
+			usdLoads.mockRestore();
+
+		}
 
 	} );
 

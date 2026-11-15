@@ -1,5 +1,5 @@
 /**
- * Binary round trip for the three.js scenes the pbrt builder produces, so a reopened archive
+ * Binary round trip for the three.js scenes the pbrt and USD builders produce, so a reopened archive
  * skips parsing. Geometry, instance matrices and generated textures go to one binary file as
  * raw sections; the tree, materials and animation go to JSON. Textures that came from the
  * archive are stored as their path and decoded from it again.
@@ -10,7 +10,7 @@
 
 import {
 	AnimationClip, BufferAttribute, BufferGeometry, Color, DataTexture, Group, InstancedBufferAttribute, InstancedMesh,
-	MaterialLoader, Mesh, Object3D, OrthographicCamera, PerspectiveCamera, DirectionalLight, PointLight, SpotLight,
+	MaterialLoader, Mesh, Object3D, OrthographicCamera, PerspectiveCamera, DirectionalLight, PointLight, SpotLight, RectAreaLight,
 } from 'three';
 
 export const SCENE_GRAPH_FORMAT = 3;
@@ -34,7 +34,7 @@ const TEXTURE_PROPS = [
 	'flipY', 'generateMipmaps', 'premultiplyAlpha', 'unpackAlignment', 'colorSpace',
 ];
 
-const LIGHT_PROPS = [ 'intensity', 'distance', 'decay', 'angle', 'penumbra' ];
+const LIGHT_PROPS = [ 'intensity', 'distance', 'decay', 'angle', 'penumbra', 'width', 'height' ];
 const OBJECT_PROPS = [ 'name', 'visible', 'castShadow', 'receiveShadow', 'frustumCulled', 'renderOrder', 'matrixAutoUpdate' ];
 
 export class SceneGraphUnsupported extends Error {
@@ -58,6 +58,7 @@ function kindOf( object ) {
 	if ( object.isDirectionalLight ) return 'DirectionalLight';
 	if ( object.isPointLight ) return 'PointLight';
 	if ( object.isSpotLight ) return 'SpotLight';
+	if ( object.isRectAreaLight ) return 'RectAreaLight';
 	if ( object.isLight || object.isPoints || object.isLine || object.isSprite || object.isLOD ) return null;
 	if ( object.isGroup ) return 'Group';
 	return object.constructor === Object3D ? 'Object3D' : null;
@@ -150,6 +151,8 @@ function encodeTexture( texture, sections ) {
 	for ( const prop of TEXTURE_PROPS ) record[ prop ] = texture[ prop ];
 	for ( const prop of [ 'repeat', 'offset', 'center' ] ) record[ prop ] = texture[ prop ].toArray();
 	record.rotation = texture.rotation;
+	// Set directly: repeat, offset and rotation do not describe it.
+	if ( ! texture.matrixAutoUpdate ) record.matrix = texture.matrix.toArray();
 
 	const path = texture.userData?.[ ARCHIVE_PATH ];
 	if ( path ) {
@@ -413,6 +416,13 @@ function applyTextureProps( texture, record ) {
 	texture.offset.fromArray( record.offset );
 	texture.center.fromArray( record.center );
 	texture.rotation = record.rotation;
+	if ( record.matrix ) {
+
+		texture.matrixAutoUpdate = false;
+		texture.matrix.fromArray( record.matrix );
+
+	}
+
 	texture.uuid = record.uuid;
 	Object.assign( texture.userData, record.userData );
 	texture.needsUpdate = true;
@@ -546,6 +556,7 @@ export async function decodeSceneGraph( manifest, data, { loadTexture } ) {
 			case 'DirectionalLight': object = new DirectionalLight(); break;
 			case 'PointLight': object = new PointLight(); break;
 			case 'SpotLight': object = new SpotLight(); break;
+			case 'RectAreaLight': object = new RectAreaLight(); break;
 			default: object = new Object3D();
 
 		}
