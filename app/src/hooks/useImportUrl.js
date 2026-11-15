@@ -37,8 +37,8 @@ export function useImportUrl() {
 		if ( ! isImportableUrl( importUrl ) ) {
 
 			toast( {
-				title: "Invalid URL",
-				description: "Enter an http(s) link to a .glb / .gltf file or a scene archive (.zip, .tar, .tar.gz).",
+				title: "Cannot open this link",
+				description: "Enter an http(s) link to a .glb or .gltf file, or to a scene archive (.zip, .tar, .tar.gz).",
 				variant: "destructive",
 			} );
 			return;
@@ -58,8 +58,8 @@ export function useImportUrl() {
 					toggleImportModal( false );
 
 					toast( {
-						title: "Model Loaded",
-						description: `Successfully loaded model.${spillNote( app )}`,
+						title: "Model loaded",
+						description: [ importUrl.split( '/' ).pop().split( '?' )[ 0 ], spillNote( app ) ].filter( Boolean ).join( '.' ),
 					} );
 
 				} )
@@ -69,7 +69,7 @@ export function useImportUrl() {
 
 					if ( error?.code === 'LOAD_CANCELLED' ) {
 
-						toast( { title: "Loading Cancelled", description: "The download was cancelled." } );
+						toast( { title: "Loading cancelled", description: "The download was cancelled." } );
 						return;
 
 					}
@@ -84,8 +84,8 @@ export function useImportUrl() {
 					}
 
 					toast( {
-						title: "Error Loading Model",
-						description: `${error}`,
+						title: "Could not open the link",
+						description: error?.message || `${error}`,
 						variant: "destructive",
 					} );
 

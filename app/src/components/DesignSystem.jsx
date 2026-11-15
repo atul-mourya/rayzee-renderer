@@ -21,7 +21,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Menubar, MenubarContent, MenubarItem, MenubarMenu, MenubarSeparator, MenubarTrigger } from "@/components/ui/menubar";
+import { Menubar, MenubarContent, MenubarItem, MenubarMenu, MenubarSeparator, MenubarShortcut, MenubarTrigger } from "@/components/ui/menubar";
 import { NumberInput } from "@/components/ui/number-input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Progress } from "@/components/ui/progress";
@@ -125,6 +125,7 @@ export default function DesignSystem() {
 	const [ dark, setDark ] = useState( true );
 	const [ bounces, setBounces ] = useState( 8 );
 	const [ mode, setMode ] = useState( "orbit" );
+	const [ stage, setStage ] = useState( "preview" );
 	const [ aiOnly, setAiOnly ] = useState( false );
 	const [ values, setValues ] = useState( {} );
 	const { toast } = useToast();
@@ -293,33 +294,38 @@ export default function DesignSystem() {
 						</Section>
 
 						<Section title="Menus, dialogs and popovers">
-							<div className="flex h-10 items-center rounded-md border border-border px-2">
+							<div className="grid h-10 grid-cols-[1fr_auto_1fr] items-center rounded-md border border-border px-2">
 								<Menubar>
 									<MenubarMenu>
 										<MenubarTrigger>File</MenubarTrigger>
 										<MenubarContent>
-											<MenubarItem>Open</MenubarItem>
+											<MenubarItem>Open…</MenubarItem>
 											<MenubarItem>Open Recent…</MenubarItem>
 											<MenubarSeparator />
 											<MenubarItem>Export Picture…</MenubarItem>
 										</MenubarContent>
 									</MenubarMenu>
 									<MenubarMenu>
-										<MenubarTrigger>Edit</MenubarTrigger>
-										<MenubarContent><MenubarItem disabled>Undo</MenubarItem></MenubarContent>
+										<MenubarTrigger>View</MenubarTrigger>
+										<MenubarContent><MenubarItem>Reset Camera<MenubarShortcut>R</MenubarShortcut></MenubarItem></MenubarContent>
 									</MenubarMenu>
 								</Menubar>
+								<ToggleGroup type="single" variant="modes" aria-label="Mode" value={stage} onValueChange={v => v && setStage( v )}>
+									<ToggleGroupItem value="preview">Preview</ToggleGroupItem>
+									<ToggleGroupItem value="render">Render</ToggleGroupItem>
+									<ToggleGroupItem value="results">Results</ToggleGroupItem>
+								</ToggleGroup>
 							</div>
 							<div className="flex flex-wrap items-start gap-4">
 								<Dialog>
 									<DialogTrigger asChild><Button variant="outline">Dialog</Button></DialogTrigger>
 									<DialogContent>
 										<DialogHeader>
-											<DialogTitle>Import from URL</DialogTitle>
+											<DialogTitle>Open from URL</DialogTitle>
 											<DialogDescription>Paste a link to a .glb, .gltf or .zip.</DialogDescription>
 										</DialogHeader>
 										<Input placeholder="https://…" />
-										<DialogFooter><Button>Import</Button></DialogFooter>
+										<DialogFooter><Button>Open</Button></DialogFooter>
 									</DialogContent>
 								</Dialog>
 								<AlertDialog>

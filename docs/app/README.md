@@ -12,7 +12,7 @@ The app opens on a sample scene, a coffee maker. Drop your own model onto the vi
 
 | Area | What it holds |
 |---|---|
-| **Top bar** | The **File**, **Add**, **Edit**, **View** and **Help** menus; the **Preview**, **Render** and **Results** tabs in the middle; on the right, the light/dark switch, the version and a link to the code on GitHub. |
+| **Top bar** | The **File**, **Add**, **View** and **Help** menus; the **Preview**, **Render** and **Results** switch in the middle; on the right, the theme: **Light**, **Dark** or **Same as System**. |
 | **Left panel** | The **Outliner**: every object, light and camera in the scene. On the Results page, your saved renders. |
 | **The view** | The picture, with a few controls floating over it. |
 | **Right panel** | Settings, in tabs. Which tabs you see depends on the top-bar tab. |
@@ -36,20 +36,23 @@ The three tabs in the middle of the top bar are three stages of work:
 
 | Item | What it does |
 |---|---|
-| **Open** | Opens a model, an archive or a `.rayzee` project. Select several files to open a model made of several files. |
+| **Open…** | Opens a model, an archive, a sky (`.hdr`, `.exr`) or a `.rayzee` project. Select several files to open a model made of several files. |
 | **Open Folder…** | Opens a folder that holds a model and its textures. |
-| **Import from URL** | Opens a model or archive from a link. |
+| **Open from URL…** | Opens a model or archive from a link. |
 | **Open Recent…** | Reopens a scene you worked on, with its edits. |
-| **Open Project…**, **Save Project…** | Opens or saves a `.rayzee` project file. |
+| **Save Project…** | Saves the scene as a `.rayzee` project file; **Open…** opens it again. |
 | **Export Picture…**, **Export Video…** | Saves the render as a picture, or the animation as a video. |
-| **Export Renders…**, **Import Renders…** | Moves all your saved renders to or from a zip file. |
+| **Export Saved Renders…**, **Import Saved Renders…** | Moves all your saved renders to or from a zip file. |
 | **Storage…** | Shows what the app keeps on this device, and clears it. |
 
 How each of these works: [Opening models and skies](loading.md) and [Projects and storage](projects.md).
 
-**Add** puts a **Cloud** or **Smoke** into the scene where the camera looks: see [Smoke, clouds and fire](scene.md#smoke-clouds-and-fire).
+**Add** puts a **Directional Light**, **Point Light**, **Spot Light** or **Area Light** into the scene and opens the
+**Light** tab to set it up, or a **Cloud** or **Smoke** where the camera looks: see
+[Smoke, clouds and fire](scene.md#smoke-clouds-and-fire). It is greyed out on the Results page.
 
-The **Edit** and **View** menus are placeholders: their items are greyed out.
+**View** has **Reset Camera** (also <kbd>R</kbd>) and **Enter Full Screen**, which fills the screen with the whole app
+(the toolbar's **Fullscreen** fills it with the picture alone).
 
 **Help** opens these pages in a new tab: **User Guide** (this page), **Keyboard and Mouse**, **Troubleshooting** and
 the **Developer Guide** for building on the engine. **Source Code** is the project on GitHub, **Release Notes** lists

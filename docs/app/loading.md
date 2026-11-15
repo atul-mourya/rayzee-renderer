@@ -7,11 +7,11 @@ environment* while you drag.
 
 From the **File** menu:
 
-- **Open** picks a file. Select several files at once to open a model made of several files, such as a `.gltf` with
-  its `.bin` and textures, or an `.obj` with its `.mtl`.
+- **Open…** picks a file: a model, an archive, a sky or a project. Select several files at once to open a model made
+  of several files, such as a `.gltf` with its `.bin` and textures, or an `.obj` with its `.mtl`.
 - **Open Folder…** picks a folder that holds a model and everything it uses. Chrome and Edge remember the folder, so a
   later session can reopen it.
-- **Import from URL** opens a model from a link: an `http(s)` address ending in `.glb`, `.gltf`, `.zip`, `.tar`,
+- **Open from URL…** opens a model from a link: an `http(s)` address ending in `.glb`, `.gltf`, `.zip`, `.tar`,
   `.tgz` or `.gz`.
 
 | Kind | Files |
@@ -19,7 +19,7 @@ From the **File** menu:
 | Models | `.glb`, `.gltf`, `.fbx`, `.obj`, `.stl`, `.ply`, `.dae`, `.3mf`, `.usd`, `.usda`, `.usdc`, `.usdz` |
 | Smoke, clouds, fire | `.vdb` (OpenVDB, as Blender, Houdini and EmberGen save them). Numbered frames (`fire_0001.vdb`, …) selected together, in a folder or in a zip play as one animation in the **Anim** tab. Files from Blender and EmberGen are stood upright. |
 | Archives | `.zip`, `.tar`, `.tar.gz`, `.tgz`, holding any of the above, or a whole pbrt-v4 or USD scene |
-| Skies | `.hdr` and `.exr`, dropped onto the view |
+| Skies | `.hdr` and `.exr`, opened or dropped onto the view |
 | Projects | `.rayzee`: see [Projects and storage](projects.md) |
 
 A new model replaces the scene. While a load runs, a progress window shows each step (downloading, reading, building,

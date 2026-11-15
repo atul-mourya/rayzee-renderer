@@ -15,7 +15,7 @@ In the view, drag to pan and scroll to zoom. **Press & Hold to See Original** sh
 The toolbar has **Auto-fit**, the zoom controls, **Export Render** (see
 [Pictures](render-and-export.md#pictures)) and **Fullscreen**.
 
-To move renders to another browser or computer, use **File → Export Renders…** and **File → Import Renders…**: one zip
+To move renders to another browser or computer, use **File → Export Saved Renders…** and **File → Import Saved Renders…**: one zip
 file with every render, its HDR copy and its AI versions. Renders already there are skipped.
 
 ## Adjust

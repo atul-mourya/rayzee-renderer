@@ -25,7 +25,7 @@ A project is a file you keep: **File → Save Project…** writes a `.rayzee` fi
 from your computer, the model itself (up to 3.5 GB where the browser lets the app write the file directly, 512 MB
 otherwise). A model from a link is referenced, not copied in.
 
-Open a project with **File → Open Project…**, **File → Open**, or by dropping the `.rayzee` file on the view. If the
+Open a project with **File → Open…** or by dropping the `.rayzee` file on the view. If the
 model was too large to include, keep the model file beside the project: the app asks for it.
 
 ## Storage

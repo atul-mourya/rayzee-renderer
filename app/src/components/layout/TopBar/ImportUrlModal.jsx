@@ -31,15 +31,15 @@ const ImportUrlModal = ( {
 		<Dialog open={isOpen} onOpenChange={onClose}>
 			<DialogContent>
 				<DialogHeader>
-					<DialogTitle>Import from URL</DialogTitle>
+					<DialogTitle>Open from URL</DialogTitle>
 					<DialogDescription>
-	                    Enter the URL of a .glb / .gltf file, or of a scene archive (.zip, .tar, .tar.gz).
+	                    A link to a .glb or .gltf file, or to a scene archive (.zip, .tar, .tar.gz).
 					</DialogDescription>
 				</DialogHeader>
 				<Input
 					value={importUrl}
 					onChange={handleUrlChange}
-					placeholder="Enter URL"
+					placeholder="https://…"
 				/>
 				<DialogFooter>
 					<Button variant="outline" onClick={onClose} disabled={isImporting}>
@@ -49,10 +49,10 @@ const ImportUrlModal = ( {
 						{isImporting ? (
 							<>
 								<Loader2 className="mr-2 h-4 w-4 animate-spin" />
-	                            Importing...
+	                            Opening…
 							</>
 						) : (
-							'Import'
+							'Open'
 						)}
 					</Button>
 				</DialogFooter>

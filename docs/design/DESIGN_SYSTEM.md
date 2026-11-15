@@ -71,7 +71,8 @@ or variant of the component, and a caller passes only what is about its place: a
 | `Chip` (`ui/badge.jsx`) | `tone="scrim"` / `"ai"`, `size="md"` / `"sm"` (16 px, on a thumbnail), `rounded` | a label over a picture: `<Chip tone="ai">v2</Chip>` |
 | `Badge` | `size="sm"` | a tag on a catalog card |
 | `Input` | `variant="filled"`: a panel's blue-tinted field, seen by its fill (plain fields show their edge) | the number field, the catalog search |
-| `Menubar` | the top bar's: no box, quiet names | `<Menubar>` |
+| `Menubar`, `DropdownMenu` | the top bar's: no box, quiet names. Every menu is the app's size, `text-xs` in 24 px rows with a check for the chosen item, as `Select` and the right-click menu are | `<Menubar>` |
+| `ToggleGroup` | `variant="modes"`: the top bar's Preview / Render / Results, a bordered pill split by lines, the chosen one tinted | `<ToggleGroup type="single" variant="modes">` |
 | `SelectTrigger` | `size="sm"`: the 20 px pill | `<SelectTrigger size="sm" className="max-w-32">` |
 | `ToggleGroup` | `size="xs"`, passed to its items | `<ToggleGroup size="xs">` (the group is already the 20 px pill) |
 | `TabsList` | `variant="bar"` (a sidebar's icon tabs), `"pills"`, `"compact"`, passed to its tabs | `<TabsList variant="compact" className="grid-cols-4">` |

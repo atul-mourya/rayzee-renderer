@@ -758,26 +758,26 @@ const LightsTab = () => {
 							</Button>
 						</DropdownMenuTrigger>
 						<DropdownMenuContent align="end">
-							<DropdownMenuItem className="text-xs" onClick={() => handleAddLight( 'DirectionalLight' )}>
+							<DropdownMenuItem onClick={() => handleAddLight( 'DirectionalLight' )}>
 								<ArrowsUpFromLine className="mr-2 h-3 w-3 rotate-45 -scale-100" />
 								Directional Light
 							</DropdownMenuItem>
-							<DropdownMenuItem className="text-xs" onClick={() => handleAddLight( 'PointLight' )}>
+							<DropdownMenuItem onClick={() => handleAddLight( 'PointLight' )}>
 								<Lightbulb className="mr-2 h-3 w-3" />
 								Point Light
 							</DropdownMenuItem>
-							<DropdownMenuItem className="text-xs" onClick={() => handleAddLight( 'SpotLight' )}>
+							<DropdownMenuItem onClick={() => handleAddLight( 'SpotLight' )}>
 								<Spotlight className="mr-2 h-3 w-3" />
 								Spot Light
 							</DropdownMenuItem>
-							<DropdownMenuItem className="text-xs" onClick={() => handleAddLight( 'RectAreaLight' )}>
+							<DropdownMenuItem onClick={() => handleAddLight( 'RectAreaLight' )}>
 								<Grid3X3 className="mr-2 h-3 w-3" />
 								Area Light
 							</DropdownMenuItem>
 							{lights.length > 0 && (
 								<>
 									<Separator className="my-1" />
-									<DropdownMenuItem className="text-xs text-error focus:text-error" onClick={handleClearAllLights}>
+									<DropdownMenuItem className="text-error focus:text-error" onClick={handleClearAllLights}>
 										<Trash2 className="mr-2 h-3 w-3" />
 										Clear All
 									</DropdownMenuItem>

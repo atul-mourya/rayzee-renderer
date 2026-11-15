@@ -10,13 +10,16 @@ const ToggleGroupContext = React.createContext( {
 	variant: "default",
 } );
 
+// `modes`: the top bar's Preview / Render / Results, a bordered pill.
+const ROOT_VARIANTS = { default: "justify-between max-w-32 h-5 rounded-full", modes: "h-8 overflow-hidden rounded-full border border-border bg-background/90 shadow-md" };
+
 const ToggleGroup = React.forwardRef( ( { className, variant, size, children, ...props }, ref ) => (
 	<ToggleGroupPrimitive.Root
 		ref={ref}
 		aria-labelledby={useRowLabel()}
-		className={cn( "flex items-center justify-between gap-0 max-w-32 h-5 rounded-full", className )}
+		className={cn( "flex items-center gap-0", ROOT_VARIANTS[ variant ?? "default" ], className )}
 		{...props}>
-		<ToggleGroupContext.Provider value={{ variant, size }}>
+		<ToggleGroupContext.Provider value={{ variant, size: size ?? ( variant === "modes" ? "bar" : undefined ) }}>
 			{children}
 		</ToggleGroupContext.Provider>
 	</ToggleGroupPrimitive.Root>

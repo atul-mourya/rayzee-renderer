@@ -20,9 +20,9 @@ the app works there, but large models load more slowly.
 
 - ***Invalid File Type***: the file is not one the app reads. See [the list](loading.md#your-own-files).
 - **Textures are missing, or a `.gltf` fails**: the model is made of several files. Open them all at once (select every
-  file in **File → Open**), or use **File → Open Folder…**, or drop the folder on the view.
+  file in **File → Open…**), or use **File → Open Folder…**, or drop the folder on the view.
 - ***Still Loading***: another load is running. Wait for it, then try again.
-- **Import from URL fails**: the link must end in `.glb`, `.gltf`, `.zip`, `.tar`, `.tgz` or `.gz`, and the server
+- **Open from URL… fails**: the link must end in `.glb`, `.gltf`, `.zip`, `.tar`, `.tgz` or `.gz`, and the server
   must let other sites download the file. Many file-sharing pages are web pages, not the file itself.
 - **A Sketchfab model will not load**: its author may not allow downloads.
 
@@ -69,7 +69,7 @@ than letting the tab crash.
 - A private window keeps nothing after it closes.
 - The browser may clear the site's data when the disk runs low. Open **File → Storage…** and, if it says *Not
   protected*, click **Keep data on this device**.
-- To keep renders safe, save them to a file with **File → Export Renders…**, and scenes with **File → Save Project…**.
+- To keep renders safe, save them to a file with **File → Export Saved Renders…**, and scenes with **File → Save Project…**.
 
 ## AI edits do not work
 

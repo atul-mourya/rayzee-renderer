@@ -1,9 +1,9 @@
-import { useRef } from "react";
+import { useRef, useSyncExternalStore } from "react";
 import { Group, Vector3 } from 'three';
 import { Volume, VolumeGrid } from 'rayzee';
 import { useToast } from "@/hooks/use-toast";
 import { getApp } from '@/lib/appProxy';
-import { useStore } from '@/store';
+import { useStore, useCameraStore, useLightStore } from '@/store';
 import { pickFolder, loadFolder } from '@/lib/folders';
 import { spillNote } from '@/lib/storage';
 import { REPO_URL, docsUrl } from '@/lib/help';
@@ -14,12 +14,55 @@ import {
 	MenubarItem,
 	MenubarMenu,
 	MenubarSeparator,
+	MenubarShortcut,
 	MenubarTrigger,
 } from "@/components/ui/menubar";
 
 let volumeSeed = 0;
 
+// Files a model comes with (buffers, materials, textures), opened together with it as a folder would be.
+const MODEL_PARTS = [ '.bin', '.mtl', '.ktx2', '.tga', '.bmp', '.gif', '.tif', '.tiff', '.avif' ];
+
+// What Open… offers: whatever the engine reads, projects, and a model's parts.
+function openableTypes( app ) {
+
+	const formats = Object.keys( app.assetLoader.getSupportedFormats() ).map( extension => `.${extension}` );
+	return [ ...formats, '.rayzee', ...MODEL_PARTS ].join( ',' );
+
+}
+
 const REPORT_URL = `${REPO_URL}/issues/new?template=bug_report.yml&context=${encodeURIComponent( `Rayzee ${appVersion}` )}`;
+
+const LIGHTS = [
+	{ type: 'DirectionalLight', label: 'Directional Light' },
+	{ type: 'PointLight', label: 'Point Light' },
+	{ type: 'SpotLight', label: 'Spot Light' },
+	{ type: 'RectAreaLight', label: 'Area Light' },
+];
+
+// A new light opens the Light tab, where it is selected.
+function addLight( type ) {
+
+	useLightStore.getState().addLight( type );
+	useStore.getState().setActiveTab( 'light' );
+
+}
+
+const watchFullScreen = ( onChange ) => {
+
+	document.addEventListener( 'fullscreenchange', onChange );
+	return () => document.removeEventListener( 'fullscreenchange', onChange );
+
+};
+
+const isFullScreen = () => !! document.fullscreenElement;
+
+function toggleFullScreen() {
+
+	const change = document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen();
+	change?.catch( () => {} );
+
+}
 
 // A menu item that is a link, so it opens in a new tab and can be copied.
 const HelpLink = ( { href, children } ) => (
@@ -54,8 +97,9 @@ const MenuBar = ( { onOpenImportModal, onOpenStorage, onOpenRecent } ) => {
 
 	const fileInputRef = useRef( null );
 	const rendersInputRef = useRef( null );
-	const projectInputRef = useRef( null );
 	const { toast } = useToast();
+	const onResults = useStore( state => state.appMode === 'results' );
+	const fullScreen = useSyncExternalStore( watchFullScreen, isFullScreen );
 
 	const handleSaveProject = async () => {
 
@@ -98,21 +142,13 @@ const MenuBar = ( { onOpenImportModal, onOpenStorage, onOpenRecent } ) => {
 
 	};
 
-	const handleProjectSelect = async ( event ) => {
-
-		const file = event.target.files?.[ 0 ];
-		event.target.value = '';
-		if ( file ) await openProject( file );
-
-	};
-
 	const handleExportRenders = async () => {
 
 		try {
 
 			const { exportRenders } = await import( '@/lib/renderArchive' );
 			const count = await exportRenders();
-			toast( { title: 'Renders exported', description: `${count} render${count === 1 ? '' : 's'} written to the zip.` } );
+			toast( { title: 'Saved renders exported', description: `${count} render${count === 1 ? '' : 's'} written to the zip.` } );
 
 		} catch ( error ) {
 
@@ -133,7 +169,7 @@ const MenuBar = ( { onOpenImportModal, onOpenStorage, onOpenRecent } ) => {
 
 			const { importRenders } = await import( '@/lib/renderArchive' );
 			const { added, skipped } = await importRenders( file );
-			toast( { title: 'Renders imported', description: `${added} added${skipped ? `, ${skipped} already here` : ''}.` } );
+			toast( { title: 'Saved renders imported', description: `${added} added${skipped ? `, ${skipped} already here` : ''}.` } );
 
 		} catch ( error ) {
 
@@ -145,7 +181,10 @@ const MenuBar = ( { onOpenImportModal, onOpenStorage, onOpenRecent } ) => {
 
 	const handleOpenFile = () => {
 
-		fileInputRef.current?.click();
+		const app = getApp();
+		if ( ! app ) return;
+		fileInputRef.current.accept = openableTypes( app );
+		fileInputRef.current.click();
 
 	};
 
@@ -187,17 +226,15 @@ const MenuBar = ( { onOpenImportModal, onOpenStorage, onOpenRecent } ) => {
 
 		}
 
-		// Validate file type
-		const supportedFormats = [ '.glb', '.gltf', '.fbx', '.obj', '.stl', '.ply', '.dae', '.3mf', '.usd', '.usda', '.usdc', '.usdz', '.zip', '.tar', '.tgz', '.tar.gz', '.gz' ];
-		const fileName = file.name.toLowerCase();
-		const isSupported = supportedFormats.some( format => fileName.endsWith( format ) );
+		const app = getApp();
+		const format = app?.assetLoader.getFileFormat( file.name );
+		if ( ! format ) {
 
-		if ( ! isSupported ) {
-
+			event.target.value = '';
 			toast( {
-				title: "Invalid File Type",
-				description: "Please select a supported 3D model file (.glb, .gltf, .fbx, .obj, .stl, .ply, .dae, .3mf, .usd, .usda, .usdc, .usdz) or an archive: .zip, .tar, .tar.gz, .tgz (incl. pbrt scenes). A model made of several files opens with all of them selected, or from File → Open Folder…",
-				variant: "destructive",
+				title: 'Cannot open this file',
+				description: `Rayzee opens 3D models, scene archives (.zip, .tar), skies (.hdr, .exr) and .rayzee projects. A model made of several files opens with all of them selected, or with Open Folder…`,
+				variant: 'destructive',
 			} );
 			return;
 
@@ -205,25 +242,13 @@ const MenuBar = ( { onOpenImportModal, onOpenStorage, onOpenRecent } ) => {
 
 		try {
 
-			// loadFile dispatches by format (model / archive / environment), so the UI
-			// doesn't branch on extension — .zip (OBJ/MTL, pbrt) and direct models all
-			// route from one entry point, guarded against a concurrent load.
-			const app = getApp();
-			if ( app ) {
-
-				await app.loadFile( file );
-
-				const note = spillNote( app );
-				toast( {
-					title: "Model Loaded",
-					description: `Successfully loaded ${file.name}${note ? `.${note}` : ''}`,
-				} );
-
-			} else {
-
-				throw new Error( "PathTracer app not initialized" );
-
-			}
+			// loadFile dispatches by format (model, archive, sky) and guards against a concurrent load.
+			await app.loadFile( file );
+			const note = spillNote( app );
+			toast( {
+				title: format.type === 'environment' || format.type === 'image' ? 'Sky loaded' : 'Model loaded',
+				description: note ? `${file.name}.${note}` : file.name,
+			} );
 
 		} catch ( error ) {
 
@@ -235,19 +260,21 @@ const MenuBar = ( { onOpenImportModal, onOpenStorage, onOpenRecent } ) => {
 
 			} else toast( error?.code === 'LOAD_IN_PROGRESS'
 				? {
-					title: "Still Loading",
-					description: "Wait for the current load to finish, then open the file again.",
+					title: 'Still loading',
+					description: 'Wait for the current load to finish, then open the file again.',
 				}
 				: {
-					title: "Error Loading Model",
-					description: ( error.message || "Failed to load model" ) + ( fileName.endsWith( '.gltf' )
-						? ' — a .gltf that uses separate files opens with all of them selected, or from File → Open Folder…' : '' ),
-					variant: "destructive",
+					title: 'Could not open the file',
+					description: ( error.message || 'The file did not load.' ) + ( file.name.toLowerCase().endsWith( '.gltf' )
+						? ' — a .gltf that uses separate files opens with all of them selected, or with Open Folder…' : '' ),
+					variant: 'destructive',
 				} );
 
 		} finally {
 
-			// Reset the input so the same file can be selected again
+			// A sky's load reports progress but no end: cleared here, as a drop does.
+			useStore.getState().resetLoading();
+			// The same file can be picked again.
 			event.target.value = '';
 
 		}
@@ -259,16 +286,8 @@ const MenuBar = ( { onOpenImportModal, onOpenStorage, onOpenRecent } ) => {
 			<input
 				ref={fileInputRef}
 				type="file"
-				accept=".glb,.gltf,.fbx,.obj,.stl,.ply,.dae,.3mf,.usd,.usda,.usdc,.usdz,.vdb,.zip,.tar,.tgz,.gz,.rayzee,.bin,.mtl,.png,.jpg,.jpeg,.webp,.avif,.ktx2,.tga,.bmp,.gif,.tif,.tiff"
 				multiple
 				onChange={handleFileSelect}
-				style={{ display: 'none' }}
-			/>
-			<input
-				ref={projectInputRef}
-				type="file"
-				accept=".rayzee"
-				onChange={handleProjectSelect}
 				style={{ display: 'none' }}
 			/>
 			<input
@@ -282,19 +301,18 @@ const MenuBar = ( { onOpenImportModal, onOpenStorage, onOpenRecent } ) => {
 				<MenubarMenu>
 					<MenubarTrigger>File</MenubarTrigger>
 					<MenubarContent>
-						<MenubarItem onSelect={handleOpenFile}>Open</MenubarItem>
+						<MenubarItem onSelect={handleOpenFile}>Open…</MenubarItem>
 						<MenubarItem onSelect={handleOpenFolder}>Open Folder…</MenubarItem>
-						<MenubarItem onSelect={onOpenImportModal}>Import from URL</MenubarItem>
+						<MenubarItem onSelect={onOpenImportModal}>Open from URL…</MenubarItem>
 						<MenubarItem onSelect={onOpenRecent}>Open Recent…</MenubarItem>
 						<MenubarSeparator />
-						<MenubarItem onSelect={() => projectInputRef.current?.click()}>Open Project…</MenubarItem>
 						<MenubarItem onSelect={handleSaveProject}>Save Project…</MenubarItem>
 						<MenubarSeparator />
 						<MenubarItem onSelect={() => useStore.getState().setExportRequest( { tab: 'picture', from: 'live' } )}>Export Picture…</MenubarItem>
 						<MenubarItem onSelect={() => useStore.getState().setExportRequest( { tab: 'video', from: 'live' } )}>Export Video…</MenubarItem>
 						<MenubarSeparator />
-						<MenubarItem onSelect={handleExportRenders}>Export Renders…</MenubarItem>
-						<MenubarItem onSelect={() => rendersInputRef.current?.click()}>Import Renders…</MenubarItem>
+						<MenubarItem onSelect={handleExportRenders}>Export Saved Renders…</MenubarItem>
+						<MenubarItem onSelect={() => rendersInputRef.current?.click()}>Import Saved Renders…</MenubarItem>
 						<MenubarSeparator />
 						<MenubarItem onSelect={onOpenStorage}>Storage…</MenubarItem>
 					</MenubarContent>
@@ -303,28 +321,22 @@ const MenuBar = ( { onOpenImportModal, onOpenStorage, onOpenRecent } ) => {
 				<MenubarMenu>
 					<MenubarTrigger>Add</MenubarTrigger>
 					<MenubarContent>
-						<MenubarItem onSelect={() => addVolume( 'cloud' )}>Cloud</MenubarItem>
-						<MenubarItem onSelect={() => addVolume( 'smoke' )}>Smoke</MenubarItem>
-					</MenubarContent>
-				</MenubarMenu>
-
-				<MenubarMenu>
-					<MenubarTrigger>Edit</MenubarTrigger>
-					<MenubarContent>
-						<MenubarItem disabled>Undo</MenubarItem>
-						<MenubarItem disabled>Redo</MenubarItem>
+						{LIGHTS.map( ( { type, label } ) => (
+							<MenubarItem key={type} disabled={onResults} onSelect={() => addLight( type )}>{label}</MenubarItem>
+						) )}
 						<MenubarSeparator />
-						<MenubarItem disabled>Copy</MenubarItem>
-						<MenubarItem disabled>Paste</MenubarItem>
+						<MenubarItem disabled={onResults} onSelect={() => addVolume( 'cloud' )}>Cloud</MenubarItem>
+						<MenubarItem disabled={onResults} onSelect={() => addVolume( 'smoke' )}>Smoke</MenubarItem>
 					</MenubarContent>
 				</MenubarMenu>
 
 				<MenubarMenu>
 					<MenubarTrigger>View</MenubarTrigger>
 					<MenubarContent>
-						<MenubarItem disabled>Zoom In</MenubarItem>
-						<MenubarItem disabled>Zoom Out</MenubarItem>
-						<MenubarItem disabled>Reset View</MenubarItem>
+						<MenubarItem disabled={onResults} onSelect={() => useCameraStore.getState().handleResetCamera()}>
+							Reset Camera<MenubarShortcut>R</MenubarShortcut>
+						</MenubarItem>
+						<MenubarItem onSelect={toggleFullScreen}>{fullScreen ? 'Exit Full Screen' : 'Enter Full Screen'}</MenubarItem>
 					</MenubarContent>
 				</MenubarMenu>
 

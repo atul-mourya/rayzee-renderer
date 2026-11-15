@@ -12,12 +12,15 @@ const toggleVariants = cva(
 				default: "bg-transparent",
 				outline:
           "border border-input bg-transparent shadow-xs hover:bg-accent hover:text-accent-foreground",
+				// The top bar's mode switch: quiet until hovered, the chosen one tinted, a line between each.
+				modes: "text-muted-foreground hover:bg-accent/50 hover:text-foreground data-[state=on]:bg-primary/20 data-[state=on]:text-primary-tint-foreground data-[state=on]:hover:bg-primary/30 not-first:border-l not-first:border-muted",
 			},
 			size: {
 				default: "h-9 px-3",
 				sm: "h-8 px-2",
 				lg: "h-10 px-3",
 				xs: "h-5 px-3 text-xs",
+				bar: "h-full px-3 rounded-none text-xs",
 			},
 		},
 		defaultVariants: {

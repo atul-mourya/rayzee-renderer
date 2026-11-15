@@ -56,7 +56,7 @@ distance and **Bokeh Stretch** stretches the blurry spots of light into ovals, a
 | Control | What it does |
 |---|---|
 | **Emissive Geometry** | Lets glowing surfaces, such as light panels and screens, light the scene with less grain. The number sets how strongly. |
-| **Lights** (+) | Adds a **Directional Light**, **Point Light**, **Spot Light** or **Area Light**. **Clear All** removes every light. |
+| **Lights** (+) | Adds a **Directional Light**, **Point Light**, **Spot Light** or **Area Light** (so does the **Add** menu). **Clear All** removes every light. |
 | **Light Helper** | Shows the lights in the view as outlines you can click and move. |
 
 Each light in the list has an eye button to hide it and a bin to remove it. Click a light to select it and show its
@@ -80,7 +80,7 @@ The environment and the sun are set in the [Tracer tab](tracer.md#environment), 
 ## Smoke, clouds and fire
 
 **Add → Cloud** puts a cloud above what the camera looks at; **Add → Smoke** a column of smoke in front of it, both
-sized to the view. A `.vdb` file opened from **File → Open** comes in the same way. Select one in the **Outliner** (it
+sized to the view. A `.vdb` file opened from **File → Open…** comes in the same way. Select one in the **Outliner** (it
 cannot be clicked in the view) and move it with its handle; the **Material** tab then shows:
 
 | Setting | What it does |

@@ -1,8 +1,8 @@
-import { useMemo, useCallback, useRef, useEffect, useState, lazy, Suspense } from 'react';
+import { useState, lazy, Suspense } from 'react';
 import { useStore, usePathTracerStore } from '@/store';
 import MenuBar from './MenuBar';
 import ModeTabs from './ModeTabs';
-import ActionBar from './ActionBar';
+import { ThemeToggle } from '@/components/theme-toggle';
 import { useImportUrl } from '@/hooks/useImportUrl';
 
 // Lazy load the ImportUrlModal since it's only used when opening import dialog
@@ -25,28 +25,14 @@ const ModalLoadingFallback = () => (
 
 const TopBar = () => {
 
-	// Store subscriptions
 	const appMode = useStore( state => state.appMode );
 	const setAppMode = useStore( state => state.setAppMode );
 	const handleModeChange = usePathTracerStore( state => state.handleModeChange );
 	const exportRequested = useStore( state => !! state.exportRequest );
 
-	// Ref for appMode to keep handleTabChange stable
-	const appModeRef = useRef( appMode );
-	useEffect( () => {
-
-		appModeRef.current = appMode;
-
-	}, [ appMode ] );
-
 	const [ storageOpen, setStorageOpen ] = useState( false );
-	const openStorage = useCallback( () => setStorageOpen( true ), [] );
-	const closeStorage = useCallback( () => setStorageOpen( false ), [] );
 	const [ recentOpen, setRecentOpen ] = useState( false );
-	const openRecent = useCallback( () => setRecentOpen( true ), [] );
-	const closeRecent = useCallback( () => setRecentOpen( false ), [] );
 
-	// Use custom hooks
 	const {
 		modalState,
 		openImportModal,
@@ -55,43 +41,28 @@ const TopBar = () => {
 		handleImportFromUrl
 	} = useImportUrl();
 
-	// Handle tab change — stable callback (no appMode in deps)
-	const handleTabChange = useCallback( ( value ) => {
+	const handleTabChange = ( value ) => {
 
-		if ( value !== appModeRef.current ) {
+		if ( value === appMode ) return;
+		// First: the mode handler's reset listeners read appMode.
+		setAppMode( value );
+		handleModeChange( value );
 
-			// First: the mode handler's reset listeners read appMode.
-			setAppMode( value );
-			handleModeChange( value );
-
-		}
-
-	}, [ setAppMode, handleModeChange ] );
-
-	// Handle GitHub redirect
-	const handleGithubRedirection = useCallback( () => {
-
-		window.open( 'https://github.com/atul-mourya/rayzee-renderer', '_blank' );
-
-	}, [] );
-
-	// Memoize the logo
-	const logo = useMemo( () => (
-		<div className="flex items-center space-x-2 mr-4 px-2">
-			<span className="font-semibold">Rayzee</span>
-		</div>
-	), [] );
+	};
 
 	return (
-		<div className="flex items-center h-10 border-b">
-			{logo}
-			<MenuBar onOpenImportModal={openImportModal} onOpenStorage={openStorage} onOpenRecent={openRecent} />
-
-			<div className="grow" />
-			<ModeTabs currentMode={appMode} onModeChange={handleTabChange} />
-			<div className="grow" />
-
-			<ActionBar onGithubClick={handleGithubRedirection} />
+		<>
+			{/* Three columns, so the mode switch sits in the middle of the window whatever the menus' width. */}
+			<div className="grid h-10 grid-cols-[1fr_auto_1fr] items-center border-b px-2">
+				<div className="flex h-full min-w-0 items-center gap-2">
+					<span className="px-1 text-sm font-semibold">Rayzee</span>
+					<MenuBar onOpenImportModal={openImportModal} onOpenStorage={() => setStorageOpen( true )} onOpenRecent={() => setRecentOpen( true )} />
+				</div>
+				<ModeTabs currentMode={appMode} onModeChange={handleTabChange} />
+				<div className="flex justify-end">
+					<ThemeToggle />
+				</div>
+			</div>
 
 			<Suspense fallback={<ModalLoadingFallback />}>
 				<ImportUrlModal
@@ -105,12 +76,12 @@ const TopBar = () => {
 			</Suspense>
 			{ storageOpen && (
 				<Suspense fallback={<ModalLoadingFallback />}>
-					<StorageDialog isOpen={storageOpen} onClose={closeStorage} />
+					<StorageDialog isOpen={storageOpen} onClose={() => setStorageOpen( false )} />
 				</Suspense>
 			) }
 			{ recentOpen && (
 				<Suspense fallback={<ModalLoadingFallback />}>
-					<RecentDialog isOpen={recentOpen} onClose={closeRecent} />
+					<RecentDialog isOpen={recentOpen} onClose={() => setRecentOpen( false )} />
 				</Suspense>
 			) }
 			{ exportRequested && (
@@ -118,7 +89,7 @@ const TopBar = () => {
 					<ExportDialog />
 				</Suspense>
 			) }
-		</div>
+		</>
 	);
 
 };
