@@ -1197,6 +1197,11 @@ rides in mis_ray_t), and picking / auto-focus (`raycaster.near`).
 and walk controls turn by `mirrorSign()`, picking keeps it (the world matrix), and the overlay layer is shown flipped
 (`ViewOverlayRenderer.setMirrored`). ⚠️ Anything else drawn by a three.js renderer from the live camera needs the same.
 
+⚠️ **The orbit controls aim at their target with the camera's `up`.** Engine code calls `cameraManager._alignTarget()`
+before `controls.update()` (a host's `lookAt` leaves the target off the line of sight), and a scene camera's `up` goes
+to the view and the controls (`ViewOrbitControls.setUp` sets three's private `_quat`: re-check on upgrades), or the
+update turns or levels the view. Sessions save `view.up`; the default camera and timeline keys are level.
+
 **A far plane past f32** (glTF's zfar 1e10 at znear 1e-4, Khronos' teapots_galore): the inverse projection's w at the
 far plane, 1 / far, rounded to 0 or below and every camera ray turned round (sky only). `cameraProjectionMatrixInverse`
 comes from `projectionInverseOf()` (`scene/ViewCamera.js`), which keeps that w positive there and is the camera's own

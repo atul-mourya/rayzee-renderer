@@ -563,6 +563,8 @@ export class PathTracerApp extends RayzeeRenderer {
 
 	_modelReplaced() {
 
+		// A view left on the last model's rolled camera is levelled for the new one.
+		this.cameraManager._setUp( new Vector3( 0, 1, 0 ) );
 		this._syncControlsAfterLoad();
 		this.cameraManager.currentCameraIndex = 0;
 		if ( this.cameraManager.cameras.length > 1 ) this.cameraManager.switchCamera( 1 );
@@ -1264,6 +1266,8 @@ export class PathTracerApp extends RayzeeRenderer {
 
 	_syncControlsAfterLoad() {
 
+		// A load leaves the camera where it was: the controls' update must not turn it to a target it does not face.
+		this.cameraManager._alignTarget();
 		this.cameraManager.controls.saveState();
 		this.cameraManager.controls.update();
 		this.cameraManager.walkControls.fitSpeed( this.assetLoader.getSceneScale() );
@@ -1309,7 +1313,8 @@ export class PathTracerApp extends RayzeeRenderer {
 		}
 
 		// Reframe-free: never clamp past where the camera currently sits, so the rebuild
-		// can't yank it (e.g. when the scene shrinks after a removal).
+		// can't yank it (e.g. when the scene shrinks after a removal), nor turn it.
+		this.cameraManager._alignTarget();
 		const currentDist = camera.position.distanceTo( controls.target );
 		controls.minDistance = Math.min( maxDim / 1000, currentDist );
 		controls.maxDistance = Math.max( cameraDistance * 10, currentDist * 1.1 );

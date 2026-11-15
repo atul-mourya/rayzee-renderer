@@ -9,6 +9,12 @@ describe( 'PathTracerApp — the camera a replaced model opens through', () => {
 		const cameraManager = {
 			cameras,
 			currentCameraIndex: previousIndex,
+			// The view is levelled before the load's update: a rolled camera of the last model's leaves no tilt.
+			_setUp( up ) {
+
+				switches.push( { up: up.toArray() } );
+
+			},
 			switchCamera( index ) {
 
 				switches.push( { index, from: this.currentCameraIndex } );
@@ -24,19 +30,19 @@ describe( 'PathTracerApp — the camera a replaced model opens through', () => {
 
 	it( 'switches to the model\'s first camera, leaving the default where it was', () => {
 
-		expect( replaceWith( [ 'default', 'model A', 'model B' ], 0 ) ).toEqual( { switches: [ { index: 1, from: 0 } ], current: 1 } );
+		expect( replaceWith( [ 'default', 'model A', 'model B' ], 0 ) ).toEqual( { switches: [ { up: [ 0, 1, 0 ] }, { index: 1, from: 0 } ], current: 1 } );
 
 	} );
 
 	it( 'switches from the default even when the previous model had another camera selected', () => {
 
-		expect( replaceWith( [ 'default', 'model A' ], 3 ) ).toEqual( { switches: [ { index: 1, from: 0 } ], current: 1 } );
+		expect( replaceWith( [ 'default', 'model A' ], 3 ) ).toEqual( { switches: [ { up: [ 0, 1, 0 ] }, { index: 1, from: 0 } ], current: 1 } );
 
 	} );
 
 	it( 'stays on the default camera for a model without cameras', () => {
 
-		expect( replaceWith( [ 'default' ], 2 ) ).toEqual( { switches: [], current: 0 } );
+		expect( replaceWith( [ 'default' ], 2 ) ).toEqual( { switches: [ { up: [ 0, 1, 0 ] } ], current: 0 } );
 
 	} );
 

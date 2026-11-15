@@ -69,7 +69,15 @@ turns it off or supplies a host manager; `openHeadless` defaults to off.
   `_hostSet` is a Map), hidden objects, gizmo-moved objects. Objects are matched by child-index
   path, materials by index, model cameras by index — each **plus a name check**; UUIDs change per
   load. `resolve` answers what the engine cannot reach (a local HDRI, a non-builtin OCIO config).
-  `toPortable` / `fromPortable` keep colours, vectors and non-finite numbers through JSON.
+  `toPortable` / `fromPortable` keep colours, vectors and non-finite numbers through JSON. The live view comes back
+  exactly as saved: an orbit target off the camera's line of sight (a host that aimed the camera with `lookAt` alone)
+  is moved onto it at its distance (`_alignTarget`), or the controls' update turned the camera to it. Loads stopped
+  placing the target (5e9c39ea); the same alignment runs wherever the engine updates the controls or records a view:
+  after a load and an add or remove, saving a view as a camera, leaving the default camera, keying the timeline. A
+  scene camera's `up` goes to the view and the controls (`setUp`: three's `_quat`), or their update levelled a rolled
+  camera to +y (pbrt-v4's transparent-machines rendered turned 90° from pbrt's picture). The view's up is saved with
+  the session (`view.up`; older sessions level) and with a camera saved from the view; the default camera, a new
+  model's first frame and timeline keys (which carry none) are level. The panorama's level horizon still levels to +y.
   `app.sceneSource` says where the model came from (`url` / `local-file` / `object3d`, with an
   archive's `element`); `sceneSourceFile` is the File of a local load. Not restored: texture swaps
   and texture-transform edits, host Object3D loads, a picked OCIO folder.

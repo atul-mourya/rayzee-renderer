@@ -9,14 +9,25 @@ import { toPortable, fromPortable } from '../../Portable.js';
 import { createLogger } from '../../Logger.js';
 
 const log = createLogger( 'camera' );
+const _forward = /*@__PURE__*/ new Vector3(), _offset = /*@__PURE__*/ new Vector3(), _across = /*@__PURE__*/ new Vector3();
+const _yAxis = /*@__PURE__*/ new Vector3( 0, 1, 0 );
 
 // The horizontal turn follows a mirrored camera's picture (pan reads the camera's matrix already).
-// `_rotateLeft` is three's own: re-check on each upgrade.
+// `_rotateLeft`, `_quat` and `_quatInverse` are three's own: re-check on each upgrade.
 class ViewOrbitControls extends OrbitControls {
 
 	_rotateLeft( angle ) {
 
 		super._rotateLeft( angle * mirrorSign( this.object ) );
+
+	}
+
+	/** Orbits about `up` and aims with it: an imported camera's own up keeps its roll through the controls' update. */
+	setUp( up ) {
+
+		this.object.up.copy( up ).normalize();
+		this._quat.setFromUnitVectors( this.object.up, _yAxis );
+		this._quatInverse.copy( this._quat ).invert();
 
 	}
 
@@ -132,11 +143,18 @@ export class CameraManager extends EventDispatcher {
 		cam.position.copy( src.position );
 		cam.quaternion.copy( src.quaternion );
 		cam.scale.copy( src.scale );
+		cam.up.copy( src.up );
 		cam.updateMatrixWorld( true );
 
 		cam.userData.__rayzeeUserCamera = true;
 		cam.userData.__rayzeeEffects = this._captureEffects();
-		if ( this.controls ) cam.userData.__rayzeeOrbitTarget = this.controls.target.clone();
+		if ( this.controls ) {
+
+			this._alignTarget();
+			cam.userData.__rayzeeOrbitTarget = this.controls.target.clone();
+
+		}
+
 		if ( src.userData.clipStart > 0 ) cam.userData.clipStart = src.userData.clipStart;
 
 		this._userCameraCounter += 1;
@@ -302,6 +320,7 @@ export class CameraManager extends EventDispatcher {
 		// Save default camera state before switching away from it
 		if ( this.currentCameraIndex === 0 && index !== 0 ) {
 
+			this._alignTarget();
 			this._defaultCameraState = {
 				position: this.camera.position.clone(),
 				quaternion: this.camera.quaternion.clone(),
@@ -329,6 +348,7 @@ export class CameraManager extends EventDispatcher {
 			this.camera.near = s.near;
 			this.camera.far = s.far;
 			this.camera.userData.clipStart = 0;
+			this._setUp( _yAxis );
 			this.camera.updateProjectionMatrix();
 			this.camera.updateMatrixWorld( true );
 
@@ -401,6 +421,8 @@ export class CameraManager extends EventDispatcher {
 		this.camera.far = source.far;
 		// Only an imported camera's clip start clips the render: see PathTracerStage._updateCameraUniforms.
 		this.camera.userData.clipStart = source.userData?.clipStart ?? 0;
+		// Its up too (a pbrt camera's), or the controls' update levels a rolled camera to +y.
+		this._setUp( source.up );
 		this.camera.updateProjectionMatrix();
 		this.camera.updateMatrixWorld( true );
 
@@ -593,6 +615,35 @@ export class CameraManager extends EventDispatcher {
 
 	}
 
+	/** The view's up, through the controls where there are some. @private */
+	_setUp( up ) {
+
+		if ( this.controls ) this.controls.setUp( up );
+		else this.camera.up.copy( up ).normalize();
+
+	}
+
+	/**
+	 * The orbit target onto the camera's line of sight at the distance it was (1 where the camera stands on it), when it
+	 * is off that line: the controls' update aims at it, and a host may have aimed the camera with `lookAt` alone. Called
+	 * wherever the engine updates the controls or records a view; not per frame, where a host's new target is aimed at.
+	 * @private
+	 */
+	_alignTarget() {
+
+		const { camera, controls } = this;
+		if ( ! controls ) return;
+		const forward = _forward.set( 0, 0, - 1 ).applyQuaternion( camera.quaternion );
+		const offset = _offset.subVectors( controls.target, camera.position );
+		const distance = offset.length();
+		if ( distance > 0 && offset.dot( forward ) > 0 && _across.crossVectors( offset, forward ).lengthSq() <= 1e-12 * distance * distance ) return;
+		controls.target.copy( camera.position ).addScaledVector( forward, distance || 1 );
+		// Straight down or up the controls cannot tell the turn: the target leans a milliradian to the picture's top, as a
+		// view orbited there does, or the next update turns the view to face −z.
+		if ( Math.abs( forward.dot( camera.up ) ) > 1 - 1e-6 ) controls.target.addScaledVector( _across.set( 0, 1, 0 ).applyQuaternion( camera.quaternion ), 1e-3 * ( distance || 1 ) );
+
+	}
+
 	/** Per frame, before rendering. */
 	updateControls() {
 
@@ -609,6 +660,7 @@ export class CameraManager extends EventDispatcher {
 	captureView() {
 
 		const camera = this.camera;
+		this._alignTarget();
 		const orthoHeight = this.orthoHeight ?? 2 * this._fittedHalfHeight();
 		return { position: camera.position.clone(), target: this.controls.target.clone(), fov: camera.fov, orthoHeight };
 
@@ -621,6 +673,8 @@ export class CameraManager extends EventDispatcher {
 	applyPose( pose ) {
 
 		const camera = this.camera;
+		// Keys carry no up: they play level.
+		this._setUp( _yAxis );
 		camera.position.copy( pose.position );
 		camera.lookAt( pose.target );
 		this.controls.target.copy( pose.target );
@@ -658,6 +712,7 @@ export class CameraManager extends EventDispatcher {
 				position: camera.position.toArray(),
 				quaternion: camera.quaternion.toArray(),
 				scale: camera.scale.toArray(),
+				up: camera.up.toArray(),
 				fov: camera.fov,
 				near: camera.near,
 				far: camera.far,
@@ -697,6 +752,7 @@ export class CameraManager extends EventDispatcher {
 					position: cam.position.toArray(),
 					quaternion: cam.quaternion.toArray(),
 					scale: cam.scale.toArray(),
+					up: cam.up.toArray(),
 					orbitTarget: cam.userData.__rayzeeOrbitTarget?.toArray() ?? null,
 				};
 
@@ -732,6 +788,7 @@ export class CameraManager extends EventDispatcher {
 				cam.position.fromArray( entry.position );
 				cam.quaternion.fromArray( entry.quaternion );
 				cam.scale.fromArray( entry.scale );
+				if ( entry.up ) cam.up.fromArray( entry.up );
 				cam.updateProjectionMatrix();
 				cam.updateMatrixWorld( true );
 				cam.userData.__rayzeeUserCamera = true;
@@ -789,7 +846,14 @@ export class CameraManager extends EventDispatcher {
 			camera.updateProjectionMatrix();
 			camera.updateMatrixWorld( true );
 			this.controls.target.fromArray( v.target );
+			// A session without `up` is level.
+			this._setUp( v.up ? _offset.fromArray( v.up ) : _yAxis );
+			this._alignTarget();
 			this.controls.update();
+			// Exactly as saved, past the rounding of the update's aim.
+			camera.position.fromArray( v.position );
+			camera.quaternion.fromArray( v.quaternion );
+			camera.updateMatrixWorld( true );
 
 		}
 

@@ -176,6 +176,9 @@ engine.cameraManager.orthoHeight             // Orthographic view height, scene 
 engine.cameraManager.setOrthoHeight(height)  // Set it
 ```
 
+A scene camera is taken whole, its roll included: the view takes the camera's `up` (an imported pbrt camera's own;
++y for most others) and orbits about it, and the default camera gets +y back.
+
 **Walk mode** is first-person navigation: drag to look, W A S D or the arrow keys to walk level, E and Q to
 rise and sink, Shift faster, Alt slower. A new model resets `speed` so the walk crosses it in about eight
 seconds. Keys are ignored while focus is in a text field, list or menu, and when a focused control has

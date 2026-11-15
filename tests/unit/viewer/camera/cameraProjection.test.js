@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
-import { OrthographicCamera, PerspectiveCamera, Vector3 } from 'three';
+import { Box3, OrthographicCamera, PerspectiveCamera, Quaternion, Vector3 } from 'three';
 import { CameraManager } from '@/core/viewer/camera/CameraManager.js';
+import { PathTracerApp } from '@/core/viewer/PathTracerApp.js';
 import { InteractionManager } from '@/core/viewer/camera/InteractionManager.js';
 import { EngineEvents } from '@/core/EngineEvents.js';
 
@@ -755,6 +756,236 @@ describe( 'CameraManager sessions', () => {
 		const { cm } = manager();
 		expect( cm.restore( null ) ).toEqual( { mismatched: [] } );
 		expect( cm.restore( undefined ) ).toEqual( { mismatched: [] } );
+
+	} );
+
+	it( 'keeps an imported camera\'s roll through the controls, orbiting about its up, and gives the default view +y back', () => {
+
+		const { cm } = manager();
+		const level = cm.camera.quaternion.clone();
+		// A camera whose scene's up lies near +x: its picture is turned against +y.
+		const rolled = new PerspectiveCamera( 4.5, 2.3, 0.1, 100 );
+		rolled.up.set( 0.934, 0, 0.358 );
+		rolled.position.set( 2, 5, 9 );
+		rolled.lookAt( 0, 0, 0 );
+		rolled.updateMatrixWorld( true );
+		cm.setCameras( [ cm.camera, rolled ] );
+
+		cm.switchCamera( 1 );
+		cm.controls.update();
+		expect( cm.camera.quaternion.angleTo( rolled.quaternion ) ).toBeLessThan( 1e-6 );
+		// An orbit turns about the camera's up: the camera keeps its height along it, and its picture stays upright.
+		const axis = rolled.up.clone().normalize();
+		const height = () => cm.camera.position.clone().sub( cm.controls.target ).dot( axis );
+		const before = height(), from = cm.camera.position.clone();
+		cm.controls._rotateLeft( 0.3 );
+		cm.controls.update();
+		expect( cm.camera.position.distanceTo( from ) ).toBeGreaterThan( 0.1 );
+		expect( height() ).toBeCloseTo( before, 9 );
+		expect( Math.abs( new Vector3( 1, 0, 0 ).applyQuaternion( cm.camera.quaternion ).dot( axis ) ) ).toBeLessThan( 1e-9 );
+
+		cm.switchCamera( 0 );
+		expect( cm.camera.up.toArray() ).toEqual( [ 0, 1, 0 ] );
+		cm.controls.update();
+		expect( cm.camera.quaternion.angleTo( level ) ).toBeLessThan( 1e-6 );
+
+	} );
+
+	it( 'keeps a rolled view\'s up in a saved session and a camera saved from it; timeline keys and older sessions play level', () => {
+
+		const rolledCamera = () => {
+
+			const camera = new PerspectiveCamera( 30, 2, 0.1, 100 );
+			camera.up.set( 1, 0, 0 );
+			camera.position.set( 2, 5, 9 );
+			camera.lookAt( 0, 0, 0 );
+			camera.updateMatrixWorld( true );
+			return camera;
+
+		};
+
+		const { cm } = manager();
+		const rolled = rolledCamera();
+		cm.setCameras( [ cm.camera, rolled ] );
+		cm.switchCamera( 1 );
+		const saved = cm.addCameraFromView( 'Saved' );
+		const state = JSON.parse( JSON.stringify( cm.serialize() ) );
+
+		const into = manager().cm;
+		into.setCameras( [ into.camera, rolledCamera() ] );
+		into.switchCamera( 1 );
+		into.restore( state );
+		into.controls.update();
+		expect( into.camera.quaternion.angleTo( rolled.quaternion ) ).toBeLessThan( 1e-6 );
+		into.switchCamera( 0 );
+		expect( into.camera.up.toArray() ).toEqual( [ 0, 1, 0 ] );
+		into.switchCamera( saved );
+		into.controls.update();
+		expect( into.camera.quaternion.angleTo( rolled.quaternion ) ).toBeLessThan( 1e-6 );
+
+		// A key carries no up: it plays level, whichever camera is on.
+		into.applyPose( { position: new Vector3( 0, 3, 8 ), target: new Vector3(), fov: 50, orthoHeight: 4 } );
+		expect( into.camera.up.toArray() ).toEqual( [ 0, 1, 0 ] );
+		expect( Math.abs( new Vector3( 1, 0, 0 ).applyQuaternion( into.camera.quaternion ).y ) ).toBeLessThan( 1e-9 );
+
+		// A session without `up` is level.
+		delete state.view.up;
+		const old = manager().cm;
+		old.setCameras( [ old.camera, rolledCamera() ] );
+		old.switchCamera( 1 ); // as the load does before a session is restored
+		old.restore( state );
+		expect( old.camera.up.toArray() ).toEqual( [ 0, 1, 0 ] );
+
+	} );
+
+	it( 'fits the orbit limits to the scene after an add or remove, never past the camera, nor turning a hand-aimed view', () => {
+
+		const { cm } = manager();
+		let bounds = new Box3( new Vector3( - 1, 0, - 1 ), new Vector3( 1, 2, 1 ) );
+		const app = Object.assign( Object.create( PathTracerApp.prototype ), { meshScene: {}, cameraManager: cm, getModelBounds: () => bounds } );
+		// A host aims the camera and leaves the target at the origin.
+		cm.camera.position.set( 0, 1.4, 4.2 );
+		cm.camera.lookAt( 0, 0.5, 0 );
+		cm.camera.updateMatrixWorld( true );
+		const aim = cm.camera.quaternion.clone();
+
+		app._recalibrateControlLimits();
+		expect( cm.camera.quaternion.angleTo( aim ) ).toBeLessThan( 1e-6 );
+		expect( [ cm.camera.near, cm.camera.far ] ).toEqual( [ 0.02, 200 ] );
+		const fit = 2 / Math.sin( cm.camera.fov * Math.PI / 360 ) / 2;
+		expect( cm.controls.maxDistance ).toBeCloseTo( fit * 10, 9 );
+		expect( cm.controls.minDistance ).toBeCloseTo( 0.002, 9 );
+
+		// Shrunk to a speck with the camera far out: the limits keep it where it is.
+		bounds = new Box3( new Vector3(), new Vector3( 0.01, 0.01, 0.01 ) );
+		cm.camera.position.multiplyScalar( 50 );
+		cm.camera.updateMatrixWorld( true );
+		const at = cm.camera.position.clone();
+		app._recalibrateControlLimits();
+		const distance = cm.camera.position.distanceTo( cm.controls.target );
+		expect( cm.controls.maxDistance ).toBeGreaterThanOrEqual( distance );
+		expect( cm.camera.position.distanceTo( at ) ).toBeLessThan( 1e-9 );
+
+		// On a scene camera its own clip planes stay; an empty scene changes nothing.
+		cm.currentCameraIndex = 1;
+		cm.camera.near = 0.5;
+		bounds = new Box3( new Vector3( - 10, - 10, - 10 ), new Vector3( 10, 10, 10 ) );
+		app._recalibrateControlLimits();
+		expect( cm.camera.near ).toBe( 0.5 );
+		const limits = [ cm.controls.minDistance, cm.controls.maxDistance ];
+		bounds = new Box3();
+		app._recalibrateControlLimits();
+		expect( [ cm.controls.minDistance, cm.controls.maxDistance ] ).toEqual( limits );
+
+	} );
+
+	it( 'brings back the exact view, its orbit target off its axis included', () => {
+
+		const { cm } = manager();
+		// A host aims the camera and leaves the orbit target behind (the target stays at the origin).
+		cm.camera.position.set( 0, 1.4, 4.2 );
+		cm.camera.lookAt( 0, 0.5, 0 );
+		cm.camera.updateMatrixWorld( true );
+		const state = JSON.parse( JSON.stringify( cm.serialize() ) );
+
+		for ( const into of [ cm, manager().cm ] ) {
+
+			into.restore( state );
+			expect( into.camera.position.toArray() ).toEqual( state.view.position );
+			expect( into.camera.quaternion.toArray() ).toEqual( state.view.quaternion );
+			// The pivot moved onto the view's axis at the saved target's distance, so the controls' next update keeps the view.
+			const forward = new Vector3( 0, 0, - 1 ).applyQuaternion( into.camera.quaternion );
+			const toTarget = into.controls.target.clone().sub( into.camera.position );
+			expect( toTarget.clone().cross( forward ).length() ).toBeLessThan( 1e-9 );
+			expect( toTarget.dot( forward ) ).toBeCloseTo( Math.hypot( 1.4, 4.2 ), 9 );
+			into.controls.update();
+			expect( into.camera.quaternion.angleTo( new Quaternion().fromArray( state.view.quaternion ) ) ).toBeLessThan( 1e-6 );
+
+		}
+
+	} );
+
+	it( 'keeps a restored view looking away from its orbit target, the target before it at the same distance', () => {
+
+		const { cm } = manager();
+		cm.camera.position.set( 0, 0, 5 );
+		cm.camera.lookAt( 0, 0, 10 );
+		const state = JSON.parse( JSON.stringify( cm.serialize() ) );
+		cm.restore( state );
+		expect( cm.camera.quaternion.toArray() ).toEqual( state.view.quaternion );
+		expect( cm.controls.target.toArray().map( ( v ) => Math.round( v * 1e9 ) / 1e9 ) ).toEqual( [ 0, 0, 10 ] );
+
+	} );
+
+	// A host aims the camera and leaves the orbit target at the origin.
+	const aimed = () => {
+
+		const { cm } = manager();
+		cm.camera.position.set( 0, 1.4, 4.2 );
+		cm.camera.lookAt( 0, 0.5, 0 );
+		cm.camera.updateMatrixWorld( true );
+		return { cm, quaternion: cm.camera.quaternion.clone(), position: cm.camera.position.clone() };
+
+	};
+
+	const sameView = ( cm, { quaternion, position } ) => {
+
+		expect( cm.camera.quaternion.angleTo( quaternion ) ).toBeLessThan( 1e-6 );
+		expect( cm.camera.position.distanceTo( position ) ).toBeLessThan( 1e-9 );
+
+	};
+
+	it( 'brings back a view the host aimed when it was saved as a camera, or when the default camera is left and taken again', () => {
+
+		const saved = aimed();
+		const index = saved.cm.addCameraFromView( 'Shot' );
+		saved.cm.switchCamera( index );
+		saved.cm.controls.update();
+		sameView( saved.cm, saved );
+
+		const left = aimed();
+		left.cm.setCameras( [ left.cm.camera, new PerspectiveCamera( 40, 1, 0.1, 100 ) ] );
+		left.cm.switchCamera( 1 );
+		left.cm.switchCamera( 0 );
+		left.cm.controls.update();
+		sameView( left.cm, left );
+
+	} );
+
+	it( 'keys the view the host aimed, and plays it back as it was', () => {
+
+		const view = aimed();
+		const pose = view.cm.captureView();
+		view.cm.camera.position.set( 9, 9, 9 );
+		view.cm.applyPose( pose );
+		sameView( view.cm, view );
+
+	} );
+
+	it( 'keeps the turn of a view looking straight down, the target off to one side', () => {
+
+		const { cm } = manager();
+		cm.camera.position.set( 1, 6, - 2 );
+		cm.camera.rotation.set( - Math.PI / 2, 0, 0.7 );
+		cm.camera.updateMatrixWorld( true );
+		const quaternion = cm.camera.quaternion.clone();
+		cm._alignTarget();
+		cm.controls.update();
+		expect( cm.camera.quaternion.angleTo( quaternion ) ).toBeLessThan( 2e-3 );
+
+	} );
+
+	it( 'gives a camera standing on its orbit target a target ahead of it', () => {
+
+		const { cm } = manager();
+		cm.camera.position.set( 0, 0, 0 );
+		cm.camera.lookAt( 1, 0, 0 );
+		cm.controls.target.set( 0, 0, 0 );
+		const quaternion = cm.camera.quaternion.clone();
+		cm._alignTarget();
+		expect( cm.controls.target.distanceTo( new Vector3( 1, 0, 0 ) ) ).toBeLessThan( 1e-9 );
+		cm.controls.update();
+		expect( cm.camera.quaternion.angleTo( quaternion ) ).toBeLessThan( 1e-6 );
 
 	} );
 
