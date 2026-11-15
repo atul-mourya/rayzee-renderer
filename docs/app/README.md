@@ -73,8 +73,10 @@ lets you pick objects by clicking them. Messages such as **Compiling shaders...*
 
 ## The status bar
 
-**Left: the graphs.** **FPS**, **CPU**, **GPU** and **CPT** (GPU compute) timings. A **DN** graph joins them while the
-AI denoiser is cleaning the live view.
+**Left: the speed tiles.** **fps**, then **cpu**, **gpu** and **compute**: the milliseconds a frame takes on the CPU,
+on the GPU drawing it to the screen, and on the GPU tracing it. **denoise** counts the denoised pictures a second while
+the AI denoiser cleans the live view, and how long the last one took. The faint bars behind each number are its last
+few seconds; hover a tile to see what it measures.
 
 **Middle:** the picture's size in pixels.
 
