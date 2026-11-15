@@ -2547,6 +2547,10 @@ SCENES.push( {
 	},
 	async build( app ) {
 
+		// Its own sky, as volume-lamps: the backdrop shows past the walls, and would otherwise be the last scene's.
+		const env = app.stages.pathTracer.environment;
+		env.envParams.solidSkyColor = new Color( 0.01, 0.012, 0.02 );
+		await env.setMode( 'color' );
 		const corner = new Group();
 		const grey = new MeshPhysicalMaterial( { color: 0x9a9a9a, roughness: 0.9, metalness: 0 } );
 		const slab = ( w, h, d, x, y, z ) => {

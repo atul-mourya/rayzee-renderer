@@ -223,6 +223,8 @@ Two rules that are easy to get wrong:
   engine then overwrites itself (`groundCatcherHeight` is auto-seeded to the scene's min-Y on load).
   `session.settingsFloor()` (`harness/sceneSession.js`) builds the per-load reset from the union of those keys, so a setting mutated
   outside them leaks into whichever scene loads next and makes results depend on scene order.
+- **Set the scene's own sky**, even with `enableEnvironment: false`: that only stops the sky lighting the scene, and
+  whatever shows past its walls is the backdrop, which is otherwise the previous scene's.
 
 Then do two things that are not optional:
 
