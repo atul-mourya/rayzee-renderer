@@ -21,14 +21,14 @@ import {
 	DataTexture, FloatType, RGBAFormat, LinearFilter, EquirectangularReflectionMapping,
 	SRGBColorSpace, NoColorSpace, AnimationClip, VectorKeyframeTrack, QuaternionKeyframeTrack,
 	NumberKeyframeTrack, BooleanKeyframeTrack, DirectionalLight, PointLight, SpotLight, FrontSide, DoubleSide,
-	RepeatWrapping, UnsignedByteType
+	RepeatWrapping, UnsignedByteType, DataUtils
 } from 'three';
 import { blackbodyRGB, buildMaterial, illuminantRGB, pBool, pFloat, pString, resolveSpectrum, sampledEmissionRGB } from './PBRTMaterials.js';
 import { makeLayer, layerMean, planBake, bakeRows, bakeResult, combineOf, namedScalars, productOf, mixOf, srgbToLinear, linearToSRGB, hasAlpha, generateUV, uvKey } from './PBRTTextureBake.js';
 import BakeWorker from './BakeWorker.js?worker&inline';
 import { loopSubdivide } from './LoopSubdivision.js';
 import { approximated, param } from './PBRTParser.js';
-import { octahedralToEquirect } from './EqualAreaOctahedral.js';
+import { octahedralToEquirect, SRGB_TO_LINEAR } from './EqualAreaOctahedral.js';
 import { tessellateCurve, tessellateCurves, tessellateCurvesAcross } from './PBRTCurves.js';
 import CurveWorker from './CurveWorker.js?worker&inline';
 import PtexWorker from './PtexWorker.js?worker&inline';
@@ -152,7 +152,7 @@ const DEFAULT_CURVE_TOLERANCE = 0.05;
 const CURVE_SPLIT_CURVES = 20000;
 
 /** Bumped whenever the same scene files build a different graph, so a stored graph is not reused. */
-export const PBRT_BUILD_REVISION = 42;
+export const PBRT_BUILD_REVISION = 43;
 
 // Ptex pages: all of a scene's Ptex colour maps in this much texture memory at most, on square pages this size.
 const DEFAULT_PTEX_MEMORY = 1024 * 2 ** 20;
@@ -922,6 +922,94 @@ function materialNameCandidates( texName ) {
 
 	}
 
+	return out;
+
+}
+
+// Alike but for their portal.
+function sameSky( a, b ) {
+
+	const names = new Set( [ ...Object.keys( a.params ), ...Object.keys( b.params ) ] );
+	names.delete( 'portal' );
+	for ( const name of names ) if ( JSON.stringify( a.params[ name ] ) !== JSON.stringify( b.params[ name ] ) ) return false;
+	return String( a.ctm ) === String( b.ctm );
+
+}
+
+// An equirectangular sky's linear RGB × `gain`, read bilinearly at (u, v), u wrapping; v = 0 is straight down (row 0),
+// as the engine's equirect and its CDF lay it out. Null where its pixels cannot be read here.
+function skyReader( texture, gain ) {
+
+	const pixels = texturePixels( texture );
+	if ( ! pixels || ! ( pixels.width > 0 ) || ! ( pixels.height > 0 ) ) return null;
+	const { data, width, height, topDown, float } = pixels;
+	const channels = data.length / ( width * height );
+	if ( ! Number.isInteger( channels ) || channels < 3 ) return null;
+	let value = ( i ) => data[ i ];
+	if ( data instanceof Uint16Array ) value = ( i ) => DataUtils.fromHalfFloat( data[ i ] );
+	// An 8-bit sky is sRGB, as pbrt reads a PNG.
+	else if ( ! float ) value = ( i ) => SRGB_TO_LINEAR[ data[ i ] ];
+	const row = topDown ? ( y ) => height - 1 - y : ( y ) => y;
+	const texel = ( x, y, c ) => value( ( row( y ) * width + ( ( x % width ) + width ) % width ) * channels + c ) * gain;
+
+	return {
+		width, height,
+		read( u, v, out ) {
+
+			const fx = u * width - 0.5, fy = Math.min( height - 1, Math.max( 0, v * height - 0.5 ) );
+			const x0 = Math.floor( fx ), y0 = Math.floor( fy ), y1 = Math.min( height - 1, y0 + 1 );
+			const tx = fx - x0, ty = fy - y0;
+			for ( let c = 0; c < 3; c ++ ) {
+
+				const top = texel( x0, y0, c ) * ( 1 - tx ) + texel( x0 + 1, y0, c ) * tx;
+				const bottom = texel( x0, y1, c ) * ( 1 - tx ) + texel( x0 + 1, y1, c ) * tx;
+				out[ c ] = top * ( 1 - ty ) + bottom * ty;
+
+			}
+
+		},
+	};
+
+}
+
+// pbrt adds every infinite light; the engine has one environment: their sum, at the largest one's size.
+function sumEquirects( skies, warn ) {
+
+	const readers = [];
+	for ( const { texture, gain, name } of skies ) {
+
+		const reader = skyReader( texture, gain );
+		if ( reader ) readers.push( reader );
+		else warn( `infinite light ${name}: its pixels cannot be read back here, so it is left out of the environment` );
+
+	}
+
+	if ( readers.length === 0 ) return skies[ 0 ].texture;
+	const size = readers.reduce( ( a, r ) => ( r.width * r.height > a.width * a.height ? r : a ), { width: 0, height: 0 } );
+	const { width, height } = size;
+	const data = new Float32Array( width * height * 4 );
+	const rgb = [ 0, 0, 0 ];
+	for ( let y = 0; y < height; y ++ ) for ( let x = 0; x < width; x ++ ) {
+
+		const o = ( y * width + x ) * 4;
+		for ( const reader of readers ) {
+
+			reader.read( ( x + 0.5 ) / width, ( y + 0.5 ) / height, rgb );
+			data[ o ] += rgb[ 0 ];
+			data[ o + 1 ] += rgb[ 1 ];
+			data[ o + 2 ] += rgb[ 2 ];
+
+		}
+
+		data[ o + 3 ] = 1;
+
+	}
+
+	const out = new DataTexture( data, width, height, RGBAFormat, FloatType );
+	out.mapping = EquirectangularReflectionMapping;
+	out.minFilter = LinearFilter;
+	out.magFilter = LinearFilter;
+	out.needsUpdate = true;
 	return out;
 
 }
@@ -3809,8 +3897,10 @@ export class PBRTSceneBuilder {
 
 			const channels = image.data.length / ( image.width * image.height );
 			if ( ! Number.isInteger( channels ) || channels < 3 ) return null;
-			// three's EXR/HDR loaders fill DataTexture rows bottom-up; pbrt reads the square top-down.
-			src = { data: image.data, width: image.width, height: image.height, channels, bottomUp: true };
+			// three's EXR loader fills rows bottom-up, its HDR loader top-down for a flip on upload; pbrt reads the square
+			// top-down. An 8-bit sky is sRGB.
+			const bytes = image.data instanceof Uint8Array || image.data instanceof Uint8ClampedArray;
+			src = { data: image.data, width: image.width, height: image.height, channels, bottomUp: tex.flipY !== true, srgb: bytes };
 
 		} else {
 
@@ -3839,8 +3929,26 @@ export class PBRTSceneBuilder {
 
 	async _buildEnvironment( lights ) {
 
-		const inf = lights.find( l => l.type === 'infinite' );
-		if ( ! inf ) return null;
+		const infinite = lights.filter( l => l.type === 'infinite' );
+		// Portal lights alike but for their portal count once: the engine has no portals.
+		const kept = [];
+		for ( const l of infinite ) {
+
+			if ( ! l.params.portal || ! kept.some( o => o.params.portal && sameSky( o, l ) ) ) kept.push( l );
+			else for ( const name of [ 'filename', 'scale', 'L' ] ) param( l.params, name );
+
+		}
+
+		const skies = [];
+		for ( const inf of kept ) skies.push( await this._infiniteLightTexture( inf ) );
+		if ( skies.length === 0 ) return null;
+		if ( skies.length === 1 && skies[ 0 ].gain === 1 ) return { texture: skies[ 0 ].texture };
+		return { texture: sumEquirects( skies, ( m ) => this.warn( m ) ) };
+
+	}
+
+	// `{ texture, gain, name }`: `gain` the `scale` still to apply, where the texture is the loader's own (a lat-long).
+	async _infiniteLightTexture( inf ) {
 
 		const scale = pFloat( inf.params, 'scale', 1 );
 		const filename = pString( inf.params, 'filename', null );
@@ -3853,10 +3961,10 @@ export class PBRTSceneBuilder {
 				if ( tex ) {
 
 					const converted = this._equirectFromInfiniteLight( tex, inf, scale, filename );
-					if ( converted ) return { texture: converted };
+					if ( converted ) return { texture: converted, gain: 1, name: `"${filename}"` };
 
 					tex.mapping = EquirectangularReflectionMapping;
-					return { texture: tex };
+					return { texture: tex, gain: scale, name: `"${filename}"` };
 
 				}
 
@@ -3890,7 +3998,7 @@ export class PBRTSceneBuilder {
 		tex.minFilter = LinearFilter;
 		tex.magFilter = LinearFilter;
 		tex.needsUpdate = true;
-		return { texture: tex };
+		return { texture: tex, gain: 1, name: 'L' };
 
 	}
 

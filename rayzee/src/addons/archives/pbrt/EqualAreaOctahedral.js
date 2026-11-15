@@ -63,7 +63,7 @@ function toSquare( dx, dy, dz, out ) {
 }
 
 /** 8-bit sRGB → linear, tabulated so a per-tap decode costs a lookup rather than a pow(). */
-const SRGB_TO_LINEAR = ( () => {
+export const SRGB_TO_LINEAR = ( () => {
 
 	const t = new Float32Array( 256 );
 	for ( let i = 0; i < 256; i ++ ) {
@@ -112,11 +112,11 @@ function sampleBilinear( data, width, height, channels, u, v, out, table ) {
  * Resample a square equal-area octahedral map into an equirectangular RGBA float image.
  *
  * The output uses the engine's own mapping (Environment.js): u = atan2(z,x)/2pi + 0.5,
- * v = 1 - acos(y)/pi, with row 0 at v = 1 so "up" lands at the top like any other HDRI.
+ * v = 1 - acos(y)/pi, with row 0 at v = 0 (straight down) and the last row up, as the engine samples it.
  *
  * @param {{data: ArrayLike<number>, width: number, height: number, channels: number,
  *   bottomUp?: boolean, srgb?: boolean}} src - `bottomUp` when row 0 holds the BOTTOM of the
- *   image, which is what three's EXR/HDR loaders produce; pbrt indexes the square top-down, and
+ *   image, as three's EXR loader fills it (its HDR loader fills top-down, flipY); pbrt indexes the square top-down, and
  *   reading it the wrong way round turns out to rotate the sky 180° about the light's z axis.
  *   `srgb` when the samples are 8-bit sRGB, as a PNG read back through a canvas is.
  * @param {number[]} lightToWorld - the light's pbrt CTM (column-major 16), or null

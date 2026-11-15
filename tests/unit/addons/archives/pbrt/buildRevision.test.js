@@ -15,7 +15,7 @@ import { SCENE_GRAPH_FORMAT } from '@/core/addons/archives/SceneGraphCodec.js';
 import { USD_BUILD_REVISION } from '@/core/addons/archives/usd/index.js';
 
 // Updated together: the two numbers in the stored graph's key, and the code that builds and stores it.
-const RECORDED = { revision: 42, usd: 1, format: 3, code: '64b19c34a3ca19a5' };
+const RECORDED = { revision: 43, usd: 1, format: 3, code: '17564af4651af2f5' };
 
 const ARCHIVES = resolve( dirname( fileURLToPath( import.meta.url ) ), '../../../../../rayzee/src/addons/archives' );
 const SOURCES = [ 'pbrt', 'usd', 'SceneGraphCodec.js' ];

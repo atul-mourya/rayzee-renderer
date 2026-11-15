@@ -2,7 +2,7 @@ import { DataTexture, FloatType, LinearFilter, RGBAFormat } from 'three';
 
 /**
  * Portable float map: "PF" (RGB) or "Pf" (grey), width and height, then a scale whose sign is the byte
- * order, then rows bottom first — the order three's EXR and HDR loaders fill a DataTexture in.
+ * order, then rows bottom first — the order three's EXR loader fills a DataTexture in.
  * A scale other than ±1 multiplies the pixels, as pbrt reads it.
  * @param {Uint8Array} bytes
  * @returns {{ data: Float32Array, width: number, height: number }} RGBA, row 0 the bottom

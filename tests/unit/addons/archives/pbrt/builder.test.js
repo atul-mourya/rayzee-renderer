@@ -2063,6 +2063,123 @@ describe( 'PBRT scene builder: an infinite light\'s image', () => {
 
 	} );
 
+	// pbrt adds every infinite light; the engine has one environment.
+	it( 'sums every infinite light, and counts portal lights of one image once', async () => {
+
+		const scene = async ( text ) => {
+
+			const builder = new PBRTSceneBuilder( { resolvePLY: async () => null, resolveEnvironment: async () => sky( 32, 32, [] ) } );
+			const ir = await new PBRTParser().parse( enc.encode( `WorldBegin\n${text}` ) );
+			return { texture: ( await builder._buildEnvironment( ir.lights ) )?.texture, warnings: builder.warnings };
+
+		};
+
+		const image = 'LightSource "infinite" "string filename" "sky.exr" "float scale" 2';
+		const glow = 'LightSource "infinite" "rgb L" [ 0.25 0.25 0.25 ]';
+		const both = ( await scene( `${image}\n${glow}` ) ).texture;
+		expect( [ both.image.width, both.image.height ] ).toEqual( [ 32, 16 ] );
+		expect( mean( both ) ).toBeCloseTo( 1.25, 4 );
+		expect( mean( ( await scene( `${glow}\n${glow}` ) ).texture ) ).toBeCloseTo( 0.5, 4 );
+
+		const portal = ( y ) => `${image} "point3 portal" [ 0 ${y} 0  1 ${y} 0  1 ${y} 1  0 ${y} 1 ]`;
+		expect( mean( ( await scene( `${portal( 0 )}\n${portal( 2 )}` ) ).texture ) ).toBeCloseTo( 1, 4 );
+		expect( mean( ( await scene( `${portal( 0 )}\n${glow}` ) ).texture ) ).toBeCloseTo( 1.25, 4 );
+		expect( ( await scene( '' ) ).texture ).toBeUndefined();
+
+	} );
+
+	// Each light's own image by name, in a scene of several.
+	const skies = async ( text, images ) => {
+
+		const builder = new PBRTSceneBuilder( { resolvePLY: async () => null, resolveEnvironment: async ( name ) => images[ name ] } );
+		const ir = await new PBRTParser().parse( enc.encode( `WorldBegin\n${text}` ) );
+		return { texture: ( await builder._buildEnvironment( ir.lights ) )?.texture, warnings: builder.warnings };
+
+	};
+
+	const glow = 'LightSource "infinite" "rgb L" [ 0.25 0.25 0.25 ]';
+	const brightest = ( t ) => {
+
+		let at = 0;
+		for ( let i = 0; i < t.image.data.length; i += 4 ) if ( t.image.data[ i ] > t.image.data[ at ] ) at = i;
+		return [ ( at / 4 ) % t.image.width, Math.floor( at / 4 / t.image.width ) ];
+
+	};
+
+	it( 'keeps every image where it is in the sum, rows flipped on upload or not', async () => {
+
+		const plain = sky( 64, 32, [[ 40, 6, 9 ]] );
+		const flipped = sky( 64, 32, [[ 40, 32 - 1 - 6, 9 ]] );
+		flipped.flipY = true;
+		const image = 'LightSource "infinite" "string filename" "sky.exr"';
+		for ( const texture of [ plain, flipped ] ) {
+
+			const { texture: sum } = await skies( `${image}\n${glow}`, { 'sky.exr': texture } );
+			expect( brightest( sum ) ).toEqual( [ 40, 6 ] );
+			expect( sum.image.data[ ( 6 * 64 + 40 ) * 4 ] ).toBeCloseTo( 9.25, 4 );
+			expect( sum.image.data[ ( 20 * 64 + 10 ) * 4 ] ).toBeCloseTo( 0.75, 4 );
+
+		}
+
+	} );
+
+	it( 'applies a lat-long image\'s `scale`, alone or summed, and reads an 8-bit one as sRGB', async () => {
+
+		const image = 'LightSource "infinite" "string filename" "sky.png" "float scale" 4';
+		const wide = sky( 64, 32, [] );
+		const alone = ( await skies( image, { 'sky.png': wide } ) ).texture;
+		expect( alone ).not.toBe( wide );
+		expect( mean( alone ) ).toBeCloseTo( 2, 4 );
+		expect( mean( ( await skies( `${image}\n${glow}`, { 'sky.png': wide } ) ).texture ) ).toBeCloseTo( 2.25, 4 );
+
+		const bytes = new DataTexture( new Uint8Array( 64 * 32 * 4 ).fill( 188 ), 64, 32 );
+		expect( mean( ( await skies( `${image}\n${glow}`, { 'sky.png': bytes } ) ).texture ) ).toBeCloseTo( 4 * 0.5029 + 0.25, 3 );
+
+	} );
+
+	it( 'leaves out an image it cannot read, naming it, and keeps the first when none can be read', async () => {
+
+		const drawable = new DataTexture( null, 64, 32 );
+		drawable.image = { width: 64, height: 32 };
+		const image = 'LightSource "infinite" "string filename" "sky.png"';
+		const { texture, warnings } = await skies( `${image}\n${glow}`, { 'sky.png': drawable } );
+		expect( mean( texture ) ).toBeCloseTo( 0.25, 4 );
+		expect( warnings.some( ( w ) => /"sky\.png".*left out/.test( w ) ) ).toBe( true );
+
+		const other = new DataTexture( null, 64, 32 );
+		other.image = { width: 64, height: 32 };
+		const none = await skies( `${image}\nLightSource "infinite" "string filename" "b.png"`, { 'sky.png': drawable, 'b.png': other } );
+		expect( none.texture ).toBe( drawable );
+
+	} );
+
+	it( 'keeps portal lights that differ in image, radiance, scale or transform', async () => {
+
+		const portal = '"point3 portal" [ 0 0 0  1 0 0  1 0 1  0 0 1 ]';
+		const images = { 'a.exr': sky( 32, 16, [] ), 'b.exr': sky( 32, 16, [[ 0, 0, 0.5 ]] ) };
+		images[ 'b.exr' ].image.data.fill( 1 );
+		const sum = async ( a, b ) => mean( ( await skies( `LightSource "infinite" ${a} ${portal}\nLightSource "infinite" ${b} ${portal}`, images ) ).texture );
+
+		expect( await sum( '"string filename" "a.exr"', '"string filename" "b.exr"' ) ).toBeCloseTo( 1.5, 4 );
+		expect( await sum( '"rgb L" [ 1 0 0 ]', '"rgb L" [ 0 0 1 ]' ) ).toBeCloseTo( 1, 4 );
+		expect( await sum( '"string filename" "a.exr"', '"string filename" "a.exr" "float scale" 2' ) ).toBeCloseTo( 1.5, 4 );
+		const light = `LightSource "infinite" "string filename" "a.exr" ${portal}`;
+		expect( mean( ( await skies( `${light}\nAttributeBegin Rotate 90 0 1 0 ${light} AttributeEnd`, images ) ).texture ) ).toBeCloseTo( 1, 4 );
+		expect( await sum( '"string filename" "a.exr"', '"string filename" "a.exr"' ) ).toBeCloseTo( 0.5, 4 );
+
+	} );
+
+	it( 'reads a square sky the HDR loader filled top-down (flipY) the same way up as an EXR', async () => {
+
+		const exr = sky( 33, 33, [[ 20, 8, 100 ]] );
+		const hdr = sky( 33, 33, [[ 20, 33 - 1 - 8, 100 ]] );
+		hdr.flipY = true;
+		const a = ( await environment( exr ) ).texture, b = ( await environment( hdr ) ).texture;
+		expect( brightest( b ) ).toEqual( brightest( a ) );
+		expect( Array.from( b.image.data ) ).toEqual( Array.from( a.image.data ) );
+
+	} );
+
 } );
 
 describe( 'PBRT scene builder: float maps', () => {
