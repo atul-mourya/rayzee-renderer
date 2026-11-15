@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { OrthographicCamera, PerspectiveCamera, Vector3 } from 'three';
 import { CameraManager } from '@/core/viewer/camera/CameraManager.js';
+import { InteractionManager } from '@/core/viewer/camera/InteractionManager.js';
 import { EngineEvents } from '@/core/EngineEvents.js';
 
 function canvas() {
@@ -600,20 +601,25 @@ describe( 'CameraManager navigation', () => {
 
 	} );
 
-	it( 'holds the orbit still while the AF point is being placed', () => {
+	it( 'holds the orbit still while the AF point is being placed, and lets go however placing ends', () => {
 
 		const { cm } = manager();
 		cm.enterAFPointPlacementMode();
 		expect( cm.controls.enabled ).toBe( true );
 
-		const interaction = { enterAFPointPlacementMode: vi.fn(), exitAFPointPlacementMode: vi.fn() };
+		const canvas = { style: {}, addEventListener: vi.fn(), removeEventListener: vi.fn(), getBoundingClientRect: () => ( { left: 0, top: 0, width: 100, height: 100 } ) };
+		const interaction = Object.assign( Object.create( InteractionManager.prototype ), { canvas, _orbitControls: cm.controls } );
 		cm.setInteractionManager( interaction );
-		cm.enterAFPointPlacementMode();
-		expect( interaction.enterAFPointPlacementMode ).toHaveBeenCalledOnce();
-		expect( cm.controls.enabled ).toBe( false );
 
+		cm.enterAFPointPlacementMode();
+		expect( cm.controls.enabled ).toBe( false );
 		cm.exitAFPointPlacementMode();
-		expect( interaction.exitAFPointPlacementMode ).toHaveBeenCalledOnce();
+		expect( cm.controls.enabled ).toBe( true );
+
+		// A click on the viewport places the point and ends placing without the camera manager: it left the orbit off.
+		cm.enterAFPointPlacementMode();
+		interaction.handleAFPointClick( { clientX: 25, clientY: 75 } );
+		expect( interaction.afPointPlacementMode ).toBe( false );
 		expect( cm.controls.enabled ).toBe( true );
 
 	} );

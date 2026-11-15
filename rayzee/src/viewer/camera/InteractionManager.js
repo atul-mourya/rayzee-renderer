@@ -313,6 +313,7 @@ export class InteractionManager extends EventDispatcher {
 		this.afPointPlacementMode = true;
 		this.canvas.style.cursor = 'crosshair';
 		this.canvas.addEventListener( 'click', this.handleAFPointClick );
+		if ( this._orbitControls ) this._orbitControls.enabled = false;
 
 	}
 
@@ -324,6 +325,7 @@ export class InteractionManager extends EventDispatcher {
 		this.afPointPlacementMode = false;
 		this.canvas.style.cursor = '';
 		this.canvas.removeEventListener( 'click', this.handleAFPointClick );
+		if ( this._orbitControls ) this._orbitControls.enabled = true;
 
 	}
 

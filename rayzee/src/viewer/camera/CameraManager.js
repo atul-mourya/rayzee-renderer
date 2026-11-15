@@ -860,17 +860,13 @@ export class CameraManager extends EventDispatcher {
 
 	enterAFPointPlacementMode() {
 
-		if ( ! this.interactionManager ) return;
-		this.interactionManager.enterAFPointPlacementMode();
-		if ( this.controls ) this.controls.enabled = false;
+		this.interactionManager?.enterAFPointPlacementMode();
 
 	}
 
 	exitAFPointPlacementMode() {
 
-		if ( ! this.interactionManager ) return;
-		this.interactionManager.exitAFPointPlacementMode();
-		if ( this.controls ) this.controls.enabled = true;
+		this.interactionManager?.exitAFPointPlacementMode();
 
 	}
 
