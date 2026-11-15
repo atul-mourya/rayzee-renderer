@@ -15,7 +15,7 @@ const StatChip = ( { active, onClick, title, children } ) => (
 		title={title}
 		className={cn(
 			"inline-flex items-center gap-1",
-			onClick && "cursor-pointer hover:text-on-scrim",
+			onClick && "cursor-pointer hover:text-foreground",
 			active && "font-bold text-overlay-accent"
 		)}
 	>
@@ -62,7 +62,7 @@ const EditableValue = ( { value, onCommit, label } ) => {
 
 		return (
 			<input
-				className="bg-transparent border-b border-on-scrim text-on-scrim w-12"
+				className="bg-transparent border-b border-foreground text-foreground w-12"
 				type="number"
 				name={label}
 				aria-label={label}
@@ -81,7 +81,7 @@ const EditableValue = ( { value, onCommit, label } ) => {
 			type="button"
 			aria-label={`${label}: ${value}, change`}
 			onClick={() => setIsEditing( true )}
-			className="cursor-pointer border-b border-dotted border-on-scrim hover:border-overlay-accent"
+			className="cursor-pointer border-b border-dotted border-foreground hover:border-overlay-accent"
 		>
 			{value}
 		</button>
@@ -181,7 +181,7 @@ const StatsMeter = ( { viewportMode } ) => {
 		<div className="absolute top-2 left-2 max-w-[calc(50%-4.5rem)] text-xs text-foreground bg-background opacity-50 p-1 rounded flex flex-col gap-1">
 			<div className="flex flex-wrap items-center gap-x-1 gap-y-0.5">
 				{sceneStats?.triangleCount > 0 && (
-					<span className="mr-1 whitespace-nowrap">Triangles: <span className="text-on-scrim">{sceneStats.triangleCount.toLocaleString()}</span> |</span>
+					<span className="mr-1 whitespace-nowrap">Triangles: <span className="text-foreground">{sceneStats.triangleCount.toLocaleString()}</span> |</span>
 				)}
 
 				{/* Time Control */}
@@ -189,7 +189,7 @@ const StatsMeter = ( { viewportMode } ) => {
 					<StatChip active={timeLimited} onClick={() => handleRenderLimitModeChange( 'timeOnly' )}>
 						Time:
 					</StatChip>
-					<span className="text-on-scrim">{stats.timeElapsed.toFixed( 2 )}</span>s
+					<span className="text-foreground">{stats.timeElapsed.toFixed( 2 )}</span>s
 					{timeLimited && (
 						<> / <EditableValue label="Time limit" value={renderTimeLimit} onCommit={handleRenderTimeLimitChange} />s </>
 					)}
@@ -202,7 +202,7 @@ const StatsMeter = ( { viewportMode } ) => {
 					<StatChip active={framesLimited} onClick={() => handleRenderLimitModeChange( 'frames' )}>
 						Frames:
 					</StatChip>
-					<span className="text-on-scrim">{stats.samples}</span>
+					<span className="text-foreground">{stats.samples}</span>
 					{framesLimited && (
 						<> / <EditableValue label="Samples" value={storeMaxSamples} onCommit={handleMaxSamplesEdit} /> </>
 					)}
@@ -227,14 +227,14 @@ const StatsMeter = ( { viewportMode } ) => {
 			</div>
 
 			<div className="flex items-center gap-1">
-				<span>Memory: <span className="text-on-scrim">{formatBytes( stats.memoryUsed )}</span></span>
+				<span>Memory: <span className="text-foreground">{formatBytes( stats.memoryUsed )}</span></span>
 				<span className="mx-1">|</span>
-				<span>Peak: <span className="text-on-scrim">{formatBytes( stats.memoryPeak )}</span></span>
+				<span>Peak: <span className="text-foreground">{formatBytes( stats.memoryPeak )}</span></span>
 			</div>
 
 			{sceneStats?.triangleCount > 0 && (
 				<span title="The model's width × height × depth, as its file gives them. If that is not its real size, set Subject Size in the Camera tab (Depth of Field, Pro).">
-					Size: <span className="text-on-scrim">{modelSize}</span> m
+					Size: <span className="text-foreground">{modelSize}</span> m
 				</span>
 			)}
 		</div>
