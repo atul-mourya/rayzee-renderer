@@ -387,3 +387,4 @@ minified + gzip of the three.js loader alone (three is external, so it lands in 
 - The Future of Path Tracing | Best Practices, Optimizations & Future Standards <https://www.youtube.com/watch?v=0IrzX4LDIx8>
 - GPU optimization - 450 papers, 14 years of research. Some techniques will have evolved, but the mental models hold up: https://dl.acm.org/doi/10.1145/3570638
 - https://github.com/mmp/pbrt-v4
+- interesting test contents: https://www.thepixellab.net/exclusive-page-2
