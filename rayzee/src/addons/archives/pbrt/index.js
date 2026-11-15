@@ -17,6 +17,7 @@
 import { freeNow } from './ArrayMemory.js';
 import { PBRTParser, ParamUsage } from './PBRTParser.js';
 import { PBRTSceneBuilder } from './PBRTSceneBuilder.js';
+import { spectrumFileSamples } from './PBRTMaterials.js';
 import { findFrameSequence, FrameSequenceMerger, motionFromShutter, SEQUENCE_FPS } from './PBRTAnimation.js';
 import { plyFaceIndices } from './Ptex.js';
 
@@ -436,6 +437,26 @@ export async function loadPBRTScene( args ) {
 
 	const entryPath = requested || candidates[ 0 ];
 	const usage = new ParamUsage();
+	// Once for every frame of a sequence.
+	const spectrumFiles = new Map();
+	const readSpectrumFile = async ( name, dir ) => {
+
+		let read;
+		try {
+
+			const file = await vfs.readPath( name, dir );
+			read = file ? spectrumFileSamples( file ) : { samples: null, problem: 'not found' };
+
+		} catch ( e ) {
+
+			read = { samples: null, problem: e.message };
+
+		}
+
+		if ( ! read.samples ) warnings.push( `spectrum file "${name}": ${read.problem}` );
+		return read.samples;
+
+	};
 
 	// Parse (with Include resolution). Bytes go straight to the lexer — a scene file can
 	// be larger than the longest string JavaScript will build.
@@ -454,8 +475,20 @@ export async function loadPBRTScene( args ) {
 			usage
 		} );
 
-		const ir = await parser.parse( bytes, path.includes( '/' ) ? path.slice( 0, path.lastIndexOf( '/' ) ) : '' );
+		const dir = path.includes( '/' ) ? path.slice( 0, path.lastIndexOf( '/' ) ) : '';
+		const ir = await parser.parse( bytes, dir );
 		vfs.releasePath( path, null, bytes );
+		// A spectrum file is found from the scene's own folder, as pbrt's search directory; its samples replace the name,
+		// in place: an `Attribute` keeps a copy of the parameter that shares its value array.
+		for ( const p of ir.spectrumFiles ) {
+
+			const key = `${dir}\0${p.value[ 0 ]}`;
+			if ( ! spectrumFiles.has( key ) ) spectrumFiles.set( key, await readSpectrumFile( p.value[ 0 ], dir ) );
+			const samples = spectrumFiles.get( key );
+			if ( samples ) p.value.splice( 0, p.value.length, ...samples );
+
+		}
+
 		return ir;
 
 	};

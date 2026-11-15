@@ -19,6 +19,7 @@
  *   lights: [ { type, params, ctm } ],
  *   instances: Map<name, { name, count, matrices, matricesEnd? }>,
  *   objects: Map<name, shapes[]>,
+ *   spectrumFiles: [ { type: 'spectrum', value: [ filename ] } ],  (the parameters themselves, filled in by the loader)
  *   transformTimes: { start, end },
  *   hasMotion: boolean,
  *   warnings: string[]
@@ -31,6 +32,14 @@
 import { resized } from './ArrayMemory.js';
 import { TokenStream, TokenType } from './PBRTTokenizer.js';
 import * as M from './PBRTMath.js';
+
+// pbrt-v4's named spectra (`GetNamedSpectrum`, an exact lookup): metals, glasses, illuminants, camera sensors. Any other
+// spectrum string is a file.
+export const NAMED_SPECTRUM = new RegExp( '^(' + [
+	'metal-(Ag|Al|Au|Cu|CuZn|MgO|TiO2)-(eta|k)', 'glass-(BK7|BAF10|FK51A|LASF9|F5|F10|F11)', 'stdillum-(A|D50|D65|F[1-9]|F1[0-2])',
+	'illum-acesD60', 'canon_eos_(100d|1dx_mkii|200d|200d_mkii|5d|5d_mkii|5d_mkiii|5d_mkiv|5ds|m)_[rgb]',
+	'hasselblad_l1d_20c_[rgb]', 'nikon_d8(10|50)_[rgb]', 'sony_ilce_(6400|7m3|7rm3|9)_[rgb]',
+].join( '|' ) + ')$' );
 
 // Vertex streams reach tens of millions of entries and every consumer narrows them to
 // float32 / uint32 anyway, so hold them at that width instead of 8 bytes a number.
@@ -238,6 +247,7 @@ export class PBRTParser {
 			skippedInstances: 0,
 			objects: new Map(),
 			media: new Map(),
+			spectrumFiles: [],
 			transformTimes: { start: 0, end: 1 },
 			hasMotion: false,
 			warnings: []
@@ -507,6 +517,11 @@ export class PBRTParser {
 
 			const value = this._parseParamValue( type );
 			params[ name ] = { type, value };
+			if ( type === 'spectrum' && value.length === 1 && typeof value[ 0 ] === 'string' && ! NAMED_SPECTRUM.test( value[ 0 ] ) ) {
+
+				this.ir.spectrumFiles.push( params[ name ] );
+
+			}
 
 		}
 

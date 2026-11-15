@@ -213,6 +213,96 @@ describe( 'pbrt lights', () => {
 
 	} );
 
+	// pbrt-v4 reads any spectrum string it has no table for as a file, found from the scene's folder (its search
+	// directory), not the including file's.
+	it( 'reads a spectrum from a file as the same samples written inline, lights and surfaces alike', async () => {
+
+		const scene = async ( world, extra = {} ) => {
+
+			const vfs = {
+				'room/scene.pbrt': enc.encode( `LookAt 0 0 5  0 0 0  0 1 0\nCamera "perspective"\nWorldBegin\nInclude "parts/part.pbrt"\n` ),
+				// A decoy: found from the include's folder, it would make the light black.
+				'room/parts/spectra/warm.spd': enc.encode( '800 1 900 1' ),
+				'room/parts/part.pbrt': enc.encode( `${world}\nShape "sphere"\n` ),
+				'room/spectra/warm.spd': enc.encode( '# a light\n400 0.2\n500 1   # peak\n600 0.5, 700 0.1\n' ),
+				'room/stdillum-D65.spd': enc.encode( '400 0.2 500 1 600 0.5 700 0.1' ),
+				'room/refl.spd': enc.encode( '400 0.1 500 0.8 600 0.3 700 0.9' ),
+				'room/eta.spd': enc.encode( '400 0.2 700 0.2' ),
+				'room/k.spd': enc.encode( '400 3.9\n700 3.9\n' ),
+				...extra,
+			};
+			return loadPBRTScene( { vfs, plyParser: () => null, imageFromBytes: async () => null } );
+
+		};
+
+		const lamp = async ( world, extra ) => {
+
+			const built = await scene( world, extra );
+			const [ point ] = lamps( built.group, PointLight );
+			const c = point.color.clone().multiplyScalar( point.intensity / ( 4 * Math.PI ) );
+			return { rgb: [ c.r, c.g, c.b ], built };
+
+		};
+
+		for ( const light of [
+			'LightSource "point" "spectrum I" "spectra/warm.spd"',
+			// Only pbrt's exact names are tables.
+			'LightSource "point" "spectrum I" "stdillum-D65.spd"',
+			// An Attribute keeps its own copy of the parameter.
+			'Attribute "light" "spectrum I" "spectra/warm.spd"\nLightSource "point"',
+		] ) {
+
+			const warm = await lamp( light );
+			expectRGB( warm.rgb, [ 0.54578, 1.15500, 0.80245 ] );
+			expect( warm.built.parameters.approximated ).toEqual( {} );
+			expect( warm.built.warnings.filter( ( w ) => /spectrum/.test( w ) ) ).toEqual( [] );
+
+		}
+
+		const surface = async ( material ) => {
+
+			const built = await scene( `Material ${material}` );
+			const c = built.group.getObjectByProperty( 'isMesh', true ).material.color;
+			return [ c.r, c.g, c.b ];
+
+		};
+
+		expectRGB( await surface( '"diffuse" "spectrum reflectance" "refl.spd"' ), [ 0.28405, 0.61463, 0.46904 ], 0.002 );
+		expectRGB( await surface( '"conductor" "spectrum eta" "eta.spd" "spectrum k" "k.spd"' ), [ 0.95195, 0.95195, 0.95195 ], 0.002 );
+		// Steep: each wavelength's η and k must line up (the inline twin's colour above).
+		const steep = { 'room/eta3.spd': enc.encode( '400 3 700 0.2' ), 'room/k3.spd': enc.encode( '400 0.2 700 5' ) };
+		const steepMetal = ( await scene( 'Material "conductor" "spectrum eta" "eta3.spd" "spectrum k" "k3.spd"', steep ) ).group.getObjectByProperty( 'isMesh', true ).material.color;
+		expectRGB( [ steepMetal.r, steepMetal.g, steepMetal.b ], [ 0.87434, 0.49296, 0.22451 ], 0.004 );
+		// Named spectra stay names, never looked for as files.
+		const gold = await scene( 'Material "conductor" "spectrum eta" "metal-Au-eta" "spectrum k" "metal-Au-k"\nLightSource "point" "spectrum I" "stdillum-F4"' );
+		expect( gold.group.getObjectByProperty( 'isMesh', true ).material.color.b ).toBeLessThan( 0.5 );
+		expect( gold.warnings.filter( ( w ) => /spectrum file/.test( w ) ) ).toEqual( [] );
+
+		const area = await scene( 'AreaLightSource "diffuse" "spectrum L" "spectra/warm.spd" "float scale" 2' );
+		const { emissive, emissiveIntensity } = area.group.getObjectByProperty( 'isMesh', true ).material;
+		expectRGB( [ emissive.r, emissive.g, emissive.b ].map( ( v ) => v * emissiveIntensity ), [ 1.09156, 2.31, 1.6049 ], 0.006 );
+
+		// One it cannot read is said so, and the light stays as before: white.
+		const broken = { 'room/odd.spd': enc.encode( '400 1 500' ), 'room/back.spd': enc.encode( '500 1 400 1' ), 'room/nm.spd': enc.encode( '400nm 0.2\n700nm 0.1' ) };
+		for ( const [ file, problem ] of [[ 'gone.spd', 'not found' ], [ 'odd.spd', '3 values' ], [ 'back.spd', 'not increasing' ], [ 'nm.spd', '"400nm" is not a number' ]] ) {
+
+			const bad = await lamp( `LightSource "point" "spectrum I" "${file}"`, broken );
+			expectRGB( bad.rgb, [ 1, 1, 1 ], 1e-6 );
+			expect( bad.built.warnings.some( ( w ) => w.includes( `"${file}"` ) && w.includes( problem ) ) ).toBe( true );
+
+		}
+
+		// A frame sequence reads a file once, and says so once.
+		const frames = await loadPBRTScene( {
+			vfs: Object.fromEntries( [ 1, 2, 3 ].map( ( n ) => [ `seq/frame${n}.pbrt`, enc.encode( `Camera "perspective"\nWorldBegin\nLightSource "point" "spectrum I" "gone.spd"\nShape "sphere"\n` ) ] ) ),
+			plyParser: () => null,
+			imageFromBytes: async () => null,
+		} );
+		expect( frames.frames ).toHaveLength( 3 );
+		expect( frames.warnings.filter( ( w ) => w.includes( '"gone.spd"' ) ) ).toHaveLength( 1 );
+
+	} );
+
 } );
 
 describe( 'PFM', () => {

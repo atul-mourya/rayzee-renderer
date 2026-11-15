@@ -131,7 +131,15 @@ subtree per element, and the whole thing rarely fits: Moana is 29 GB unpacked.
   them, as pbrt's PiecewiseLinearSpectrum), or a blackbody read as a surface colour (the curve peaking at 1, Wien's λ),
   is what it reflects under a white light as an RGB film shows it: XYZ( r · D65 ) / Y( D65 ) (`reflectanceRGB`), each
   wavelength clamped to [0, 1] as pbrt's materials clamp it; coefficients (σa, σs, mfp, a constant texture) unclamped.
-  A conductor's sampled η and k go through the normal-incidence Fresnel a wavelength at a time. `.pfm` images load (`addons/archives/pbrt/PFM.js`). An area light is
+  A conductor's sampled η and k go through the normal-incidence Fresnel a wavelength at a time. A spectrum string that
+  is not one of pbrt's exact names (`NAMED_SPECTRUM`) is a file of ( λ, value ) pairs (`#` comments), found from the
+  main scene file's folder (pbrt's search directory, not an include's): the parser lists those parameters
+  (`ir.spectrumFiles`), the loader reads each file once a load, frames included, and writes its samples into the
+  parameter's value array (an `Attribute` keeps a copy sharing it), and every reader takes them as written inline. One
+  missing, holding a word that is not a number, odd or not increasing in λ is warned about once and left as before.
+  Against pbrt-v4 (a spectral area light on a spectral sphere), Rayzee ÷ pbrt mean R / G / B: 0.985 / 1.001 / 0.953,
+  the same as the samples written inline; before, it read white on grey (0.71 / 1.14 / 4.48). `.pfm` images load
+  (`addons/archives/pbrt/PFM.js`). An area light is
   one-sided unless `"bool twosided"`: a surface on both faces (`DoubleSide`) emitting from its front (`emissiveSide:
   FrontSide`), so from behind it is dark, never a hole, as in pbrt; its triangles rewound to face the vertex normals, or
   turned over by ReverseOrientation where it has none (`_facingEmission`). An area light's `power` scales its radiance

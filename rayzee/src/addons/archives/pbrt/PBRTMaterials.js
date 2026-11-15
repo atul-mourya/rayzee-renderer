@@ -11,7 +11,7 @@
 import { MeshPhysicalMaterial, Color, DoubleSide } from 'three';
 import { namedScattering } from './PBRTScattering.js';
 import { dipoleReflectance, albedoForReflectance } from '../../../materials/Scattering.js';
-import { approximated, param } from './PBRTParser.js';
+import { approximated, param, NAMED_SPECTRUM } from './PBRTParser.js';
 import { uvKey } from './PBRTTextureBake.js';
 
 // pbrt's named metals at normal incidence, ( (η−1)² + k² ) / ( (η+1)² + k² ) of their `metal-X-eta` and `metal-X-k`
@@ -211,6 +211,36 @@ function reflectanceRGB( s, bounded = true ) {
 // Inline ( λ value ) samples as pbrt reads them: linear between, 0 outside (PiecewiseLinearSpectrum).
 const sampledSpectrum = ( v ) => ( lambda ) => ( lambda < v[ 0 ] || lambda > v[ v.length - ( v.length % 2 ) - 2 ] ? 0 : spectrumAt( v, lambda ) );
 
+/**
+ * A spectrum file as pbrt-v4 reads one (`PiecewiseLinearSpectrum::Read`): ( λ nm, value ) pairs, `#` to the end of a
+ * line a comment; interleaved samples, or null with the reason when a word is not a number, the count is odd or λ does
+ * not increase. Commas separate as spaces do, and a last value needs no newline after it (pbrt is stricter on both).
+ * @param {Uint8Array|string} file
+ * @returns {{ samples: number[]|null, problem?: string }}
+ */
+export function spectrumFileSamples( file ) {
+
+	const text = typeof file === 'string' ? file : new TextDecoder().decode( file );
+	const samples = [];
+	for ( const line of text.split( /\r?\n/ ) ) {
+
+		for ( const word of line.replace( /#.*/, '' ).split( /[\s,]+/ ) ) {
+
+			if ( word === '' ) continue;
+			const v = Number( word );
+			if ( ! Number.isFinite( v ) ) return { samples: null, problem: `"${word.slice( 0, 20 )}" is not a number` };
+			samples.push( v );
+
+		}
+
+	}
+
+	if ( samples.length < 2 || samples.length % 2 ) return { samples: null, problem: `${samples.length} values, not ( λ value ) pairs` };
+	for ( let i = 2; i < samples.length; i += 2 ) if ( ! ( samples[ i ] > samples[ i - 2 ] ) ) return { samples: null, problem: 'wavelengths not increasing' };
+	return { samples };
+
+}
+
 /** A pbrt light spectrum by name (`stdillum-A`, `-D50`, `-D65`, `-F1` … `-F12`, `illum-acesD60`) at luminance 1, or null. */
 export function illuminantRGB( name ) {
 
@@ -348,7 +378,8 @@ export async function resolveSpectrum( params, name, ctx, dfltRGB = null, { boun
 			approximated( params, name );
 			const key = namedMetalKey( p.value[ 0 ] );
 			if ( key && METAL_ALBEDO[ key ] ) return { rgb: METAL_ALBEDO[ key ].slice(), texture: null };
-			ctx.warn( `named spectrum "${p.value[ 0 ]}" approximated to gray` );
+			// Not a name: a spectrum file the loader could not read, and said so.
+			if ( NAMED_SPECTRUM.test( p.value[ 0 ] ) ) ctx.warn( `named spectrum "${p.value[ 0 ]}" approximated to gray` );
 			return { rgb: [ 0.5, 0.5, 0.5 ], texture: null };
 
 		}
