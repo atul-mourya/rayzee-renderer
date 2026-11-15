@@ -100,10 +100,6 @@
 
 ### Unconfirmed
 
-- [ ] **Fast Navigation flaps on heavy scenes at 1080p** (NRD, or no live denoiser): full-size frames take the GPU past 100 ms a frame, interaction mode times out between them, and the pending drop to half size does not take hold. 24155522.glb at 1920×1080 under NRD: half size reached only after 4.1 s of moving.
-  Could not reproduce 2026-11-07 (27977388): a 5 s drag (`controls.rotateLeft` every 8 ms) dropped to half size after
-  118 ms under NRD, 96 ms with none, 12 ms under OIDN, and held it to the end, one drop and one restore each.
-
 ---
 
 ## Features

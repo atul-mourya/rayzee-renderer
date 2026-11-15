@@ -566,6 +566,7 @@ export class RayzeeRenderer extends EventDispatcher {
 		}
 
 		this._beginFrame();
+		this.stages.pathTracer?.noteFrame();
 
 		const cameraMoved = this.needsReset;
 		if ( this.needsReset ) {
@@ -1703,8 +1704,8 @@ export class RayzeeRenderer extends EventDispatcher {
 	 * - `_bounceEarlyExitThreshold` ends the bounce loop off the async survivor curve, and the
 	 *   frame a readback lands on is GPU-scheduled. `_useDynamicDispatch` sizes each bounce on
 	 *   the GPU; pinned off with the rest, a deterministic frame runs full grids.
-	 * - `interactionModeEnabled` is a 100 ms timer that lowers the render resolution, disables
-	 *   accumulation and freezes frameCount; it engages on the very first frame.
+	 * - `interactionModeEnabled` is a 100 ms timer (waiting for a frame begun since the move) that lowers the render
+	 *   resolution, disables accumulation and freezes frameCount; it engages on the very first frame.
 	 * - auto-focus raycasts per frame and auto-exposure adapts off `performance.now()`.
 	 *
 	 * Leaves the rAF loop stopped — drive rendering with {@link PathTracerApp#renderFrames}.
@@ -1916,6 +1917,7 @@ export class RayzeeRenderer extends EventDispatcher {
 				// A host moves the camera between calls, and a load frames it with lookAt(), which leaves matrixWorld stale.
 				this.camera.updateMatrixWorld();
 				takeFrameStep( this.renderer );
+				stage.noteFrame();
 				this.pipeline.render();
 				passes ++;
 

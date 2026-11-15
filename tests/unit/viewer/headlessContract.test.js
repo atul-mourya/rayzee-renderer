@@ -51,6 +51,7 @@ function makeApp( { advanceBy = 1, retireAfter = Infinity } = {} ) {
 		isComplete: false,
 		isReady: true,
 		readbackWait: () => null,
+		noteFrame: vi.fn(),
 	};
 
 	const app = {
@@ -92,10 +93,11 @@ function makeApp( { advanceBy = 1, retireAfter = Infinity } = {} ) {
 
 describe( 'renderFrames', () => {
 
-	it( 'accumulates the requested count', async () => {
+	it( 'accumulates the requested count, each pass a frame interaction mode counts', async () => {
 
 		const { app } = makeApp();
 		await expect( app.renderFrames( 8, { yieldEvery: 0 } ) ).resolves.toBe( 8 );
+		expect( app.stages.pathTracer.noteFrame ).toHaveBeenCalledTimes( 8 );
 
 	} );
 

@@ -213,6 +213,7 @@ describe( 'CameraOptimizer', () => {
 			optimizer.enterInteractionMode();
 			expect( optimizer.isInInteractionMode() ).toBe( true );
 
+			optimizer.noteFrame();
 			vi.advanceTimersByTime( 100 );
 			expect( optimizer.isInInteractionMode() ).toBe( false );
 
@@ -221,8 +222,73 @@ describe( 'CameraOptimizer', () => {
 		it( 'restores quality after timeout', () => {
 
 			optimizer.enterInteractionMode();
+			optimizer.noteFrame();
 			vi.advanceTimersByTime( 100 );
 			expect( material.uniforms.maxBounceCount.value ).toBe( 8 );
+
+		} );
+
+		// Frames slower than the delay: the next move comes with the next frame, after the timer.
+		it( 'waits for a frame drawn since the last move', () => {
+
+			optimizer.enterInteractionMode();
+			vi.advanceTimersByTime( 230 );
+			expect( optimizer.isInInteractionMode() ).toBe( true );
+
+			optimizer.noteFrame();
+			optimizer.enterInteractionMode();
+			vi.advanceTimersByTime( 230 );
+			expect( optimizer.isInInteractionMode() ).toBe( true );
+
+			optimizer.noteFrame();
+			vi.advanceTimersByTime( 100 );
+			expect( optimizer.isInInteractionMode() ).toBe( false );
+
+		} );
+
+		// A frame that draws the move sees the camera change itself: that re-arms the delay, the frame still counts.
+		it( 'counts a frame that re-enters on the move it draws', () => {
+
+			optimizer.enterInteractionMode();
+			optimizer.noteFrame();
+			optimizer.updateInteractionMode( true );
+			vi.advanceTimersByTime( 100 );
+			expect( optimizer.isInInteractionMode() ).toBe( false );
+
+		} );
+
+		it( 'clears a re-armed delay when switched off', () => {
+
+			const onExit = vi.fn();
+			optimizer.onExitCallback = onExit;
+			optimizer.enterInteractionMode();
+			vi.advanceTimersByTime( 250 );
+			optimizer.setInteractionModeEnabled( false );
+			expect( onExit ).toHaveBeenCalledOnce();
+			vi.advanceTimersByTime( 2000 );
+			expect( onExit ).toHaveBeenCalledOnce();
+
+		} );
+
+		it( 'ends at the eleventh delay with no frame at all (a stopped loop)', () => {
+
+			optimizer.enterInteractionMode();
+			vi.advanceTimersByTime( 1000 );
+			expect( optimizer.isInInteractionMode() ).toBe( true );
+			vi.advanceTimersByTime( 100 );
+			expect( optimizer.isInInteractionMode() ).toBe( false );
+
+		} );
+
+		it( 'counts the eleven delays from the last move', () => {
+
+			optimizer.enterInteractionMode();
+			vi.advanceTimersByTime( 600 );
+			optimizer.enterInteractionMode();
+			vi.advanceTimersByTime( 1000 );
+			expect( optimizer.isInInteractionMode() ).toBe( true );
+			vi.advanceTimersByTime( 100 );
+			expect( optimizer.isInInteractionMode() ).toBe( false );
 
 		} );
 

@@ -1,3 +1,6 @@
+// Delays re-armed with no frame begun since the last move: a stopped loop still leaves after 11 delays (1.1 s).
+const MAX_FRAMELESS_WAITS = 10;
+
 /**
  * CameraOptimizer.js
  * Manages performance optimization during camera interaction by temporarily
@@ -18,6 +21,8 @@ export class CameraOptimizer {
 		// State
 		this.interactionMode = false;
 		this.interactionTimeout = null;
+		this._framesSinceMove = 0;
+		this._framelessWaits = 0;
 		this.originalValues = {};
 		this.appliedValues = {};
 		this.wasAccumulationEnabled = true; // Track original accumulation state
@@ -36,9 +41,11 @@ export class CameraOptimizer {
 	}
 
 	/**
-     * Enter interaction mode with reduced quality settings
-     */
-	enterInteractionMode() {
+	 * Enter interaction mode with reduced quality settings.
+	 * @param {boolean} [inFrame=false] - the move was seen by a frame already begun (the path tracer's own check, a held
+	 *   trace): it re-arms the delay but is not a move that frame still has to show
+	 */
+	enterInteractionMode( inFrame = false ) {
 
 		// Check if interaction mode is enabled globally
 		if ( ! this.interactionModeEnabled ) return;
@@ -111,12 +118,30 @@ export class CameraOptimizer {
 
 		}
 
-		// Set timeout to exit interaction mode
-		this.interactionTimeout = setTimeout( () => {
+		// Ends `interactionDelay` after the last move, once a frame begun since has applied the drop.
+		if ( ! inFrame ) this._framesSinceMove = 0;
+		this._framelessWaits = 0;
+		this.interactionTimeout = setTimeout( () => this._interactionTimedOut(), this.interactionDelay );
 
-			this.exitInteractionMode();
+	}
 
-		}, this.interactionDelay );
+	_interactionTimedOut() {
+
+		if ( this._framesSinceMove === 0 && this._framelessWaits ++ < MAX_FRAMELESS_WAITS ) {
+
+			this.interactionTimeout = setTimeout( () => this._interactionTimedOut(), this.interactionDelay );
+			return;
+
+		}
+
+		this.exitInteractionMode();
+
+	}
+
+	/** A frame of the loop began (after the viewer applied what a move asked for). */
+	noteFrame() {
+
+		this._framesSinceMove ++;
 
 	}
 
@@ -177,7 +202,7 @@ export class CameraOptimizer {
 
 		if ( cameraChanged ) {
 
-			this.enterInteractionMode();
+			this.enterInteractionMode( true );
 
 		}
 

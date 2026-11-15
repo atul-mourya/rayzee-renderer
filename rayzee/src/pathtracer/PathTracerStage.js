@@ -179,8 +179,8 @@ function triangleNodes( geo, shade, clusters = null ) {
 
 }
 
-// How long after the last move the view still counts as moving. Matches CameraOptimizer's own
-// settle delay, so the answer does not change when interaction mode is switched off.
+// How long after the last move the view still counts as moving: CameraOptimizer's own delay, whose end also waits for a
+// frame begun since the move.
 const VIEW_SETTLE_MS = 100;
 
 /**
@@ -836,9 +836,17 @@ export class PathTracerStage extends RenderStage {
 
 	// ===== MANAGER DELEGATION METHODS =====
 
-	enterInteractionMode() {
+	/** @param {boolean} [inFrame=false] - seen by a frame already begun (see CameraOptimizer.enterInteractionMode) */
+	enterInteractionMode( inFrame = false ) {
 
-		this.cameraOptimizer?.enterInteractionMode();
+		this.cameraOptimizer?.enterInteractionMode( inFrame );
+
+	}
+
+	/** A frame of the render loop began (interaction mode ends only once one has since the last move). */
+	noteFrame() {
+
+		this.cameraOptimizer?.noteFrame();
 
 	}
 

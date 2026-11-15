@@ -132,7 +132,7 @@ const color = context.getTexture( 'pathtracer:color' );
 |-------|-----------|---------|-------------|
 | `pathtracer:frameComplete` | PathTracerStage, every traced frame | `{ frame, isComplete }` | — |
 | `camera:moved` | PathTracerStage, on a frame the camera changed | — | NormalDepth |
-| `pathtracer:interactionStart` / `pathtracer:interactionEnd` | PathTracerStage, when its CameraOptimizer enters / leaves interaction mode | — | PathTracerApp (drops / restores the render scale) |
+| `pathtracer:interactionStart` / `pathtracer:interactionEnd` | PathTracerStage, when its CameraOptimizer enters / leaves interaction mode (it leaves 100 ms after the last move, once a loop frame has begun since: `noteFrame`) | — | PathTracerApp (drops / restores the render scale) |
 | `pipeline:historyReset` | RayzeeRenderer (`reset()` unless soft), PathTracerStage (render-mode change, 50 ms later), PathTracerApp (render-scale change) | — | NRD |
 | `pipeline:lightingChanged` | RayzeeRenderer (model or environment load, rebuild after adding or removing an object), EnvironmentManager mode change (`callbacks.onLightingChanged`) | — | AutoExposure |
 | `pipeline:reset` | `RenderPipeline.reset()` | — | PathTracerStage, NormalDepth, AutoExposure, LocalExposure, OverlayManager (hides TileHelper) |

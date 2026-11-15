@@ -317,6 +317,7 @@ describe( 'the render loop', () => {
 			isReady: true, isComplete: false, frameCount: 0, completionThreshold: ceiling, resetCount: 0,
 			readbackWait: () => null,
 			noteViewChanged: vi.fn( () => void order.push( 'viewChanged' ) ),
+			noteFrame: vi.fn( () => void order.push( 'frame' ) ),
 		};
 		const app = core( {
 			order,
@@ -477,7 +478,7 @@ describe( 'the render loop', () => {
 
 		app.animate();
 
-		expect( order ).toEqual( [ 'viewChanged', 'reset', 'trace' ] );
+		expect( order ).toEqual( [ 'frame', 'viewChanged', 'reset', 'trace' ] );
 		expect( app.reset ).toHaveBeenCalledWith( true );
 		expect( app.needsReset ).toBe( false );
 		expect( app._holdTrace ).toHaveBeenCalledWith( true );

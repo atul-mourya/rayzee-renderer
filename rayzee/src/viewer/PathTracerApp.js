@@ -397,7 +397,7 @@ export class PathTracerApp extends RayzeeRenderer {
 		if ( ! this.denoisingManager?.skipsTrace() ) return false;
 		// The camera is still being dragged; without this the interaction timeout can
 		// expire inside a long denoise and drop the view out of interaction mode.
-		if ( cameraMoved ) this.stages.pathTracer.enterInteractionMode();
+		if ( cameraMoved ) this.stages.pathTracer.enterInteractionMode( true );
 		return true;
 
 	}
