@@ -57,6 +57,7 @@ export default defineConfig( {
 					format: "umd",
 					entryFileNames: "rayzee.umd.js",
 					name: "Rayzee",
+					comments: { legal: true },
 					globals: ( id ) => {
 
 						if ( id === "three" || id.startsWith( "three/" ) || id.startsWith( "three\\/" ) ) return "THREE";
@@ -70,6 +71,8 @@ export default defineConfig( {
 					format: "es",
 					entryFileNames: "[name].es.js",
 					globals: { three: "THREE" },
+					// Vite drops @license comments when it minifies; output/Flip.js's BSD notice must ship.
+					comments: { legal: true },
 				},
 			],
 		},

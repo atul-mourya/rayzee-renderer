@@ -163,7 +163,12 @@ as several `renderFrames( k, { reset: false } )` calls and reads the accumulatio
 serves the error and a linear `onStep` alike. `compareImages` and `mergeRenders` are core (`output/ImageMath.js`,
 exported from `rayzee` and `rayzee/core`): the first follows pbrt's `Image::MSE` / `MAE` / `MRSE` (util/image.cpp), sums
 over RGB divided by every pixel, a non-finite value skipped; the second sums parts weighted by samples into one
-Float32Array.
+Float32Array. `flip` ports NVIDIA's FLIP.h (`output/Flip.js`, BSD-3-Clause: its notice is kept in the file and, through
+`comments: { legal: true }` in `rayzee/vite.config.js`, in the bundles): on NVIDIA's
+own test pairs the means are 0.159693 (LDR) and 0.283547 (HDR) as its tests expect, and 99.99 % of pixels land on the
+same step of its 256-step result images, the rest one off. Separable passes write transposed, so both directions run
+along rows; the kernels are folded at their centre. A non-finite value takes the other image's, as the error means
+skip it.
 Defaults are the batch renderer's (`strict`, `deterministic`); its `settings` are applied before the load and again
 after it, since some are read while a model loads (`areaLightIntensityScale`). Under `strict`,
 the renderer also defaults storage off unless the host set it (`isAssetConfigured( 'storage' )`):

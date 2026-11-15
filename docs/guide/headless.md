@@ -160,13 +160,25 @@ const { stats } = await captureHeadless(app, { samples: 64, stats: true });
   image. `onStep` gets the raw accumulation in `colorSpace`, never the denoised picture.
 - **`reference`** measures the accumulation at each step and at the end, in linear light. To measure a denoised
   frame, capture it with `colorSpace: 'linear'` and call `compareImages(frame, reference)`.
-- **`compareImages(image, reference, { crop, errorImage })`** gives the numbers pbrt's `imgtool diff` prints, by its
+- **`compareImages(image, reference, { crop, errorImage, flip })`** gives the numbers pbrt's `imgtool diff` prints, by its
   definitions: `mse`, `rmse`, `mae`, `mrse` (squared error over (reference + 0.01)²), means over red, green and blue
   of every pixel; `relativeBias` (mean ÷ reference mean − 1: light gained or lost, which the means of errors do not
   show); `nonFinite`, values counted as no error. Floats compare as they are, 8- and 16-bit data as their stored
   value ÷ 255 or ÷ 65,535 (pbrt decodes an sRGB PNG to linear first: decode yours to match its numbers; a half-float
   buffer in a `Uint16Array` must be converted), and a float image against an integer one is refused. `errorImage: true`
   adds each pixel's squared error.
+- **`flip: true`** adds NVIDIA's FLIP (`imgtool diff --metric FLIP`): how visible the difference is to a person, 0–1,
+  where the error means count every changed value alike. It returns `{ mean, weightedMedian, max }` (the three FLIP's
+  own tool gates on; `errorImage: true` adds the per-pixel map). Light (floats, linear Rec.709) is compared as HDR-FLIP,
+  at every stop between the reference's brightest pixel and its median; a picture (8 or 16 bit) as sRGB. `flip: { ppd }`
+  sets the viewer: pixels per degree, default 67 (0.7 m from a 0.7 m wide 4K screen); more makes fine noise matter less.
+  It runs on the CPU: a 1080p picture takes about 1 s, 1080p light about 0.8 s a stop (11.5 s for NVIDIA's HDR pair,
+  14 stops).
+
+```js
+const { flip } = compareImages(render, golden, { flip: true });
+if (flip.mean > limit) throw new Error(`visibly different: FLIP ${flip.mean.toFixed(3)}`);
+```
 
 **Pinning a look.** A change to what a render looks like when a host sets nothing — a default
 setting, a mode preset, light units — can ship in any release, and its release notes say how renders

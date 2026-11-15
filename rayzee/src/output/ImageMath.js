@@ -1,7 +1,9 @@
 /**
- * Images as data, for a batch host: compared by pbrt's error metrics, and parts of a render split by sample range
- * merged back into one. RGBA, as the engine reads back.
+ * Images as data, for a batch host: compared by pbrt's error metrics and NVIDIA's FLIP, and parts of a render split by
+ * sample range merged back into one. RGBA, as the engine reads back.
  */
+
+import { FLIP_DEFAULT_PPD, flipErrorMap } from './Flip.js';
 
 /**
  * How far `image` is from `reference` over red, green and blue, by the definitions pbrt's `imgtool diff` uses: MSE, MAE
@@ -13,11 +15,15 @@
  * @param {Object} [options]
  * @param {{x: number, y: number, width: number, height: number}} [options.crop] - compare this rectangle of both
  * @param {boolean} [options.errorImage=false] - also return each pixel's squared error, averaged over RGB
+ * @param {boolean|{ppd?: number}} [options.flip=false] - also return NVIDIA's FLIP: how visible the difference is, 0–1.
+ *   Light (floats) is compared as HDR-FLIP over the reference's exposures, a picture as sRGB. `ppd` is the viewer's
+ *   pixels per degree (default 67: 0.7 m from a 0.7 m wide 4K screen). Seconds for a large image
  * @returns {{mse: number, rmse: number, mae: number, mrse: number, mean: number, referenceMean: number,
- *   relativeBias: number, nonFinite: number, pixels: number, errorImage?: Float32Array}} `relativeBias` is
+ *   relativeBias: number, nonFinite: number, pixels: number, errorImage?: Float32Array,
+ *   flip?: {mean: number, weightedMedian: number, max: number, errorImage?: Float32Array}}} `relativeBias` is
  *   mean ÷ referenceMean − 1: energy gained or lost, which the error means do not show
  */
-export function compareImages( image, reference, { crop = null, errorImage = false } = {} ) {
+export function compareImages( image, reference, { crop = null, errorImage = false, flip = false } = {} ) {
 
 	assertImage( image, 'compareImages: image' );
 	assertImage( reference, 'compareImages: reference' );
@@ -40,6 +46,10 @@ export function compareImages( image, reference, { crop = null, errorImage = fal
 		throw new Error( `compareImages: crop ${JSON.stringify( crop )} is not inside the ${image.width}×${image.height} image` );
 
 	}
+
+	if ( typeof flip !== 'boolean' && ( typeof flip !== 'object' || flip === null ) ) throw new Error( 'compareImages: flip is true, false or { ppd }' );
+	const { ppd = FLIP_DEFAULT_PPD } = flip === true ? {} : flip || {};
+	if ( ! ( ppd > 0 && Number.isFinite( ppd ) ) ) throw new Error( `compareImages: flip.ppd must be a positive number, got ${ppd}` );
 
 	const scaleA = dataScale( a ), scaleB = dataScale( b );
 	const perPixel = errorImage ? new Float32Array( width * height ) : null;
@@ -90,7 +100,85 @@ export function compareImages( image, reference, { crop = null, errorImage = fal
 		nonFinite,
 		pixels: width * height,
 		...( perPixel ? { errorImage: perPixel } : {} ),
+		...( flip ? { flip: flipStats( image, reference, { x, y, width, height }, ppd, errorImage ) } : {} ),
 	};
+
+}
+
+function flipStats( image, reference, { x, y, width, height }, ppd, keepMap ) {
+
+	const light = image.data instanceof Float32Array;
+	const a = image.data, b = reference.data;
+	const tableA = light ? null : srgbTable( a ), tableB = light ? null : srgbTable( b );
+	const test = new Float32Array( width * height * 3 ), ref = new Float32Array( width * height * 3 );
+	for ( let row = 0; row < height; row ++ ) {
+
+		for ( let col = 0; col < width; col ++ ) {
+
+			const i = ( ( y + row ) * image.width + x + col ) * 4, o = ( row * width + col ) * 3;
+			for ( let c = 0; c < 3; c ++ ) {
+
+				if ( ! light ) {
+
+					test[ o + c ] = tableA[ a[ i + c ] ];
+					ref[ o + c ] = tableB[ b[ i + c ] ];
+					continue;
+
+				}
+
+				let va = a[ i + c ], vb = b[ i + c ];
+				const fa = Number.isFinite( va ), fb = Number.isFinite( vb );
+				// As above, a value not finite in either image counts as no error.
+				if ( ! fa || ! fb ) {
+
+					va = fa ? va : fb ? vb : 0;
+					vb = fb ? vb : va;
+
+				}
+
+				test[ o + c ] = Math.max( va, 0 );
+				ref[ o + c ] = Math.max( vb, 0 );
+
+			}
+
+		}
+
+	}
+
+	const map = flipErrorMap( ref, test, width, height, { hdr: light, ppd } );
+	const sorted = map.slice().sort();
+	let sum = 0;
+	for ( const v of sorted ) sum += v;
+	// FLIP's weighted median: the error below which half the summed error lies.
+	let weightedMedian = 0;
+	for ( let i = 0, running = 0; i < sorted.length; i ++ ) {
+
+		running += sorted[ i ];
+		if ( running > 0.5 * sum ) {
+
+			weightedMedian = sorted[ i ];
+			break;
+
+		}
+
+	}
+
+	return { mean: sum / map.length, weightedMedian, max: sorted[ sorted.length - 1 ], ...( keepMap ? { errorImage: map } : {} ) };
+
+}
+
+// Every 8- or 16-bit sRGB code value as linear light.
+function srgbTable( data ) {
+
+	const scale = dataScale( data ), table = new Float32Array( Math.round( 1 / scale ) + 1 );
+	for ( let i = 0; i < table.length; i ++ ) {
+
+		const v = i * scale;
+		table[ i ] = v <= 0.04045 ? v / 12.92 : ( ( v + 0.055 ) / 1.055 ) ** 2.4;
+
+	}
+
+	return table;
 
 }
 
