@@ -1,6 +1,6 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { BufferAttribute } from 'three';
-import { PathTracerStage } from '@/core/pathtracer/PathTracerStage.js';
+import { PathTracerStage, measureUploadPacing, textureLayerSink } from '@/core/pathtracer/PathTracerStage.js';
 import { UniformManager, LIGHT_FLOATS, LIGHT_LIST_STEP, lightListCapacity } from '@/core/pathtracer/UniformManager.js';
 
 // The stage needs a WebGPU renderer to construct, but the completion-threshold methods only
@@ -302,6 +302,125 @@ describe( 'PathTracerStage accumulation weight', () => {
 
 		expect( accumulate( 5, { interacting: true } ) ).toEqual( [ 1, 0 ] );
 		expect( accumulate( 5, { enabled: false } ) ).toEqual( [ 1, 0 ] );
+
+	} );
+
+} );
+
+// A device whose queue answers each onSubmittedWorkDone only when the test says, and counts the texture writes.
+function fakeDevice() {
+
+	const answers = [];
+	const writes = [];
+	const device = { queue: {
+		onSubmittedWorkDone: () => new Promise( ( resolve ) => answers.push( resolve ) ),
+		writeTexture: ( destination ) => writes.push( destination.origin.z ),
+	} };
+	const answer = async ( n = answers.length ) => {
+
+		answers.splice( 0, n ).forEach( ( resolve ) => resolve() );
+		await new Promise( ( resolve ) => setTimeout( resolve ) );
+
+	};
+
+	return { device, answers, writes, answer };
+
+}
+
+// The queue answers its probes after `ms` each.
+async function probed( fake, ms ) {
+
+	let now = 0;
+	vi.spyOn( performance, 'now' ).mockImplementation( () => now );
+	measureUploadPacing( fake.device );
+	for ( let i = 0; i < 3; i ++ ) {
+
+		now += ms;
+		await fake.answer();
+
+	}
+
+}
+
+// Five layers of 64 MB each (never touched, so never committed), uploaded through the texture layer sink.
+function upload( device ) {
+
+	const renderer = { backend: { device, get: () => ( { texture: {} } ) } };
+	const texture = { image: { width: 4096, height: 4096 } };
+	const data = new Uint8Array( 5 * 64 * 2 ** 20 );
+	return textureLayerSink( renderer ).write( texture, 0, data, 5 );
+
+}
+
+const flush = () => new Promise( ( resolve ) => setTimeout( resolve ) );
+
+describe( 'PathTracerStage upload pacing', () => {
+
+	afterEach( () => vi.restoreAllMocks() );
+
+	it( 'waits for every upload where the queue answers at once', async () => {
+
+		const fake = fakeDevice();
+		await probed( fake, 0.1 );
+		const done = upload( fake.device );
+		await flush();
+		expect( fake.writes ).toEqual( [ 0 ] );
+		await fake.answer();
+		expect( fake.writes ).toEqual( [ 0, 1 ] );
+		for ( let i = 0; i < 4; i ++ ) await fake.answer();
+		await done;
+
+	} );
+
+	it( 'keeps three more uploads in flight where the queue answers on a timer, then waits for the oldest', async () => {
+
+		const fake = fakeDevice();
+		await probed( fake, 100 );
+		const done = upload( fake.device );
+		await flush();
+		expect( fake.writes ).toEqual( [ 0, 1, 2, 3 ] );
+		await fake.answer( 1 );
+		expect( fake.writes ).toEqual( [ 0, 1, 2, 3, 4 ] );
+		await fake.answer();
+		await done;
+
+	} );
+
+	it( 'counts the fastest probe: a page busy at one answer is not a slow queue', async () => {
+
+		const fake = fakeDevice();
+		let now = 0;
+		vi.spyOn( performance, 'now' ).mockImplementation( () => now );
+		measureUploadPacing( fake.device );
+		for ( const ms of [ 400, 0.1, 150 ] ) {
+
+			now += ms;
+			await fake.answer();
+
+		}
+
+		upload( fake.device );
+		await flush();
+		expect( fake.writes ).toEqual( [ 0 ] );
+
+	} );
+
+	it( 'paces drainUploads per device, and waits for each upload until the queue has been timed', async () => {
+
+		const slow = fakeDevice(), fresh = fakeDevice();
+		await probed( slow, 100 );
+		const drain = ( device ) => PathTracerStage.prototype.drainUploads.call( { renderer: { backend: { device } } } );
+
+		let settled = false;
+		drain( slow.device ).then( () => ( settled = true ) );
+		await flush();
+		expect( settled ).toBe( true );
+
+		measureUploadPacing( fresh.device );
+		settled = false;
+		drain( fresh.device ).then( () => ( settled = true ) );
+		await flush();
+		expect( settled ).toBe( false );
 
 	} );
 

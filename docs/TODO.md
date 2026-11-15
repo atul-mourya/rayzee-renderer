@@ -16,9 +16,7 @@
   Safari kills the page and closes its window); a fresh page loads it in 52–58 s. Check the app's reload of a large scene
 
 ### Follow-ups from the Rust/WebAssembly night (2026-11-11)
-- [ ] Firefox loads 1.2–4.2× slower than Chrome (`bench:load -- --firefox`, 2026-11-14): `upload` 6–11× wherever the
-  geometry is large (24155522 0.24 → 2.19 s, transparent-machines 0.28 → 2.15 s), `extraction` 2–2.5×, the first frame
-  2.4–4×. Check whether the paced uploads wait on a slow `onSubmittedWorkDone` there
+- [ ] Find why Firefox's `extraction` is 2–2.5× and its first frame 2.4–4× Chrome's (`bench:load -- --firefox`, 2026-11-14)
 - [ ] Chrome: decode a zipped image from its bytes, not `createImageBitmap( new Blob( [ bytes ] ) )`
 - [ ] Moana island phases (Chrome, textured): USD read 30 s, USD build 50 s, extraction + BLAS 57 s, placing and
   measuring copies 11 s, grouping 12 s, top-level tree 12 s, writing the tree 8 s, assembling 10 s, copy records

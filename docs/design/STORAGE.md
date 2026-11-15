@@ -143,7 +143,8 @@ turns it off or supplies a host manager; `openHeadless` defaults to off.
   build** (`SceneProcessor._beginProgressiveSpill`): each BLAS goes to scratch as it lands, a triangle
   chunk is uploaded (`PathTracerStage.createChunkUploader`, a GPU buffer allocated after
   extraction) and spilled once every BLAS over it is built, and the combined BVH is assembled from
-  scratch, uploading and spilling each chunk the fill passes (each upload awaited, `stage.drainUploads()`). Chunks
+  scratch, uploading and spilling each chunk the fill passes (each upload awaited, `stage.drainUploads()`; where the
+  queue answers on a timer, Firefox's ~100 ms, up to three more stay in flight: `paceUpload`). Chunks
   holding emitters stay, and the TLAS chunks until the after-load spill. `setTriangleData` / `setBVHData` adopt the
   pre-filled buffers. A scene restored
   from the BLAS cache spills after upload instead (`spillToDisk`). 50M triangles: 7.2 GB at rest

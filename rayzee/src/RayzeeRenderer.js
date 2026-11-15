@@ -4,7 +4,7 @@ import { Scene, EventDispatcher, Box3, Matrix4, REVISION } from 'three';
 import { RectAreaLightTexturesLib } from 'three/addons/lights/RectAreaLightTexturesLib.js';
 import { SceneHelpers } from './scene/SceneHelpers.js';
 import { PathTracer } from './pathtracer/PathTracer.js';
-import { textureLayerSink } from './pathtracer/PathTracerStage.js';
+import { measureUploadPacing, textureLayerSink } from './pathtracer/PathTracerStage.js';
 import { Compositor } from './pipeline/Compositor.js';
 import { RenderPipeline } from './pipeline/RenderPipeline.js';
 import { CompletionTracker, getDisplaySamples } from './pipeline/CompletionTracker.js';
@@ -3091,6 +3091,7 @@ export class RayzeeRenderer extends EventDispatcher {
 
 		}
 
+		measureUploadPacing( device );
 		this.renderer = new WebGPURenderer( { canvas: this.canvas, alpha: true, device } );
 
 		try {

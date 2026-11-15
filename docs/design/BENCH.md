@@ -583,6 +583,10 @@ transparent-machines, 1 warm-up + 3 loads each):
   geometry is large (24155522 0.24 → 2.19 s, zero-day 0.13 → 1.41 s, transparent-machines 0.28 → 2.15 s),
   `extraction` (2.0–2.5×) and the first frame (2.4–4×). `blas` reads the same within 25 %, but for 24155522 (0.30 →
   1.57 s), whose 91 images decode on the same workers (`textures` 0.47 → 1.73 s); `pbrtBuild` 1.0–1.4×.
+- **Firefox's `upload` was its queue's timer** (2026-11-15): `onSubmittedWorkDone` answers ~100 ms after it is asked,
+  idle or not (Chrome 0.06 ms, dawn.node 0.02 ms), and the paced uploads waited out one tick a 64 MB write. With three
+  kept in flight there (`paceUpload`), A/B against main, 3 rounds: `upload` 24155522 2.24 → 0.51 s, transparent-machines
+  2.20 → 0.60 s; `ready` −34 % and −20 %; nothing slower, browser peak within 0.15 GB.
 - **The WebAssembly BLAS build (4c42ef1b) holds in Firefox.** Against 1f605fe7 (given the device-limit fix, without
   which Firefox ran neither), 3 rounds: `blas` crown −73 %, classroom −70 %, zero-day −46 %, 24155522 −24 %; Chrome on
   2026-11-12 read −74 %, −70 %, −55 % and −39 %. Nothing slower.

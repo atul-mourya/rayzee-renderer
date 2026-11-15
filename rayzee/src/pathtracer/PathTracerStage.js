@@ -37,6 +37,58 @@ const TRIANGLE_UPLOAD_GAP = 1 << 12;
 // Texture array layers sent per drained upload: four 2K maps.
 const TEXTURE_UPLOAD_SLICE_BYTES = 64 * 2 ** 20;
 
+// A queue that answers onSubmittedWorkDone on a timer (Firefox) keeps a few uploads in flight rather than wait a tick
+// after each; one that answers at once waits after each (see drainUploads).
+const SLOW_QUEUE_MS = 20;
+const UPLOADS_IN_FLIGHT_SLOW = 3;
+const QUEUE_PROBES = 3;
+const uploadPacing = new WeakMap(); // device → { pending: Promise[], inFlight }
+
+function pacingOf( device ) {
+
+	let pace = uploadPacing.get( device );
+	if ( ! pace ) uploadPacing.set( device, pace = { pending: [], inFlight: 0 } );
+	return pace;
+
+}
+
+/**
+ * Times `onSubmittedWorkDone` on a new device, without waiting for it: {@link paceUpload} follows the answer. Each probe
+ * is sent as the last one answers, and the fastest counts: a busy page only delays an answer.
+ */
+export function measureUploadPacing( device ) {
+
+	const pace = pacingOf( device );
+	let fastest = Infinity;
+	const probe = ( left ) => {
+
+		const start = performance.now();
+		device.queue.onSubmittedWorkDone().then( () => {
+
+			fastest = Math.min( fastest, performance.now() - start );
+			if ( left > 1 ) return probe( left - 1 );
+			if ( fastest > SLOW_QUEUE_MS ) pace.inFlight = UPLOADS_IN_FLIGHT_SLOW;
+			log.debug( `upload pacing: the queue answers in ${fastest.toFixed( 2 )} ms; ${pace.inFlight} uploads kept in flight` );
+
+		}, () => {} );
+
+	};
+
+	probe( QUEUE_PROBES );
+
+}
+
+/** After an upload: resolves once no more uploads are on their way to the GPU than the queue is allowed. */
+function paceUpload( device ) {
+
+	const pace = pacingOf( device );
+	const done = device.queue.onSubmittedWorkDone();
+	done.catch( () => {} ); // held unawaited past a device loss
+	pace.pending.push( done );
+	return Promise.all( pace.pending.splice( 0, Math.max( 0, pace.pending.length - pace.inFlight ) ) ).then( () => {} );
+
+}
+
 /**
  * Writes `layers` layers of `data` into a texture array's GPU texture from `firstLayer`, a slice at a time, each drained
  * as {@link PathTracerStage#drainUploads} explains.
@@ -48,7 +100,8 @@ async function writeTextureLayers( renderer, texture, firstLayer, data, layers )
 	const { width, height } = texture.image;
 	const layerBytes = data.byteLength / layers;
 	const step = Math.max( 1, Math.floor( TEXTURE_UPLOAD_SLICE_BYTES / layerBytes ) );
-	const { queue } = renderer.backend.device;
+	const { device } = renderer.backend;
+	const { queue } = device;
 
 	for ( let k = 0; k < layers; k += step ) {
 
@@ -59,7 +112,7 @@ async function writeTextureLayers( renderer, texture, firstLayer, data, layers )
 			{ bytesPerRow: layerBytes / height, rowsPerImage: height },
 			{ width, height, depthOrArrayLayers: n }
 		);
-		await queue.onSubmittedWorkDone();
+		await paceUpload( device );
 
 	}
 
@@ -73,7 +126,8 @@ async function writeTextureBox( renderer, texture, origin, size, data, bytesPerT
 	const bytes = new Uint8Array( data.buffer, data.byteOffset, data.byteLength );
 	const sliceBytes = size[ 0 ] * size[ 1 ] * bytesPerTexel;
 	const step = Math.max( 1, Math.floor( TEXTURE_UPLOAD_SLICE_BYTES / sliceBytes ) );
-	const { queue } = renderer.backend.device;
+	const { device } = renderer.backend;
+	const { queue } = device;
 	for ( let k = 0; k < size[ 2 ]; k += step ) {
 
 		const n = Math.min( step, size[ 2 ] - k );
@@ -83,7 +137,7 @@ async function writeTextureBox( renderer, texture, origin, size, data, bytesPerT
 			{ bytesPerRow: size[ 0 ] * bytesPerTexel, rowsPerImage: size[ 1 ] },
 			{ width: size[ 0 ], height: size[ 1 ], depthOrArrayLayers: n }
 		);
-		if ( k + n < size[ 2 ] ) await queue.onSubmittedWorkDone();
+		if ( k + n < size[ 2 ] ) await paceUpload( device );
 
 	}
 
@@ -986,14 +1040,13 @@ export class PathTracerStage extends RenderStage {
 	}
 
 	/**
-	 * Resolves once the GPU has taken every upload so far. Chrome passes each upload through a shared memory pool that
-	 * grows to the most ever sent before the GPU caught up and is kept until the page closes (2.2 GB on the Moana
-	 * island); awaiting this after each chunk keeps it to one. Measured: 1 GB in 64 MB writes left 1 GB behind, paced
-	 * 64 MB, in the same time.
+	 * Resolves once the GPU has taken the uploads so far ({@link paceUpload}: all but a few where the queue answers on a
+	 * timer). Chrome passes each upload through a shared memory pool that grows to the most ever sent before the GPU
+	 * caught up and is kept until the page closes; awaiting this after each chunk keeps it to one.
 	 */
 	drainUploads() {
 
-		return this.renderer.backend.device.queue.onSubmittedWorkDone();
+		return paceUpload( this.renderer.backend.device );
 
 	}
 
