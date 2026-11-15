@@ -205,7 +205,8 @@
 - [ ] **Single-sheet dielectric**: kroken's picture glass is one quad of `dielectric`; the card behind it renders very
   noisy at 512 spp and OIDN turns the noise into a bumpy texture. See Known → `thickness` / thin-walled; check how the
   medium stack treats an open sheet against pbrt's per-interface orientation.
-- [ ] **Spectra, what is left**: a named illuminant used as a reflectance reads grey.
+- [ ] **Spectra, what is left**: a named illuminant used as a reflectance reads grey; EXR area-light images and
+  material maps ignore their `chromaticities` (skies honour them).
 - [ ] **Lights**: `goniometric` → IES; `projection` → gobos; infinite `portal`.
 - [ ] **Cameras**: `realistic` (lens files). (`spherical` opens as the engine's panorama: lat-long for `equirectangular`,
   the equal-area projection for pbrt's default `equalarea`, 2026-11-09.)

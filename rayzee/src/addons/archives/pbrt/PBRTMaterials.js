@@ -123,6 +123,86 @@ const CIE_1931 = [
 
 const XYZ_TO_REC709 = [ 3.2404542, - 1.5371385, - 0.4985314, - 0.9692660, 1.8760108, 0.0415560, 0.0556434, - 0.2040259, 1.0572252 ];
 
+// The colour spaces pbrt-v4 knows an EXR's `chromaticities` by (RGBColorSpace::Lookup): red, green, blue and white x y.
+// Whites as pbrt computes them from its illuminant tables (D65 the spectral 0.312727, 0.329023, as XYZ_TO_REC709's).
+const EXR_SPACES = {
+	'ACES2065-1': [ 0.7347, 0.2653, 0, 1, 0.0001, - 0.077, 0.32168, 0.33767 ],
+	'DCI-P3': [ 0.68, 0.32, 0.265, 0.69, 0.15, 0.06, 0.312727, 0.329023 ],
+	Rec2020: [ 0.708, 0.292, 0.17, 0.797, 0.131, 0.046, 0.312727, 0.329023 ],
+	sRGB: [ 0.64, 0.33, 0.3, 0.6, 0.15, 0.06, 0.312727, 0.329023 ],
+};
+
+/**
+ * The colour space an OpenEXR file's `chromaticities` names, as pbrt-v4 matches it (each value within 0.1 %): one of
+ * EXR_SPACES' names, 'sRGB' where the file names none, null where it names another (pbrt reads that one as sRGB).
+ * @param {Uint8Array} bytes - the file, or at least its header
+ * @returns {?string}
+ */
+export function exrColorSpace( bytes ) {
+
+	const view = new DataView( bytes.buffer, bytes.byteOffset, bytes.byteLength );
+	if ( bytes.length < 8 || view.getUint32( 0, true ) !== 20000630 ) return 'sRGB';
+	const text = ( at ) => {
+
+		const end = bytes.indexOf( 0, at );
+		return [ end < 0 ? '' : String.fromCharCode( ...bytes.subarray( at, end ) ), end + 1 ];
+
+	};
+
+	for ( let at = 8; at < bytes.length; ) {
+
+		const [ name, typeAt ] = text( at );
+		if ( name === '' || typeAt === 0 ) return 'sRGB';
+		const [ type, sizeAt ] = text( typeAt );
+		if ( sizeAt === 0 || sizeAt + 4 > bytes.length ) return 'sRGB';
+		const size = view.getInt32( sizeAt, true );
+		if ( size < 0 ) return 'sRGB';
+		if ( name === 'chromaticities' && type === 'chromaticities' && size === 32 && sizeAt + 36 <= bytes.length ) {
+
+			const c = Array.from( { length: 8 }, ( _, i ) => view.getFloat32( sizeAt + 4 + i * 4, true ) );
+			const close = ( a, b ) => a === b || Math.abs( ( a - b ) / b ) < 1e-3;
+			return Object.keys( EXR_SPACES ).find( ( key ) => EXR_SPACES[ key ].every( ( v, i ) => close( c[ i ], v ) ) ) ?? null;
+
+		}
+
+		at = sizeAt + 4 + size;
+
+	}
+
+	return 'sRGB';
+
+}
+
+/**
+ * A colour space's linear RGB to linear Rec.709 through XYZ, rows of 3, with no chromatic adaptation: pbrt's RGB film
+ * without white balance shows an ACES white as D60.
+ * @param {string} name - an EXR_SPACES key
+ * @returns {number[]}
+ */
+export function rec709From( name ) {
+
+	const [ rx, ry, gx, gy, bx, by, wx, wy ] = EXR_SPACES[ name ];
+	const xyz = ( x, y ) => [ x / y, 1, ( 1 - x - y ) / y ];
+	const P = [ xyz( rx, ry ), xyz( gx, gy ), xyz( bx, by ) ]; // columns
+	const W = xyz( wx, wy );
+	// Scale each primary so that RGB ( 1, 1, 1 ) is the white: S = P⁻¹ W.
+	const m = [ P[ 0 ][ 0 ], P[ 1 ][ 0 ], P[ 2 ][ 0 ], P[ 0 ][ 1 ], P[ 1 ][ 1 ], P[ 2 ][ 1 ], P[ 0 ][ 2 ], P[ 1 ][ 2 ], P[ 2 ][ 2 ] ];
+	const inv = invert3( m );
+	const S = [ 0, 1, 2 ].map( ( r ) => inv[ r * 3 ] * W[ 0 ] + inv[ r * 3 + 1 ] * W[ 1 ] + inv[ r * 3 + 2 ] * W[ 2 ] );
+	const toXYZ = m.map( ( v, i ) => v * S[ i % 3 ] );
+	return [ 0, 1, 2 ].flatMap( ( r ) => [ 0, 1, 2 ].map( ( c ) => XYZ_TO_REC709[ r * 3 ] * toXYZ[ c ] + XYZ_TO_REC709[ r * 3 + 1 ] * toXYZ[ 3 + c ] + XYZ_TO_REC709[ r * 3 + 2 ] * toXYZ[ 6 + c ] ) );
+
+}
+
+function invert3( m ) {
+
+	const [ a, b, c, d, e, f, g, h, i ] = m;
+	const A = e * i - f * h, B = - ( d * i - f * g ), C = d * h - e * g;
+	const det = a * A + b * B + c * C;
+	return [ A, - ( b * i - c * h ), b * f - c * e, B, a * i - c * g, - ( a * f - c * d ), C, - ( a * h - b * g ), a * e - b * d ].map( ( v ) => v / det );
+
+}
+
 // pbrt-v4's D65 table (src/pbrt/util/spectrum.cpp): the first wavelength in nm, then a value every 5 nm. The white a
 // reflectance is seen under.
 const D65_TABLE = [ 300, 0.0341, 1.6643, 3.2945, 11.765, 20.236, 28.645, 37.054, 38.501, 39.949, 42.43, 44.912, 45.775, 46.638, 49.364, 52.089, 51.032, 49.975, 52.312, 54.648, 68.701, 82.755, 87.12, 91.486, 92.459, 93.432, 90.057, 86.682, 95.774, 104.86, 110.94, 117.01, 117.41, 117.81, 116.34, 114.86, 115.39, 115.92, 112.37, 108.81, 109.08, 109.35, 108.58, 107.8, 106.3, 104.79, 106.24, 107.69, 106.05, 104.4, 104.22, 104.05, 102.02, 100, 98.167, 96.334, 96.061, 95.788, 92.237, 88.686, 89.346, 90.006, 89.803, 89.599, 88.649, 87.699, 85.494, 83.289, 83.494, 83.699, 81.863, 80.027, 80.121, 80.215, 81.246, 82.278, 80.281, 78.284, 74.003, 69.721, 70.665, 71.609, 72.979, 74.349, 67.977, 61.604, 65.745, 69.886, 72.486, 75.087, 69.34, 63.593, 55.005, 46.418, 56.612, 66.805, 65.094, 63.383, 63.843, 64.304, 61.878, 59.452, 55.705, 51.959, 54.7, 57.441, 58.876, 60.312 ];

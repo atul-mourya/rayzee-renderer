@@ -116,7 +116,14 @@ subtree per element, and the whole thing rarely fits: Moana is 29 GB unpacked.
   out with a warning. Portal lights alike in all but their portal (watercolor's two, one a window: same image, scale and
   transform) count once, as the engine has no portals; portal lights that differ are summed, each window then showing
   both. A lat-long (non-square) image's `scale` goes into a float copy, since the importer pins the environment's
-  intensity at 1. A square `.hdr` is read top-down (three's HDR loader fills it so, flipY); it came out mirrored.
+  intensity at 1. A square `.hdr` is read top-down (three's HDR loader fills it so, flipY); it came out mirrored. An
+  EXR sky is in the colour space its `chromaticities` name, as pbrt's `RGBColorSpace::Lookup` matches them (ACES2065-1,
+  DCI-P3, Rec.2020, sRGB, each value within 0.1 %; any other read as sRGB with a warning), converted to linear Rec.709
+  through XYZ with no chromatic adaptation (`_archiveEnvironment`, `rec709From`), the file's negatives clamped first (as
+  pbrt's ClampZero) and light outside Rec.709 clipped at 0. Area-light images and material maps are still read as
+  Rec.709 (pbrt reads theirs too: lights as the sky, maps as albedo, where an ACES white stays white).
+  The explosion's ACES sky read as Rec.709 was purple: against pbrt its corner read 1.50 / 1.06 / 1.04, now 1.02 / 1.02
+  / 1.01.
   A scene without one renders with the environment off
   (`sceneMetadata.environment.enabled === false`, applied at the replace-load seam, and what it replaced comes back with
   the next model unless someone changed it). `distant`, `point` and `spot` become three.js lamps in the engine's units
