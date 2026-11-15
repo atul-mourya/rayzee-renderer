@@ -1618,5 +1618,65 @@
 		"ratio": 0.4631992488667682,
 		"rawRmse": 0.015807978690012818,
 		"denoisedRmse": 0.007322243855315816
+	},
+	"animation-skinned/nrd/1": {
+		"ratio": 0.24517085042965683,
+		"rawRmse": 0.04502948351338146,
+		"denoisedRmse": 0.011039916767383943
+	},
+	"animation-skinned/oidn/1": {
+		"ratio": 0.16700207407442538,
+		"rawRmse": 0.04502948351338146,
+		"denoisedRmse": 0.007520017141234846
+	},
+	"animation-skinned/oidn-tiled/1": {
+		"ratio": 0.16700207407442538,
+		"rawRmse": 0.04502948351338146,
+		"denoisedRmse": 0.007520017141234846
+	},
+	"animation-skinned/nrd/16": {
+		"ratio": 0.4658892980260474,
+		"rawRmse": 0.005284599399494267,
+		"denoisedRmse": 0.0024620383045792556
+	},
+	"animation-skinned/oidn/16": {
+		"ratio": 0.33856475802021097,
+		"rawRmse": 0.005284599399494267,
+		"denoisedRmse": 0.0017891791169235285
+	},
+	"animation-skinned/oidn-tiled/16": {
+		"ratio": 0.33853557500126574,
+		"rawRmse": 0.005284599399494267,
+		"denoisedRmse": 0.0017890248963591353
+	},
+	"animation-skinned/nrd/64": {
+		"ratio": 1,
+		"rawRmse": 0.002396180302898793,
+		"denoisedRmse": 0.002396180302898793
+	},
+	"animation-skinned/oidn/64": {
+		"ratio": 0.5226829428417203,
+		"rawRmse": 0.002396180302898793,
+		"denoisedRmse": 0.001252442572298506
+	},
+	"animation-skinned/oidn-tiled/64": {
+		"ratio": 0.5226676496759427,
+		"rawRmse": 0.002396180302898793,
+		"denoisedRmse": 0.0012524059271159006
+	},
+	"animation-skinned/nrd/150": {
+		"ratio": 1,
+		"rawRmse": 0.0017124326465569125,
+		"denoisedRmse": 0.0017124326465569125
+	},
+	"animation-skinned/oidn/150": {
+		"ratio": 0.6369734851424671,
+		"rawRmse": 0.0017124326465569125,
+		"denoisedRmse": 0.0010907741909490952
+	},
+	"animation-skinned/oidn-tiled/150": {
+		"ratio": 0.6369734851424671,
+		"rawRmse": 0.0017124326465569125,
+		"denoisedRmse": 0.0010907741909490952
 	}
 }

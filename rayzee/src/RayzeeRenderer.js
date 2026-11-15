@@ -3415,6 +3415,13 @@ export class RayzeeRenderer extends EventDispatcher {
 
 	}
 
+	/** True while the loaded scene's clips can move it (it then never spills). The core plays no clips. */
+	_sceneAnimates() {
+
+		return false;
+
+	}
+
 	/** Draws what sits over the image. Here only brings the light scene's matrices up to date. */
 	_renderHelperOverlay() {
 

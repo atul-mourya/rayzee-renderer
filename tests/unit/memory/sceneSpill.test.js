@@ -424,6 +424,7 @@ describe( 'deciding to spill', () => {
 		_memorySpill: 'auto',
 		storage: {},
 		assetLoader: { animations: [], maxEnvironmentWidth: 0 },
+		_sceneAnimates: () => false,
 		_sdf: { needsSpill: vi.fn( () => true ) },
 		meshScene: { environment: sky( 16 ) },
 		stages: { pathTracer: { compactLayout: null } },
@@ -448,7 +449,7 @@ describe( 'deciding to spill', () => {
 
 	it( 'never spills an animated scene or one without storage; a forced spill still asks the size, for the layout', () => {
 
-		const animated = app( { assetLoader: { animations: [ {} ], maxEnvironmentWidth: 99 } } );
+		const animated = app( { assetLoader: { animations: [ {} ], maxEnvironmentWidth: 99 }, _sceneAnimates: () => true } );
 		expect( planSpill( animated ) ).toBe( false );
 		expect( animated._sdf.needsSpill ).not.toHaveBeenCalled();
 		expect( animated.assetLoader.maxEnvironmentWidth ).toBe( 0 );

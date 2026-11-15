@@ -42,7 +42,7 @@ describe( 'PathTracerApp spill plan', () => {
 	const plan = ( { mode = 'auto', storage = {}, animations = [], big = false, environment = null } = {} ) => {
 
 		const app = {
-			_memorySpill: mode, storage, meshScene: { environment }, assetLoader: { animations, maxEnvironmentWidth: 0 },
+			_memorySpill: mode, storage, meshScene: { environment }, assetLoader: { animations, maxEnvironmentWidth: 0 }, _sceneAnimates: PathTracerApp.prototype._sceneAnimates,
 			_sdf: { needsSpill: () => big }, _chunkUploader: () => 'uploader', stages: { pathTracer: { compactLayout: null } },
 		};
 		const spill = PathTracerApp.prototype._planSpill.call( app );

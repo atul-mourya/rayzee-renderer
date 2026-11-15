@@ -18,7 +18,9 @@ On `rayzee/core`, formats other than glTF and `.hdr` need the `rayzee/addons/for
 A run of numbered `.vdb` files loads as one volume that changes over time, played by the timeline or by
 `engine.seekSequences( seconds )`: see [Volumes](rendering.md#volumes).
 
-`loadModel` / `loadObject3D` **replace** the current scene. A model that carries cameras opens through its first one; `cameraManager.switchCamera(0)` goes back to the default view, fitted to the model. To add or remove objects from a live scene without a full reload (and without reframing the camera):
+`loadModel` / `loadObject3D` **replace** the current scene. An object's own clips (`object3d.animations`) go to
+`engine.animationManager` as a loaded glTF's do, bound by node name to the engine's copy; a track on the object itself
+replaces the transform of its parents that the copy carries. A model that carries cameras opens through its first one; `cameraManager.switchCamera(0)` goes back to the default view, fitted to the model. To add or remove objects from a live scene without a full reload (and without reframing the camera):
 
 ```js
 const id = await engine.addModel(url, { name })                  // Append a model, rebuild in place
@@ -246,7 +248,7 @@ Light `intensity` follows Blender: radiant power in watts for point, spot and ar
 
 ## engine.animationManager
 
-GLTF animation playback controls.
+Playback of a model's clips (glTF, pbrt frame sequences, `loadObject3D`'s `object3d.animations`).
 
 ```js
 engine.animationManager.play(clipIndex)      // Play an animation clip

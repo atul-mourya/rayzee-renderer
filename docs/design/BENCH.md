@@ -425,7 +425,8 @@ just that part.
 `--core` renders each scene a second time with the renderer core (`RayzeeRenderer` from `rayzee/core`, with the
 physical-sky and bidirectional add-ons installed), alive beside the full engine, and requires the two to match byte
 for byte. It holds the core/viewer split to "same pixels", and it is what found module-level shader state shared
-between two renderers in one process (see `shaders/SceneResources.js`).
+between two renderers in one process (see `shaders/SceneResources.js`). A scene marked `viewer: true` is skipped there:
+`animation-skinned` poses its clip with the viewer's animation player.
 
 ### Scene loading — real models, by phase
 

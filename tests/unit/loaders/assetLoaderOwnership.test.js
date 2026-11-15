@@ -5,7 +5,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import {
-	BoxGeometry, Bone, Float32BufferAttribute, Group, Mesh, MeshStandardMaterial, Object3D,
+	AnimationClip, BoxGeometry, Bone, NumberKeyframeTrack, Float32BufferAttribute, Group, Mesh, MeshStandardMaterial, Object3D,
 	PerspectiveCamera, PointLight, Scene, SkinnedMesh, Skeleton, Uint16BufferAttribute, Vector3,
 } from 'three';
 import { AssetLoader } from '@/core/loaders/AssetLoader.js';
@@ -185,6 +185,26 @@ describe( 'AssetLoader — caller-owned Object3D is never mutated', () => {
 		expect( copy ).not.toBe( skinned );
 		expect( copy.skeleton ).not.toBe( skinned.skeleton );
 		expect( copy.skeleton.bones[ 0 ] ).not.toBe( bone );
+
+	} );
+
+	it( 'plays the object\'s own clips, and drops them with it', async () => {
+
+		const { design } = hostScene();
+		const clip = new AnimationClip( 'spin', 1, [ new NumberKeyframeTrack( 'design.rotation[y]', [ 0, 1 ], [ 0, 1 ] ) ] );
+		design.animations = [ clip ];
+
+		const loader = newLoader();
+		await loader.loadObject3D( design );
+		expect( loader.animations ).toEqual( [ clip ] );
+		expect( loader.animations ).not.toBe( design.animations );
+		design.animations.push( clip.clone() );
+		expect( loader.animations ).toEqual( [ clip ] );
+
+		loader.releaseTargetModel();
+		expect( loader.animations ).toEqual( [] );
+		await loader.loadObject3D( new Group() );
+		expect( loader.animations ).toEqual( [] );
 
 	} );
 

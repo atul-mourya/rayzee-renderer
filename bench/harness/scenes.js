@@ -12,6 +12,8 @@
  */
 
 import {
+	AnimationClip,
+	Bone,
 	BoxGeometry,
 	ClampToEdgeWrapping,
 	Color,
@@ -21,6 +23,7 @@ import {
 	DirectionalLight,
 	DoubleSide,
 	EquirectangularReflectionMapping,
+	Float32BufferAttribute,
 	FloatType,
 	FrontSide,
 	Group,
@@ -31,14 +34,19 @@ import {
 	Matrix4,
 	Mesh,
 	MeshPhysicalMaterial,
+	NumberKeyframeTrack,
 	PlaneGeometry,
 	PointLight,
 	Quaternion,
+	QuaternionKeyframeTrack,
 	RectAreaLight,
 	RepeatWrapping,
 	RGBAFormat,
+	Skeleton,
+	SkinnedMesh,
 	SphereGeometry,
 	SpotLight,
+	Uint16BufferAttribute,
 	SRGBColorSpace,
 	Vector3,
 } from 'three';
@@ -856,6 +864,77 @@ function makeRefitRig() {
 }
 
 /**
+ * A skinned arm (a cylinder on two bones, blended over its middle) and a box with one morph target, and the clip that
+ * bends the upper bone 70° and takes the box to its target. Built here: the corpus loads no files.
+ */
+function makeAnimatedRig() {
+
+	const group = new Group();
+
+	const height = 3;
+	const geometry = new CylinderGeometry( 0.35, 0.35, height, 32, 24 );
+	const position = geometry.attributes.position;
+	const skinIndex = new Uint16Array( position.count * 4 );
+	const skinWeight = new Float32Array( position.count * 4 );
+	for ( let i = 0; i < position.count; i ++ ) {
+
+		const w = Math.min( 1, Math.max( 0, ( position.getY( i ) + height / 2 - 1.2 ) / 0.6 ) );
+		skinIndex.set( [ 0, 1, 0, 0 ], i * 4 );
+		skinWeight.set( [ 1 - w, w, 0, 0 ], i * 4 );
+
+	}
+
+	geometry.setAttribute( 'skinIndex', new Uint16BufferAttribute( skinIndex, 4 ) );
+	geometry.setAttribute( 'skinWeight', new Float32BufferAttribute( skinWeight, 4 ) );
+
+	const root = new Bone();
+	root.name = 'root';
+	root.position.y = - height / 2;
+	const upper = new Bone();
+	upper.name = 'upper';
+	upper.position.y = 1.5;
+	root.add( upper );
+
+	const arm = new SkinnedMesh( geometry, new MeshPhysicalMaterial( { color: 0xdd8844, roughness: 0.35, metalness: 0.1 } ) );
+	arm.name = 'arm';
+	arm.add( root );
+	arm.bind( new Skeleton( [ root, upper ] ) );
+	arm.position.set( - 1.3, - 0.5, 0 );
+	group.add( arm );
+
+	const boxGeometry = new BoxGeometry( 1.2, 1.2, 1.2, 6, 6, 6 );
+	const base = boxGeometry.attributes.position;
+	const target = new Float32Array( base.count * 3 );
+	for ( let i = 0; i < base.count; i ++ ) {
+
+		const y = base.getY( i ), spread = y > 0 ? 1 + 0.5 * y / 0.6 : 1;
+		target.set( [ base.getX( i ) * spread, y + ( y > 0 ? 0.4 : 0 ), base.getZ( i ) * spread ], i * 3 );
+
+	}
+
+	boxGeometry.morphAttributes.position = [ new Float32BufferAttribute( target, 3 ) ];
+	const morph = new Mesh( boxGeometry, new MeshPhysicalMaterial( { color: 0x88aacc, roughness: 0.2, metalness: 0.8 } ) );
+	morph.name = 'morph';
+	morph.updateMorphTargets();
+	morph.position.set( 1.4, - 1.4, 0 );
+	group.add( morph );
+
+	const floor = new Mesh( new PlaneGeometry( 14, 14 ), new MeshPhysicalMaterial( { color: 0xaaaaaa, roughness: 0.9, metalness: 0 } ) );
+	floor.position.set( 0, - 2, 0 );
+	floor.rotation.set( - Math.PI / 2, 0, 0 );
+	group.add( floor );
+
+	const bent = new Quaternion().setFromAxisAngle( new Vector3( 0, 0, 1 ), - 70 * Math.PI / 180 );
+	group.animations = [ new AnimationClip( 'bend', 1, [
+		new QuaternionKeyframeTrack( 'upper.quaternion', [ 0, 1 ], [ 0, 0, 0, 1, ...bent.toArray() ] ),
+		new NumberKeyframeTrack( 'morph.morphTargetInfluences[0]', [ 0, 1 ], [ 0, 1 ] ),
+	] ) ];
+
+	return group;
+
+}
+
+/**
  * Pose B: a vertex deformation (grows the blob's BLAS bounds) plus a rigid transform (moves
  * the box's world AABB, so the TLAS must change too). Two different refit failure modes, one
  * render — a BLAS that keeps stale bounds and a TLAS that keeps a stale leaf AABB both
@@ -1112,6 +1191,27 @@ export const SCENES = [
 			deformToPoseB( app.sceneModel );
 			const { positions, normals } = extractWorldTriangles( app );
 			await app.refitBVH( positions, normals );
+
+			setCamera( app, [ 0, 1.2, 8 ], [ 0, - 0.2, 0 ] );
+
+		},
+	},
+	{
+		id: 'animation-skinned',
+		covers: 'skeletal and morph animation — a clip carried by loadObject3D, posed by the AnimationManager on the CPU (skinning, morph target) and refit, never built at the pose',
+		spp: 64,
+		truthSpp: 2048,
+		settings: { maxBounces: 4 },
+		// The animation player is the viewer's: the renderer core alone has none.
+		viewer: true,
+		async build( app ) {
+
+			await setGradientSky( app );
+			await app.loadObject3D( makeAnimatedRig(), 'animated' );
+
+			const reader = app.animationManager.seekTo( 0.75 );
+			await app.refitBVH( reader );
+			app.animationManager.applyPlaced( reader );
 
 			setCamera( app, [ 0, 1.2, 8 ], [ 0, - 0.2, 0 ] );
 

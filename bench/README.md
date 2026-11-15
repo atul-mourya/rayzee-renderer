@@ -159,6 +159,7 @@ probes. `npm run bench:list` prints them with what they cover.
 | `shadow-catcher-ground` | analytic ground-plane catcher — NEE dual-sum ratio, coverage gate, occlusion |
 | `textured-normalmap` | texture arrays — albedo/normal/roughness, size buckets, UV transform, normalScale |
 | `refit-deform` | BVH refit — BLAS bounds after vertex deformation, TLAS after a rigid move |
+| `animation-skinned` | a clip carried by `loadObject3D`, posed on the CPU (skinning, morph target) and refit; skipped by `bench:node -- --core` (`viewer: true`) |
 | `dispersion-glass` | Cauchy spectral IOR, per-path wavelength locking, spectral vs microfacet entry |
 | `iridescence-thinfilm` | thin-film F0 modulation across film thickness and IOR, dielectric and metal bases |
 | `sheen-velvet` | sheen distribution across roughness, coloured sheen, base-layer attenuation |
@@ -202,6 +203,8 @@ guard's other half untested.
 ## Adding a scene
 
 Append to `SCENES` in `harness/scenes.js`, then `npm run bench:bless -- --truth --only your-scene`.
+
+A scene that needs the viewer (`app.animationManager`, the denoisers) sets `viewer: true`; `bench:node -- --core` skips it.
 
 If the scene needs a field the runner gates on, add it to the `scenes()` projection in
 `harness/boot.js` as well. `build` is a function and cannot cross the CDP boundary, so the whole

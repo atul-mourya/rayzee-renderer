@@ -407,7 +407,7 @@ export function sceneBudgets( app, options ) {
  */
 export function planSpill( app ) {
 
-	const still = ( app.assetLoader?.animations?.length ?? 0 ) === 0;
+	const still = ! app._sceneAnimates();
 	const large = app._memorySpill !== false && still && app._sdf.needsSpill( app.meshScene );
 	const offered = app._memorySpill !== false && !! app.storage && still;
 	const spill = offered && ( app._memorySpill === true || large );

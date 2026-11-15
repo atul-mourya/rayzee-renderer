@@ -1242,5 +1242,26 @@
 			"samples": 64
 		},
 		"rmseVsTruth": 0.007552231175041075
+	},
+	"animation-skinned": {
+		"truth": {
+			"meanR": 0.14007807057154764,
+			"meanG": 0.37489917519286564,
+			"meanB": 0.5385189242312549,
+			"meanLuminance": 0.3367895542309468,
+			"maxLuminance": 0.5513199308782816,
+			"nonFinite": 0,
+			"samples": 2048
+		},
+		"golden": {
+			"meanR": 0.14007543525222843,
+			"meanG": 0.3748881438121998,
+			"meanB": 0.5384921018011823,
+			"meanLuminance": 0.33677916773915956,
+			"maxLuminance": 0.551319850552082,
+			"nonFinite": 0,
+			"samples": 64
+		},
+		"rmseVsTruth": 0.002396180302898793
 	}
 }

@@ -320,6 +320,12 @@ export class PathTracerApp extends RayzeeRenderer {
 
 	}
 
+	_sceneAnimates() {
+
+		return ( this.assetLoader?.animations?.length ?? 0 ) > 0;
+
+	}
+
 	_settingsBindings() {
 
 		const core = super._settingsBindings();

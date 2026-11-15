@@ -112,7 +112,7 @@ for ( const scene of SCENES ) {
 			`${( m.fractionOverThreshold * 100 ).toFixed( 3 )} % over ${GATES.pixelThreshold}, max linear Δ ${m.maxChannelDelta.toFixed( 4 )} · ${ms} ms${RESET}`
 		);
 
-		if ( core ) {
+		if ( core && ! spec.viewer ) {
 
 			await coreSession.loadScene( scene.id );
 			await core.renderFrames( spec.spp );

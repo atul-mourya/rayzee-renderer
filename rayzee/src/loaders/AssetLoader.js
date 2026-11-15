@@ -1213,6 +1213,8 @@ export class AssetLoader extends EventDispatcher {
 		model.name = object3d.name || name;
 
 		this.targetModel = model;
+		// The copy's own list: a later edit of the host's reaches nothing.
+		this.animations = model.animations ?? [];
 
 		updateLoading( { isLoading: true, status: "Processing Data...", progress: 10 } );
 		await this.onModelLoad( this.targetModel );
