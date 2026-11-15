@@ -55,8 +55,8 @@ app/                      # The React UI
 bench/                    # Headless-GPU regression bench (bench/README.md)
 tests/                    # Vitest: unit/ (by the folder of the code under test; core/ for rayzee/src's root files,
                           # app/ and bench/ for those) and gpu/ (run on Dawn in Node)
-docs/                     # A docsify site (npm run docs): app/ for people using the app, guide/ for people using
-                          # the engine, design/ for how it works inside
+docs/                     # A docsify site, shipped with the app at docs/ (npm run docs serves it alone): app/ for
+                          # people using the app, guide/ for people using the engine, design/ for how it works inside
 ```
 
 The engine has three layers: the **renderer core**, **add-ons**, and the **viewer** built on both. Viewer code never
@@ -121,7 +121,8 @@ Before submitting a PR:
   full engine and requires them to match byte for byte
 - **UI changes**: load a model and an HDRI, check the controls you touched, and watch the console; a control added,
   renamed or removed updates `docs/app/`
-- **Docs changes**: `npm run docs:check` (sidebar, links, images, anchors); `npm run docs` serves the site locally
+- **Docs changes**: `npm run docs:check` (sidebar, links, images, anchors; the release runs it too); `npm run docs`
+  serves the site alone and `npm run dev` beside the app at `/docs/`; a change goes live with the next release
 
 Remove debug logs, and dispose every GPU resource and listener a change creates.
 

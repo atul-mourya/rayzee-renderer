@@ -6,9 +6,46 @@ import { defineConfig } from "vite";
 // import basicSsl from '@vitejs/plugin-basic-ssl';
 
 import process from 'process';
-import { readFileSync } from 'fs';
+import { cpSync, mkdirSync, readFileSync } from 'fs';
+import { DOCS, sendSiteFile, siteFiles } from '../scripts/check-docs.mjs';
 const __dirname = path.resolve();
 const enginePkg = JSON.parse( readFileSync( path.resolve( __dirname, '../rayzee/package.json' ), 'utf-8' ) );
+
+// The docs site at docs/ beside the app (the Help menu's pages): served in dev, copied into the build.
+function docsSite() {
+
+	return {
+		name: 'rayzee-docs-site',
+		configureServer( server ) {
+
+			server.middlewares.use( ( req, res, next ) => {
+
+				const url = req.url.split( '?' )[ 0 ];
+				if ( url === '/docs' ) {
+
+					res.writeHead( 301, { location: '/docs/' } );
+					res.end();
+
+				} else if ( url.startsWith( '/docs/' ) ) sendSiteFile( res, url.slice( '/docs'.length ) );
+				else next();
+
+			} );
+
+		},
+		writeBundle( { dir } ) {
+
+			for ( const file of siteFiles() ) {
+
+				const to = path.join( dir, 'docs', file );
+				mkdirSync( path.dirname( to ), { recursive: true } );
+				cpSync( path.join( DOCS, file ), to );
+
+			}
+
+		},
+	};
+
+}
 
 export default defineConfig( {
 	envDir: path.resolve( __dirname, '..' ),
@@ -34,7 +71,8 @@ export default defineConfig( {
 		// basicSsl(),
 		react(),
 		babel( { include: /\/app\/src\/.*\.jsx?$/, presets: [ reactCompilerPreset() ] } ),
-		tailwindcss()
+		tailwindcss(),
+		docsSite(),
 	],
 	resolve: {
 		alias: {

@@ -49,6 +49,10 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      # Before the release: the docs site ships with the app, and a failed build after it would leave a tag with no deploy.
+      - name: Check docs
+        run: npm run docs:check
+
       - name: Build Engine
         run: npm run build:engine
 

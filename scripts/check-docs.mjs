@@ -1,4 +1,5 @@
-// The docs site (docsify, rooted at docs/): checks it, or serves it locally.
+// The docs site (docsify, rooted at docs/): checks it, or serves it locally. The app ships it at docs/: its build
+// copies siteFiles() and its dev server answers with sendSiteFile() (app/vite.config.js).
 //   node scripts/check-docs.mjs                       every sidebar entry, link, image and anchor; exit 1 on a problem
 //   node scripts/check-docs.mjs --serve [--port 3000] a static server for docs/ on localhost
 
@@ -8,24 +9,109 @@ import { dirname, extname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = resolve( dirname( fileURLToPath( import.meta.url ) ), '..' );
-const DOCS = join( ROOT, 'docs' );
+export const DOCS = join( ROOT, 'docs' );
 const REPO_URL = /^https:\/\/github\.com\/atul-mourya\/rayzee-renderer\/(?:blob|tree)\/main\/([^?#]*)(?:#(.*))?$/;
-// Working notes and private files: never part of the site.
-const NOT_SITE = [ 'TODO.md', 'ROADMAP.md', '_sidebar.md' ];
+// The site as the app ships it: '#/guide/api?id=heading' is docs/guide/api.md at that heading.
+const SITE_URL = /^https:\/\/atul-mourya\.github\.io\/rayzee-renderer\/docs\/(?:#(\/[^?#]*)(?:\?id=([^&#]*))?)?$/;
+// Working notes in docs/: never shipped. docs/internal is private too.
+const PRIVATE = [ 'TODO.md', 'ROADMAP.md' ];
+const NOT_PAGES = [ ...PRIVATE, '_sidebar.md' ];
+const TYPES = {
+	'.html': 'text/html; charset=utf-8', '.md': 'text/markdown; charset=utf-8', '.css': 'text/css; charset=utf-8',
+	'.js': 'text/javascript; charset=utf-8', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png',
+	'.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.gif': 'image/gif', '.ico': 'image/x-icon',
+};
 
-const args = process.argv.slice( 2 );
-const portArg = args.find( a => a.startsWith( '--port' ) );
-const port = Number( portArg?.includes( '=' ) ? portArg.split( '=' )[ 1 ] : args[ args.indexOf( '--port' ) + 1 ] ) || 3000;
+if ( resolve( process.argv[ 1 ] ?? '' ) === fileURLToPath( import.meta.url ) ) {
 
-if ( args.includes( '--serve' ) ) serve( port );
-else process.exit( check() ? 0 : 1 );
+	const args = process.argv.slice( 2 );
+	const portArg = args.find( a => a.startsWith( '--port' ) );
+	const port = Number( portArg?.includes( '=' ) ? portArg.split( '=' )[ 1 ] : args[ args.indexOf( '--port' ) + 1 ] ) || 3000;
+
+	if ( args.includes( '--serve' ) ) serve( port );
+	else process.exit( check() ? 0 : 1 );
+
+}
+
+// Site files
+
+// A docs/-relative path ('/'-separated) the site ships.
+function isSiteFile( path ) {
+
+	const parts = path.split( '/' );
+	if ( parts[ 0 ] === 'internal' || ( parts.length === 1 && PRIVATE.includes( parts[ 0 ] ) ) ) return false;
+	return parts.every( part => part !== '' && ! part.startsWith( '.' ) );
+
+}
+
+/**
+ * Every file the site ships, docs/-relative.
+ * @returns {string[]}
+ */
+export function siteFiles() {
+
+	const out = [];
+	const walk = dir => {
+
+		for ( const entry of readdirSync( dir, { withFileTypes: true } ) ) {
+
+			const abs = join( dir, entry.name );
+			const path = relative( DOCS, abs ).split( sep ).join( '/' );
+			// docs/internal is a symlink out of docs/ in worktrees.
+			if ( entry.isSymbolicLink() || ! isSiteFile( path ) ) continue;
+			if ( entry.isDirectory() ) walk( abs );
+			else if ( entry.isFile() ) out.push( path );
+
+		}
+
+	};
+
+	walk( DOCS );
+	return out.sort();
+
+}
+
+/**
+ * Answers a request with the site's file at `urlPath` ('/', '/guide/api.md'), or 404.
+ * @param {import('node:http').ServerResponse} res
+ * @param {string} urlPath
+ */
+export function sendSiteFile( res, urlPath ) {
+
+	let file = null;
+	try {
+
+		let path = decodeURIComponent( urlPath );
+		if ( path.endsWith( '/' ) ) path += 'index.html';
+		const root = realpathSync( DOCS );
+		const real = realpathSync( resolve( DOCS, '.' + path ) );
+		if ( real.startsWith( root + sep ) && isSiteFile( relative( root, real ).split( sep ).join( '/' ) ) && statSync( real ).isFile() ) file = real;
+
+	} catch {
+
+		file = null;
+
+	}
+
+	if ( ! file ) {
+
+		res.writeHead( 404, { 'content-type': 'text/plain; charset=utf-8' } );
+		res.end( 'Not found' );
+		return;
+
+	}
+
+	res.writeHead( 200, { 'content-type': TYPES[ extname( file ).toLowerCase() ] ?? 'application/octet-stream', 'cache-control': 'no-cache' } );
+	createReadStream( file ).pipe( res );
+
+}
 
 // Check
 
 function check() {
 
 	const problems = [];
-	const counts = { pages: 0, sidebar: 0, links: 0, anchors: 0, images: 0, github: 0, external: 0 };
+	const counts = { pages: 0, sidebar: 0, links: 0, anchors: 0, images: 0, github: 0, site: 0, external: 0 };
 	const texts = new Map();
 	const slugCache = new Map();
 
@@ -82,6 +168,17 @@ function check() {
 				if ( ! existsSync( target ) ) fail( where, `GitHub link to a missing file: ${gh[ 1 ]}` );
 				else if ( isInternal( target ) ) fail( where, 'links into docs/internal' );
 				else if ( target.endsWith( '.md' ) ) checkAnchor( where, target, gh[ 2 ] );
+				continue;
+
+			}
+
+			const hosted = url.match( SITE_URL );
+			if ( hosted ) {
+
+				counts.site ++;
+				const page = sitePage( decodeURI( hosted[ 1 ] ?? '/' ), DOCS );
+				if ( ! inside( page, DOCS ) || ! existsSync( page ) || ! isSiteFile( relative( DOCS, page ).split( sep ).join( '/' ) ) ) fail( where, `docs site link to a page it does not ship: ${url}` );
+				else checkAnchor( where, page, hosted[ 2 ] );
 				continue;
 
 			}
@@ -186,7 +283,7 @@ function check() {
 
 	const c = counts;
 	console.log( `docs: ${c.pages} pages, ${c.sidebar} sidebar entries, ${c.links} links, ${c.images} images, ${c.anchors} anchors, `
-		+ `${c.github} GitHub links checked (${c.external} other external links not fetched)` );
+		+ `${c.github} GitHub and ${c.site} docs site links checked (${c.external} other external links not fetched)` );
 	if ( problems.length ) console.log( problems.map( p => `  ${p}` ).join( '\n' ) );
 	console.log( `${problems.length} problem${problems.length === 1 ? '' : 's'}` );
 	return problems.length === 0;
@@ -201,7 +298,7 @@ function markdownUnder( dir, top = dir ) {
 		const abs = join( dir, entry.name );
 		if ( entry.isSymbolicLink() || entry.name.startsWith( '.' ) || ( dir === top && entry.name === 'internal' ) ) continue;
 		if ( entry.isDirectory() ) out.push( ...markdownUnder( abs, top ) );
-		else if ( entry.name.endsWith( '.md' ) && ! ( dir === top && NOT_SITE.includes( entry.name ) ) ) out.push( abs );
+		else if ( entry.name.endsWith( '.md' ) && ! ( dir === top && NOT_PAGES.includes( entry.name ) ) ) out.push( abs );
 
 	}
 
@@ -311,42 +408,7 @@ function githubSlug( text ) {
 
 function serve( listenPort ) {
 
-	const TYPES = {
-		'.html': 'text/html; charset=utf-8', '.md': 'text/markdown; charset=utf-8', '.css': 'text/css; charset=utf-8',
-		'.js': 'text/javascript; charset=utf-8', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png',
-		'.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.gif': 'image/gif', '.ico': 'image/x-icon',
-	};
-	const root = realpathSync( DOCS );
-
-	createServer( ( req, res ) => {
-
-		let file = null;
-		try {
-
-			let path = decodeURIComponent( new URL( req.url, 'http://localhost' ).pathname );
-			if ( path.endsWith( '/' ) ) path += 'index.html';
-			const real = realpathSync( resolve( DOCS, '.' + path ) );
-			// docs/internal is private (and a symlink out of docs/ in worktrees): never served.
-			const top = relative( root, real ).split( sep )[ 0 ];
-			if ( real.startsWith( root + sep ) && top !== 'internal' && statSync( real ).isFile() ) file = real;
-
-		} catch {
-
-			file = null;
-
-		}
-
-		if ( ! file ) {
-
-			res.writeHead( 404, { 'content-type': 'text/plain; charset=utf-8' } );
-			res.end( 'Not found' );
-			return;
-
-		}
-
-		res.writeHead( 200, { 'content-type': TYPES[ extname( file ).toLowerCase() ] ?? 'application/octet-stream', 'cache-control': 'no-cache' } );
-		createReadStream( file ).pipe( res );
-
-	} ).listen( listenPort, 'localhost', () => console.log( `Docs at http://localhost:${listenPort}/  (Ctrl+C to stop)` ) );
+	createServer( ( req, res ) => sendSiteFile( res, new URL( req.url, 'http://localhost' ).pathname ) )
+		.listen( listenPort, 'localhost', () => console.log( `Docs at http://localhost:${listenPort}/  (Ctrl+C to stop)` ) );
 
 }

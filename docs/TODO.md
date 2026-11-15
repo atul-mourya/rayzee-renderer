@@ -9,7 +9,6 @@
 - Headless, from the pbrt comparison: a crop window with the pixel offset in the sampler's seed (on
   `feat/tiled-output`), a variance layer in the EXR. Assessment:
   ~/RayzeeScratch/night/2026-11-13/headless-api/ASSESSMENT.md
-- Deploy the docs site (`npm run docs` serves it locally)
 - Safari: the Moana `pbrt-v4` folder (14,732 files, 32 GB) fails at its first read, `NotReadableError`, handed to the
   page's file input by `bench:load -- --safari`; a 24-file folder loads. Try a drop of the folder in the app
 - Safari: a second load of watercolor (24.7M triangles) in one page runs out of memory (`RangeError: Out of memory`, or

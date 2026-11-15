@@ -6,6 +6,8 @@ import { getApp } from '@/lib/appProxy';
 import { useStore } from '@/store';
 import { pickFolder, loadFolder } from '@/lib/folders';
 import { spillNote } from '@/lib/storage';
+import { REPO_URL, docsUrl } from '@/lib/help';
+import { appVersion } from '@/lib/version';
 import {
 	Menubar,
 	MenubarContent,
@@ -16,6 +18,15 @@ import {
 } from "@/components/ui/menubar";
 
 let volumeSeed = 0;
+
+const REPORT_URL = `${REPO_URL}/issues/new?template=bug_report.yml&context=${encodeURIComponent( `Rayzee ${appVersion}` )}`;
+
+// A menu item that is a link, so it opens in a new tab and can be copied.
+const HelpLink = ( { href, children } ) => (
+	<MenubarItem asChild>
+		<a href={href} target="_blank" rel="noopener">{children}</a>
+	</MenubarItem>
+);
 
 // Where the camera looks, sized to the view: smoke a third of the way back toward the camera (in front of what is looked
 // at), a cloud above it.
@@ -314,6 +325,23 @@ const MenuBar = ( { onOpenImportModal, onOpenStorage, onOpenRecent } ) => {
 						<MenubarItem disabled>Zoom In</MenubarItem>
 						<MenubarItem disabled>Zoom Out</MenubarItem>
 						<MenubarItem disabled>Reset View</MenubarItem>
+					</MenubarContent>
+				</MenubarMenu>
+
+				<MenubarMenu>
+					<MenubarTrigger>Help</MenubarTrigger>
+					<MenubarContent>
+						<HelpLink href={docsUrl( 'app/' )}>User Guide</HelpLink>
+						<HelpLink href={docsUrl( 'app/controls' )}>Keyboard and Mouse</HelpLink>
+						<HelpLink href={docsUrl( 'app/troubleshooting' )}>Troubleshooting</HelpLink>
+						<MenubarSeparator />
+						<HelpLink href={docsUrl( 'guide/getting-started' )}>Developer Guide</HelpLink>
+						<HelpLink href={REPO_URL}>Source Code</HelpLink>
+						<MenubarSeparator />
+						<HelpLink href={`${REPO_URL}/releases`}>Release Notes</HelpLink>
+						<HelpLink href={REPORT_URL}>Report a Problem</HelpLink>
+						<MenubarSeparator />
+						<p className="control-hint px-2 py-1">Rayzee {appVersion}</p>
 					</MenubarContent>
 				</MenubarMenu>
 			</Menubar>

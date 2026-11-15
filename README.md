@@ -10,7 +10,7 @@ Drop in a 3D model and watch light bounce around it. Nothing to install.
 [![NPM Downloads][npm-downloads]][npmtrends-url]
 [![jsDelivr Downloads][jsdelivr-downloads]][jsdelivr-url]
 
-**[Open the app](https://atul-mourya.github.io/rayzee-renderer/)** · **[Use the engine](#use-the-engine)** · **[Docs](docs/guide)**
+**[Open the app](https://atul-mourya.github.io/rayzee-renderer/)** · **[Use the engine](#use-the-engine)** · **[Docs](https://atul-mourya.github.io/rayzee-renderer/docs/)**
 
 <img src="docs/images/app.jpg" alt="The Rayzee app rendering a country kitchen, with the model library open on the right" width="100%" />
 
@@ -137,7 +137,7 @@ await engine.environmentManager.setMode( 'procedural' ); // light it with the ph
 engine.animate();
 ```
 
-No screen? `renderHeadless()` returns the pixels, in a browser or in Node. Start with **[Getting started](docs/guide/getting-started.md)**.
+No screen? `renderHeadless()` returns the pixels, in a browser or in Node. Start with **[Getting started](https://atul-mourya.github.io/rayzee-renderer/docs/#/guide/getting-started)**.
 
 ## Run the app locally
 
@@ -169,16 +169,21 @@ hold `Shift` / `Alt` to go faster or slower.
 
 ## Docs
 
+Everything is on the **[docs site](https://atul-mourya.github.io/rayzee-renderer/docs/)**, with search; in the app, it is under **Help**.
+
 | Guide | Covers |
 | --- | --- |
-| [Getting started](docs/guide/getting-started.md) | Install, first render, add-ons |
-| [Scenes](docs/guide/scenes.md) | Models, cameras, lights, materials, animation |
-| [Rendering](docs/guide/rendering.md) | Settings, colour, denoising, saving pictures |
-| [Headless and Node](docs/guide/headless.md) | Batch renders with no screen |
-| [Storage and memory](docs/guide/storage.md) | Caches, projects, very large scenes |
-| [API](docs/guide/api.md) | Events, warnings and errors, every export |
+| [Using the app](https://atul-mourya.github.io/rayzee-renderer/docs/#/app/) | The layout, opening models, rendering and saving, troubleshooting |
+| [Getting started](https://atul-mourya.github.io/rayzee-renderer/docs/#/guide/getting-started) | Install, first render, add-ons |
+| [Scenes](https://atul-mourya.github.io/rayzee-renderer/docs/#/guide/scenes) | Models, cameras, lights, materials, animation |
+| [Rendering](https://atul-mourya.github.io/rayzee-renderer/docs/#/guide/rendering) | Settings, colour, denoising, saving pictures |
+| [Headless and Node](https://atul-mourya.github.io/rayzee-renderer/docs/#/guide/headless) | Batch renders with no screen |
+| [Storage and memory](https://atul-mourya.github.io/rayzee-renderer/docs/#/guide/storage) | Caches, projects, very large scenes |
+| [API](https://atul-mourya.github.io/rayzee-renderer/docs/#/guide/api) | Events, warnings and errors, every export |
 | [Examples](rayzee/examples) | Runnable, in Node and in a page |
-| [How it works](docs/design) | Pipeline, shaders, BVH, denoisers |
+| [How it works](https://atul-mourya.github.io/rayzee-renderer/docs/#/design/CORE_AND_ADDONS) | Pipeline, shaders, BVH, denoisers |
+
+The same pages are in [`docs/`](docs), as plain Markdown.
 
 ## Contributing
 

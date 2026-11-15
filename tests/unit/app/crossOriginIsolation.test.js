@@ -156,6 +156,7 @@ describe( 'isolation-sw.js', () => {
 		listeners = {};
 		vi.stubGlobal( 'self', {
 			location: { origin: 'https://example.github.io' },
+			registration: { scope: 'https://example.github.io/RayTracing/' },
 			clients: { claim: vi.fn() },
 			skipWaiting: vi.fn(),
 			addEventListener: ( type, listener ) => ( listeners[ type ] = listener ),
@@ -205,6 +206,16 @@ describe( 'isolation-sw.js', () => {
 		expect( dispatch( request( 'https://other.example/w.js', 'cors', 'worker' ) ) ).toBe( null );
 		expect( dispatch( { ...request( 'https://example.github.io/RayTracing/', 'no-cors', 'document' ), cache: 'only-if-cached' } ) ).toBe( null );
 		expect( fetch ).not.toHaveBeenCalled();
+
+	} );
+
+	it( 'leaves the docs site beside the app alone', () => {
+
+		vi.stubGlobal( 'fetch', vi.fn( async () => new Response( '' ) ) );
+		expect( dispatch( request( 'https://example.github.io/RayTracing/docs/', 'navigate', 'document' ) ) ).toBe( null );
+		expect( dispatch( request( 'https://example.github.io/RayTracing/docs', 'navigate', 'document' ) ) ).toBe( null );
+		expect( fetch ).not.toHaveBeenCalled();
+		expect( dispatch( request( 'https://example.github.io/RayTracing/docsx/', 'navigate', 'document' ) ) ).not.toBe( null );
 
 	} );
 

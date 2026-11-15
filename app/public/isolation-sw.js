@@ -1,6 +1,9 @@
 // Makes the app cross-origin isolated where the host cannot send the headers (GitHub Pages): it adds COOP and COEP
 // to the page and to any same-origin worker script, so SharedArrayBuffer exists and the engine's workers share memory.
-// Registered by src/lib/crossOriginIsolation.js. Every other request is left to the browser.
+// Registered by src/lib/crossOriginIsolation.js. Every other request, and the docs site beside the app, is left to the
+// browser.
+
+const DOCS = new URL( 'docs/', self.registration.scope ).pathname;
 
 self.addEventListener( 'install', () => self.skipWaiting() );
 self.addEventListener( 'activate', ( event ) => event.waitUntil( self.clients.claim() ) );
@@ -11,7 +14,8 @@ self.addEventListener( 'fetch', ( event ) => {
 	const page = request.mode === 'navigate';
 	const worker = request.destination === 'worker' || request.destination === 'sharedworker';
 	if ( ! page && ! worker ) return;
-	if ( new URL( request.url ).origin !== self.location.origin ) return;
+	const url = new URL( request.url );
+	if ( url.origin !== self.location.origin || ( url.pathname + '/' ).startsWith( DOCS ) ) return;
 	// DevTools' own requests (chromium 823392) fail when fetched again.
 	if ( request.cache === 'only-if-cached' && request.mode !== 'same-origin' ) return;
 

@@ -8,6 +8,8 @@ import SaveControls from './SaveControls';
 import ViewportToolbar from './ViewportToolbar';
 import InteractionContextMenu from '@/components/ui/InteractionContextMenu';
 import { useToast } from '@/hooks/use-toast';
+import { ToastAction } from '@/components/ui/toast';
+import { docsUrl } from '@/lib/help';
 import { useStore, usePathTracerStore, useCameraStore, useAnimationStore, useLightStore } from '@/store';
 import { saveRender, startRenderMaintenance } from '@/lib/database';
 import { useAutoFitScale } from '@/hooks/useAutoFitScale';
@@ -417,6 +419,11 @@ const Viewport3D = forwardRef( ( { viewportMode = "preview" }, _ref ) => {
 						title: "Failed to load application",
 						description: err.message || "Uh oh!! Something went wrong. Please try again.",
 						variant: "destructive",
+						action: (
+							<ToastAction altText="Open Troubleshooting in the docs" asChild>
+								<a href={docsUrl( 'app/troubleshooting' )} target="_blank" rel="noopener">Troubleshooting</a>
+							</ToastAction>
+						),
 					} );
 
 				} )

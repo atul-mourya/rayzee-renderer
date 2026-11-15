@@ -108,8 +108,10 @@ that moved on the same GPU.
   `lights/` (gobo, IES). ⚠️ The core imports nothing from `viewer/` or `addons/`; whatever only the full entry reaches
   lives in `viewer/`, whatever only an add-on reaches in its folder (`coreBoundary.test.js` holds all three).
 
-**Docs**: `docs/guide/` is the engine's user guide and API reference (`rayzee/README.md`, the npm page, links there);
-`docs/design/` holds how it works inside. A public API change updates the guide.
+**Docs**: a docsify site the app ships at `docs/` (live at atul-mourya.github.io/rayzee-renderer/docs/; the app's Help
+menu opens it). `app/vite.config.js` copies `siteFiles()` (`scripts/check-docs.mjs`): never `docs/internal/`, `TODO.md`
+or `ROADMAP.md`. `docs/guide/` is the engine's user guide and API reference (`rayzee/README.md`, the npm page, links
+there); `docs/design/` holds how it works inside. A public API change updates the guide.
 
 **Conventions**: [docs/design/CONVENTIONS.md](docs/design/CONVENTIONS.md) — where code goes (layers, folders, which file
 owns it), exports, test layout, docs and comments; how a cleanup is run; the audit log. `/maintainer` audits against it.
@@ -181,7 +183,8 @@ owns it), exports, test layout, docs and comments; how a cleanup is run; the aud
 - **Cross-origin isolation in production** (`lib/crossOriginIsolation.js`, `app/public/isolation-sw.js`): GitHub Pages sends
   no COOP/COEP, so a service worker adds them to the page and same-origin worker scripts; the first visit reloads once
   and the app renders only after `crossOriginIsolate()` resolves. Chromium and desktop Firefox only (COEP
-  `credentialless`); Safari stays unisolated. The dev server sends the same headers itself.
+  `credentialless`); Safari stays unisolated. The dev server sends the same headers itself. The docs site beside the app
+  (`docs/`) is left out of it.
 
 ### Sub-managers and Path Tracer Classes
 PathTracer delegates to these via composition — external code accesses them directly (e.g., `stage.uniforms.get('maxBounces')`, `stage.materialData.srgbBuckets`, `stage.environment.envParams`). MaterialDataManager lives in `materials/`, EnvironmentManager in `environment/`, TLASBuilder in `bvh/`, InstanceTable in `scene/`, the rest in `pathtracer/`:

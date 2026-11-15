@@ -11,12 +11,14 @@ A real-time WebGPU path tracing engine built on Three.js. Framework-agnostic —
 
 ## Documentation
 
-- **[Getting started](https://github.com/atul-mourya/rayzee-renderer/blob/main/docs/guide/getting-started.md)** — set-ups without a bundler, with React or beside a three.js app; asset URLs; the viewer and the renderer core; add-ons; troubleshooting
-- **[Scenes](https://github.com/atul-mourya/rayzee-renderer/blob/main/docs/guide/scenes.md)** — loading models, folders and archives; camera, lights, animation, timeline, materials, environment; moving objects
-- **[Rendering](https://github.com/atul-mourya/rayzee-renderer/blob/main/docs/guide/rendering.md)** — settings and modes, colour management, denoising, local exposure, saving pictures, the render reserve, OIDN and the upscaler
-- **[Headless rendering and Node](https://github.com/atul-mourya/rayzee-renderer/blob/main/docs/guide/headless.md)** — deterministic and production renders, batch rendering, Node, GPU timing
-- **[Storage and memory](https://github.com/atul-mourya/rayzee-renderer/blob/main/docs/guide/storage.md)** — on-disk caches, scene state, render checkpoints, memory monitoring
-- **[API](https://github.com/atul-mourya/rayzee-renderer/blob/main/docs/guide/api.md)** — events, the degradation contract, logging, custom pipeline stages, every export
+On the **[docs site](https://atul-mourya.github.io/rayzee-renderer/docs/)**, with search:
+
+- **[Getting started](https://atul-mourya.github.io/rayzee-renderer/docs/#/guide/getting-started)** — set-ups without a bundler, with React or beside a three.js app; asset URLs; the viewer and the renderer core; add-ons; troubleshooting
+- **[Scenes](https://atul-mourya.github.io/rayzee-renderer/docs/#/guide/scenes)** — loading models, folders and archives; camera, lights, animation, timeline, materials, environment; moving objects
+- **[Rendering](https://atul-mourya.github.io/rayzee-renderer/docs/#/guide/rendering)** — settings and modes, colour management, denoising, local exposure, saving pictures, the render reserve, OIDN and the upscaler
+- **[Headless rendering and Node](https://atul-mourya.github.io/rayzee-renderer/docs/#/guide/headless)** — deterministic and production renders, batch rendering, Node, GPU timing
+- **[Storage and memory](https://atul-mourya.github.io/rayzee-renderer/docs/#/guide/storage)** — on-disk caches, scene state, render checkpoints, memory monitoring
+- **[API](https://atul-mourya.github.io/rayzee-renderer/docs/#/guide/api)** — events, the degradation contract, logging, custom pipeline stages, every export
 
 ## Installation
 
