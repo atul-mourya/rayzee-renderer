@@ -315,7 +315,12 @@ describe( 'connectEngineToStore mirrors', () => {
 
 	} );
 
-	afterEach( () => vi.unstubAllGlobals() );
+	afterEach( () => {
+
+		vi.unstubAllGlobals();
+		vi.useRealTimers();
+
+	} );
 
 	it( 'shader compiles', () => {
 
@@ -371,12 +376,27 @@ describe( 'connectEngineToStore mirrors', () => {
 
 	} );
 
-	it( 'stats merged over the last ones, or over none', () => {
+	it( 'stats merged over the last ones, or over none, at most every 100 ms', () => {
 
+		vi.useFakeTimers();
 		state.stats = { samples: 3, timeElapsed: 1 };
 		engine._emit( 'STATS_UPDATE', { type: 'STATS_UPDATE', target: engine, samples: 4 } );
 		expect( state.setStats ).toHaveBeenLastCalledWith( { samples: 4, timeElapsed: 1 } );
 
+		// Frames inside the window land together at its end.
+		engine._emit( 'STATS_UPDATE', { samples: 5 } );
+		engine._emit( 'STATS_UPDATE', { samples: 6, timeElapsed: 2 } );
+		expect( state.setStats ).toHaveBeenCalledTimes( 1 );
+		vi.advanceTimersByTime( 100 );
+		expect( state.setStats ).toHaveBeenCalledTimes( 2 );
+		expect( state.setStats ).toHaveBeenLastCalledWith( { samples: 6, timeElapsed: 2 } );
+
+		// A finished render's numbers land with its completion, not a window later.
+		engine._emit( 'STATS_UPDATE', { samples: 7 } );
+		engine._emit( 'RENDER_COMPLETE' );
+		expect( state.setStats ).toHaveBeenLastCalledWith( { samples: 7, timeElapsed: 1 } );
+
+		vi.advanceTimersByTime( 100 );
 		state.stats = null;
 		engine._emit( 'STATS_UPDATE', { samples: 1 } );
 		expect( state.setStats ).toHaveBeenLastCalledWith( { samples: 1 } );

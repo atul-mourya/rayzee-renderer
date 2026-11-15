@@ -9,6 +9,8 @@ import { EngineEvents } from 'rayzee';
 import { toast } from '@/hooks/use-toast';
 import { spillNote } from '@/lib/storage';
 
+const STATS_MS = 100;
+
 /**
  * Subscribe to engine events and dispatch corresponding Zustand store updates.
  * @param {PathTracerApp} engine - The engine instance (extends EventDispatcher)
@@ -26,9 +28,27 @@ export function connectEngineToStore( engine, { useStore, useCameraStore, usePat
 
 	}
 
+	// The engine sends its stats every frame; the store takes them at most every STATS_MS, the newest always landing.
+	// Written every frame, the readout re-laid out and repainted the whole page every frame.
+	let pendingStats = null;
+	let statsTimer = 0;
+	const writeStats = () => {
+
+		statsTimer = 0;
+		if ( ! pendingStats ) return;
+		const state = useStore.getState();
+		state.setStats( { ...( state.stats || {} ), ...pendingStats } );
+		pendingStats = null;
+		statsTimer = setTimeout( writeStats, STATS_MS );
+
+	};
+
 	// ── Render lifecycle ─────────────────────────────────────
 	on( EngineEvents.RENDER_COMPLETE, ( e ) => {
 
+		// The finished render's own numbers, with its completion.
+		clearTimeout( statsTimer );
+		writeStats();
 		useStore.getState().setIsRenderComplete( true );
 		useStore.getState().setIsRendering( false );
 		useStore.getState().setCompletionReason( e?.reason ?? null );
@@ -106,8 +126,8 @@ export function connectEngineToStore( engine, { useStore, useCameraStore, usePat
 	on( EngineEvents.STATS_UPDATE, ( e ) => {
 
 		const { type: _type, target: _target, ...statsUpdate } = e;
-		const state = useStore.getState();
-		state.setStats( { ...( state.stats || {} ), ...statsUpdate } );
+		pendingStats = { ...pendingStats, ...statsUpdate };
+		if ( ! statsTimer ) writeStats();
 
 	} );
 
@@ -303,6 +323,7 @@ export function connectEngineToStore( engine, { useStore, useCameraStore, usePat
 
 		handlers.forEach( ( [ type, fn ] ) => engine.removeEventListener( type, fn ) );
 		handlers.length = 0;
+		clearTimeout( statsTimer );
 		// A compile this engine never finishes must not hold the loading panel open.
 		useStore.getState().setIsCompilingShaders( false );
 		useStore.getState().setIsLoadingDenoiser( false );

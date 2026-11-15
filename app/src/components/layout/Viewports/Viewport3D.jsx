@@ -56,8 +56,6 @@ const Viewport3D = forwardRef( ( { viewportMode = "preview" }, _ref ) => {
 	const isUpscaling = useStore( state => state.isUpscaling );
 	const isRenderComplete = useStore( state => state.isRenderComplete );
 	const setIsRenderComplete = useStore( state => state.setIsRenderComplete );
-	const stats = useStore( state => state.stats );
-	const statsRef = useRef( stats );
 	const setLoading = useStore( state => state.setLoading );
 	const appMode = useStore( state => state.appMode );
 
@@ -178,13 +176,6 @@ const Viewport3D = forwardRef( ( { viewportMode = "preview" }, _ref ) => {
 	}, [ isAppInitialized ] );
 
 
-	// Keep stats ref current so handleSave doesn't depend on stats (which changes every frame)
-	useEffect( () => {
-
-		statsRef.current = stats;
-
-	}, [ stats ] );
-
 	// Save/Discard Handlers
 	const handleSave = useCallback( async ( { keepHDR = false } = {} ) => {
 
@@ -224,7 +215,8 @@ const Viewport3D = forwardRef( ( { viewportMode = "preview" }, _ref ) => {
 					exposure: 0,
 				},
 				timestamp: new Date(),
-				renderTime: statsRef.current.timeElapsed || 0,
+				// Read at save: a subscription re-rendered this whole view on every frame's stats.
+				renderTime: useStore.getState().stats?.timeElapsed || 0,
 				isEdited: true
 			};
 
