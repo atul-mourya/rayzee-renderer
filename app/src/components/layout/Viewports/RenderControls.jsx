@@ -22,7 +22,7 @@ const ControlButton = ( { icon, label, onClick, isActive, disabled } ) => (
 				size="icon"
 				className={cn(
 					"w-8 h-full border-0",
-					isActive && "bg-primary/20 text-primary hover:bg-primary/30 hover:text-primary",
+					isActive && "bg-primary/20 text-primary-tint-foreground hover:bg-primary/30 hover:text-primary-tint-foreground",
 					! isActive && ! disabled && "text-muted-foreground hover:text-foreground hover:bg-accent/50",
 					disabled && "opacity-50"
 				)}

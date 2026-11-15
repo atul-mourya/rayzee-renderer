@@ -205,15 +205,28 @@ describe( 'design tokens', () => {
 
 	} );
 
+	// An HSL token as sRGB; `[ colour, alpha, under ]` is the colour at that alpha over another, composited as CSS does.
+	function srgb( value ) {
+
+		if ( Array.isArray( value ) ) {
+
+			const [ over, alpha, under ] = value;
+			return srgb( over ).map( ( c, i ) => alpha * c + ( 1 - alpha ) * srgb( under )[ i ] );
+
+		}
+
+		const [ h, s, l ] = value.split( /\s+/ ).map( parseFloat );
+		const k = n => ( n + h / 30 ) % 12, a_ = ( s / 100 ) * Math.min( l / 100, 1 - l / 100 );
+		return [ 0, 8, 4 ].map( n => l / 100 - a_ * Math.max( - 1, Math.min( k( n ) - 3, 9 - k( n ), 1 ) ) );
+
+	}
+
 	// WCAG 2's contrast: relative luminance of sRGB, (lighter + 0.05) / (darker + 0.05).
 	function contrast( a, b ) {
 
 		const luminance = ( value ) => {
 
-			const [ h, s, l ] = value.split( /\s+/ ).map( parseFloat );
-			const k = n => ( n + h / 30 ) % 12, a_ = ( s / 100 ) * Math.min( l / 100, 1 - l / 100 );
-			const rgb = [ 0, 8, 4 ].map( n => l / 100 - a_ * Math.max( - 1, Math.min( k( n ) - 3, 9 - k( n ), 1 ) ) );
-			const linear = rgb.map( c => ( c <= 0.04045 ? c / 12.92 : ( ( c + 0.055 ) / 1.055 ) ** 2.4 ) );
+			const linear = srgb( value ).map( c => ( c <= 0.04045 ? c / 12.92 : ( ( c + 0.055 ) / 1.055 ) ** 2.4 ) );
 			return 0.2126 * linear[ 0 ] + 0.7152 * linear[ 1 ] + 0.0722 * linear[ 2 ];
 
 		};
@@ -245,6 +258,24 @@ describe( 'design tokens', () => {
 		}
 
 		expect( low ).toEqual( [] );
+
+		// Text on a blue tint (a chosen tab, the loading percent): the tint is primary at 15–30 % over a surface.
+		for ( const [ theme, tokens ] of [[ 'light', definedIn( block( ':root:not(.dark)', '--background:' ) ) ], [ 'dark', definedIn( block( '.dark', '--background:' ) ) ]] ) {
+
+			for ( const surface of [ '--background', '--card', '--popover', '--accent', '--muted', '--secondary' ] ) {
+
+				for ( const alpha of [ 0.15, 0.2, 0.3 ] ) {
+
+					const ratio = contrast( tokens.get( '--primary-tint-foreground' ), [ tokens.get( '--primary' ), alpha, tokens.get( surface ) ] );
+					if ( ! ( ratio >= 4.5 ) ) low.push( `${theme} --primary-tint-foreground on --primary/${alpha * 100} over ${surface}: ${ratio.toFixed( 2 )}` );
+
+				}
+
+			}
+
+		}
+
+		expect( low ).toEqual( [] );
 		// The focus ring and the blue fills are not text: 3:1 against the page.
 		for ( const tokens of [ definedIn( block( ':root:not(.dark)', '--background:' ) ), definedIn( block( '.dark', '--background:' ) ) ] ) {
 
@@ -254,6 +285,13 @@ describe( 'design tokens', () => {
 
 		// The formula, against WebAIM's checker: #767676 on white is 4.54:1.
 		expect( contrast( '0 0% 46.27%', '0 0% 100%' ) ).toBeCloseTo( 4.54, 2 );
+
+	} );
+
+	it( 'blue text sits on a blue tint only as primary-tint-foreground', () => {
+
+		const lines = COMPONENTS.flatMap( file => readFileSync( file, 'utf8' ).split( '\n' ).map( ( line, i ) => [ `${path.relative( ROOT, file )}:${i + 1}`, line ] ) );
+		expect( lines.filter( ( [ , line ] ) => /\bbg-primary\/[1-3]\d\b/.test( line ) && /\btext-primary\b(?!-)/.test( line ) ).map( ( [ at ] ) => at ) ).toEqual( [] );
 
 	} );
 

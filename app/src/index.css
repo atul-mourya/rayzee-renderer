@@ -55,6 +55,7 @@
 
   --color-primary: hsl(var(--primary));
   --color-primary-foreground: hsl(var(--primary-foreground));
+  --color-primary-tint-foreground: hsl(var(--primary-tint-foreground));
 
   --color-secondary: hsl(var(--secondary));
   --color-secondary-foreground: hsl(var(--secondary-foreground));
@@ -223,6 +224,7 @@
     --popover-foreground: 217.2 15% 11%;
     --primary: 221.2 83.2% 53.3%;
     --primary-foreground: 210 40% 98%;
+    --primary-tint-foreground: 221.2 83.2% 41%;
     --secondary: 210 40% 96.1%;
     --secondary-foreground: 222.2 47.4% 11.2%;
     --muted: 210 40% 96.1%;
@@ -263,6 +265,7 @@
     --popover-foreground: 210 40% 98%;
     --primary: 217.2 91.2% 64%;
     --primary-foreground: 222.2 47.4% 11.2%;
+    --primary-tint-foreground: 217.2 91.2% 78%;
     --secondary: 217.2 32.6% 17.5%;
     --secondary-foreground: 210 40% 98%;
     --muted: 217.2 32.6% 17.5%;

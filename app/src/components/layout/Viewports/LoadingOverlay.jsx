@@ -217,7 +217,7 @@ const StatusPill = ( { label, percent, onCancel } ) => (
 		<Loader2 className="size-3.5 animate-spin text-primary" />
 		{label}
 		{percent !== undefined && (
-			<span className="rounded-full bg-primary/15 px-1.5 py-px text-xxs font-medium tabular-nums text-primary">{Math.round( percent )}%</span>
+			<span className="rounded-full bg-primary/15 px-1.5 py-px text-xxs font-medium tabular-nums text-primary-tint-foreground">{Math.round( percent )}%</span>
 		)}
 		{onCancel && (
 			<Button variant="quiet-destructive" size="icon-xs" className="pointer-events-auto -mr-1" onClick={onCancel} title="Cancel" aria-label="Cancel">

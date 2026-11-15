@@ -13,9 +13,9 @@ on the page's background and on the hover grey (`accent`). `designTokens.test.js
 `muted-foreground` and `primary` on every surface, and `primary-foreground` on `primary`, from the stylesheet; shadcn's
 own dark `primary` (59.8 % lightness, 3.97:1 on the hover grey) is 64 % here (4.60:1), and light `muted-foreground` 45 %
 (4.34 → 4.64:1). Text on a blue fill is `primary-foreground` (dark 5.62:1, light 4.94): the colour field's hex and a
-slider's value once the fill reaches it (`foreground` there read 3.51 / 3.34). Blue text on a blue tint is the one
-exception left: the selected mode tab and active render button (`primary/20`, dark 4.05, light 3.90) and a selected
-light row (`primary/15`, dark 4.40, light 4.19).
+slider's value once the fill reaches it (`foreground` there read 3.51 / 3.34). Blue text on a blue tint (`primary` at
+15–30 % over any surface: the chosen mode tab and render button, a chosen light row, the loading percent) is
+`primary-tint-foreground`, the same blue lighter in dark (78 %) and darker in light (41 %): `primary` there read 2.9–4.4:1.
 
 ## Tokens
 

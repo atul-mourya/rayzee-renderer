@@ -11,7 +11,7 @@ const TabButton = ( { label, value, currentValue, onClick } ) => {
 			variant="ghost"
 			className={cn(
 				"h-8 px-3 rounded-md",
-				isActive && "bg-primary/20 text-primary hover:bg-primary/30 hover:text-primary",
+				isActive && "bg-primary/20 text-primary-tint-foreground hover:bg-primary/30 hover:text-primary-tint-foreground",
 				! isActive && "text-muted-foreground hover:text-foreground hover:bg-accent/50"
 			)}
 			onClick={() => onClick( value )}

@@ -189,7 +189,7 @@ const ViewportToolbar = ( {
 					disabled={disabled}
 					className={cn(
 						"h-6 w-6 p-1 hover:bg-primary/20 hover:scale-105 mx-1 rounded-full disabled:opacity-50 disabled:cursor-not-allowed",
-						( ( isAutoFit && ! isManualScale ) || isActive ) && "bg-primary/30 text-primary"
+						( ( isAutoFit && ! isManualScale ) || isActive ) && "bg-primary/30 text-primary-tint-foreground"
 					)}
 				>
 					{React.cloneElement( icon, {

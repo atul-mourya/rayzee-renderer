@@ -94,8 +94,8 @@ const LightListItem = ( { light, index, isSelected, onSelect, onRemove, onToggle
 					: 'hover:bg-accent/30'
 			}`}
 		>
-			<Icon size={12} className={`shrink-0 ${config.iconClass} ${isSelected ? 'text-primary' : 'text-muted-foreground'} ${isVisible ? '' : 'opacity-40'}`} />
-			<span className={`text-xs truncate flex-1 ${isSelected ? 'text-primary font-medium' : ''} ${isVisible ? '' : 'opacity-40'}`}>{light.name}</span>
+			<Icon size={12} className={`shrink-0 ${config.iconClass} ${isSelected ? 'text-primary-tint-foreground' : 'text-muted-foreground'} ${isVisible ? '' : 'opacity-40'}`} />
+			<span className={`text-xs truncate flex-1 ${isSelected ? 'text-primary-tint-foreground font-medium' : ''} ${isVisible ? '' : 'opacity-40'}`}>{light.name}</span>
 			<div
 				className={`w-2.5 h-2.5 rounded-full shrink-0 border border-border ${isVisible ? '' : 'opacity-40'}`}
 				style={{ backgroundColor: light.color }}

@@ -59,6 +59,7 @@ const GROUPS = [
 	]],
 	[ "Signals", "Colour is never the only signal: each comes with a word or an icon.", [
 		[ "primary", "On, chosen, the main action" ], [ "primary-foreground", "Text on it" ],
+		[ "primary-tint-foreground", "Text on a blue tint (a chosen tab)" ],
 		[ "destructive", "A destructive button's fill" ], [ "destructive-foreground", "Text on it" ],
 		[ "error", "Error text and icons, removing on hover" ], [ "warning", "Quota, waiting, needs attention" ],
 		[ "success", "Done (over the render)" ], [ "ai", "AI in progress and hints" ],

@@ -8,9 +8,6 @@
 -   Fast compilation on windows devices
 -   make bvh an independent library — built as the `rayzee-bvh` package on the night of 2026-11-05 (branch
     `night/bvh-package`), not committed
-- App: blue text on a blue tint stays under WCAG AA's 4.5:1 — the selected mode tab and active render button
-  (`text-primary` on `primary/20`: dark 4.05, light 3.90; hover `/30` 3.39), a selected light row and the loading percent
-  (`/15`: dark 4.40, light 4.19)
 - Headless, from the pbrt comparison: a crop window with the pixel offset in the sampler's seed (on
   `feat/tiled-output`), a variance layer in the EXR. Assessment:
   ~/RayzeeScratch/night/2026-11-13/headless-api/ASSESSMENT.md
