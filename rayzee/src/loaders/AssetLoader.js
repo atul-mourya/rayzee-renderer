@@ -24,6 +24,9 @@ import { expandByVolumes } from '../scene/Volumes.js';
 
 const log = createLogger( 'assets' );
 
+// A download reports its bytes at most this often; three reports every chunk (~20 KB).
+const DOWNLOAD_PROGRESS_MS = 100;
+
 export function disposeMaterial( material ) {
 
 	if ( Array.isArray( material ) ) {
@@ -392,12 +395,17 @@ export class AssetLoader extends EventDispatcher {
 	// `cancelable` gates the Cancel affordance (true only for network URLs — blob
 	// and data URLs resolve locally and have nothing to abort). Download maps onto
 	// 2→60% of the bar, leaving headroom for the processing phases that follow.
+	// At most every DOWNLOAD_PROGRESS_MS, the last chunk of a known size always.
 	_downloadProgress( status, cancelable ) {
 
+		let sentAt = - Infinity;
 		return ( event ) => {
 
 			const loaded = event?.loaded || 0;
 			const total = event?.lengthComputable ? ( event.total || 0 ) : 0;
+			const now = performance.now();
+			if ( now - sentAt < DOWNLOAD_PROGRESS_MS && ! ( total && loaded >= total ) ) return;
+			sentAt = now;
 			updateLoading( {
 				isLoading: true,
 				status,
