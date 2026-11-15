@@ -244,24 +244,53 @@ describe( 'PBRT scene builder', () => {
 		const corner = ( t, k ) => sides.attributes.position.getX( sides.index ? sides.index.getX( t * 3 + k ) : t * 3 + k );
 		for ( let t = 0; t < 4; t ++ ) expect( [ corner( t, 1 ), corner( t, 2 ) ] ).toEqual( [ corner( t, 0 ), corner( t, 0 ) ] );
 
-		// tex1 and tex2 default to 1 (white), dir to +y.
+		// As pbrt's: tex1 defaults to 0 (black), tex2 to 1, dir to +y.
 		const plain = await load( 'Texture "mix" "spectrum" "directionmix" "rgb tex2" [ 0 0 0.8 ]' );
-		expect( [ plain.red, plain.blue ] ).toEqual( [ 4, 8 ] );
-		expect( plain.meshes.find( ( m ) => m.material.color.r > 0.5 ).material.color.toArray() ).toEqual( [ 1, 1, 1 ] );
+		const countOf = ( result, test ) => result.meshes.filter( ( m ) => test( m.material.color ) ).reduce( ( n, m ) => n + m.geometry.index.count / 3, 0 );
+		expect( countOf( plain, ( c ) => c.r + c.g + c.b === 0 ) ).toBe( 4 );
+		expect( countOf( plain, ( c ) => c.b > 0.5 ) ).toBe( 8 );
 		// Inside an object, placed twice. A tilted direction leaves faces between: each goes to its larger part, reported.
 		const placed = await load( MIX, `ObjectBegin "box" ${cube} ObjectEnd ObjectInstance "box" Translate 3 0 0 ObjectInstance "box"` );
 		expect( [ placed.red, placed.blue ] ).toEqual( [ 8, 16 ] );
 		const tilted = await load( MIX.replace( '"vector3 dir" [ 0 1 0 ]', '"vector3 dir" [ 0 1 0.2 ]' ) );
 		expect( [ tilted.red, tilted.blue ] ).toEqual( [ 4, 8 ] );
 		expect( Object.keys( tilted.parameters.approximated ) ).toEqual( [ 'Texture directionmix: dir' ] );
-		// The shading normal decides where the mesh has one, turned as normals turn: corner normals on a box flattened
-		// tenfold all lean up, where its faces stay square to the axes.
+		// pbrt reads the face's own normal, never the mesh's: corner normals on a box flattened tenfold all lean up, where
+		// its faces stay square to the axes.
 		const flat = `AttributeBegin Scale 1 0.1 1 ${cube} AttributeEnd`;
 		const N = '"normal N" [ -1 -1 -1  1 -1 -1  1 1 -1  -1 1 -1  -1 -1 1  1 -1 1  1 1 1  -1 1 1 ]';
 		const box = await load( MIX, flat );
 		expect( [ box.red, box.blue ] ).toEqual( [ 4, 8 ] );
 		const smooth = await load( MIX, flat.replace( '"integer indices"', `${N} "integer indices"` ) );
-		expect( [ smooth.red, smooth.blue ] ).toEqual( [ 12, 0 ] );
+		expect( [ smooth.red, smooth.blue ] ).toEqual( [ 4, 8 ] );
+		// A normal list not one a vertex is dropped from each part, as the whole mesh drops it.
+		const short = await load( MIX, cube.replace( '"integer indices"', '"normal N" [ 0 1 0  0 1 0  0 1 0  0 1 0  0 1 0  0 1 0  0 1 0 ] "integer indices"' ) );
+		expect( [ short.red, short.blue ] ).toEqual( [ 4, 8 ] );
+		for ( const mesh of short.meshes ) expect( Array.from( mesh.geometry.attributes.normal.array ).every( Number.isFinite ) ).toBe( true );
+		// An object turned at its placement splits as placed: turned onto x, its ±x sides face +y.
+		const turnedObject = await load( MIX, `ObjectBegin "box" ${cube} ObjectEnd AttributeBegin Rotate 90 0 0 1 ObjectInstance "box" AttributeEnd` );
+		expect( [ turnedObject.red, turnedObject.blue ] ).toEqual( [ 4, 8 ] );
+		const top = turnedObject.meshes.find( ( m ) => m.material.color.r > 0.5 ).geometry;
+		const x = ( t, k ) => top.attributes.position.getX( top.index.getX( t * 3 + k ) );
+		for ( let t = 0; t < 4; t ++ ) expect( Math.abs( x( t, 0 ) ) ).toBe( 1 );
+		expect( turnedObject.parameters.approximated ).toEqual( {} );
+		// Placements turned apart: one split for both, reported.
+		const apart = await load( MIX, `ObjectBegin "box" ${cube} ObjectEnd ObjectInstance "box" AttributeBegin Rotate 90 0 0 1 ObjectInstance "box" AttributeEnd` );
+		expect( Object.keys( apart.parameters.approximated ) ).toEqual( [ 'Texture directionmix: dir' ] );
+		// A float directionmix as a mix's amount: tops 0 (the first material), sides 1, as pbrt mixes them.
+		const mixed = await loadPBRTScene( buildArgs( { vfs: { 'scene.pbrt': enc.encode( `LookAt 0 0 5  0 0 0  0 1 0\nCamera "perspective"\nWorldBegin\n` +
+			'Texture "amt" "float" "directionmix"\nMakeNamedMaterial "a" "string type" "diffuse" "rgb reflectance" [ 0.8 0 0 ]\n' +
+			'MakeNamedMaterial "b" "string type" "diffuse" "rgb reflectance" [ 0 0 0.8 ]\n' +
+			`Material "mix" "string materials" [ "a" "b" ] "texture amount" "amt"\n${cube}` ) } } ) );
+		const mixedMeshes = [];
+		mixed.group.traverse( ( o ) => o.isMesh && mixedMeshes.push( o ) );
+		const facesOf = ( test ) => mixedMeshes.filter( ( m ) => test( m.material.color ) ).reduce( ( n, m ) => n + m.geometry.index.count / 3, 0 );
+		expect( [ facesOf( ( c ) => c.r > 0.5 ), facesOf( ( c ) => c.b > 0.5 ) ] ).toEqual( [ 4, 8 ] );
+		// A second directionmix on another slot of another direction follows the first's split, reported.
+		const two = await loadPBRTScene( buildArgs( { vfs: { 'scene.pbrt': enc.encode( `LookAt 0 0 5  0 0 0  0 1 0\nCamera "perspective"\nWorldBegin\n${MIX}\n` +
+			'Texture "rough" "float" "directionmix" "float tex1" 0.1 "float tex2" 0.9 "vector3 dir" [ 1 0 0 ]\n' +
+			`Material "conductor" "texture reflectance" "mix" "texture roughness" "rough"\n${cube}` ) } } ) );
+		expect( Object.keys( two.parameters.approximated ) ).toContain( 'Texture directionmix: dir' );
 		// A shape other than a triangle mesh keeps the old path: warned, not split.
 		const sphere = await load( MIX, 'Shape "sphere" "float radius" 1' );
 		expect( sphere.warnings.some( ( w ) => /texture class "directionmix" not supported/.test( w ) ) ).toBe( true );

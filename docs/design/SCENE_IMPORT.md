@@ -274,10 +274,12 @@ subtree per element, and the whole thing rarely fits: Moana is 29 GB unpacked.
   becomes its mean (a roughness) or is dropped, a bake input in another set its mean, each reported. A .ply shared by shapes mapped
   apart is stored once each, and pbrt maps each copy of a template where it stands, so those copies are meshes of their
   own up to 1M triangles in all (past it they share the first copy's uv, reported); a moving shape is mapped at its start.
-  `directionmix` splits a triangle mesh whose material names one into its faces along `dir` (|n · dir| ≥ ½, the shading
-  normal where the mesh has one: tex1) and the rest (tex2), each under a copy of the material (`_splitDirectionMix`):
-  exact on kroken's magazines (cover on top, printed spines on the sides; they were plain grey), a hard edge where the
-  normal turns (reported approximated); other shapes keep the old warning. `dots` is not supported. ⚠️ `material.clone()` drops the engine's own
+  `directionmix` splits a triangle mesh whose material names one into its faces along `dir` (|n · dir| ≥ ½, n the face's
+  own normal, as pbrt's texture context carries the geometric one: tex1, default 0) and the rest (tex2, default 1), each
+  under a copy of the material (`_splitDirectionMix`): exact on kroken's magazines (cover on top, printed spines on the
+  sides; they were plain grey), a hard edge where faces turn (reported approximated). An object's shapes split as its
+  placements turn them, one split for all (placements that disagree, or a second directionmix of another direction on
+  the same material, are reported approximated); other shapes keep the old warning. `dots` is not supported. ⚠️ `material.clone()` drops the engine's own
   properties (diffuse transmission, subsurface): use `cloneMaterial`. Bump `PBRT_BUILD_REVISION` with any of this, or a
   stored graph of the old build comes back.
 - **Ptex** (`pbrt/Ptex.js`, `PtexWorker.js`): Disney's per-face textures — every face of a mesh has its own texels, found

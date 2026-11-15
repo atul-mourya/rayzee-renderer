@@ -181,7 +181,7 @@ const DEFAULT_CURVE_TOLERANCE = 0.05;
 const CURVE_SPLIT_CURVES = 20000;
 
 /** Bumped whenever the same scene files build a different graph, so a stored graph is not reused. */
-export const PBRT_BUILD_REVISION = 45;
+export const PBRT_BUILD_REVISION = 46;
 
 // Ptex pages: all of a scene's Ptex colour maps in this much texture memory at most, on square pages this size.
 const DEFAULT_PTEX_MEMORY = 1024 * 2 ** 20;
@@ -2819,10 +2819,11 @@ export class PBRTSceneBuilder {
 	}
 
 	/**
-	 * pbrt's `directionmix` is tex1 where the shading normal runs along `dir`, tex2 across it, blended by |n · dir|. A
-	 * triangle mesh whose material names one is split into its triangles mostly along (tex1) and the rest (tex2), each
-	 * under a copy of the material naming that texture: exact on a box, a hard edge where the normal turns
-	 * (approximated). Other shapes keep the old path (not supported). @private
+	 * pbrt's `directionmix` is tex1 where the surface's own (geometric) normal runs along `dir`, tex2 across it, blended
+	 * by |n · dir|. A triangle mesh whose material names one is split into its triangles mostly along (tex1) and the rest
+	 * (tex2), each under a copy of the material naming that texture: exact on a box, a hard edge where faces turn
+	 * (approximated). An object's shapes split as each placement turns them: one split for all, approximated where the
+	 * placements disagree. Other shapes keep the old path (not supported). @private
 	 */
 	_splitDirectionMix( ir ) {
 
@@ -2841,13 +2842,15 @@ export class PBRTSceneBuilder {
 				const def = p?.type === 'texture' ? mixes.get( p.value[ 0 ] ) : null;
 				if ( ! def ) continue;
 				this._usage?.open( def.params, 'Texture directionmix' );
-				// pbrt's tex1 / tex2 default to 1; dir to (0, 1, 0), in the texture's space.
-				const tex = ( k ) => param( def.params, k ) ?? ( def.dataType === 'float' ? { type: 'float', value: [ 1 ] } : { type: 'rgb', value: [ 1, 1, 1 ] } );
+				// pbrt's tex1 defaults to 0, tex2 to 1; dir to (0, 1, 0), in the texture's space.
+				const tex = ( k ) => param( def.params, k ) ?? ( def.dataType === 'float' ? { type: 'float', value: [ k === 'tex1' ? 0 : 1 ] } : { type: 'rgb', value: k === 'tex1' ? [ 0, 0, 0 ] : [ 1, 1, 1 ] } );
 				const d = param( def.params, 'dir' )?.value ?? [ 0, 1, 0 ], m = def.ctm ?? M.identity();
-				const dir = [ 0, 1, 2 ].map( ( r ) => m[ r ] * d[ 0 ] + m[ 4 + r ] * d[ 1 ] + m[ 8 + r ] * d[ 2 ] );
-				const length = Math.hypot( ...dir ) || 1;
-				found ??= { dir: dir.map( ( v ) => v / length ), def, along: { ...material.params }, across: { ...material.params } };
-				// One direction a material: a second mix on another slot follows the first's split.
+				const raw = [ 0, 1, 2 ].map( ( r ) => m[ r ] * d[ 0 ] + m[ 4 + r ] * d[ 1 ] + m[ 8 + r ] * d[ 2 ] );
+				const length = Math.hypot( ...raw ) || 1;
+				const dir = raw.map( ( v ) => v / length );
+				// One direction a material: a second mix on another slot follows the first's split, reported where it differs.
+				if ( found && dir.some( ( v, i ) => Math.abs( v - found.dir[ i ] ) > 1e-6 ) ) approximated( def.params, 'dir' );
+				found ??= { dir, def, along: { ...material.params }, across: { ...material.params } };
 				found.along[ key ] = tex( 'tex1' );
 				found.across[ key ] = tex( 'tex2' );
 
@@ -2863,7 +2866,25 @@ export class PBRTSceneBuilder {
 
 		};
 
-		const split = ( shapes ) => {
+		// Each placement's matrix of an object, one a distinct turn and stretch (its linear part).
+		const placementsOf = ( name ) => {
+
+			const turns = new Map();
+			const add = ( m, at = 0 ) => {
+
+				const key = [ 0, 1, 2, 4, 5, 6, 8, 9, 10 ].map( ( k ) => Math.round( m[ at + k ] * 1e6 ) ).join( ',' );
+				if ( ! turns.has( key ) ) turns.set( key, Array.from( m.subarray ? m.subarray( at, at + 16 ) : m.slice( at, at + 16 ) ) );
+
+			};
+
+			const list = ir.instances?.get( name );
+			for ( let i = 0; i < ( list?.count ?? 0 ); i ++ ) add( list.matrices, i * 16 );
+			for ( const placed of ir.animatedInstances ?? [] ) if ( placed.name === name ) add( placed.motion.matrices );
+			return turns.size ? [ ...turns.values() ] : [ M.identity() ];
+
+		};
+
+		const split = ( shapes, placements = null ) => {
 
 			let out = null;
 			shapes.forEach( ( shape, i ) => {
@@ -2876,7 +2897,9 @@ export class PBRTSceneBuilder {
 
 				}
 
-				const parts = this._directionParts( shape, v );
+				const own = placements ? shape.relativeCTM || shape.ctm : shape.ctm;
+				const transforms = ( placements ?? [ M.identity() ] ).map( ( m ) => M.multiply( m, own ?? M.identity() ) );
+				const parts = this._directionParts( shape, v, transforms );
 				out ??= shapes.slice( 0, i );
 				out.push( ...parts );
 
@@ -2887,46 +2910,43 @@ export class PBRTSceneBuilder {
 		};
 
 		ir.shapes = split( ir.shapes );
-		for ( const [ name, template ] of ir.objects ) ir.objects.set( name, split( template ) );
+		for ( const [ name, template ] of ir.objects ) ir.objects.set( name, split( template, placementsOf( name ) ) );
 
 	}
 
-	/** A triangle mesh's faces by |n · dir| ≥ ½, each set a shape of its own under its material copy. @private */
-	_directionParts( shape, { dir, def, along, across } ) {
+	/**
+	 * A triangle mesh's faces by |n · dir| ≥ ½, n each face's own normal under each of `transforms` (its placements), each
+	 * set a shape of its own under its material copy; split as the first transform has it. @private
+	 */
+	_directionParts( shape, { dir, def, along, across }, transforms ) {
 
-		const { params } = shape, P = params.P?.value, N = params.N?.value;
+		const { params } = shape, P = params.P?.value;
 		const indices = params.indices?.value ?? ( P?.length === 9 ? [ 0, 1, 2 ] : null );
 		if ( ! P || ! indices ) return [ shape ];
-		const c = shape.ctm ?? M.identity(), inverse = N ? M.invert( c ) : null;
-		const world = ( i ) => [ 0, 1, 2 ].map( ( r ) => c[ r ] * P[ i * 3 ] + c[ 4 + r ] * P[ i * 3 + 1 ] + c[ 8 + r ] * P[ i * 3 + 2 ] );
-		const faces = indices.length / 3, side = new Uint8Array( faces );
-		let blended = 0, alongCount = 0;
-		for ( let f = 0; f < faces; f ++ ) {
+		const faces = indices.length / 3;
+		let side = null, blended = 0, disagree = false, alongCount = 0;
+		for ( const c of transforms ) {
 
-			const [ a, b, d ] = [ indices[ f * 3 ], indices[ f * 3 + 1 ], indices[ f * 3 + 2 ] ];
-			let n;
-			if ( N ) {
+			const world = ( i ) => [ 0, 1, 2 ].map( ( r ) => c[ r ] * P[ i * 3 ] + c[ 4 + r ] * P[ i * 3 + 1 ] + c[ 8 + r ] * P[ i * 3 + 2 ] );
+			const sides = new Uint8Array( faces );
+			for ( let f = 0; f < faces; f ++ ) {
 
-				// The shading normal pbrt reads, at the face's middle: the corners' normals by the inverse transpose.
-				const s = [ 0, 1, 2 ].map( ( k ) => N[ a * 3 + k ] + N[ b * 3 + k ] + N[ d * 3 + k ] );
-				n = [ 0, 1, 2 ].map( ( r ) => inverse[ r * 4 ] * s[ 0 ] + inverse[ r * 4 + 1 ] * s[ 1 ] + inverse[ r * 4 + 2 ] * s[ 2 ] );
-
-			} else {
-
-				const pa = world( a ), pb = world( b ), pd = world( d );
+				const pa = world( indices[ f * 3 ] ), pb = world( indices[ f * 3 + 1 ] ), pd = world( indices[ f * 3 + 2 ] );
 				const e1 = [ pb[ 0 ] - pa[ 0 ], pb[ 1 ] - pa[ 1 ], pb[ 2 ] - pa[ 2 ] ], e2 = [ pd[ 0 ] - pa[ 0 ], pd[ 1 ] - pa[ 1 ], pd[ 2 ] - pa[ 2 ] ];
-				n = [ e1[ 1 ] * e2[ 2 ] - e1[ 2 ] * e2[ 1 ], e1[ 2 ] * e2[ 0 ] - e1[ 0 ] * e2[ 2 ], e1[ 0 ] * e2[ 1 ] - e1[ 1 ] * e2[ 0 ] ];
+				const n = [ e1[ 1 ] * e2[ 2 ] - e1[ 2 ] * e2[ 1 ], e1[ 2 ] * e2[ 0 ] - e1[ 0 ] * e2[ 2 ], e1[ 0 ] * e2[ 1 ] - e1[ 1 ] * e2[ 0 ] ];
+				const amount = Math.abs( n[ 0 ] * dir[ 0 ] + n[ 1 ] * dir[ 1 ] + n[ 2 ] * dir[ 2 ] ) / ( Math.hypot( ...n ) || 1 );
+				if ( ! side && amount > 0.01 && amount < 0.99 ) blended ++;
+				sides[ f ] = amount >= 0.5 ? 1 : 0;
 
 			}
 
-			const amount = Math.abs( n[ 0 ] * dir[ 0 ] + n[ 1 ] * dir[ 1 ] + n[ 2 ] * dir[ 2 ] ) / ( Math.hypot( ...n ) || 1 );
-			if ( amount > 0.01 && amount < 0.99 ) blended ++;
-			side[ f ] = amount >= 0.5 ? 1 : 0;
-			alongCount += side[ f ];
+			if ( ! side ) side = sides;
+			else if ( sides.some( ( v, f ) => v !== side[ f ] ) ) disagree = true;
 
 		}
 
-		if ( blended > 0 ) approximated( def.params, 'dir' );
+		for ( let f = 0; f < faces; f ++ ) alongCount += side[ f ];
+		if ( blended > 0 || disagree ) approximated( def.params, 'dir' );
 		if ( alongCount === faces ) return [ { ...shape, material: along } ];
 		if ( alongCount === 0 ) return [ { ...shape, material: across } ];
 		return [[ 1, along ], [ 0, across ]].map( ( [ want, material ] ) => ( { ...shape, material, params: this._faceSubset( params, side, want ) } ) );
@@ -2954,10 +2974,19 @@ export class PBRTSceneBuilder {
 		}
 
 		const out = { ...params, indices: { type: 'integer', ...params.indices, value: Int32Array.from( kept ) } };
+		const vertices = params.P.value.length / 3;
 		for ( const [ key, stride ] of Object.entries( MESH_VERTEX_PARAMS ) ) {
 
 			const value = params[ key ]?.value;
 			if ( ! value ) continue;
+			// One not a value a vertex is left out, as the whole mesh would have it.
+			if ( key !== 'P' && value.length !== vertices * stride ) {
+
+				delete out[ key ];
+				continue;
+
+			}
+
 			const copy = new value.constructor( order.length * stride );
 			order.forEach( ( i, j ) => {
 
@@ -2969,7 +2998,8 @@ export class PBRTSceneBuilder {
 		}
 
 		const faces = params.faceIndices?.value;
-		if ( faces ) out.faceIndices = { ...params.faceIndices, value: faces.filter( ( _, f ) => side[ f ] === want ) };
+		if ( faces?.length === side.length ) out.faceIndices = { ...params.faceIndices, value: faces.filter( ( _, f ) => side[ f ] === want ) };
+		else delete out.faceIndices;
 		return out;
 
 	}

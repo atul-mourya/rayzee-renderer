@@ -14,7 +14,7 @@
  *   film:   { xresolution, yresolution, filename } | null,
  *   camera: { type, params, cameraToWorld:number[16] } | null,
  *   namedMaterials: Map<name, { type, params }>,
- *   namedTextures:  Map<name, { dataType, class, params, ctm? }>,  (ctm: where a position mapping was declared)
+ *   namedTextures:  Map<name, { dataType, class, params, ctm? }>,  (ctm: where a position mapping or a directionmix was declared)
  *   shapes: [ { type, params, ctm, ctmEnd?, material, areaLight, reverseOrientation, interior, exterior } ],
  *   lights: [ { type, params, ctm } ],
  *   instances: Map<name, { name, count, matrices, matricesEnd? }>,

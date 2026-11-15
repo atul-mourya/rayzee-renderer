@@ -195,8 +195,8 @@
 - [ ] **Displacement** (`texture displacement` + `edgelength`): dice to the edge length and displace along the normal at
   load, as pbrt does — kroken's rug pile, cushion tufting, bricks, rocks. Needs a per-shape triangle cap.
 - [ ] **Texture classes**: `dots` (needs pbrt's Perlin noise); `fbm`, `wrinkled`, `windy`, `marble` (3D procedural);
-  `directionmix` on shapes other than triangle meshes (a triangle mesh is split by face since 6facbd12, a commit no
-  second reader has gone over yet). 2D `checkerboard` and `bilerp` are baked since 2026-10-05.
+  `directionmix` on shapes other than triangle meshes (plymesh, bilinear patches, quadrics) and nested in `scale` /
+  `mix` textures. 2D `checkerboard` and `bilerp` are baked since 2026-10-05.
 - [ ] **Mix material**: colours, clear coat, roughness and metalness follow the amount texture (baked per texel); the
   surface stays the mean where either material has a roughness, metalness or coat map of its own, and IOR,
   transmission and the rest always do. pbrt's own per-hit choice between the two materials would cover all of it.
