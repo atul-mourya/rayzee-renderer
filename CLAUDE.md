@@ -150,7 +150,7 @@ owns it), exports, test layout, docs and comments; how a cleanup is run; the aud
 - **`appProxy.js`**: `getApp()`, `setApp()`, `subscribeApp()` — decouples all consumers from direct app references
 - **`EngineAdapter.js`**: Bridges engine events to Zustand stores
 - **`exporter.js`** + **`components/layout/TopBar/ExportDialog.jsx`**: the Export window (File → Export Picture… / Export
-  Video…, the viewport's camera button, the Results page's export button, the Anim tab's Export Video…), opened through
+  Video…, the status bar's camera button or, on Results, its export button, the Anim tab's Export Video…), opened through
   `useStore.exportRequest`. Picture choices persist in localStorage, video choices in `useAnimationStore.videoExport`; the
   EXR colour space is `app.color.exportSpace`. A saved render exports its picture (edited, as rendered, AI) or its EXR
   copy, as saved or converted to Radiance HDR. Both import `rayzee/encoders` only when used (the window on open).
@@ -185,6 +185,9 @@ owns it), exports, test layout, docs and comments; how a cleanup is run; the aud
   and the app renders only after `crossOriginIsolate()` resolves. Chromium and desktop Firefox only (COEP
   `credentialless`); Safari stays unisolated. The dev server sends the same headers itself. The docs site beside the app
   (`docs/`) is left out of it.
+- **Status bar** (`components/layout/StatusBar/StatusBar.jsx`): the viewport on screen fills it through `StatusBarPortal`
+  (the stats strip, the picture's size, the toolbar). ⚠️ The live viewport stays mounted under Results: it portals only
+  while `viewportMode !== 'results'`, or both pages' controls show.
 
 ### Sub-managers and Path Tracer Classes
 PathTracer delegates to these via composition — external code accesses them directly (e.g., `stage.uniforms.get('maxBounces')`, `stage.materialData.srgbBuckets`, `stage.environment.envParams`). MaterialDataManager lives in `materials/`, EnvironmentManager in `environment/`, TLASBuilder in `bvh/`, InstanceTable in `scene/`, the rest in `pathtracer/`:

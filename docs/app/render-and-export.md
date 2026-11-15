@@ -56,7 +56,7 @@ saved samples; **Discard render** throws it away.
 
 ## Pictures
 
-Open the export window from **File → Export Picture…**, the **Export Picture** button (a camera) in the view's toolbar,
+Open the export window from **File → Export Picture…**, the **Export Picture** button (a camera) in the status bar's toolbar,
 or, for a saved render, **Export Render** on the Results page. It remembers your last choices.
 
 | Format | Good for |

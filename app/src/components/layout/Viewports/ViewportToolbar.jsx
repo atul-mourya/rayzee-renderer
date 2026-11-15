@@ -19,7 +19,6 @@ import { cn } from "@/lib/utils";
  * @param {Function} props.onResize - Callback fired when viewport size changes
  * @param {React.RefObject} props.viewportWrapperRef - Ref to the viewport wrapper element
  * @param {string} props.className - Additional CSS classes
- * @param {string} props.position - Position of the toolbar (top-left, top-right, bottom-left, bottom-right)
  * @param {string} props.buttonVariant - Button variant from UI library
  * @param {string} props.buttonSize - Button size from UI library
  * @param {number} props.iconSize - Size of icons in pixels
@@ -52,7 +51,6 @@ const ViewportToolbar = ( {
 
 	// Appearance
 	className,
-	position = "bottom-right",
 
 	// Button and icon styling
 	buttonVariant = "ghost",
@@ -108,14 +106,6 @@ const ViewportToolbar = ( {
 
 	// The wheel zooms too: a parent passing `scale` is followed.
 	const shown = scale ?? size;
-
-	// Define position classes based on position prop
-	const positionClasses = {
-		"top-left": "top-2 left-2",
-		"top-right": "top-2 right-2",
-		"bottom-left": "bottom-2 left-2",
-		"bottom-right": "bottom-2 right-2"
-	};
 
 	// Resizer handlers
 	const handleSizeChange = ( newSize ) => {
@@ -216,11 +206,7 @@ const ViewportToolbar = ( {
 	const needsSeparator = hasZoomControls && hasOtherControls;
 
 	return (
-		<div data-no-pan className={cn(
-			"flex absolute h-8 text-xs text-foreground rounded-full bg-secondary backdrop-blur items-center",
-			positionClasses[ position ],
-			className
-		)}>
+		<div className={cn( "flex h-8 items-center rounded-full bg-secondary text-xs text-foreground", className )}>
 			<TooltipProvider>
 				{/* Transform Controls — visible when object selected */}
 				{selectedObject && (

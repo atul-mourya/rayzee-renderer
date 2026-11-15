@@ -12,7 +12,7 @@ The left panel, **Saved Renders**, lists them newest first, each with the date, 
 - With AI versions made, **All** and **With AI** filter the list. A purple badge shows how many versions a render has.
 
 In the view, drag to pan and scroll to zoom. **Press & Hold to See Original** shows the render without your adjustments.
-The toolbar has **Auto-fit**, the zoom controls, **Export Render** (see
+The toolbar in the status bar has **Auto-fit**, the zoom controls, **Export Render** (see
 [Pictures](render-and-export.md#pictures)) and **Fullscreen**.
 
 To move renders to another browser or computer, use **File → Export Saved Renders…** and **File → Import Saved Renders…**: one zip

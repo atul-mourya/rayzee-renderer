@@ -4,6 +4,7 @@ import TopBar from './components/layout/TopBar/TopBar';
 import LeftSidebar from '@/components/layout/LeftSideBar/LeftSidebar';
 import ViewportArea from './components/layout/Viewports/ViewportArea';
 import RightSidebar from './components/layout/RightSideBar/RightSidebar';
+import { StatusBar, StatusBarProvider } from './components/layout/StatusBar/StatusBar';
 import { ThemeProvider } from "@/components/theme-provider";
 import {
 	ResizableHandle,
@@ -143,22 +144,25 @@ const App = () => {
 
 	return (
 		<ThemeProvider defaultTheme="dark" storageKey="vite-ui-theme">
-			<div className="flex flex-col w-screen h-screen">
-				<TopBar />
-				<ResizablePanelGroup direction="horizontal" className="flex flex-1 overflow-hidden h-full">
-					<ResizablePanel onResize={handleResize} className="min-w-50" defaultSize={20}>
-						<LeftSidebar />
-					</ResizablePanel>
-					<ResizableHandle withHandle />
-					<ResizablePanel className="min-w-50" defaultSize={60}>
-						<ViewportArea />
-					</ResizablePanel>
-					<ResizableHandle withHandle />
-					<ResizablePanel onResize={handleResize} className="min-w-50 h-full" defaultSize={20}>
-						<RightSidebar />
-					</ResizablePanel>
-				</ResizablePanelGroup>
-			</div>
+			<StatusBarProvider>
+				<div className="flex flex-col w-screen h-screen">
+					<TopBar />
+					<ResizablePanelGroup direction="horizontal" className="flex flex-1 overflow-hidden h-full">
+						<ResizablePanel onResize={handleResize} className="min-w-50" defaultSize={20}>
+							<LeftSidebar />
+						</ResizablePanel>
+						<ResizableHandle withHandle />
+						<ResizablePanel className="min-w-50" defaultSize={60}>
+							<ViewportArea />
+						</ResizablePanel>
+						<ResizableHandle withHandle />
+						<ResizablePanel onResize={handleResize} className="min-w-50 h-full" defaultSize={20}>
+							<RightSidebar />
+						</ResizablePanel>
+					</ResizablePanelGroup>
+					<StatusBar />
+				</div>
+			</StatusBarProvider>
 		</ThemeProvider>
 	);
 

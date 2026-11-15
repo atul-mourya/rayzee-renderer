@@ -47,7 +47,7 @@ These do nothing while you type in a text box.
   deselect. Double-click an object to select it and open the **Material** tab.
 - Or click its row in the Outliner.
 - A selected object shows a handle. Drag its arrows, rings or boxes to move, turn or resize it. Pick which with
-  **Translate**, **Rotate** and **Scale** in the toolbar at the bottom right, and **World Space** / **Local Space** for
+  **Translate**, **Rotate** and **Scale** in the toolbar at the right of the status bar, and **World Space** / **Local Space** for
   its axes. The handle has no keyboard shortcuts.
 - Right-click (with something selected) for **Hide** / **Show**, **Focus** (look at it), **Isolate** / **Un-isolate**
   (hide everything else), **Copy Material**, **Paste Material** and **Deselect**. The menu works on the selected object,

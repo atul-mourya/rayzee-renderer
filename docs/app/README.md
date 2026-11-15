@@ -16,6 +16,7 @@ The app opens on a sample scene, a coffee maker. Drop your own model onto the vi
 | **Left panel** | The **Outliner**: every object, light and camera in the scene. On the Results page, your saved renders. |
 | **The view** | The picture, with a few controls floating over it. |
 | **Right panel** | Settings, in tabs. Which tabs you see depends on the top-bar tab. |
+| **Status bar** | Along the bottom: the speed graphs, the picture's size and the view's toolbar. |
 
 Drag the borders between the panels to resize them.
 
@@ -66,16 +67,18 @@ how many samples it has; click either to choose which one stops the render, and 
 stops early once the picture is clean (adaptive sampling). **Memory:** and **Peak:** are graphics memory, and **Size:**
 is the model's size as its file gives it.
 
-**Bottom left: the graphs.** **FPS**, **CPU**, **GPU** and **CPT** (GPU compute) timings. A **DN** graph joins them
-while the AI denoiser is cleaning the live view.
-
 **Top centre: the render controls.** **Pause** / **Play**, **Restart**, and **Click to Select** (Preview only), which
 lets you pick objects by clicking them. Messages such as **Compiling shaders...**, **Denoising...** and
 **Upscaling...** show just below.
 
-**Bottom centre** shows the picture's size in pixels.
+## The status bar
 
-**Bottom right: the toolbar.**
+**Left: the graphs.** **FPS**, **CPU**, **GPU** and **CPT** (GPU compute) timings. A **DN** graph joins them while the
+AI denoiser is cleaning the live view.
+
+**Middle:** the picture's size in pixels.
+
+**Right: the toolbar.**
 
 | Button | What it does |
 |---|---|
@@ -85,7 +88,7 @@ lets you pick objects by clicking them. Messages such as **Compiling shaders...*
 | **Zoom Out**, the zoom slider, **Zoom In** | Shows the picture smaller or larger (5–300 %). This does not change the render. |
 | **Export Picture** | Opens the export window for the current render. |
 | **Reset Camera** | Puts the camera back where it started (also <kbd>R</kbd>). |
-| **Fullscreen** | Fills the screen with the view. |
+| **Fullscreen** | Fills the screen with the picture alone; <kbd>Esc</kbd> comes back. |
 
 ## The Outliner
 

@@ -11,6 +11,8 @@ import { fitArea } from '@/lib/aiEdit';
 import { AreaLayer, CompareSwitch, SplitHandle } from './AIOverlay';
 import { ImageProcessorComposer, pictureGrade, hdrShowsPicture } from '@/lib/ImageProcessor';
 import ViewportToolbar from './ViewportToolbar';
+import DimensionDisplay from './DimensionDisplay';
+import { StatusBarPortal } from '@/components/layout/StatusBar/StatusBar';
 import { updateRender, getRenderHDR } from '@/lib/database';
 import { getApp } from '@/lib/appProxy';
 import { useColorStatus, ensureDefaultConfig } from '@/lib/colorManagement';
@@ -824,29 +826,34 @@ const ResultsViewport = forwardRef( function ResultsViewport( props, ref ) {
 				</div>
 			</div>
 
-			{/* ViewportToolbar - replaces the old custom controls */}
-			<ViewportToolbar
-				onResize={handleViewportResize}
-				viewportWrapperRef={viewportRef}
-				appRef={resultsToolbarRef}
-				scale={viewportScale}
-				position="bottom-right"
-				defaultSize={100}
-				minSize={5}
-				maxSize={300}
-				zoomStep={25}
-				autoFitScale={autoFitScale}
-				isManualScale={isManualScale}
-				onResetToAutoFit={handleResetToAutoFitWithPan}
-				controls={{
-					resetZoom: true,
-					zoomButtons: true,
-					zoomSlider: true,
-					screenshot: true,
-					resetCamera: false, // Not applicable to static images
-					fullscreen: true
-				}}
-			/>
+			{pictureSize && imageLoadState.loaded && (
+				<StatusBarPortal slot="center">
+					<DimensionDisplay dimension={pictureSize} />
+				</StatusBarPortal>
+			)}
+			<StatusBarPortal slot="right">
+				<ViewportToolbar
+					onResize={handleViewportResize}
+					viewportWrapperRef={viewportRef}
+					appRef={resultsToolbarRef}
+					scale={viewportScale}
+					defaultSize={100}
+					minSize={5}
+					maxSize={300}
+					zoomStep={25}
+					autoFitScale={autoFitScale}
+					isManualScale={isManualScale}
+					onResetToAutoFit={handleResetToAutoFitWithPan}
+					controls={{
+						resetZoom: true,
+						zoomButtons: true,
+						zoomSlider: true,
+						screenshot: true,
+						resetCamera: false, // Not applicable to static images
+						fullscreen: true
+					}}
+				/>
+			</StatusBarPortal>
 		</div>
 	);
 

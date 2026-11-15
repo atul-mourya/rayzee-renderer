@@ -27,7 +27,6 @@ const ALLOWED = {
 	// A sample value in the reference page.
 	'components/DesignSystem.jsx': [ '#3a5f7d' ],
 	// A canvas: no CSS reaches it.
-	'components/layout/Viewports/StatsPanel.jsx': [ '#ffffff', '#1e293b' ],
 	'components/ui/texture-preview.jsx': [ '#444', '#fff', '#333', '#999', '#222', '#666' ],
 };
 

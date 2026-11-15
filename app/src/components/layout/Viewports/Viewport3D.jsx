@@ -6,6 +6,7 @@ import StatsMeter from './StatsMeter';
 import StatsPanel from './StatsPanel';
 import SaveControls from './SaveControls';
 import ViewportToolbar from './ViewportToolbar';
+import { StatusBarPortal } from '@/components/layout/StatusBar/StatusBar';
 import InteractionContextMenu from '@/components/ui/InteractionContextMenu';
 import { useToast } from '@/hooks/use-toast';
 import { ToastAction } from '@/components/ui/toast';
@@ -503,25 +504,36 @@ const Viewport3D = forwardRef( ( { viewportMode = "preview" }, _ref ) => {
 				<PictureStatus scale={viewportScale} />
 			</div>
 
-			<DimensionDisplay dimension={renderResolution} />
 			<StatsMeter viewportMode={viewportMode} />
-			{isAppInitialized && <StatsPanel app={appRef.current} container={viewportRef.current} />}
 
 			{shouldShowSaveControls && (
 				<SaveControls onSave={handleSave} onDiscard={handleDiscard} />
 			)}
 
-			{canvasReady && (
-				<ViewportToolbar
-					onResize={handleViewportResize}
-					viewportWrapperRef={viewportRef}
-					scale={viewportScale}
-					minSize={MIN_ZOOM}
-					maxSize={MAX_ZOOM}
-					autoFitScale={autoFitScale}
-					isManualScale={isManualScale}
-					onResetToAutoFit={handleResetToAutoFitWithPan}
-				/>
+			{/* The status bar's, while this view is on screen (it stays mounted under the Results page). */}
+			{viewportMode !== 'results' && (
+				<>
+					<StatusBarPortal slot="left">
+						{isAppInitialized && <StatsPanel app={appRef.current} />}
+					</StatusBarPortal>
+					<StatusBarPortal slot="center">
+						<DimensionDisplay dimension={renderResolution} />
+					</StatusBarPortal>
+					<StatusBarPortal slot="right">
+						{canvasReady && (
+							<ViewportToolbar
+								onResize={handleViewportResize}
+								viewportWrapperRef={viewportRef}
+								scale={viewportScale}
+								minSize={MIN_ZOOM}
+								maxSize={MAX_ZOOM}
+								autoFitScale={autoFitScale}
+								isManualScale={isManualScale}
+								onResetToAutoFit={handleResetToAutoFitWithPan}
+							/>
+						)}
+					</StatusBarPortal>
+				</>
 			)}
 
 			<InteractionContextMenu />
