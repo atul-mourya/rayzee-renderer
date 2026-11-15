@@ -2,8 +2,6 @@
 
 ## Bugs
 - remove all hacks on rectarealight parsing and treat all the incoming serailized data. getting difference between placeholder arealight vs arealight coming with usd files
--  the Moana lava rocks render bright red. The scene file itself sets them to red, and their real colour comes from a texture format (Ptex) the pbrt loader doesn't read yet.
-   → Ptex is read since 04f857f4 (2026-11-11, pbrt and USD); recheck the lava rocks in the app
 -  dont reload the same model using query param. instead provide a save button with autosave option. on reload load the default. users can open using file menu
 -   Fast compilation on windows devices
 -   make bvh an independent library — built as the `rayzee-bvh` package on the night of 2026-11-05 (branch
@@ -42,12 +40,6 @@
   (`writeTextureLayers`), the triangle and tree uploads ~150 ms. Starting textures before the geometry extraction
   (they need only the materials, `extractMaterialsOnly`) was tried twice: no gain in Chrome, the overlap slowing
   extraction as much as it saved
-- [ ] watercolor's pbrt build (Node 18 s, Chrome 11.9 s): 40 texture bakes take 5.3 s of the page's time (242M texels,
-  ~22 ns each), making their layers 1.2 s, the octahedral environment 1.9 s, .ply parsing 1.0 s. The shape loop waits
-  14.3 s of 18 in Node, strictly one shape at a time (materials 8.5 s with the bakes, geometry 5.8 s). Tried, not kept:
-  hoisting the bakes' sampling and one shape for their terms (−10–15 % of the bakes, bytes identical); prefetching the
-  next 8 shapes' small .ply files (Node build −6 %, Chrome unchanged). The lever is the bakes in workers, which needs
-  their combines (closures over material code) written as data
 - [ ] Textured island: preflight 8,811 MB against the 9,216 MB line; Ptex's per-face vertices add ~870 MB of geometry.
   A load in a tab that had held the island before failed narrowing the sky (`ArrayBuffer.transfer`'s smaller block):
   the narrowed texels now stay in place when that block cannot be had
@@ -203,7 +195,6 @@
 - [ ] animating lights support
 - [ ] Timeline scrubber for animation control
 - [ ] Multi-clip blending - cross-fade between animation clips with configurable transition duration
-- [ ] ArrayBufferTarget memory for long videos - StreamTarget upgrade
 - [ ] sequence caching for smooth playback / scrubbing
 
 ---
@@ -215,13 +206,7 @@
   load, as pbrt does — kroken's rug pile, cushion tufting, bricks, rocks. Needs a per-shape triangle cap.
 - [ ] **Texture classes**: `dots` (needs pbrt's Perlin noise); `fbm`, `wrinkled`, `windy`, `marble` (3D procedural);
   `directionmix` on shapes other than triangle meshes (a triangle mesh is split by face since 6facbd12, a commit no
-  second reader has gone over yet). 2D `checkerboard` and `bilerp` are baked since 2026-10-05. `ptex` is not read on
-  main: the 2026-10-06 reader was lost, and its rebuild (pbrt and USD) is on branch `feat/island-geometry-and-ptex`
-  (36806b04).
-- [ ] **Ptex past 1,024 files** (the rebuild on `feat/island-geometry-and-ptex` packs shared atlas pages): each .ptx is a texture of its own, and past 1,024 for one map type the engine renders
-  the rest untextured — Moana's isCoral names 2,273, isDunesA 755. Pack small atlases onto shared pages (distinct
-  Texture objects over one `source`: the extractor counts sources); the scene-graph codec would then have to store a
-  page once, not once per texture.
+  second reader has gone over yet). 2D `checkerboard` and `bilerp` are baked since 2026-10-05.
 - [ ] **Mix material**: colours, clear coat, roughness and metalness follow the amount texture (baked per texel); the
   surface stays the mean where either material has a roughness, metalness or coat map of its own, and IOR,
   transmission and the rest always do. pbrt's own per-hit choice between the two materials would cover all of it.
@@ -253,7 +238,6 @@
 
 ## USD import
 
-- [ ] **Ptex** — Moana's USD ships its .ptx (13 GB); a Ptex input reads the mesh's mean displayColor today.
 - [ ] **Vertex colours** — displayColor varies per vertex; the engine has none, so each mesh takes its mean.
 - [ ] **Light linking** — Moana's palm keys light only the palms (`collection:lightLink`); here every light lights everything.
 - [ ] **Camera dome** — Moana's `sky_dome_cam_llc` (islandsunVIS.png) is the background, the lighting dome another image;
