@@ -293,6 +293,7 @@ export class PathTracerApp extends RayzeeRenderer {
 			settings: this.settings,
 			softReset: () => this.reset( true ),
 			hardReset: () => this.reset(),
+			wake: () => this.wake(),
 		} );
 
 		super._wireEvents();

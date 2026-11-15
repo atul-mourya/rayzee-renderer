@@ -884,12 +884,13 @@ export class CameraManager extends EventDispatcher {
 	 * @param {Function} params.setFocusDistance - Callback to update uniform + settings
 	 * @param {Function} params.softReset       - Callback for soft accumulation reset
 	 * @param {Function} params.hardReset       - Callback for hard accumulation reset
+	 * @param {Function} [params.wake]          - Restarts a stopped render loop
 	 */
 	updateAutoFocus( ctx ) {
 
 		const context = ctx || this._afContext;
 		if ( ! context || ! this.interactionManager ) return;
-		const { assetLoader, currentFocusDistance, pathTracer, setFocusDistance, softReset, hardReset } = context;
+		const { assetLoader, currentFocusDistance, pathTracer, setFocusDistance, softReset, hardReset, wake } = context;
 
 		if ( this.autoFocusMode === 'manual' ) return;
 
@@ -919,7 +920,7 @@ export class CameraManager extends EventDispatcher {
 			&& stage.frameCount > 0
 			&& ! stage.isComplete ) return;
 
-		const hitPoint = this._pickFocusPoint( stage.resetCount );
+		const hitPoint = this._pickFocusPoint( stage.resetCount, wake );
 		if ( hitPoint === undefined ) return;
 
 		let rawDistance;
@@ -1001,14 +1002,15 @@ export class CameraManager extends EventDispatcher {
 	 * or so later and the last point serves meanwhile; undefined until the first lands, and until a fresh start's does
 	 * (a new model, mode or AF point), which then resets the render. @private
 	 */
-	_pickFocusPoint( resetCount ) {
+	_pickFocusPoint( resetCount, wake ) {
 
 		const camera = this.camera;
 		const { x, y } = this.afScreenPoint;
 		const last = this._afPick ??= {
 			point: new Vector3(), hit: false, resetCount: NaN, x: NaN, y: NaN, view: new Matrix4(), projection: new Matrix4(),
-			awaiting: true, pending: false, again: false, againForced: false,
+			awaiting: true, pending: false, again: false, againForced: false, wake: null,
 		};
+		last.wake = wake;
 
 		if ( this._afPointDirty || resetCount !== last.resetCount || x !== last.x || y !== last.y
 			|| ! last.view.equals( camera.matrixWorld ) || ! last.projection.equals( camera.projectionMatrix ) ) {
@@ -1057,6 +1059,9 @@ export class CameraManager extends EventDispatcher {
 
 			}
 
+			// The frame that asked may have been a finished render's last.
+			last.wake?.();
+
 		};
 
 		const { x, y } = this.afScreenPoint;
@@ -1092,8 +1097,9 @@ export class CameraManager extends EventDispatcher {
 	 * @param {import('../../RenderSettings.js').RenderSettings} deps.settings
 	 * @param {Function}                        deps.softReset
 	 * @param {Function}                        deps.hardReset
+	 * @param {Function}                        deps.wake
 	 */
-	initAutoFocus( { assetLoader, pathTracer, settings, softReset, hardReset } ) {
+	initAutoFocus( { assetLoader, pathTracer, settings, softReset, hardReset, wake } ) {
 
 		this._afContext = {
 			assetLoader,
@@ -1101,6 +1107,7 @@ export class CameraManager extends EventDispatcher {
 			setFocusDistance: ( d ) => settings.set( 'focusDistance', d, { silent: true } ),
 			softReset,
 			hardReset,
+			wake,
 		};
 
 		// Live getter — reads current value without allocation

@@ -89,6 +89,24 @@ describe( 'auto-focus', async () => {
 
 	} );
 
+	// A finished render's loop stops after the frame that asked, so a moved AF point was never focused.
+	it( 'wakes the render loop when a pick lands', async () => {
+
+		const cm = manager();
+		const wake = vi.fn();
+		cm.interactionManager.scene = sceneWithBoxAt( 3 );
+		cm.updateAutoFocus( {
+			assetLoader: { getSceneScale: () => 2 }, currentFocusDistance: 0,
+			pathTracer: { enableDOF: { value: 1 }, cameraProjection: { value: 0 }, resetCount: 0 },
+			setFocusDistance: vi.fn(), softReset: vi.fn(), hardReset: vi.fn(), wake,
+		} );
+		expect( wake ).not.toHaveBeenCalled();
+
+		await new Promise( resolve => setTimeout( resolve, 0 ) );
+		expect( wake ).toHaveBeenCalledTimes( 1 );
+
+	} );
+
 	it( 'picks again only when the view, the AF point or the render changed', async () => {
 
 		const cm = manager();
