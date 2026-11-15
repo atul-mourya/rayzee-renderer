@@ -582,13 +582,15 @@ export function growReserve( volume ) {
 }
 
 /**
- * A density grid and an emission grid on one box: the density grid's index space, grown over the emission grid's,
- * the emission resampled onto it. Either unchanged where they already share one.
+ * A density grid and an emission grid on one box: the density grid's index space, grown over the emission grid's
+ * unless `grow` is false (emission that shows only where there is density), the emission resampled onto it. Either
+ * unchanged where they already share one.
  */
-export function unifyGrids( grid, emission ) {
+export function unifyGrids( grid, emission, { grow = true } = {} ) {
 
 	if ( ! emission ) return { grid, emission: null };
 	if ( emission.transform.equals( grid.transform ) && emission.width === grid.width && emission.height === grid.height && emission.depth === grid.depth ) return { grid, emission };
+	if ( ! grow ) return { grid, emission: new VolumeGrid( { ...grid, data: resampleOnto( emission, grid ), name: emission.name } ) };
 	const box = emission.getBounds().applyMatrix4( grid.transform.clone().invert() );
 	const lo = [ Math.min( 0, Math.floor( box.min.x + 0.5 ) ), Math.min( 0, Math.floor( box.min.y + 0.5 ) ), Math.min( 0, Math.floor( box.min.z + 0.5 ) ) ];
 	const hi = [ Math.max( grid.width, Math.ceil( box.max.x + 0.5 ) ), Math.max( grid.height, Math.ceil( box.max.y + 0.5 ) ), Math.max( grid.depth, Math.ceil( box.max.z + 0.5 ) ) ];

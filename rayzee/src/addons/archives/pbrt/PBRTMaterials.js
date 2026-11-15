@@ -251,6 +251,16 @@ export function illuminantRGB( name ) {
 // Planck's law, unscaled (hc / k = 1.4387769e7 nm·K); black at 0 K and below.
 export const blackbodyRGB = ( kelvin ) => emissionRGB( lambda => 1 / ( ( lambda / 100 ) ** 5 * Math.expm1( 1.4387769e7 / ( lambda * kelvin ) ) ) );
 
+// pbrt's BlackbodySpectrum (Planck's curve peaking at 1, at Wien's λ) as its film reads it: not scaled to luminance 1.
+export function peakBlackbodyRGB( kelvin ) {
+
+	if ( ! ( kelvin > 0 ) ) return [ 0, 0, 0 ];
+	const planck = ( lambda ) => 1 / ( ( lambda / 100 ) ** 5 * Math.expm1( 1.4387769e7 / ( lambda * kelvin ) ) );
+	const peak = planck( 2.8977721e6 / kelvin );
+	return spectrumRGB( ( lambda ) => planck( lambda ) / peak ).map( ( v ) => Math.max( 0, v ) );
+
+}
+
 // pbrt's sampled spectrum: 0 outside its samples (spectrumAt holds the end values, as an eta wants).
 export const sampledEmissionRGB = ( v ) => emissionRGB( sampledSpectrum( v ) );
 

@@ -621,7 +621,9 @@ bench gates and measurements.
   ⚠️ Every TSL `Loop` counter is `i` in WGSL: a nested loop hides the outer one, so hold an outer index in a `.toVar()`
   (the volume index read inside the majorant walk was the cell loop's). ⚠️ A `Data3DTexture` written by hand needs
   `needsUpdate` before `initTexture`, else three.js makes a 1×1 2D placeholder. ⚠️ OpenVDB writes nothing for an empty
-  half-float block (a full-float one still gets a size).
+  half-float block (a full-float one still gets a size). pbrt's `nanovdb` / `uniformgrid` media bounded only by
+  `interface` shapes become volumes clipped to them (`pbrt/NanoVDB.js`; ⚠️ its Blosc decoder is imported on first use:
+  the add-on may not import a core loader statically).
 - ⚠️ `bench:ab` read +7–9 % on identical code for two scenes on one day: net any A/B of a self-run.
 
 ### State-Engine Synchronization Pattern

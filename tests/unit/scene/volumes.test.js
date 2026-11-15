@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { DataUtils, Group, Matrix4, Vector3, Box3 } from 'three';
 import {
 	Volume, VolumeGrid, collectVolumes, halveGrid, majorantGrid, packBoxes, packVolumes, writeVolumeHeaders, volumeUniformArray,
-	expandByVolumes,
+	expandByVolumes, unifyGrids,
 } from '@/core/scene/Volumes.js';
 import { VOLUME_LAYOUT } from '@/core/scene/BufferLayout.js';
 
@@ -120,6 +120,18 @@ describe( 'volumes', () => {
 		const index = local.applyMatrix4( grid.transform.clone().invert() ).round();
 		expect( emission.data[ index.x + grid.width * ( index.y + grid.height * index.z ) ] ).toBeCloseTo( 2, 6 );
 		expect( grid.data[ index.x + grid.width * ( index.y + grid.height * index.z ) ] ).toBe( 1 );
+
+	} );
+
+	it( 'keeps an emission that shows only with density on the density\'s box, however large its own', () => {
+
+		const density = VolumeGrid.fromFunction( 8, () => 1 );
+		const heat = new VolumeGrid( { width: 64, height: 64, depth: 64, data: new Float32Array( 64 ** 3 ).fill( 2 ), transform: density.transform.clone().multiply( new Matrix4().makeTranslation( - 28, - 28, - 28 ) ) } );
+		const { grid, emission } = unifyGrids( density, heat, { grow: false } );
+		expect( grid ).toBe( density );
+		expect( [ emission.width, emission.height, emission.depth ] ).toEqual( [ 8, 8, 8 ] );
+		expect( emission.data.every( ( v ) => Math.abs( v - 2 ) < 1e-6 ) ).toBe( true );
+		expect( unifyGrids( density, heat ).grid.width ).toBe( 64 );
 
 	} );
 

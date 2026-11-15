@@ -122,8 +122,8 @@
 
 ### Rendering
 - [ ] Explore neural textures: example <https://cornell-neural.utsubo.io/>
-- [ ] Volumes, what is left (docs/design/VOLUMES.md): pbrt `nanovdb` / `uniformgrid` and USD `OpenVDBAsset` (Moana
-  ocean); inside glass and subsurface; coloured extinction; NEE toward glowing volumes; NRD guides; picking; sparse
+- [ ] Volumes, what is left (docs/design/VOLUMES.md): USD `OpenVDBAsset` (Moana ocean); pbrt's `rgbgrid` and `cloud`
+  media, its camera medium; scenes with a volume stored as graphs; inside glass and subsurface; coloured extinction; NEE toward glowing volumes; NRD guides; picking; sparse
   bricks; sessions keeping an added cloud or smoke.
 - [ ] Introduce Sequenced HRDIs - https://mattepaint.com/gallery/hdri/skies/
 - [ ] **Fog and light shafts** ROADMAP: "Fog and homogeneous participating media", "Volumetric lighting and shadows";
@@ -200,8 +200,8 @@
 - [ ] **Mix material**: colours, clear coat, roughness and metalness follow the amount texture (baked per texel); the
   surface stays the mean where either material has a roughness, metalness or coat map of its own, and IOR,
   transmission and the rest always do. pbrt's own per-hit choice between the two materials would cover all of it.
-- [ ] **Participating media**: only absorption inside glass is mapped (σa + σs as attenuation). Scattering, a medium in a
-  non-glass shape, the camera's medium and grid/nanovdb media need volumetric path tracing (Rendering → Volumetric).
+- [ ] **Participating media**: a homogeneous medium is only absorption inside glass (σa + σs as attenuation); its
+  scattering, one in a non-glass shape, a grid medium inside glass and the camera's medium need volumetric tracing.
 - [ ] **Single-sheet dielectric**: kroken's picture glass is one quad of `dielectric`; the card behind it renders very
   noisy at 512 spp and OIDN turns the noise into a bumpy texture. See Known → `thickness` / thin-walled; check how the
   medium stack treats an open sheet against pbrt's per-interface orientation.

@@ -590,7 +590,8 @@ export async function loadPBRTScene( args ) {
 			if ( ! bytes ) return null;
 			return ( envFromBytes || imageFromBytes )( bytes, filename );
 
-		}
+		},
+		resolveFile: ( filename ) => vfs.readPath( filename )
 	} );
 
 	const buildStart = performance.now();

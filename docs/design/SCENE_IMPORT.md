@@ -217,7 +217,8 @@ subtree per element, and the whole thing rarely fits: Moana is 29 GB unpacked.
   (no scattering inside). Glass with its medium outside only (Teapot (full)'s glass–tea wall, `"" "Tea"`) is turned
   over — normals negated, triangles rewound (`turnedOver`), eta inverted — so the medium is its inside and every
   crossing bends as before (`_shapeMedium`). A medium on both sides keeps the inside one; the same medium on both sides
-  (a medium filling space) is not supported, reported once. `diffusetransmission` is the engine's diffuse transmission lobe,
+  (a medium filling space) is not supported, reported once. A grid medium (`nanovdb`, `uniformgrid`) inside a shape is
+  a volume (docs/design/VOLUMES.md → pbrt's grid media); its `interface` shape is not built. `diffusetransmission` is the engine's diffuse transmission lobe,
   split at T's peak (brightest texel × tint × scale; `ctx.textureMaxRGB` scans the map's bytes, no bake layer). Each
   colour is its lobe's peak over its share × its map's brightest texel, so R and T are exact at every texel pbrt does
   not clamp while max R + max T ≤ 1; a mapped colour may pass 1, colour × map never does. A textured T is the

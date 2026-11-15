@@ -19,6 +19,7 @@
  *   lights: [ { type, params, ctm } ],
  *   instances: Map<name, { name, count, matrices, matricesEnd? }>,
  *   objects: Map<name, shapes[]>,
+ *   media: Map<name, params>, mediumTransforms: Map<name, number[16]>,  (the ctm where each was declared)
  *   spectrumFiles: [ { type: 'spectrum', value: [ filename ] } ],  (the parameters themselves, filled in by the loader)
  *   transformTimes: { start, end },
  *   hasMotion: boolean,
@@ -247,6 +248,7 @@ export class PBRTParser {
 			skippedInstances: 0,
 			objects: new Map(),
 			media: new Map(),
+			mediumTransforms: new Map(),
 			spectrumFiles: [],
 			transformTimes: { start: 0, end: 1 },
 			hasMotion: false,
@@ -920,6 +922,7 @@ export class PBRTParser {
 
 				const mediumName = this._expectString( 'MakeNamedMedium name' );
 				this.ir.media.set( mediumName, this._withAttributes( 'medium', this._parseParams() ) );
+				this.ir.mediumTransforms.set( mediumName, this.ctm.slice() );
 				break;
 
 			}

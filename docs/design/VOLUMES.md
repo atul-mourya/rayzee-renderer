@@ -100,6 +100,47 @@ floats, an affine map, four grids of three types, inactive values of every flag,
 (`tests/unit/loaders/fixtures/vdb/`, `make.py`) — and on the Moana island's `deepWaterVolume.vdb` (Houdini 18, OpenVDB
 6.2, Blosc): 108M active voxels in 1.3 s, halved to 1868 × 21 × 436 for the 2048-texel limit.
 
+## pbrt's grid media
+
+pbrt-v4's `nanovdb` and `uniformgrid` media inside a shape (`MediumInterface "smoke" ""`) become volumes
+(`_gridMediumVolumes`, `addons/archives/pbrt/PBRTSceneBuilder.js`), placed by the transform where the medium was made:
+- **NanoVDB** (`addons/archives/pbrt/NanoVDB.js`): files of ABI 32 (pbrt-v4's nanovdb, 32.3), segments of grids raw,
+  Zip or Blosc; float grids only, as pbrt reads them (`grid<float>()`). A grid is read dense over its active box with
+  `getValue`'s values (inactive voxels and tiles included) from its root, internal and leaf nodes; index → world is its
+  map. Past 2²⁷ voxels or 2048 a side a value is the mean of f³ voxels, read so (OpenVDB grids are read the same way):
+  the packer would halve it anyway. A constant tile then adds its share to each coarse voxel it covers, so a large
+  pruned interior costs as many steps as coarse voxels (OpenVDB.js still adds tiles voxel by voxel). On pbrt-v4-scenes' `explosion` (two grids, 4.5M active voxels each, 161 × 364 ×
+  153): every one of ~37k sampled voxels equals nanovdb's own reader (a C++ dump; `make.cpp` beside the test fixture
+  makes it), world-space trilinear lookups within 6e-5; each grid reads in ~150 ms.
+- **Inputs**: extinction σa + σs (× `scale`), one number a point, so its luminance where the channels differ
+  (`approximated`); the albedo σs over it, per channel; `g`. Emission is pbrt's σa × Le (`emissionFromAbsorption`), Le
+  as the ramp: `Lescale` × pbrt's blackbody peaking at 1 (`peakBlackbodyRGB`, as the film reads it, not scaled to
+  luminance 1) at ( temperature − `temperatureoffset` / `temperaturecutoff` ) × `temperaturescale`, none to 100 K. pbrt's
+  film integrates the colour-matching functions × L without dividing by ∫ȳ (film.h, `ToSensorRGB`): a blackbody at peak
+  1 reads ~100, which files' `Lescale` is set against. The emission grid is resampled onto the density's box, never
+  grown over its own: σa × Le is zero where there is no density (a pyro file's temperature often fills its domain). A
+  `uniformgrid` voxel i sits at p0 + ( i + ½ ) / n × ( p1 − p0 ); its `Le` spectrum takes the `Lescale` grid, and
+  without one pbrt's default, a 1³ grid read trilinearly against zeros outside: 1 at the centre, ⅛ at the corners
+  (`tentField`). A temperature there drops `Lescale` (one grid carries the temperature; reported approximated).
+- **Clipped to the shape**: pbrt's medium is only inside its shape, and the explosion's sphere cuts the smoke's top
+  off. Voxels outside are cleared (`_clipToShapes`): each column of voxels is inside between alternate crossings of
+  the shapes' triangles, those with the medium outside (`"" "smoke"`) carving holes; where every shape has it outside
+  (a camera in the smoke), it is everywhere in the grid but inside them. A column crossed an odd number of
+  times (a crack) is clipped as its nearest decided neighbour within two columns; past 1 % of columns the shapes are
+  not closed (a disk) and nothing is clipped, nor where a shape builds no surface; each with a warning.
+- **Only where nothing but `interface` bounds it**: volumes are traced outside glass and subsurface media, so a medium
+  inside glass (or any surface) stays that surface's, left clear as before; and only directly placed shapes count, not
+  an object instance's.
+- The steps give the page a turn (`_tick`). A scene with a volume is not stored as a graph (the codec has no volume; it
+  refuses the scene rather than drop it).
+
+Measured against a pbrt-v4 build (260 × 360, 1024 spp, firefly clamp off): with a
+plain sky and a diffuse floor the sky matches to 0.1 %, the smoke and floor to 0–1 %, the fire 4.5–5.8 % bright,
+2.2–3.9 % at `maxBounces` 4 — pbrt adds a medium's emission at depth < maxdepth, one segment fewer than a surface's;
+pbrt's own seed-to-seed noise there is 0.5 %. The scene as written differs more for reasons outside the volume: its sky
+EXR is ACES2065-1 (its `chromaticities`), its floor `coateddiffuse`, its film a Nikon D850 sensor; the engine's default
+firefly clamp (3) takes the fire core to 0.73.
+
 ## Sequences
 
 A run of numbered files (`fire_0001.vdb` …) plays as one thing on the timeline. The pieces are generic, so other

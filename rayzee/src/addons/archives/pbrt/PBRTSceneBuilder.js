@@ -21,9 +21,11 @@ import {
 	DataTexture, FloatType, RGBAFormat, LinearFilter, EquirectangularReflectionMapping,
 	SRGBColorSpace, NoColorSpace, AnimationClip, VectorKeyframeTrack, QuaternionKeyframeTrack,
 	NumberKeyframeTrack, BooleanKeyframeTrack, DirectionalLight, PointLight, SpotLight, FrontSide, DoubleSide,
-	RepeatWrapping, UnsignedByteType, DataUtils
+	RepeatWrapping, UnsignedByteType, DataUtils, Color
 } from 'three';
-import { blackbodyRGB, buildMaterial, illuminantRGB, pBool, pFloat, pString, resolveSpectrum, sampledEmissionRGB } from './PBRTMaterials.js';
+import { blackbodyRGB, buildMaterial, illuminantRGB, pBool, pFloat, pString, peakBlackbodyRGB, resolveSpectrum, sampledEmissionRGB } from './PBRTMaterials.js';
+import { readNanoVDB, bloscReader } from './NanoVDB.js';
+import { Volume, VolumeGrid, unifyGrids } from '../../../scene/Volumes.js';
 import { makeLayer, layerMean, planBake, bakeRows, bakeResult, combineOf, namedScalars, productOf, mixOf, srgbToLinear, linearToSRGB, hasAlpha, generateUV, uvKey } from './PBRTTextureBake.js';
 import BakeWorker from './BakeWorker.js?worker&inline';
 import { loopSubdivide } from './LoopSubdivision.js';
@@ -77,6 +79,33 @@ async function lightRGB( params, name, ctx ) {
 
 const FLIP_Z = [ 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, - 1, 0, 0, 0, 0, 1 ];
 const MAX_SKY_READBACK = 4096;
+// Media read as volumes, and the surfaces that only bound a medium (not built round one).
+const GRID_MEDIA = new Set( [ 'nanovdb', 'uniformgrid' ] );
+const BOUNDARY_MATERIALS = new Set( [ 'interface', 'none', '' ] );
+
+// pbrt's grid emission from a temperature: Le × its normalised blackbody at ( value − offset ) × scale, none to 100 K.
+const blackbodyRamp = ( leScale, offset, scale ) => ( value ) => {
+
+	const kelvin = ( value - offset ) * scale;
+	return kelvin > 100 ? peakBlackbodyRGB( kelvin ).map( ( c ) => c * leScale ) : [ 0, 0, 0 ];
+
+};
+
+// pbrt's default Lescale is a 1³ grid read trilinearly against zeros outside it: 1 at the centre, ⅛ at the corners.
+function tentField( n ) {
+
+	const tent = ( i, k ) => {
+
+		const p = ( i + 0.5 ) / k;
+		return p < 0.5 ? p + 0.5 : 1.5 - p;
+
+	};
+
+	const out = new Float32Array( n[ 0 ] * n[ 1 ] * n[ 2 ] );
+	for ( let z = 0, i = 0; z < n[ 2 ]; z ++ ) for ( let y = 0; y < n[ 1 ]; y ++ ) for ( let x = 0; x < n[ 0 ]; x ++ ) out[ i ++ ] = tent( x, n[ 0 ] ) * tent( y, n[ 1 ] ) * tent( z, n[ 2 ] );
+	return out;
+
+}
 
 // setIndex() only wraps a plain Array; hand it a typed one and it lands on the geometry
 // raw, with no .count, and every consumer downstream reads NaN.
@@ -152,7 +181,7 @@ const DEFAULT_CURVE_TOLERANCE = 0.05;
 const CURVE_SPLIT_CURVES = 20000;
 
 /** Bumped whenever the same scene files build a different graph, so a stored graph is not reused. */
-export const PBRT_BUILD_REVISION = 43;
+export const PBRT_BUILD_REVISION = 44;
 
 // Ptex pages: all of a scene's Ptex colour maps in this much texture memory at most, on square pages this size.
 const DEFAULT_PTEX_MEMORY = 1024 * 2 ** 20;
@@ -1028,6 +1057,7 @@ export class PBRTSceneBuilder {
 	 * @param {(filename:string)=>Promise<BufferGeometry>} [resolvers.resolvePLY]
 	 * @param {(filename:string)=>Promise<import('three').Texture>} [resolvers.resolveImage]
 	 * @param {(filename:string)=>Promise<import('three').Texture>} [resolvers.resolveEnvironment]
+	 * @param {(filename:string)=>Promise<?Uint8Array>} [resolvers.resolveFile] - a file's bytes (a grid medium's .nvdb)
 	 * @param {boolean} [resolvers.convertHandedness=false]
 	 * @param {(done:number, total:number)=>?Promise} [resolvers.pause] - called as shapes are built; a promise it
 	 *   returns is waited on, which lets the host redraw
@@ -1046,6 +1076,7 @@ export class PBRTSceneBuilder {
 		this.resolvePLY = resolvers.resolvePLY || ( async () => null );
 		this.resolveImage = resolvers.resolveImage || ( async () => null );
 		this.resolveEnvironment = resolvers.resolveEnvironment || resolvers.resolveImage || ( async () => null );
+		this.resolveFile = resolvers.resolveFile || ( async () => null );
 		this.convertHandedness = resolvers.convertHandedness === true;
 		this._usage = resolvers.usage ?? null;
 		this.pause = resolvers.pause ?? null;
@@ -1162,6 +1193,7 @@ export class PBRTSceneBuilder {
 		this._shapeTotal = ir.shapes.length;
 		for ( const name of ir.instances.keys() ) this._shapeTotal += ir.objects.get( name )?.length ?? 0;
 		await this._preparePtex( ir );
+		await this._gridMediumVolumes( ir, group );
 
 		// Shapes (direct + instanced)
 		for ( let i = 0; i < ir.shapes.length; i ++ ) {
@@ -1176,6 +1208,14 @@ export class PBRTSceneBuilder {
 			this._shapesDone ++;
 			await this._tick();
 			const shape = ir.shapes[ i ];
+			if ( ( this._volumeMedia.has( shape.interior ) || this._volumeMedia.has( shape.exterior ) ) && BOUNDARY_MATERIALS.has( shape.material?.type ?? 'diffuse' ) ) {
+
+				// Built only to clip the volume: one use of its .ply less.
+				if ( shape.type === 'plymesh' ) this._lastPlyUse( pString( shape.params, 'filename', null ) );
+				continue;
+
+			}
+
 			const [ geometry, surface ] = await Promise.all( [
 				this._batches && ! shape.shared ? this._createGeometry( shape ) : this._buildGeometry( shape ),
 				this._getMaterial( shape )
@@ -3057,6 +3097,287 @@ export class PBRTSceneBuilder {
 		}
 
 		return { name: exterior, flip: true };
+
+	}
+
+	/**
+	 * pbrt's grid media (`nanovdb`, `uniformgrid`) inside a shape, as volumes in its group: extinction σa + σs, the
+	 * albedo σs over it, Henyey–Greenstein `g`, and emission σa × Le as pbrt's media emit. A shape that only bounds one
+	 * (an `interface`) is then not built.
+	 * @private
+	 */
+	async _gridMediumVolumes( ir, group ) {
+
+		this._volumeMedia = new Set();
+		const bounds = new Map(); // medium -> the shapes it is inside or outside of
+		for ( const shape of ir.shapes ) {
+
+			if ( ! shape || shape.interior === shape.exterior ) continue;
+			for ( const name of [ shape.interior, shape.exterior ] ) {
+
+				if ( ! name ) continue;
+				if ( ! bounds.has( name ) ) bounds.set( name, [] );
+				bounds.get( name ).push( shape );
+
+			}
+
+		}
+
+		for ( const [ name, shapes ] of bounds ) {
+
+			const params = ir.media?.get( name );
+			if ( ! params || ! GRID_MEDIA.has( params.type?.value?.[ 0 ] ) ) continue;
+			// Volumes are traced outside glass and solids only: a medium a surface holds stays that surface's (left clear).
+			if ( ! shapes.every( ( shape ) => BOUNDARY_MATERIALS.has( shape.material?.type ?? 'diffuse' ) ) ) continue;
+			const type = pString( params, 'type', '' );
+			this._usage?.open( params, `MakeNamedMedium ${type}`, 'type' );
+			let volume = null;
+			try {
+
+				volume = await this._gridVolume( name, type, params, ir.mediumTransforms?.get( name ) ?? M.identity() );
+
+			} catch ( e ) {
+
+				this.warn( `medium "${name}" (${type}): ${e.message}` );
+
+			}
+
+			if ( ! volume ) continue;
+			await this._clipToShapes( volume, shapes, name );
+			group.add( volume );
+			this._volumeMedia.add( name );
+
+		}
+
+	}
+
+	/**
+	 * Clears a grid medium's voxels outside the shapes it is inside of (pbrt's medium is there only), or inside them
+	 * where it is only ever outside. Each column of voxels is inside between alternate crossings of the shapes'
+	 * triangles; a shape that leaves columns an odd count (not closed) clips nothing.
+	 * @private
+	 */
+	async _clipToShapes( volume, shapes, name ) {
+
+		const grid = volume.grid;
+		const { width, height, depth, data } = grid;
+		const toIndex = grid.transform.clone().invert();
+		const columns = new Map(); // column -> z of each crossing, in index space
+		const a = new Vector3(), b = new Vector3(), c = new Vector3();
+		let whole = true;
+		for ( const shape of shapes ) {
+
+			await this._tick();
+			const geometry = await this._createGeometry( shape );
+			const position = geometry?.getAttribute( 'position' );
+			if ( ! position ) {
+
+				whole = false;
+				continue;
+
+			}
+
+			const m = new Matrix4().fromArray( this.convertHandedness ? M.multiply( FLIP_Z, shape.ctm ) : shape.ctm ).premultiply( toIndex );
+			const index = geometry.getIndex();
+			const count = index ? index.count : position.count;
+			const corner = ( v, k ) => v.fromBufferAttribute( position, index ? index.getX( k ) : k ).applyMatrix4( m );
+			for ( let k = 0; k < count; k += 3 ) {
+
+				corner( a, k ); corner( b, k + 1 ); corner( c, k + 2 );
+				const area = ( b.x - a.x ) * ( c.y - a.y ) - ( c.x - a.x ) * ( b.y - a.y );
+				if ( area === 0 ) continue;
+				const x0 = Math.max( 0, Math.ceil( Math.min( a.x, b.x, c.x ) ) ), x1 = Math.min( width - 1, Math.floor( Math.max( a.x, b.x, c.x ) ) );
+				const y0 = Math.max( 0, Math.ceil( Math.min( a.y, b.y, c.y ) ) ), y1 = Math.min( height - 1, Math.floor( Math.max( a.y, b.y, c.y ) ) );
+				for ( let y = y0; y <= y1; y ++ ) for ( let x = x0; x <= x1; x ++ ) {
+
+					// Off the voxel centre by a hair, so a column never runs down an edge or through a corner.
+					const px = x + 1.3e-6, py = y + 2.9e-6;
+					const u = ( ( b.x - px ) * ( c.y - py ) - ( c.x - px ) * ( b.y - py ) ) / area;
+					const v = ( ( c.x - px ) * ( a.y - py ) - ( a.x - px ) * ( c.y - py ) ) / area;
+					if ( u < 0 || v < 0 || u + v > 1 ) continue;
+					const key = x + width * y;
+					let list = columns.get( key );
+					if ( ! list ) columns.set( key, list = [] );
+					list.push( u * a.z + v * b.z + ( 1 - u - v ) * c.z );
+
+				}
+
+			}
+
+		}
+
+		if ( ! whole ) {
+
+			this.warn( `medium "${name}": a shape bounding it builds no surface; the grid is not clipped to its shapes` );
+			return;
+
+		}
+
+		let odd = 0;
+		for ( const list of columns.values() ) if ( list.length % 2 ) odd ++;
+		// A crack in a closed mesh leaves a few columns undecided. More, and it is not closed.
+		if ( odd > 0.01 * columns.size ) {
+
+			this.warn( `medium "${name}": its shapes are not closed (${odd} of ${columns.size} columns cross them an odd number of times); the grid is not clipped to them` );
+			return;
+
+		}
+
+		if ( odd > 0 ) this.warn( `medium "${name}": ${odd} of ${columns.size} columns cross its shapes an odd number of times; each is clipped as a neighbour is` );
+		for ( const list of columns.values() ) list.sort( ( p, q ) => p - q );
+		const none = [];
+		const decided = ( x, y ) => {
+
+			const list = x >= 0 && y >= 0 && x < width && y < height ? columns.get( x + width * y ) ?? none : null;
+			return list && list.length % 2 === 0 ? list : null;
+
+		};
+
+		// Outside every shape that bounds it (a camera in the smoke), the medium is everywhere but in them.
+		const everywhere = shapes.every( ( shape ) => shape.interior !== name );
+		// An undecided column takes the nearest decided one within two columns; with none it keeps its voxels.
+		const near = [[ 1, 0 ], [ - 1, 0 ], [ 0, 1 ], [ 0, - 1 ], [ 1, 1 ], [ - 1, 1 ], [ 1, - 1 ], [ - 1, - 1 ], [ 2, 0 ], [ - 2, 0 ], [ 0, 2 ], [ 0, - 2 ]];
+		let cleared = 0;
+		for ( let y = 0; y < height; y ++ ) for ( let x = 0; x < width; x ++ ) {
+
+			if ( x === 0 && ( y & 63 ) === 0 ) await this._tick();
+			let list = decided( x, y );
+			for ( let k = 0; ! list && k < near.length; k ++ ) list = decided( x + near[ k ][ 0 ], y + near[ k ][ 1 ] );
+			if ( ! list ) continue;
+			for ( let z = 0, n = 0; z < depth; z ++ ) {
+
+				while ( n < list.length && list[ n ] <= z ) n ++;
+				const at = x + width * ( y + height * z );
+				if ( ( n % 2 === 0 ) !== everywhere && data[ at ] !== 0 ) {
+
+					data[ at ] = 0;
+					cleared ++;
+
+				}
+
+			}
+
+		}
+
+		if ( cleared > 0 ) volume.grid = new VolumeGrid( grid );
+
+	}
+
+	/** @private */
+	async _gridVolume( name, type, params, ctm ) {
+
+		const world = new Matrix4().fromArray( this.convertHandedness ? M.multiply( FLIP_Z, ctm ) : ctm );
+		const ctx = this._materialContext();
+		const scale = pFloat( params, 'scale', 1 );
+		const absorb = ( await resolveSpectrum( params, 'sigma_a', ctx, [ 1, 1, 1 ], { bounded: false } ) ).rgb.map( ( v ) => v * scale );
+		const scatter = ( await resolveSpectrum( params, 'sigma_s', ctx, [ 1, 1, 1 ], { bounded: false } ) ).rgb.map( ( v ) => v * scale );
+		const offset = pFloat( params, 'temperatureoffset', pFloat( params, 'temperaturecutoff', 0 ) );
+		const temperatureScale = pFloat( params, 'temperaturescale', 1 );
+		let density, emission = null, ramp = null;
+		if ( type === 'nanovdb' ) {
+
+			const file = pString( params, 'filename', '' );
+			const bytes = file ? await this.resolveFile( file ) : null;
+			if ( ! bytes ) {
+
+				this.warn( `medium "${name}": nanovdb file ${file ? `"${file}" not found` : 'not named'}` );
+				return null;
+
+			}
+
+			let { grids, blosc } = readNanoVDB( bytes );
+			if ( blosc ) ( { grids } = readNanoVDB( bytes, { blosc: await bloscReader() } ) );
+			const gridName = pString( params, 'gridname', 'density' ), temperatureName = pString( params, 'temperaturename', 'temperature' );
+			// As pbrt's readGrid: a fog volume or a grid of no class.
+			const named = ( n ) => {
+
+				const grid = grids.find( ( g ) => g.name === n );
+				if ( grid && grid.gridClass !== 'fog volume' && grid.gridClass !== 'unknown' ) throw new Error( `"${file}": "${n}" is a ${grid.gridClass} grid, not a fog volume` );
+				return grid;
+
+			};
+
+			const densityGrid = named( gridName );
+			if ( ! densityGrid ) throw new Error( `"${file}" has no "${gridName}" grid (its grids: ${grids.map( ( g ) => g.name ).join( ', ' )})` );
+			density = densityGrid.toVolumeGrid( world );
+			await this._tick();
+			const temperatureGrid = named( temperatureName );
+			const leScale = pFloat( params, 'Lescale', 1 );
+			// A temperature grid holding no voxel gives no light, the density kept (pbrt's Le is then 0).
+			if ( temperatureGrid && leScale > 0 && temperatureGrid.voxelCount > 0 ) {
+
+				emission = temperatureGrid.toVolumeGrid( world );
+				ramp = blackbodyRamp( leScale, offset, temperatureScale );
+				await this._tick();
+
+			}
+
+		} else {
+
+			const n = [ 'nx', 'ny', 'nz' ].map( ( k ) => pFloat( params, k, 1 ) );
+			const values = param( params, 'density' )?.value;
+			if ( ! values || values.length !== n[ 0 ] * n[ 1 ] * n[ 2 ] ) throw new Error( `${values?.length ?? 0} density values for ${n.join( ' × ' )}` );
+			const p0 = param( params, 'p0' )?.value ?? [ 0, 0, 0 ], p1 = param( params, 'p1' )?.value ?? [ 1, 1, 1 ];
+			// Voxel i's centre at p0 + ( i + ½ ) / n × ( p1 − p0 ), pbrt's SampledGrid.
+			const transform = world.clone().multiply( new Matrix4().makeTranslation( ...p0 ) )
+				.multiply( new Matrix4().makeScale( ...n.map( ( k, a ) => ( p1[ a ] - p0[ a ] ) / k ) ) ).multiply( new Matrix4().makeTranslation( 0.5, 0.5, 0.5 ) );
+			const grid = ( data, gridName ) => new VolumeGrid( { width: n[ 0 ], height: n[ 1 ], depth: n[ 2 ], data: Float32Array.from( data ), transform: transform.clone(), name: gridName } );
+			density = grid( values, 'density' );
+			const temperature = param( params, 'temperature' )?.value;
+			const scales = param( params, 'Lescale' )?.value ?? null;
+			// pbrt stops on either of a size other than the density's.
+			if ( temperature && temperature.length !== values.length ) throw new Error( `${temperature.length} temperature values for ${values.length} density values` );
+			if ( scales && scales.length !== values.length ) throw new Error( `${scales.length} Lescale values for ${values.length} density values` );
+			if ( temperature ) {
+
+				// Le is Lescale's grid (a tent by default) × the blackbody: one grid carries the temperature, so Lescale is left out.
+				emission = grid( temperature, 'temperature' );
+				ramp = blackbodyRamp( 1, offset, temperatureScale );
+				approximated( params, 'temperature' );
+				if ( scales ) approximated( params, 'Lescale' );
+
+			} else if ( param( params, 'Le' ) ) {
+
+				const rgb = await lightRGB( params, 'Le', ctx );
+				if ( Math.max( ...rgb ) > 0 ) {
+
+					emission = grid( scales ?? tentField( n ), 'Lescale' );
+					ramp = ( value ) => rgb.map( ( c ) => c * value );
+
+				}
+
+			}
+
+		}
+
+		// The engine's extinction is one number a point: σt's luminance, each channel's albedo against it.
+		const extinction = absorb.map( ( v, c ) => v + scatter[ c ] );
+		const sigma = 0.2126 * extinction[ 0 ] + 0.7152 * extinction[ 1 ] + 0.0722 * extinction[ 2 ];
+		if ( Math.max( ...extinction ) - Math.min( ...extinction ) > 0.01 * sigma ) {
+
+			approximated( params, 'sigma_a' );
+			approximated( params, 'sigma_s' );
+
+		}
+
+		// Emission is σa × Le: none where there is no density, so the density's box holds all of it.
+		const unified = unifyGrids( density, emission, { grow: false } );
+		const volume = new Volume( unified.grid, {
+			density: sigma,
+			color: new Color( ...scatter.map( ( v ) => ( sigma > 0 ? Math.min( 1, v / sigma ) : 0 ) ) ),
+			anisotropy: pFloat( params, 'g', 0 )
+		} );
+		if ( Math.abs( volume.anisotropy ) > 0.95 ) approximated( params, 'g' );
+		volume.name = name;
+		if ( unified.emission ) {
+
+			volume.emissionGrid = unified.emission;
+			volume.emissionFromAbsorption = true;
+			volume.emissionRamp = ramp;
+
+		}
+
+		return volume;
 
 	}
 
