@@ -1244,38 +1244,25 @@ export class AssetLoader extends EventDispatcher {
 
 		this.sceneMetadata = withSceneAspect( this.sceneMetadata, extractedCameras[ 0 ] );
 
-		// Center model and adjust camera
+		// The camera stays where it is: a model's own cameras are the viewer's to switch to.
 		buildTimer.start( 'Camera setup' );
 		computeInstanceBoundingBoxes( model );
 		const box = expandByVolumes( new Box3().setFromObject( model ), model );
 		const center = box.getCenter( new Vector3() );
 		const size = box.getSize( new Vector3() );
-
-		this.controls?.target.copy( center );
-
 		const maxDim = Math.max( size.x, size.y, size.z );
-		const fov = this.camera.fov * ( Math.PI / 180 );
-		const cameraDistance = Math.abs( maxDim / Math.sin( fov / 2 ) / 2 );
-
-		// Set up isometric-like view
-		const angle = Math.PI / 6; // 30 degrees
-		const pos = new Vector3(
-			Math.cos( angle ) * cameraDistance,
-			cameraDistance / Math.sqrt( 2 ), // Elevation
-			Math.sin( angle ) * cameraDistance
-		);
-
-		this.camera.position.copy( pos.add( center ) );
-		this.camera.lookAt( center );
 
 		this.camera.near = maxDim / 100;
 		this.camera.far = maxDim * 100;
 		this.camera.updateProjectionMatrix();
 		if ( this.controls ) {
 
-			this.controls.maxDistance = cameraDistance * 10;
+			// Never below where the camera sits, or the controls pull it in.
+			const fov = this.camera.fov * ( Math.PI / 180 );
+			const fitDistance = Math.abs( maxDim / Math.sin( fov / 2 ) / 2 );
+			const distance = this.camera.position.distanceTo( this.controls.target );
+			this.controls.maxDistance = Math.max( fitDistance * 10, distance * 1.1 );
 			this.controls.saveState();
-			this.controls.update();
 
 		}
 

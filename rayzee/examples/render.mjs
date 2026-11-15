@@ -8,8 +8,8 @@
 //   --environment <file|url>  .hdr, .exr, .png or .jpg, or "sky" for the physical sky (default)
 //   --resolution <n|WxH>      the longer side in pixels, or an exact size like 1920x1080 (default: 800)
 //   --aspect <W:H>            shape for a single-number resolution, like 16:9 or 1.5 (default: 4:3)
-//   --camera <name|n>         a camera in the scene, by name or number; 0 is the engine's own view of the model
-//                             (default), and a name the scene lacks lists the ones it has
+//   --camera <name|n>         a camera in the scene, by name or number; 0 is the engine's own, which a load leaves
+//                             at (0, 0, 5) looking down −z; a name the scene lacks lists the ones it has
 //   --samples <n>             samples per pixel (default: 128)
 //   --no-denoise              save the raw render instead of running the OIDN denoiser on it
 //   --details                 also save render.json: what made the image (provenance) and how long each part took

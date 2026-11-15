@@ -22,7 +22,7 @@ describe( 'PathTracerApp — the camera a replaced model opens through', () => {
 
 	}
 
-	it( 'switches to the model\'s first camera, leaving the default for the fitted view', () => {
+	it( 'switches to the model\'s first camera, leaving the default where it was', () => {
 
 		expect( replaceWith( [ 'default', 'model A', 'model B' ], 0 ) ).toEqual( { switches: [ { index: 1, from: 0 } ], current: 1 } );
 

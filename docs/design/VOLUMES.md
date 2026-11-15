@@ -69,7 +69,7 @@ Per Shade segment (origin → hit), outside glass and subsurface media, in the b
 Volume scatters count as bounces (`maxBounces`), Russian roulette from the third, as fog's do. The G-buffer takes the
 first scatter (normal toward the camera, the albedo), as fog's. Under the bidirectional integrators volumes are left
 out (`setting.ignored`). A scene of volumes alone gets a hidden anchor triangle (`anchorVolumes`, `SceneLoading.js`):
-the geometry build refuses zero triangles. Model bounds and camera framing count volumes (`expandByVolumes`):
+the geometry build refuses zero triangles. Model bounds count volumes (`expandByVolumes`):
 three.js's `Box3.setFromObject` sees none.
 
 ## OpenVDB

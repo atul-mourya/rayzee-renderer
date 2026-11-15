@@ -473,13 +473,28 @@ function setSceneConfig( config ) {
 
 }
 
+// A load leaves the camera where the last scene put it: frame the model as loads used to, so A/B runs share one view.
+function frameModel( { center, maxDim } ) {
+
+	const camera = app.camera;
+	const distance = Math.abs( maxDim / Math.sin( camera.fov * ( Math.PI / 180 ) / 2 ) / 2 );
+	const angle = Math.PI / 6;
+	camera.position.set( center.x + Math.cos( angle ) * distance, center.y + distance / Math.SQRT2, center.z + Math.sin( angle ) * distance );
+	camera.lookAt( center );
+	camera.updateMatrixWorld( true );
+	const controls = app.cameraManager.controls;
+	controls.target.copy( center );
+	controls.update();
+
+}
+
 /**
  * Load an arbitrary GLB for timing only — no golden exists, so no image suite can reach it. Corpus
  * scenes are procedural primitives with few materials; their kernel shares do not transfer to real
  * content, so conclusions drawn only from the corpus need checking against a model.
  *
- * setCameras() selects index 0, the engine default camera, which for an interior is usually outside
- * the geometry — prefer an authored one.
+ * Camera 0, the engine default, is framed from outside the model (frameModel), which for an interior
+ * is usually outside the geometry — prefer an authored one.
  *
  * A GLB carries no environment, and the black placeholder is not a neutral default: env NEE is
  * deterministic (a shadow ray every bounce), but a black env gives envTotalSum 0 ⇒ envPdf 0, so the
@@ -495,8 +510,11 @@ async function loadModelScene( url, cameraIndex = 1, env = 'procedural' ) {
 	app.settings.setMany( { ...session.settingsFloor(), ...BASE_SETTINGS }, { silent: true } );
 	session.restoreEnvParams();
 
+	let sceneData = null;
+	const keepSceneData = ( event ) => void ( sceneData = event.sceneData );
+	app.assetLoader.addEventListener( 'modelProcessed', keepSceneData );
 	const startedAt = performance.now();
-	await app.loadModel( url );
+	await app.loadModel( url ).finally( () => app.assetLoader.removeEventListener( 'modelProcessed', keepSceneData ) );
 	const loadMs = performance.now() - startedAt;
 
 	// After the model: setMode builds the sky and its importance-sampling CDF.
@@ -507,6 +525,7 @@ async function loadModelScene( url, cameraIndex = 1, env = 'procedural' ) {
 	const cameras = app.cameraManager?.cameras ?? [];
 	const picked = cameraIndex > 0 && cameraIndex < cameras.length ? cameraIndex : 0;
 	if ( picked !== app.cameraManager.currentCameraIndex ) app.cameraManager.switchCamera( picked );
+	if ( picked === 0 ) frameModel( sceneData );
 
 	app.setDeterministicMode( true, { pinDispatch: ! perfModeEnabled } );
 

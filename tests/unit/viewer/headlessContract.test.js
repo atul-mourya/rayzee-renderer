@@ -101,7 +101,7 @@ describe( 'renderFrames', () => {
 
 	} );
 
-	// A load frames the camera with lookAt(), which leaves matrixWorld stale; nothing else refreshes it headless.
+	// A host places the camera with lookAt(), which leaves matrixWorld stale; nothing else refreshes it headless.
 	it( 'brings the camera\'s world matrix up to date before every pass', async () => {
 
 		const { app } = makeApp();

@@ -10,7 +10,7 @@ import {
 } from 'three';
 import { AssetLoader } from '@/core/loaders/AssetLoader.js';
 
-// onModelLoad() reframes the camera through OrbitControls; only these members are touched.
+// onModelLoad() sets the orbit limits; only these members are touched.
 const stubControls = () => ( {
 	target: new Vector3(),
 	maxDistance: 0,
@@ -218,6 +218,31 @@ describe( 'AssetLoader — caller-owned Object3D is never mutated', () => {
 
 		await expect( newLoader().loadObject3D( design ) )
 			.rejects.toThrow( /widget.*userData must be JSON-serializable/ );
+
+	} );
+
+} );
+
+describe( 'AssetLoader — a load leaves the camera where it was', () => {
+
+	it( 'keeps its pose and orbit target, and lets the controls reach where it sits', async () => {
+
+		const camera = new PerspectiveCamera();
+		camera.position.set( 40, 3, - 7 );
+		camera.lookAt( 2, 0, 1 );
+		const controls = stubControls();
+		controls.target.set( 2, 0, 1 );
+		const position = camera.position.toArray();
+		const quaternion = camera.quaternion.toArray();
+
+		const model = new Group().add( new Mesh( new BoxGeometry(), new MeshStandardMaterial() ) );
+		model.position.set( - 5, 0, 0 );
+		await new AssetLoader( new Scene(), camera, controls ).loadObject3D( model );
+
+		expect( camera.position.toArray() ).toEqual( position );
+		expect( camera.quaternion.toArray() ).toEqual( quaternion );
+		expect( controls.target.toArray() ).toEqual( [ 2, 0, 1 ] );
+		expect( controls.maxDistance ).toBeGreaterThan( camera.position.distanceTo( controls.target ) );
 
 	} );
 

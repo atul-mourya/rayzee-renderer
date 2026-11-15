@@ -20,7 +20,7 @@ A run of numbered `.vdb` files loads as one volume that changes over time, playe
 
 `loadModel` / `loadObject3D` **replace** the current scene. An object's own clips (`object3d.animations`) go to
 `engine.animationManager` as a loaded glTF's do, bound by node name to the engine's copy; a track on the object itself
-replaces the transform of its parents that the copy carries. A model that carries cameras opens through its first one; `cameraManager.switchCamera(0)` goes back to the default view, fitted to the model. To add or remove objects from a live scene without a full reload (and without reframing the camera):
+replaces the transform of its parents that the copy carries. A load never moves the camera: a model that carries cameras opens through its first one, and one without is seen from wherever the camera was; `cameraManager.switchCamera(0)` goes back to that view. To add or remove objects from a live scene without a full reload:
 
 ```js
 const id = await engine.addModel(url, { name })                  // Append a model, rebuild in place

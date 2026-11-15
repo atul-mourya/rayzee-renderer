@@ -1261,7 +1261,6 @@ export class PathTracerApp extends RayzeeRenderer {
 
 	_syncControlsAfterLoad() {
 
-		this.cameraManager.fitOrthographic();
 		this.cameraManager.controls.saveState();
 		this.cameraManager.controls.update();
 		this.cameraManager.walkControls.fitSpeed( this.assetLoader.getSceneScale() );
@@ -1272,8 +1271,8 @@ export class PathTracerApp extends RayzeeRenderer {
 	 * Recompute OrbitControls zoom limits (+ default-camera near/far) from the CURRENT
 	 * model bounds without moving the camera or its target. Called after a dynamic
 	 * add/remove (the reframe-free path) so an enlarged scene stays reachable and
-	 * unclipped, and a shrunken one re-tightens. The replace-load (reframe) path owns
-	 * this via onModelLoad(). Bounds cover only the loaded model roots
+	 * unclipped, and a shrunken one re-tightens. A replace load sets them in
+	 * onModelLoad(). Bounds cover only the loaded model roots
 	 * (__rayzeeSceneObject) so the oversized, usually-hidden Ground plane can't inflate them.
 	 */
 	_recalibrateControlLimits() {
@@ -1292,7 +1291,7 @@ export class PathTracerApp extends RayzeeRenderer {
 
 		const { camera, controls } = this.cameraManager;
 
-		// Same framing distance onModelLoad() uses for the initial reframe.
+		// The distance that fits the model, as onModelLoad() measures it.
 		const fov = camera.fov * ( Math.PI / 180 );
 		const cameraDistance = Math.abs( maxDim / Math.sin( fov / 2 ) / 2 );
 

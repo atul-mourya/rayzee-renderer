@@ -169,7 +169,7 @@ describe( 'CameraManager projection', () => {
 
 	} );
 
-	it( 'reframes an orthographic view on a new model like a perspective one', () => {
+	it( 'sizes an orthographic view to what a perspective one shows at the orbit target', () => {
 
 		const { cm, setProjection } = manager();
 		setProjection( 'orthographic' );
