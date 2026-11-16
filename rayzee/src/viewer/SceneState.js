@@ -6,8 +6,10 @@
  * UUID — those change on every load.
  */
 
+import { Color, Group } from 'three';
 import { VERSION } from '../Version.js';
 import { fromPortable } from '../Portable.js';
+import { Volume, VolumeGrid, PROCEDURAL_VERSION, MAX_VOLUME_VOXELS, proceduralVoxels } from '../scene/Volumes.js';
 
 export const SCENE_STATE_VERSION = 1;
 
@@ -108,7 +110,7 @@ export function captureSceneState( app ) {
 		scene: signature( app ),
 		appended: root.children
 			.filter( c => c !== app.sceneModel && c.userData?.__rayzeeSceneObject )
-			.map( c => ( { name: c.userData.__rayzeeName ?? c.name, url: c.userData.__rayzeeSourceUrl ?? null, cacheKey: c.userData.__rayzeeCacheKey ?? null } ) ),
+			.map( c => ( { name: c.userData.__rayzeeName ?? c.name, url: c.userData.__rayzeeSourceUrl ?? null, cacheKey: c.userData.__rayzeeCacheKey ?? null, volume: drawnVolume( c ), at: root.children.indexOf( c ) } ) ),
 		settings: app.settings.serialize(),
 		environment: app.environmentManager?.serialize() ?? null,
 		color: colorState( app.color ),
@@ -240,11 +242,47 @@ export async function applySceneState( app, state, { resolve = async () => null 
 	const skipped = [];
 	const skip = ( section, reason, detail = {} ) => skipped.push( { section, reason, ...detail } );
 
+	// Saved paths start with a child of the scene: those after an entry not put back move up one.
+	const gone = [];
+	const rebase = ( path ) => {
+
+		if ( ! Array.isArray( path ) || ! path.length || ! gone.length ) return path;
+		if ( gone.includes( path[ 0 ] ) ) return null;
+		return [ path[ 0 ] - gone.filter( at => at < path[ 0 ] ).length, ...path.slice( 1 ) ];
+
+	};
+
+	const notAdded = ( model, reason ) => {
+
+		skip( 'appended', reason, { name: model.name } );
+		if ( Number.isInteger( model.at ) ) gone.push( model.at );
+
+	};
+
+	let voxels = 0;
 	for ( const model of state.appended ?? [] ) {
+
+		if ( model.volume ) {
+
+			try {
+
+				const drawn = volumeFrom( model.volume, MAX_VOLUME_VOXELS - voxels );
+				await app.addModelFromObject3D( drawn.group, { name: model.name } );
+				voxels += drawn.voxels;
+
+			} catch ( error ) {
+
+				notAdded( model, error.message );
+
+			}
+
+			continue;
+
+		}
 
 		if ( ! model.url ) {
 
-			skip( 'appended', 'added from memory, not a file', { name: model.name } );
+			notAdded( model, 'added from memory, not a file' );
 			continue;
 
 		}
@@ -255,7 +293,7 @@ export async function applySceneState( app, state, { resolve = async () => null 
 
 		} catch ( error ) {
 
-			skip( 'appended', error.message, { name: model.name } );
+			notAdded( model, error.message );
 
 		}
 
@@ -305,7 +343,7 @@ export async function applySceneState( app, state, { resolve = async () => null 
 		}
 
 		const root = app.meshScene;
-		const hidden = new Set( ( state.hidden ?? [] ).map( path => objectAt( root, path ) ).filter( Boolean ) );
+		const hidden = new Set( ( state.hidden ?? [] ).map( rebase ).filter( Boolean ).map( path => objectAt( root, path ) ).filter( Boolean ) );
 		root.traverse( object => {
 
 			if ( object !== root && ! object.isLight ) object.visible = ! hidden.has( object );
@@ -316,7 +354,8 @@ export async function applySceneState( app, state, { resolve = async () => null 
 		const moved = [];
 		for ( const entry of state.moved ?? [] ) {
 
-			const object = objectAt( root, entry.path );
+			const path = rebase( entry.path );
+			const object = path && objectAt( root, path );
 			if ( ! object || object.name !== entry.name ) {
 
 				skip( 'moved', 'no such object', { name: entry.name } );
@@ -363,5 +402,56 @@ export async function applySceneState( app, state, { resolve = async () => null 
 
 	app.reset();
 	return { skipped };
+
+}
+
+// An added object that is one volume drawn from noise (Add → Cloud / Smoke): how to draw it again, its inputs and where
+// it and its group stood. Null for anything else, which a session cannot rebuild.
+function drawnVolume( root ) {
+
+	const volumes = [];
+	root.traverse( object => object.isVolume && volumes.push( object ) );
+	const [ volume ] = volumes;
+	if ( volumes.length !== 1 || ! volume.grid?.recipe || volume.emissionGrid || volume.parent !== root || root.children.length !== 1 ) return null;
+	const place = object => ( { position: object.position.toArray(), quaternion: object.quaternion.toArray(), scale: object.scale.toArray() } );
+	return {
+		recipe: { ...volume.grid.recipe },
+		name: volume.name,
+		visible: volume.visible,
+		shown: root.visible,
+		density: volume.density,
+		color: volume.color.toArray(),
+		anisotropy: volume.anisotropy,
+		group: place( root ),
+		place: place( volume ),
+	};
+
+}
+
+function volumeFrom( saved, budget ) {
+
+	// A file can be anyone's: only a recipe this engine draws the same, and only as many voxels as the volume atlas holds.
+	const { v, kind, resolution, seed } = saved.recipe ?? {};
+	if ( v !== PROCEDURAL_VERSION ) throw new Error( `a ${kind} drawn by recipe version ${v}, not ${PROCEDURAL_VERSION}` );
+	if ( kind !== 'cloud' && kind !== 'smoke' ) throw new Error( `no volume of kind "${kind}"` );
+	if ( ! Number.isInteger( resolution ) || resolution < 2 || ( seed !== null && ! Number.isFinite( seed ) ) ) throw new Error( `a ${kind} of resolution ${resolution}, seed ${seed}` );
+	const voxels = proceduralVoxels( kind, resolution );
+	if ( voxels > budget ) throw new Error( `a ${kind} of resolution ${resolution}: past the ${MAX_VOLUME_VOXELS} voxels the session's volumes may draw` );
+	const volume = new Volume( VolumeGrid.procedural( kind, { resolution, seed } ), {
+		density: saved.density, color: new Color().fromArray( saved.color ), anisotropy: saved.anisotropy,
+	} );
+	volume.name = saved.name;
+	volume.visible = saved.visible !== false;
+	const group = new Group().add( volume );
+	group.visible = saved.shown !== false;
+	for ( const [ object, place ] of [[ group, saved.group ], [ volume, saved.place ]] ) {
+
+		object.position.fromArray( place.position );
+		object.quaternion.fromArray( place.quaternion );
+		object.scale.fromArray( place.scale );
+
+	}
+
+	return { group, voxels };
 
 }

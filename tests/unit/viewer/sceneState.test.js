@@ -10,6 +10,7 @@ import { RenderSettings, SETTING_SOURCE } from '@/core/RenderSettings.js';
 import { ENGINE_DEFAULTS } from '@/core/EngineDefaults.js';
 import { MaterialDataManager } from '@/core/materials/MaterialDataManager.js';
 import { MATERIAL_DATA_LAYOUT } from '@/core/scene/BufferLayout.js';
+import { Volume, VolumeGrid } from '@/core/scene/Volumes.js';
 
 const json = value => JSON.parse( JSON.stringify( value ) );
 
@@ -510,6 +511,142 @@ describe( 'applySceneState', () => {
 			{ section: 'appended', reason: 'added from memory, not a file', name: 'Mug' },
 			{ section: 'appended', reason: '404', name: 'Bowl' },
 		] );
+
+	} );
+
+	it( 'draws an added cloud or smoke again, with its inputs and where it stood; a volume read from a file is skipped', async () => {
+
+		const added = ( volume, name ) => Object.assign( new Group().add( volume ), { userData: { __rayzeeSceneObject: true, __rayzeeName: name } } );
+		const state = saved( ( app ) => {
+
+			const cloud = new Volume( VolumeGrid.procedural( 'cloud', { resolution: 12, seed: 7 } ), { density: 3, color: 0xffeedd, anisotropy: 0.5 } );
+			cloud.name = 'Cloud';
+			cloud.position.set( 1, 4, - 2 );
+			cloud.scale.setScalar( 2.5 );
+			// Edited after it was added: the density, the colour, the group moved.
+			cloud.density = 9;
+			cloud.color.setRGB( 0.2, 0.4, 0.6 );
+			const group = added( cloud, 'Cloud' );
+			group.position.set( 0, 1, 0 );
+			const read = new Volume( new VolumeGrid( { width: 2, height: 2, depth: 2, data: new Float32Array( 8 ).fill( 1 ) } ) );
+			app.scene.root.add( group, added( read, 'Explosion' ) );
+
+		} );
+		const app = stateApp();
+		app.addModelFromObject3D = vi.fn( async () => 'id' );
+
+		const { skipped } = await applySceneState( app, state );
+
+		expect( skipped ).toEqual( [ { section: 'appended', reason: 'added from memory, not a file', name: 'Explosion' } ] );
+		expect( app.addModelFromObject3D ).toHaveBeenCalledOnce();
+		const [ group, options ] = app.addModelFromObject3D.mock.calls[ 0 ];
+		expect( options ).toEqual( { name: 'Cloud' } );
+		const [ volume ] = group.children;
+		const drawn = VolumeGrid.procedural( 'cloud', { resolution: 12, seed: 7 } );
+		expect( volume.isVolume ).toBe( true );
+		expect( volume.grid.recipe ).toEqual( { v: 1, kind: 'cloud', resolution: 12, seed: 7 } );
+		expect( Array.from( volume.grid.data ) ).toEqual( Array.from( drawn.data ) );
+		expect( [ volume.name, volume.density, volume.anisotropy, ...volume.color.toArray() ] ).toEqual( [ 'Cloud', 9, 0.5, 0.2, 0.4, 0.6 ] );
+		expect( volume.position.toArray() ).toEqual( [ 1, 4, - 2 ] );
+		expect( volume.scale.toArray() ).toEqual( [ 2.5, 2.5, 2.5 ] );
+		expect( group.position.toArray() ).toEqual( [ 0, 1, 0 ] );
+
+	} );
+
+	it( 'skips a cloud it cannot draw again, and restores the rest; keeps a cloud hidden from its group', async () => {
+
+		const state = saved( ( app ) => {
+
+			for ( const [ name, seed ] of [[ 'Big', 1 ], [ 'Next', 2 ], [ 'Hidden', 3 ]] ) {
+
+				const group = Object.assign( new Group().add( new Volume( VolumeGrid.procedural( 'smoke', { resolution: 8, seed } ) ) ), { userData: { __rayzeeSceneObject: true, __rayzeeName: name } } );
+				group.visible = name !== 'Hidden';
+				app.scene.root.add( group );
+
+			}
+
+		} );
+		state.appended[ 0 ].volume.recipe.resolution = 800; // a shared file asking for 1.9 GB
+		state.appended[ 1 ].volume.recipe.v = 99; // drawn by a later build's noise
+		const app = stateApp();
+		app.addModelFromObject3D = vi.fn( async () => 'id' );
+
+		const { skipped } = await applySceneState( app, state );
+
+		expect( skipped ).toEqual( [
+			{ section: 'appended', reason: 'a smoke of resolution 800: past the 134217728 voxels the session\'s volumes may draw', name: 'Big' },
+			{ section: 'appended', reason: 'a smoke drawn by recipe version 99, not 1', name: 'Next' },
+		] );
+		const [ group ] = app.addModelFromObject3D.mock.calls[ 0 ];
+		expect( group.visible ).toBe( false );
+		expect( group.children[ 0 ].visible ).toBe( true );
+		// The sections after it still apply.
+		expect( app.settings.restore ).toHaveBeenCalled();
+		expect( app.reset ).toHaveBeenCalledOnce();
+
+		// A failed add is skipped the same way.
+		const failing = stateApp();
+		failing.addModelFromObject3D = vi.fn( async () => {
+
+			throw new Error( 'another load is already in progress' );
+
+		} );
+		expect( ( await applySceneState( failing, state ) ).skipped.at( - 1 ) ).toEqual( { section: 'appended', reason: 'another load is already in progress', name: 'Hidden' } );
+
+	} );
+
+	it( 'draws any recipe VolumeGrid.procedural draws, up to the voxels the volume atlas holds in all', async () => {
+
+		const state = saved( ( app ) => {
+
+			for ( const name of [ 'A', 'B', 'C', 'D' ] ) app.scene.root.add( Object.assign( new Group().add( new Volume( VolumeGrid.procedural( 'cloud', { resolution: 4, seed: 1 } ) ) ), { userData: { __rayzeeSceneObject: true, __rayzeeName: name } } ) );
+
+		} );
+		// 384² × 288 = 42.5M voxels each: three fit in 2²⁷, a fourth does not. A null seed draws as VolumeGrid.procedural does.
+		for ( const entry of state.appended ) entry.volume.recipe.resolution = 384;
+		state.appended[ 0 ].volume.recipe.seed = null;
+		const app = stateApp();
+		app.addModelFromObject3D = vi.fn( async () => 'id' );
+		const draw = vi.spyOn( VolumeGrid, 'procedural' ).mockImplementation( ( kind, { resolution, seed } ) => Object.assign( new VolumeGrid( { width: 1, height: 1, depth: 1, data: new Float32Array( 1 ) } ), { recipe: { v: 1, kind, resolution, seed } } ) );
+		try {
+
+			const { skipped } = await applySceneState( app, state );
+			expect( draw.mock.calls.map( ( [ , options ] ) => options ) ).toEqual( [ { resolution: 384, seed: null }, { resolution: 384, seed: 1 }, { resolution: 384, seed: 1 } ] );
+			expect( skipped ).toEqual( [ { section: 'appended', reason: 'a cloud of resolution 384: past the 134217728 voxels the session\'s volumes may draw', name: 'D' } ] );
+
+		} finally {
+
+			draw.mockRestore();
+
+		}
+
+	} );
+
+	it( 'keeps what was hidden or moved after an added object it could not put back', async () => {
+
+		const state = saved( ( app ) => {
+
+			const cloud = Object.assign( new Group().add( new Volume( VolumeGrid.procedural( 'cloud', { resolution: 4, seed: 1 } ) ) ), { userData: { __rayzeeSceneObject: true, __rayzeeName: 'Cloud' } } );
+			const vase = Object.assign( new Group(), { name: 'Vase', userData: { __rayzeeSceneObject: true, __rayzeeName: 'Vase', __rayzeeSourceUrl: 'vase.glb' } } );
+			vase.add( Object.assign( new Group(), { name: 'Lid' } ) );
+			app.scene.root.add( cloud, vase );
+			vase.children[ 0 ].visible = false;
+			vase.position.set( 3, 0, 0 );
+			app.transformManager.movedObjects = [ vase ];
+
+		} );
+		state.appended[ 0 ].volume.recipe.v = 99;
+		const app = stateApp();
+		const vase = Object.assign( new Group(), { name: 'Vase' } );
+		vase.add( Object.assign( new Group(), { name: 'Lid' } ) );
+		app.addModel = vi.fn( async () => void app.scene.root.add( vase ) );
+
+		const { skipped } = await applySceneState( app, state );
+
+		expect( skipped.map( s => s.name ) ).toEqual( [ 'Cloud' ] );
+		expect( vase.children[ 0 ].visible ).toBe( false );
+		expect( vase.visible ).toBe( true );
+		expect( vase.position.toArray() ).toEqual( [ 3, 0, 0 ] );
 
 	} );
 

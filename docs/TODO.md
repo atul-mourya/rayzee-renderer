@@ -123,8 +123,8 @@
 ### Rendering
 - [ ] Explore neural textures: example <https://cornell-neural.utsubo.io/>
 - [ ] Volumes, what is left (docs/design/VOLUMES.md): USD `OpenVDBAsset` (Moana ocean); pbrt's `rgbgrid` and `cloud`
-  media, its camera medium; scenes with a volume stored as graphs; inside glass and subsurface; coloured extinction; NEE toward glowing volumes; NRD guides; picking; sparse
-  bricks; sessions keeping an added cloud or smoke.
+  media, its camera medium; scenes with a volume stored as graphs; inside glass and subsurface; coloured extinction; NEE
+  toward glowing volumes; NRD guides; picking; sparse bricks.
 - [ ] Introduce Sequenced HRDIs - https://mattepaint.com/gallery/hdri/skies/
 - [ ] **Fog and light shafts** ROADMAP: "Fog and homogeneous participating media", "Volumetric lighting and shadows";
   - [ ] Follow-ups: fog inside glass; the shadow catcher ignores fog; the bidirectional integrators render without it

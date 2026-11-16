@@ -18,7 +18,6 @@ import {
 	MenubarTrigger,
 } from "@/components/ui/menubar";
 
-let volumeSeed = 0;
 
 // Files a model comes with (buffers, materials, textures), opened together with it as a folder would be.
 const MODEL_PARTS = [ '.bin', '.mtl', '.ktx2', '.tga', '.bmp', '.gif', '.tif', '.tiff', '.avif' ];
@@ -82,7 +81,7 @@ async function addVolume( kind ) {
 	const distance = Math.max( camera.distanceTo( target ), 0.1 );
 	const cloud = kind === 'cloud';
 	const size = distance * ( cloud ? 0.8 : 0.6 );
-	const volume = new Volume( VolumeGrid.procedural( kind, { resolution: 96, seed: ++ volumeSeed } ), {
+	const volume = new Volume( VolumeGrid.procedural( kind, { resolution: 96, seed: Math.floor( Math.random() * 2 ** 31 ) } ), {
 		density: ( cloud ? 40 : 20 ) / size, color: cloud ? 0xffffff : 0xc0c0c0, anisotropy: cloud ? 0.5 : 0.3,
 	} );
 	volume.name = cloud ? 'Cloud' : 'Smoke';

@@ -67,7 +67,9 @@ refits, read the scene back first. `refitBLASes` throws on a spilled scene until
 
 ```js
 const state = engine.exportSceneState();      // JSON-safe: settings, sky, colour, lights, cameras,
-                                              // timeline keys, material edits, hidden and moved objects
+                                              // timeline keys, material edits, hidden and moved objects,
+                                              // models added by URL, and clouds and smoke drawn by
+                                              // VolumeGrid.procedural (as their recipe, drawn again)
 const source = engine.sceneSource;            // { kind: 'url', url, cacheKey } | { kind: 'local-file', file } | { kind: 'local-folder', folder } | ...
 
 // later, after loading the same model again:

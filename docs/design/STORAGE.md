@@ -79,8 +79,12 @@ turns it off or supplies a host manager; `openHeadless` defaults to off.
   the session (`view.up`; older sessions level) and with a camera saved from the view; the default camera, a new
   model's first frame and timeline keys (which carry none) are level. The panorama's level horizon still levels to +y.
   `app.sceneSource` says where the model came from (`url` / `local-file` / `object3d`, with an
-  archive's `element`); `sceneSourceFile` is the File of a local load. Not restored: texture swaps
-  and texture-transform edits, host Object3D loads, a picked OCIO folder.
+  archive's `element`); `sceneSourceFile` is the File of a local load. An added cloud or smoke (Add menu,
+  `VolumeGrid.procedural`) is saved as its recipe (`grid.recipe`: kind, resolution, seed), inputs and place, and drawn
+  again (`drawnVolume` / `volumeFrom`): a recipe of another `PROCEDURAL_VERSION`, or past `MAX_VOLUME_VOXELS` for the
+  session's volumes together (`proceduralVoxels`), is skipped, and saved paths after a skipped entry move up one (each
+  entry records its place, `at`). Not restored: texture swaps and texture-transform edits, other host Object3D
+  loads, a picked OCIO folder.
 - **Sessions and projects** (app: `lib/session.js`, `lib/project.js`, `SessionDialog`): autosave
   2 s after the last change and on hide, only in Preview and only when the JSON fingerprint differs
   from the last save — an untouched startup scene is never saved. Startup offers only an unfinished

@@ -11,7 +11,10 @@ import { convertLinearTriple, getWorkingMatrix } from '../color/WorkingMatrix.js
 const { VEC4S, RAMP, MAX } = VOLUME_LAYOUT;
 
 /** Voxels every volume together may keep on the GPU (half floats); past it the largest grids are halved. */
-const MAX_VOLUME_VOXELS = 2 ** 27;
+export const MAX_VOLUME_VOXELS = 2 ** 27;
+
+// Bumped whenever drawProcedural draws a recipe differently: a saved recipe of another version is not drawn again.
+export const PROCEDURAL_VERSION = 1;
 
 // Majorant cells along a grid's longest side, at most (pbrt keeps 16³).
 const MAJORANT_CELLS = 32;
@@ -97,63 +100,92 @@ export class VolumeGrid {
 	}
 
 	/**
-	 * A cloud or a column of smoke drawn from noise, filling the unit cube centred on the origin.
+	 * A cloud or a column of smoke drawn from noise, filling the unit cube centred on the origin. The grid keeps how it
+	 * was drawn (`recipe`), so a saved scene can draw it again.
 	 * @param {'cloud'|'smoke'} kind
 	 * @param {{ resolution?: number, seed?: number }} [options]
 	 */
 	static procedural( kind, { resolution = 96, seed = 1 } = {} ) {
 
-		const noise = valueNoise( seed );
-		const fbm = ( x, y, z, octaves ) => {
-
-			let sum = 0, amplitude = 0.5, f = 1;
-			for ( let o = 0; o < octaves; o ++ ) {
-
-				sum += amplitude * noise( x * f, y * f, z * f );
-				amplitude *= 0.5;
-				f *= 2.03;
-
-			}
-
-			return sum;
-
-		};
-
-		if ( kind === 'cloud' ) {
-
-			// Cumulus: three overlapping puffs with a flat base, eaten at the edge by billowing noise.
-			const puffs = [[ 0, 0, 0, 0.3 ], [ - 0.17, - 0.05, 0.04, 0.2 ], [ 0.18, - 0.07, - 0.05, 0.22 ]];
-			return VolumeGrid.fromFunction( [ resolution, Math.round( resolution * 0.75 ), resolution ], ( x, y, z ) => {
-
-				let shape = - 1;
-				for ( const [ cx, cy, cz, r ] of puffs ) shape = Math.max( shape, 1 - Math.hypot( x - cx, ( y - cy ) * 1.3, z - cz ) / r );
-				if ( y < - 0.2 ) shape -= ( - 0.2 - y ) * 12;
-				const billow = Math.abs( fbm( x * 6 + 11, y * 6, z * 6, 5 ) * 2 - 1 );
-				return Math.min( 1, ( shape - billow * 0.55 ) * 4 );
-
-			} );
-
-		}
-
-		if ( kind === 'smoke' ) {
-
-			// A plume rising from below, widening and breaking up as it climbs.
-			return VolumeGrid.fromFunction( [ Math.round( resolution * 0.6 ), resolution, Math.round( resolution * 0.6 ) ], ( x, y, z ) => {
-
-				const h = y + 0.5;
-				const swirl = fbm( x * 4, y * 3 - 7, z * 4, 4 ) - 0.5;
-				const radius = 0.05 + h * 0.2;
-				const r = Math.hypot( x - swirl * h * 0.5, z - Math.sin( y * 9 ) * 0.04 * h );
-				const wisps = fbm( x * 9 + 3, y * 7, z * 9, 5 );
-				return ( 1 - r / radius ) * ( 1 - h * 0.6 ) * ( wisps * 1.8 - 0.35 ) * 2;
-
-			} );
-
-		}
-
-		throw new Error( `VolumeGrid.procedural: unknown kind "${kind}" (cloud, smoke)` );
+		const grid = drawProcedural( kind, resolution, seed );
+		grid.recipe = { v: PROCEDURAL_VERSION, kind, resolution, seed };
+		return grid;
 
 	}
+
+}
+
+// Each kind's grid size at a resolution.
+const PROCEDURAL_SIZE = {
+	cloud: ( r ) => [ r, Math.round( r * 0.75 ), r ],
+	smoke: ( r ) => [ Math.round( r * 0.6 ), r, Math.round( r * 0.6 ) ],
+};
+
+/**
+ * The voxels `VolumeGrid.procedural( kind, { resolution } )` allocates; NaN for a kind it does not draw.
+ * @param {string} kind
+ * @param {number} resolution
+ * @returns {number}
+ */
+export function proceduralVoxels( kind, resolution ) {
+
+	const size = Object.hasOwn( PROCEDURAL_SIZE, kind ) ? PROCEDURAL_SIZE[ kind ]( resolution ) : [ NaN ];
+	return size.reduce( ( a, b ) => a * b, 1 );
+
+}
+
+// The grid VolumeGrid.procedural draws.
+function drawProcedural( kind, resolution, seed ) {
+
+	const noise = valueNoise( seed );
+	const fbm = ( x, y, z, octaves ) => {
+
+		let sum = 0, amplitude = 0.5, f = 1;
+		for ( let o = 0; o < octaves; o ++ ) {
+
+			sum += amplitude * noise( x * f, y * f, z * f );
+			amplitude *= 0.5;
+			f *= 2.03;
+
+		}
+
+		return sum;
+
+	};
+
+	if ( kind === 'cloud' ) {
+
+		// Cumulus: three overlapping puffs with a flat base, eaten at the edge by billowing noise.
+		const puffs = [[ 0, 0, 0, 0.3 ], [ - 0.17, - 0.05, 0.04, 0.2 ], [ 0.18, - 0.07, - 0.05, 0.22 ]];
+		return VolumeGrid.fromFunction( PROCEDURAL_SIZE.cloud( resolution ), ( x, y, z ) => {
+
+			let shape = - 1;
+			for ( const [ cx, cy, cz, r ] of puffs ) shape = Math.max( shape, 1 - Math.hypot( x - cx, ( y - cy ) * 1.3, z - cz ) / r );
+			if ( y < - 0.2 ) shape -= ( - 0.2 - y ) * 12;
+			const billow = Math.abs( fbm( x * 6 + 11, y * 6, z * 6, 5 ) * 2 - 1 );
+			return Math.min( 1, ( shape - billow * 0.55 ) * 4 );
+
+		} );
+
+	}
+
+	if ( kind === 'smoke' ) {
+
+		// A plume rising from below, widening and breaking up as it climbs.
+		return VolumeGrid.fromFunction( PROCEDURAL_SIZE.smoke( resolution ), ( x, y, z ) => {
+
+			const h = y + 0.5;
+			const swirl = fbm( x * 4, y * 3 - 7, z * 4, 4 ) - 0.5;
+			const radius = 0.05 + h * 0.2;
+			const r = Math.hypot( x - swirl * h * 0.5, z - Math.sin( y * 9 ) * 0.04 * h );
+			const wisps = fbm( x * 9 + 3, y * 7, z * 9, 5 );
+			return ( 1 - r / radius ) * ( 1 - h * 0.6 ) * ( wisps * 1.8 - 0.35 ) * 2;
+
+		} );
+
+	}
+
+	throw new Error( `VolumeGrid.procedural: unknown kind "${kind}" (cloud, smoke)` );
 
 }
 

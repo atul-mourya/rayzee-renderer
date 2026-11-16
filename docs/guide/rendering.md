@@ -125,6 +125,7 @@ cloud.scale.setScalar( 8 )                     // the grid fills the unit cube; 
 cloud.position.set( 0, 6, 0 )
 await engine.addModelFromObject3D( new Group().add( cloud ), { name: 'Cloud' } )
 
+// cloud.grid.recipe: { v, kind, resolution, seed } — how it was drawn; a saved scene state draws it again from it.
 // A grid of your own: width × height × depth values, x fastest, and where index space sits in the object.
 const grid = new VolumeGrid( { width, height, depth, data /* Float32Array */, transform /* Matrix4, optional */ } )
 ```
