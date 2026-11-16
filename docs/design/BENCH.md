@@ -810,6 +810,27 @@ loads its model, HDRI and denoiser weights from CDNs), so it is not part of `npm
 Verified against both ways the old viewer example broke: `engine.set( 'bounces', 8 )` fails as `uncaught: engine.set
 is not a function`, and `engine.settings.set( 'bounces', 8 )` as `warn: rayzee: unknown setting "bounces"`.
 
+## pbrt scenes against pbrt (`bench:pbrt`)
+
+Not a gate: how far the engine is from pbrt-v4 on the pbrt scenes this machine has (`bench/pbrt/scenes.json`, found
+under `RAYZEE_BENCH_MODELS` and `app/public/models`; heavy ones only with `--heavy` or `--only`). Each scene's entry file
+is copied with its Film resized (`--size`, 256 on the longer side) and rendered by the pbrt-v4 executable `RAYZEE_PBRT`
+at `--spp` (256) into a PFM kept in `bench/results/pbrt` (keyed by the copy, the samples and the binary), and by the
+engine in Node from the same copy (`captureHeadless`, `sceneRequest`, linear), its firefly clamp off unless `--clamp`.
+A zip is unpacked once into the temp folder, dated now (`unzip -DD`) and its file count kept in the marker: macOS's
+dirhelper deletes temp files older than 3 days at 03:35, and unzip had given them the zip's dates — every unpacked
+scene emptied overnight while its marker stayed. pbrt's `gbuffer` film writes EXR only, so pbrt's copy asks for `rgb`
+(the same colour); a pbrt that fails prints its last lines.
+A folder of several scenes (kroken's cameras) hands the engine only the chosen one; `--scenes list.json` runs another
+list: `bench/pbrt/materials.json` is `bench/pbrt/scenes/`, one material, medium or film setting each (a sphere and floor, coated or
+plain diffuse, under a uniform sky and a sun; a glowing uniform grid; the film's ISO, white balance and camera sensors on
+an orange sphere). The engine's side is read as linear light and given the file's exposure (shutter × ISO / 100) and
+white balance, which pbrt's film holds and the engine applies only on display: the film scenes read 1.00–1.02. On 2026-11-16, engine ÷ pbrt at 512 spp: plain
+diffuse 1.000 under both; coated diffuse 1.14–1.35 under the sky and 1.27–2.12 under the sun (rougher coats and darker
+bases further off: pbrt's layered coat sends light coming up from the base back down off its underside). Reported per scene: the engine's
+mean over pbrt's per channel, a 3 × 3 grid of luminance ratios, FLIP, and the pair as one PNG (engine | pbrt). At 128
+spp pbrt's own noise is a few percent in dark regions: compare means, or raise `--spp`.
+
 ## Every scene has been mutation-tested
 
 A scene that renders the right picture for the wrong reason still blesses cleanly. So for each

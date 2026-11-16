@@ -1,0 +1,18 @@
+{
+	"scenes": [
+		{ "id": "coat-r0-a05-sky", "path": "coat-r0-a05-sky", "entry": "scene.pbrt" },
+		{ "id": "coat-r0-a05-sun", "path": "coat-r0-a05-sun", "entry": "scene.pbrt" },
+		{ "id": "coat-r0-a09-sky", "path": "coat-r0-a09-sky", "entry": "scene.pbrt" },
+		{ "id": "coat-r0-a09-sun", "path": "coat-r0-a09-sun", "entry": "scene.pbrt" },
+		{ "id": "coat-r0-orange-sky", "path": "coat-r0-orange-sky", "entry": "scene.pbrt" },
+		{ "id": "coat-r0-orange-sun", "path": "coat-r0-orange-sun", "entry": "scene.pbrt" },
+		{ "id": "coat-r03-a05-sky", "path": "coat-r03-a05-sky", "entry": "scene.pbrt" },
+		{ "id": "coat-r03-a05-sun", "path": "coat-r03-a05-sun", "entry": "scene.pbrt" },
+		{ "id": "diffuse-a05-sky", "path": "diffuse-a05-sky", "entry": "scene.pbrt" },
+		{ "id": "diffuse-a05-sun", "path": "diffuse-a05-sun", "entry": "scene.pbrt" },
+		{ "id": "uniformgrid-glow", "path": "uniformgrid-glow", "entry": "scene.pbrt" },
+		{ "id": "film-iso-wb", "path": "film-iso-wb", "entry": "scene.pbrt" },
+		{ "id": "film-sensor-canon", "path": "film-sensor-canon", "entry": "scene.pbrt" },
+		{ "id": "film-sensor-nikon-wb", "path": "film-sensor-nikon-wb", "entry": "scene.pbrt" }
+	]
+}

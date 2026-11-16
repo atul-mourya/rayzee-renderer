@@ -30,6 +30,8 @@ npm run bench:ab -- main    # gate perf against another git ref (`-- <base> --he
 npm run bench:release      # the newest release tag against the one before it, logged for the trend
 npm run bench:trend        # results/trend.html: the perf and A/B logs, one chart a scene
 npm run bench:load         # real models loaded by phase in Node (-- --chrome, --firefox or --safari: in that browser); -- --ab main, or --base-dir <checkout>, to gate
+npm run bench:pbrt         # pbrt-v4 scenes (bench/pbrt/scenes.json) in a local pbrt (RAYZEE_PBRT) and the engine: ratios by region, FLIP
+npm run bench:pbrt -- --scenes bench/pbrt/materials.json   # one material or medium a scene (bench/pbrt/scenes/): coated vs plain diffuse, a glowing grid, film ISO / white balance / sensors
 npm run bench:exposure     # auto (and local) exposure against neither, wall clock (--size 1024x1024)
 npm run bench:storage       # raw OPFS throughput
 npm run bench:examples     # every example in rayzee/examples runs to the end

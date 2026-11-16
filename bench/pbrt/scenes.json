@@ -1,0 +1,18 @@
+{
+	"scenes": [
+		{ "id": "coffee", "path": "coffee.zip", "entry": "coffee/scene-v4.pbrt" },
+		{ "id": "classroom", "path": "classroom.zip", "entry": "classroom/scene-v4.pbrt" },
+		{ "id": "glass-of-water", "path": "glass-of-water.zip", "entry": "glass-of-water/scene-v4.pbrt" },
+		{ "id": "kitchen", "path": "kitchen.zip", "entry": "kitchen/scene-v4.pbrt" },
+		{ "id": "veach-ajar", "path": "veach-ajar.zip", "entry": "veach-ajar/scene-v4.pbrt" },
+		{ "id": "water-caustic", "path": "water-caustic.zip", "entry": "water-caustic/scene-v4.pbrt" },
+		{ "id": "volumetric-caustic", "path": "volumetric-caustic.zip", "entry": "volumetric-caustic/scene-v4.pbrt" },
+		{ "id": "contemporary-bathroom", "path": "contemporary-bathroom.zip", "entry": "contemporary-bathroom.pbrt" },
+		{ "id": "crown", "path": "crown.zip", "entry": "crown/crown.pbrt" },
+		{ "id": "explosion", "path": "mmp pbrt-v4-scenes master explosion.zip", "entry": "explosion.pbrt" },
+		{ "id": "transparent-machines", "path": "transparent-machines.zip", "entry": "transparent-machines/frame675.pbrt", "heavy": true },
+		{ "id": "zero-day", "path": "zero-day.zip", "entry": "zero-day/frame35.pbrt", "heavy": true },
+		{ "id": "watercolor", "path": "watercolor.zip", "entry": "watercolor/camera-1.pbrt", "heavy": true },
+		{ "id": "kroken", "path": "kroken.zip", "entry": "kroken/camera-1.pbrt", "heavy": true }
+	]
+}

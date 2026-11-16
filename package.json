@@ -45,6 +45,7 @@
     "bench:lut": "node bench/tools/gen-dfg-lut.mjs",
     "build:wasm": "node rayzee/wasm/build.mjs",
     "bench:oidn": "node bench/tools/oidn-kernels.mjs",
+    "bench:pbrt": "npm run build:engine && node bench/pbrt/run.js",
     "example:node": "npm run build:engine && node rayzee/examples/core-node.mjs",
     "example:render": "npm run build:engine && node rayzee/examples/render.mjs",
     "example:browser": "vite --config rayzee/examples/vite.config.js",

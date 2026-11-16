@@ -218,10 +218,8 @@
   MIP-filtered render is even).
 - [ ] **One table per directive**: pbrt-v4's parameter names, types, defaults and the `file:line` they come from, the
   translators and their tests derived from it (`pbrt/defaults.test.js` checks the defaults by hand today).
-- [ ] `bench:pbrt` — each pbrt-v4-scenes camera against its reference image, with the reference's own post applied
-  (`docs/design/SCENE_IMPORT.md` → Extending it), over a local copy (skip what is not downloaded). A local pbrt-v4
-  build renders references offline: `~/RayzeeScratch/pbrt-build-arm/pbrt` (arm64; it checked the screen window's
-  framing on 2026-11-14).
+- [ ] `bench:pbrt` against pbrt-v4-scenes' published reference images, with their own post applied
+  (`docs/design/SCENE_IMPORT.md` → Extending it): today it renders references with a local pbrt-v4 build (`RAYZEE_PBRT`).
 
 ---
 
