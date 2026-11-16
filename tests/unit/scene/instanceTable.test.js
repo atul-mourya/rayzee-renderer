@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { InstanceTable, splitIntoRuns } from '@/core/scene/InstanceTable.js';
+import { Matrix4, Quaternion, Vector3 } from 'three';
+import { InstanceTable, splitIntoRuns, invertAffineInto, multiplyAffine, isIdentityAt } from '@/core/scene/InstanceTable.js';
 import { BVH_LEAF_MARKERS, bvhIndexView } from '@/core/scene/BufferLayout.js';
 
 // Triangle record: 20 uint lanes; positions f32 at 0,1,2 (A), 4,5,6 (B), 8,9,10 (C)
@@ -474,6 +475,73 @@ describe( 'InstanceTable', () => {
 			}
 
 		} );
+
+	} );
+
+} );
+
+// The TLAS leaves' world-to-object rows (invertAffineInto), their identity bit (isIdentityAt) and an instanced mesh's
+// composed placements (multiplyAffine), against three's own matrices.
+describe( 'affine helpers', () => {
+
+	let seed = 7;
+	const random = () => ( ( seed = Math.imul( seed, 48271 ) % 2147483647 ) & 0x7fffffff ) / 2147483647;
+	const affine = ( mirror = false ) => new Matrix4().compose(
+		new Vector3( random() * 20 - 10, random() * 20 - 10, random() * 20 - 10 ),
+		new Quaternion( random() - 0.5, random() - 0.5, random() - 0.5, random() - 0.5 ).normalize(),
+		new Vector3( ( mirror ? - 1 : 1 ) * ( 0.1 + random() * 4 ), 0.1 + random() * 4, 0.1 + random() * 4 ),
+	);
+	// Rows of 16 at an offset, as the world pool holds them.
+	const pooled = ( matrices ) => {
+
+		const pool = new Float32Array( 16 * matrices.length + 5 );
+		matrices.forEach( ( m, i ) => pool.set( m.elements, 5 + 16 * i ) );
+		return pool;
+
+	};
+
+	const close = ( got, want ) => {
+
+		for ( let i = 0; i < 16; i ++ ) expect( Math.abs( got[ i ] - want[ i ] ) ).toBeLessThan( 1e-4 * ( 1 + Math.abs( want[ i ] ) ) );
+
+	};
+
+	it( 'inverts each row where it sits, mirrored and stretched ones included; a flat one gives the identity', () => {
+
+		const matrices = Array.from( { length: 8 }, ( _, i ) => affine( i % 3 === 0 ) );
+		const pool = pooled( matrices );
+		const out = new Float32Array( 16 );
+		matrices.forEach( ( m, i ) => {
+
+			invertAffineInto( pool, 5 + 16 * i, out );
+			close( out, new Matrix4().fromArray( pool, 5 + 16 * i ).invert().elements );
+
+		} );
+		const flat = new Matrix4().makeScale( 1, 0, 1 ).setPosition( 3, 4, 5 );
+		expect( Array.from( invertAffineInto( flat.elements, 0, out ) ) ).toEqual( new Matrix4().elements );
+
+	} );
+
+	it( 'composes a host matrix with an instance row read at its offset, as three multiplies them', () => {
+
+		const host = affine(), instances = [ affine(), affine( true ), affine() ];
+		const pool = pooled( instances );
+		const out = new Float32Array( 16 );
+		instances.forEach( ( m, i ) => {
+
+			multiplyAffine( host.elements, pool, 5 + 16 * i, out );
+			close( out, new Matrix4().multiplyMatrices( host, new Matrix4().fromArray( pool, 5 + 16 * i ) ).elements );
+
+		} );
+
+	} );
+
+	it( 'tells an identity row by the 16 floats at its offset only', () => {
+
+		const pool = pooled( [ affine(), new Matrix4(), affine() ] );
+		expect( [ 0, 1, 2 ].map( ( i ) => isIdentityAt( pool, 5 + 16 * i ) ) ).toEqual( [ false, true, false ] );
+		pool[ 5 + 16 + 13 ] = 1e-7;
+		expect( isIdentityAt( pool, 5 + 16 ) ).toBe( false );
 
 	} );
 
