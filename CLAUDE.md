@@ -236,6 +236,8 @@ video export, the timeline and camera track, and each data flow (animation, tran
   (any SkinnedMesh or morph track): CPU skinning, handed to `refitBVH` as a per-mesh reader. **Rigid** (everything else):
   only the meshes whose matrix or visibility changed go to `applyPoseCallback` → `PathTracerApp._applyAnimationPose`.
   ⚠️ Never refit a rigid clip: triangles are shared between placements of one geometry, so baking a pose moves every copy.
+  ⚠️ The loader converts a light's intensity (`userData.__intensityScale`); a clip's intensity keys are scaled by it per
+  load (`inEngineUnits`). Light copies show only while the source and every parent do (`followVisibility`).
 - **pbrt animation** (`addons/archives/pbrt/PBRTAnimation.js`): a `frameN.pbrt` sequence loads as one clip at 30 fps.
 - **`TransformManager.js`**: the translate/rotate/scale gizmo; drag end calls `app.updateMeshTransforms( indices )`. No
   shortcuts: the letter keys belong to walk mode.

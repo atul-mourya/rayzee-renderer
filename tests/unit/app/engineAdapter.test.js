@@ -542,6 +542,43 @@ describe( 'connectEngineToStore mirrors', () => {
 
 	} );
 
+	it( 'playback leaving the lights as a clip set them, refreshing the lights panel', () => {
+
+		const lights = [ { uuid: 'lamp', intensity: 3 } ];
+		const setLights = vi.fn();
+		const lit = createMockEngine();
+		lit.lightManager = { getAll: () => lights };
+		connectEngineToStore( lit, { ...stores, useLightStore: { getState: () => ( { setLights } ) } } );
+		lit._emit( 'ANIMATION_STARTED' );
+		expect( setLights ).not.toHaveBeenCalled();
+		for ( const type of [ 'ANIMATION_PAUSED', 'ANIMATION_STOPPED', 'ANIMATION_FINISHED' ] ) {
+
+			setLights.mockClear();
+			lit._emit( type );
+			expect( setLights ).toHaveBeenCalledWith( lights );
+
+		}
+
+	} );
+
+	it( 'an outliner hide or show refreshing the lights panel, until disconnected', () => {
+
+		vi.stubGlobal( 'window', new EventTarget() );
+		const lights = [ { uuid: 'lamp', visible: false } ];
+		const setLights = vi.fn();
+		const lit = createMockEngine();
+		lit.lightManager = { getAll: () => lights };
+		const disconnect = connectEngineToStore( lit, { ...stores, useLightStore: { getState: () => ( { setLights } ) } } );
+		window.dispatchEvent( new CustomEvent( 'meshVisibilityChanged', { detail: { uuid: 'group', visible: false } } ) );
+		expect( setLights ).toHaveBeenCalledWith( lights );
+		setLights.mockClear();
+		disconnect();
+		window.dispatchEvent( new CustomEvent( 'meshVisibilityChanged', { detail: { uuid: 'group', visible: true } } ) );
+		expect( setLights ).not.toHaveBeenCalled();
+		vi.unstubAllGlobals();
+
+	} );
+
 	it( 'playback without an animation store', () => {
 
 		const bare = createMockEngine();

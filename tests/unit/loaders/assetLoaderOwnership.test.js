@@ -6,7 +6,7 @@
 import { describe, expect, it } from 'vitest';
 import {
 	AnimationClip, BoxGeometry, Bone, NumberKeyframeTrack, Float32BufferAttribute, Group, Mesh, MeshStandardMaterial, Object3D,
-	PerspectiveCamera, PointLight, Scene, SkinnedMesh, Skeleton, Uint16BufferAttribute, Vector3,
+	DirectionalLight, PerspectiveCamera, PointLight, Scene, SkinnedMesh, Skeleton, Uint16BufferAttribute, Vector3,
 } from 'three';
 import { AssetLoader } from '@/core/loaders/AssetLoader.js';
 
@@ -321,6 +321,23 @@ describe( 'AssetLoader.processModelObjects — traversal safety', () => {
 		newLoader().processModelObjects( root );
 
 		expect( light.userData.__candelaConverted ).toBe( true );
+
+	} );
+
+	it( 'keeps each light\'s unit conversion, which a clip animating its intensity is scaled by', () => {
+
+		const root = new Group();
+		const lamp = new PointLight( 0xffffff, 2 );
+		const sun = new DirectionalLight( 0xffffff, 3 );
+		root.add( lamp, sun );
+		newLoader().processModelObjects( root );
+		expect( lamp.intensity ).toBeCloseTo( 2 * lamp.userData.__intensityScale, 12 );
+		expect( lamp.userData.__intensityScale ).toBeCloseTo( 4 * Math.PI / 683, 12 );
+		expect( sun.intensity ).toBeCloseTo( 3 / 683, 12 );
+		expect( sun.userData.__intensityScale ).toBeCloseTo( 1 / 683, 12 );
+		// Not converted, nor scaled, twice.
+		newLoader().processModelObjects( root );
+		expect( lamp.intensity ).toBeCloseTo( 2 * 4 * Math.PI / 683, 12 );
 
 	} );
 

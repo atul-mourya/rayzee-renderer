@@ -405,12 +405,13 @@ describe( 'visibility', () => {
 	it( 'patches the TLAS, refreshes the emitters and restarts, at once when the TLAS is in memory', () => {
 
 		const app = makeApp( { sdf: { whenTLASEditable: () => null } } );
+		app.lightManager = { followVisibility: () => void app.calls.push( [ 'lights' ] ) };
 
 		SceneEdits.setMeshVisibility( app, 3, false );
 		SceneEdits.updateAllMeshVisibility( app );
 		expect( app.calls ).toEqual( [
 			[ 'meshVisibility', 3, false ], [ 'volumes' ], [ 'refreshEmissive' ], [ 'reset' ],
-			[ 'allVisibility' ], [ 'volumes' ], [ 'refreshEmissive' ], [ 'reset' ],
+			[ 'allVisibility' ], [ 'lights' ], [ 'volumes' ], [ 'refreshEmissive' ], [ 'reset' ],
 		] );
 
 	} );

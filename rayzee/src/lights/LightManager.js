@@ -36,6 +36,19 @@ function placeCopy( source, copy, base ) {
 // What a placement can change on a copy.
 const placement = ( copy ) => [ ...copy.matrixWorld.elements, copy.width, copy.height, ...( copy.target?.position.toArray() ?? [] ) ];
 
+// What a clip can animate on a light besides its placement, each as the source last showed it.
+const FOLLOWED = [ 'intensity', 'visible', 'distance', 'decay', 'angle', 'penumbra' ];
+const VISIBLE = FOLLOWED.indexOf( 'visible' );
+// Shown only when it and every parent are, as three.js draws it.
+const shown = ( object ) => {
+
+	for ( let o = object; o; o = o.parent ) if ( ! o.visible ) return false;
+	return true;
+
+};
+
+const looks = ( light ) => [ ...FOLLOWED.map( ( key ) => ( key === 'visible' ? shown( light ) : light[ key ] ) ), light.color.r, light.color.g, light.color.b ];
+
 /**
  * Manages scene lights: add, remove, transfer from mesh scene to WebGPU
  * scene, sync helpers, and update GPU uniform buffers.
@@ -244,7 +257,8 @@ export class LightManager extends EventDispatcher {
 		for ( const light of sourceLights ) {
 
 			const cloned = light.clone();
-			this._copies.set( light, { copy: cloned, scale: placeCopy( light, cloned, [ cloned.width, cloned.height ] ) } );
+			cloned.visible = shown( light );
+			this._copies.set( light, { copy: cloned, scale: placeCopy( light, cloned, [ cloned.width, cloned.height ] ), seen: looks( light ) } );
 
 			if ( ( light.isSpotLight || light.isDirectionalLight ) && light.target ) {
 
@@ -268,7 +282,8 @@ export class LightManager extends EventDispatcher {
 	/**
 	 * Moves the copies of model lights an animation moved (`sources`: the model's own lights, their world matrices
 	 * current) to where their sources now are, and aims them at their targets. A host's edit to a copy's size is kept;
-	 * its place and aim follow the source.
+	 * its place and aim follow the source. Its intensity, colour, visibility, range, falloff and cone follow the source
+	 * where the source changed since: a host's edit stays until the clip changes that one.
 	 * @param {import('three').Light[]} sources
 	 * @returns {boolean} whether any copy changed
 	 */
@@ -291,11 +306,50 @@ export class LightManager extends EventDispatcher {
 			}
 
 			if ( placement( copy ).some( ( v, i ) => v !== before[ i ] ) ) moved = true;
+			const now = looks( source );
+			FOLLOWED.forEach( ( key, i ) => {
+
+				if ( now[ i ] === entry.seen[ i ] ) return;
+				copy[ key ] = now[ i ];
+				moved = true;
+
+			} );
+			if ( now.slice( - 3 ).some( ( v, i ) => v !== entry.seen[ FOLLOWED.length + i ] ) ) {
+
+				copy.color.copy( source.color );
+				moved = true;
+
+			}
+
+			entry.seen = now;
 
 		}
 
 		if ( moved ) this.updateLights();
 		return moved;
+
+	}
+
+	/**
+	 * Shows or hides the copies of model lights whose source was shown or hidden since, itself or through a parent
+	 * (the outliner hiding a group). A host's edit of a copy stays until then.
+	 * @returns {boolean} whether any copy changed
+	 */
+	followVisibility() {
+
+		let changed = false;
+		for ( const [ source, entry ] of this._copies ) {
+
+			const now = shown( source );
+			if ( entry.copy.parent !== this.scene || now === entry.seen[ VISIBLE ] ) continue;
+			entry.copy.visible = now;
+			entry.seen[ VISIBLE ] = now;
+			changed = true;
+
+		}
+
+		if ( changed ) this.updateLights();
+		return changed;
 
 	}
 
@@ -398,7 +452,7 @@ export class LightManager extends EventDispatcher {
 			if ( at >= 0 ) {
 
 				const [ { source, entry } ] = linked.splice( at, 1 );
-				this._copies.set( source, { copy: light, scale: entry.scale } );
+				this._copies.set( source, { copy: light, scale: entry.scale, seen: looks( source ) } );
 
 			}
 

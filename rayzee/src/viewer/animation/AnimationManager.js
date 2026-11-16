@@ -7,7 +7,7 @@
  * positions into triangles that other placements share.
  */
 
-import { AnimationMixer, EventDispatcher, Timer, Vector3, LoopRepeat, LoopOnce, PropertyBinding } from 'three';
+import { AnimationClip, AnimationMixer, EventDispatcher, Timer, Vector3, LoopRepeat, LoopOnce, PropertyBinding } from 'three';
 import { EngineEvents } from '../../EngineEvents.js';
 import { isDeformable } from '../../scene/GeometryExtractor.js';
 import { createLogger } from '../../Logger.js';
@@ -36,6 +36,35 @@ function nodeFinder( root ) {
 		return first.get( nodeName ) ?? null;
 
 	};
+
+}
+
+// A clip's light intensities in the engine's units: the loader converted each light's own (`__intensityScale`), so its
+// intensity tracks are scaled alike, the rest shared. Per load, as the scale is the light's. Else the clip itself.
+function inEngineUnits( clip, find ) {
+
+	let changed = false;
+	const tracks = clip.tracks.map( ( track ) => {
+
+		const { nodeName, propertyName } = PropertyBinding.parseTrackName( track.name );
+		const scale = propertyName === 'intensity' ? find( nodeName )?.userData?.__intensityScale : undefined;
+		if ( ! ( scale > 0 ) || scale === 1 ) return track;
+		changed = true;
+		const out = track.clone();
+		out.values = out.values.map( ( v ) => v * scale );
+		// Bezier handles are ( time, value ) pairs.
+		for ( const key of [ 'inTangents', 'outTangents' ] ) {
+
+			const tangents = out.settings?.[ key ];
+			if ( tangents ) out.settings[ key ] = tangents.map( ( v, i ) => ( i % 2 ? v * scale : v ) );
+
+		}
+
+		return out;
+
+	} );
+
+	return changed ? new AnimationClip( clip.name, clip.duration, tracks, clip.blendMode ) : clip;
 
 }
 
@@ -94,6 +123,7 @@ export class AnimationManager extends EventDispatcher {
 		this._clipsCache = null;
 		this._savedTimeScale = 1;
 		this.onFinished = null; // callback when a non-looping clip ends
+		this._finished = false;
 
 		this._rigid = false;
 		this._plans = null; // per clip: { meshes: Int32Array, visibility: boolean, cameras: Camera[], lights: Light[] }
@@ -136,7 +166,7 @@ export class AnimationManager extends EventDispatcher {
 		// Fall back to scene if no tracks bind successfully.
 		this.mixer = new AnimationMixer( mixerRoot );
 		const find = nodeFinder( mixerRoot );
-		let actions = boundWith( mixerRoot, find, () => animations.map( clip => this.mixer.clipAction( clip ) ) );
+		let actions = boundWith( mixerRoot, find, () => animations.map( clip => this.mixer.clipAction( inEngineUnits( clip, find ) ) ) );
 
 		// Check if any tracks actually bind to nodes in the mixer root hierarchy.
 		// If not, retry with the top-level scene as mixer root.
@@ -147,7 +177,8 @@ export class AnimationManager extends EventDispatcher {
 			log.debug( 'Tracks did not resolve from model root, retrying with scene root' );
 			this.mixer = new AnimationMixer( scene );
 			this._mixerRoot = scene;
-			actions = boundWith( scene, nodeFinder( scene ), () => animations.map( clip => this.mixer.clipAction( clip ) ) );
+			const sceneFind = nodeFinder( scene );
+			actions = boundWith( scene, sceneFind, () => animations.map( clip => this.mixer.clipAction( inEngineUnits( clip, sceneFind ) ) ) );
 
 		}
 
@@ -160,9 +191,10 @@ export class AnimationManager extends EventDispatcher {
 		// Listen for non-looping clip completion
 		this.mixer.addEventListener( 'finished', () => {
 
+			// Reported once the last pose is applied: three fires this inside mixer.update(), before it is.
 			this.isPlaying = false;
 			this.timer.reset();
-			if ( this.onFinished ) this.onFinished();
+			this._finished = true;
 
 		} );
 
@@ -428,6 +460,7 @@ export class AnimationManager extends EventDispatcher {
 		this.timer.reset();
 		this.isPlaying = false;
 
+		// A deforming pose stays, lights and cameras with it, until its next play or seek refits it.
 		if ( this._rigid ) {
 
 			this._mixerRoot.updateMatrixWorld( true );
@@ -507,7 +540,7 @@ export class AnimationManager extends EventDispatcher {
 
 		}
 
-		return this._poseReader();
+		return this._settle();
 
 	}
 
@@ -536,7 +569,22 @@ export class AnimationManager extends EventDispatcher {
 		const delta = this.timer.getDelta();
 		this.mixer.update( delta );
 
-		return this._poseReader();
+		return this._settle();
+
+	}
+
+	/** The pose's reader, then a clip's end reported. @private */
+	_settle() {
+
+		const reader = this._poseReader();
+		if ( this._finished ) {
+
+			this._finished = false;
+			this.onFinished?.();
+
+		}
+
+		return reader;
 
 	}
 

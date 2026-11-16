@@ -1381,9 +1381,11 @@ export class AssetLoader extends EventDispatcher {
 			const userData = object.userData;
 
 			// An adopted light carries three.js units; convert as point/spot are below.
+			// Each conversion is kept as `__intensityScale`: a clip animating the intensity is scaled by it as it plays.
 			if ( object.isRectAreaLight && ! userData.__radianceConverted ) {
 
-				object.intensity *= areaLightPowerFactor( object, object.width, object.height, userData );
+				userData.__intensityScale = areaLightPowerFactor( object, object.width, object.height, userData );
+				object.intensity *= userData.__intensityScale;
 				userData.__radianceConverted = true;
 
 			}
@@ -1395,14 +1397,16 @@ export class AssetLoader extends EventDispatcher {
 			// rendered every Blender lamp 683x too bright.
 			if ( ( object.isPointLight || object.isSpotLight ) && ! userData.__candelaConverted ) {
 
-				object.intensity *= 4 * Math.PI / LUMENS_PER_WATT;
+				userData.__intensityScale = 4 * Math.PI / LUMENS_PER_WATT;
+				object.intensity *= userData.__intensityScale;
 				userData.__candelaConverted = true;
 
 			}
 
 			if ( object.isDirectionalLight && ! userData.__luxConverted ) {
 
-				object.intensity /= LUMENS_PER_WATT;
+				userData.__intensityScale = 1 / LUMENS_PER_WATT;
+				object.intensity *= userData.__intensityScale;
 				userData.__luxConverted = true;
 
 			}

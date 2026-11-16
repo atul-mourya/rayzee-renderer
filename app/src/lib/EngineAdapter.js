@@ -230,8 +230,16 @@ export function connectEngineToStore( engine, { useStore, useCameraStore, usePat
 
 	} );
 
+	// A clip may have moved, dimmed, recoloured or hidden lights: the Lights panel shows them as playback leaves them.
+	const refreshAnimatedLights = () => engine.lightManager && useLightStore?.getState().setLights( engine.lightManager.getAll() );
+
+	// The outliner hid or showed a group: its lights' copies followed it (`followVisibility`).
+	const page = typeof window === 'undefined' ? null : window;
+	page?.addEventListener?.( 'meshVisibilityChanged', refreshAnimatedLights );
+
 	on( EngineEvents.ANIMATION_PAUSED, () => {
 
+		refreshAnimatedLights();
 		if ( useAnimationStore ) {
 
 			const state = useAnimationStore.getState();
@@ -244,6 +252,7 @@ export function connectEngineToStore( engine, { useStore, useCameraStore, usePat
 
 	on( EngineEvents.ANIMATION_STOPPED, () => {
 
+		refreshAnimatedLights();
 		if ( useAnimationStore ) {
 
 			const state = useAnimationStore.getState();
@@ -256,6 +265,7 @@ export function connectEngineToStore( engine, { useStore, useCameraStore, usePat
 
 	on( EngineEvents.ANIMATION_FINISHED, () => {
 
+		refreshAnimatedLights();
 		if ( useAnimationStore ) {
 
 			const state = useAnimationStore.getState();
@@ -323,6 +333,7 @@ export function connectEngineToStore( engine, { useStore, useCameraStore, usePat
 
 		handlers.forEach( ( [ type, fn ] ) => engine.removeEventListener( type, fn ) );
 		handlers.length = 0;
+		page?.removeEventListener?.( 'meshVisibilityChanged', refreshAnimatedLights );
 		clearTimeout( statsTimer );
 		// A compile this engine never finishes must not hold the loading panel open.
 		useStore.getState().setIsCompilingShaders( false );

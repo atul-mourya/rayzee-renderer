@@ -211,7 +211,12 @@ export function setMeshVisibility( app, meshIndex, visible ) {
 
 export function updateAllMeshVisibility( app ) {
 
-	whenTLASEditable( app, () => app.stages.pathTracer?.updateAllMeshVisibility() );
+	whenTLASEditable( app, () => {
+
+		app.stages.pathTracer?.updateAllMeshVisibility();
+		app.lightManager?.followVisibility();
+
+	} );
 
 }
 

@@ -411,6 +411,97 @@ describe( 'LightManager in a three.js scene', () => {
 
 	} );
 
+	it( 'gives a copy the intensity, colour, visibility, range, falloff and cone its source was animated to', () => {
+
+		const { scene, tracer, manager } = setup();
+		const model = new Scene();
+		const lamp = new PointLight( 0xffffff, 2, 10, 2 );
+		const spot = new SpotLight( 0xffffff, 3, 0, Math.PI / 6, 0.1 );
+		model.add( lamp, spot );
+		manager.transferSceneLights( model );
+		const [ lampCopy, spotCopy ] = lightsOf( scene );
+		tracer.updateLights.mockClear();
+
+		lamp.intensity = 7;
+		lamp.color.setRGB( 1, 0.5, 0.25 );
+		lamp.distance = 4;
+		lamp.decay = 1;
+		spot.angle = Math.PI / 4;
+		spot.penumbra = 0.6;
+		spot.visible = false;
+		expect( manager.followSources( [ lamp, spot ] ) ).toBe( true );
+		expect( [ lampCopy.intensity, lampCopy.distance, lampCopy.decay, ...lampCopy.color.toArray() ] ).toEqual( [ 7, 4, 1, 1, 0.5, 0.25 ] );
+		expect( [ spotCopy.angle, spotCopy.penumbra, spotCopy.visible ] ).toEqual( [ Math.PI / 4, 0.6, false ] );
+		expect( spotCopy.intensity ).toBe( 3 );
+		expect( tracer.updateLights ).toHaveBeenCalledOnce();
+
+		// Unchanged: nothing to upload. A host's edit stays until the clip changes that property again.
+		tracer.updateLights.mockClear();
+		lampCopy.intensity = 100;
+		expect( manager.followSources( [ lamp, spot ] ) ).toBe( false );
+		expect( lampCopy.intensity ).toBe( 100 );
+		expect( tracer.updateLights ).not.toHaveBeenCalled();
+		lamp.color.setRGB( 0, 1, 0 );
+		expect( manager.followSources( [ lamp ] ) ).toBe( true );
+		expect( [ lampCopy.intensity, ...lampCopy.color.toArray() ] ).toEqual( [ 100, 0, 1, 0 ] );
+		lamp.intensity = 1;
+		spot.visible = true;
+		expect( manager.followSources( [ lamp, spot ] ) ).toBe( true );
+		expect( [ lampCopy.intensity, spotCopy.visible ] ).toEqual( [ 1, true ] );
+
+	} );
+
+	it( 'shows a copy only while its source and every parent are shown, a host\'s edit kept until they change', () => {
+
+		const { scene, tracer, manager } = setup();
+		const model = new Scene();
+		const hiddenGroup = new Group();
+		hiddenGroup.visible = false;
+		const shownGroup = new Group();
+		const kept = new PointLight();
+		const lamp = new PointLight();
+		hiddenGroup.add( kept );
+		shownGroup.add( lamp );
+		model.add( hiddenGroup, shownGroup );
+		manager.transferSceneLights( model );
+		const [ keptCopy, lampCopy ] = lightsOf( scene );
+		expect( [ keptCopy.visible, lampCopy.visible ] ).toEqual( [ false, true ] );
+
+		// A clip hides the lamp's parent, then shows it.
+		shownGroup.visible = false;
+		expect( manager.followSources( [ lamp ] ) ).toBe( true );
+		expect( lampCopy.visible ).toBe( false );
+		shownGroup.visible = true;
+		expect( manager.followSources( [ lamp ] ) ).toBe( true );
+		expect( lampCopy.visible ).toBe( true );
+
+		// The outliner hides a group: its lights go out.
+		tracer.updateLights.mockClear();
+		shownGroup.visible = false;
+		expect( manager.followVisibility() ).toBe( true );
+		expect( lampCopy.visible ).toBe( false );
+		expect( tracer.updateLights ).toHaveBeenCalledOnce();
+		expect( manager.followVisibility() ).toBe( false );
+
+		// A clip turns a parent back on.
+		hiddenGroup.visible = true;
+		expect( manager.followSources( [ kept ] ) ).toBe( true );
+		expect( keptCopy.visible ).toBe( true );
+
+		// The host switched a copy on by hand: kept until its source is shown or hidden again.
+		lampCopy.visible = true;
+		expect( manager.followVisibility() ).toBe( false );
+		expect( lampCopy.visible ).toBe( true );
+		shownGroup.visible = true;
+		lamp.visible = false;
+		expect( manager.followVisibility() ).toBe( false );
+		lamp.visible = true;
+		hiddenGroup.visible = false;
+		expect( manager.followVisibility() ).toBe( true );
+		expect( [ keptCopy.visible, lampCopy.visible ] ).toEqual( [ false, true ] );
+
+	} );
+
 	it( 'still moves a model light\'s copy after a saved session restores the lights', () => {
 
 		const { scene, manager } = setup();
@@ -422,14 +513,21 @@ describe( 'LightManager in a three.js scene', () => {
 		model.add( rig );
 		manager.transferSceneLights( model );
 		manager.addLight( 'PointLight' );
+		const saved = manager.serialize();
+		// The clip ran on before the session came back: the session's brightness wins until the clip changes it again.
+		lamp.intensity = 5;
 
-		const [ restored, host ] = manager.restore( manager.serialize() );
+		const [ restored, host ] = manager.restore( saved );
 		rig.position.set( 0, 0, 4 );
 		model.updateMatrixWorld( true );
 		expect( manager.followSources( [ lamp ] ) ).toBe( true );
 		expect( restored.position.toArray() ).toEqual( [ 0, 0, 4 ] );
 		expect( host.position.toArray() ).toEqual( [ 0, 2, 0 ] );
 		expect( lightsOf( scene ) ).toEqual( [ restored, host ] );
+		expect( restored.intensity ).toBe( 1 );
+		lamp.intensity = 3;
+		expect( manager.followSources( [ lamp ] ) ).toBe( true );
+		expect( restored.intensity ).toBe( 3 );
 
 	} );
 
