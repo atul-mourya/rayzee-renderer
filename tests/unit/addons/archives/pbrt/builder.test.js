@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { BufferGeometry, DataTexture, DoubleSide, EquirectangularReflectionMapping, Float32BufferAttribute, FloatType, FrontSide, Matrix4, Mesh, NoColorSpace, OrthographicCamera, PerspectiveCamera, RGBAFormat, SRGBColorSpace, Texture, Vector3 } from 'three';
-import { loadPBRTScene, pickEntryPath, PBRTParser, PBRTSceneBuilder } from '@/core/addons/archives/pbrt/index.js';
+import { loadPBRTScene, pickEntryPath, PBRTParser, PBRTSceneBuilder, sceneText } from '@/core/addons/archives/pbrt/index.js';
 import { deriveAlphaMode } from '@/core/scene/GeometryExtractor.js';
 import { viewMatrixOf } from '@/core/scene/ViewCamera.js';
 import { srgbToLinear, linearToSRGB } from '@/core/addons/archives/pbrt/PBRTTextureBake.js';
@@ -1179,6 +1179,27 @@ describe( 'PBRT scene builder', () => {
 
 	} );
 
+
+	it( 'reads a gzip-compressed included scene file as its text, as pbrt-v4 does (the hair scenes\' geometry)', async () => {
+
+		const { gzipSync } = await import( 'node:zlib' );
+		const mesh = 'Shape "trianglemesh" "point3 P" [ 0 0 0 1 0 0 0 1 0 ] "integer indices" [ 0 1 2 ]\n';
+		const vfs = {
+			'scene.pbrt': enc.encode( 'WorldBegin\nInclude "geometry/hair.pbrt.gz"\n' ),
+			'geometry/hair.pbrt.gz': new Uint8Array( gzipSync( enc.encode( mesh ) ) ),
+		};
+		const { group, warnings } = await loadPBRTScene( { ...buildArgs(), vfs } );
+		expect( warnings ).toEqual( [] );
+		expect( group.children.filter( ( c ) => c instanceof Mesh ) ).toHaveLength( 1 );
+		// Text is text: bytes that do not start as gzip's do are read as they are.
+		const plain = enc.encode( mesh );
+		expect( await sceneText( plain ) ).toBe( plain );
+		// A damaged one fails the load naming the file, as pbrt fails on it.
+		const damaged = new Uint8Array( gzipSync( enc.encode( mesh ) ) );
+		damaged.fill( 0xff, 10, 30 );
+		await expect( loadPBRTScene( { ...buildArgs(), vfs: { 'scene.pbrt': enc.encode( 'WorldBegin\nInclude "geometry/hair.pbrt.gz"\n' ), 'geometry/hair.pbrt.gz': damaged } } ) ).rejects.toThrow( /geometry\/hair\.pbrt\.gz is not readable gzip/ );
+
+	} );
 
 	it( 'empties the archive as it consumes it', async () => {
 

@@ -20,6 +20,7 @@ import { PBRTSceneBuilder } from './PBRTSceneBuilder.js';
 import { spectrumFileSamples } from './PBRTMaterials.js';
 import { findFrameSequence, FrameSequenceMerger, motionFromShutter, SEQUENCE_FPS } from './PBRTAnimation.js';
 import { plyFaceIndices } from './Ptex.js';
+import { gunzipSync } from 'three/addons/libs/fflate.module.js';
 
 export { PBRTParser } from './PBRTParser.js';
 export { PBRTSceneBuilder, PBRT_BUILD_REVISION, SPILL_TRIANGLE_BUDGET, SPILL_PLACEMENT_BUDGET, texturePixels } from './PBRTSceneBuilder.js';
@@ -54,6 +55,53 @@ function joinPath( dir, rel ) {
 	if ( ! dir ) return normalizePath( rel );
 	if ( rel.startsWith( '/' ) ) return normalizePath( rel );
 	return normalizePath( `${dir}/${rel}` );
+
+}
+
+/**
+ * A scene file's text: pbrt-v4 reads a gzip-compressed one (`.pbrt.gz`, as the hair scenes' geometry) as its text. The
+ * text streams into one buffer of the size gzip records (its last 4 bytes, mod 2³²), grown only past that.
+ */
+export async function sceneText( bytes, name = 'scene file' ) {
+
+	if ( ! bytes || bytes.length < 18 || bytes[ 0 ] !== 0x1f || bytes[ 1 ] !== 0x8b ) return bytes;
+	try {
+
+		if ( typeof DecompressionStream === 'undefined' ) return gunzipSync( bytes );
+		const size = new DataView( bytes.buffer, bytes.byteOffset + bytes.length - 4, 4 ).getUint32( 0, true );
+		const source = new ReadableStream( { start( c ) {
+
+			c.enqueue( bytes );
+			c.close();
+
+		} } );
+		const reader = source.pipeThrough( new DecompressionStream( 'gzip' ) ).getReader();
+		// A trailer can lie (a damaged file): never more than text compresses to at most, a grown buffer past it.
+		let out = new Uint8Array( Math.min( size, bytes.length * 32 ) ), at = 0;
+		for ( ;; ) {
+
+			const { done, value } = await reader.read();
+			if ( done ) break;
+			if ( at + value.length > out.length ) {
+
+				const grown = new Uint8Array( Math.max( out.length * 2, at + value.length ) );
+				grown.set( out.subarray( 0, at ) );
+				out = grown;
+
+			}
+
+			out.set( value, at );
+			at += value.length;
+
+		}
+
+		return at === out.length ? out : out.subarray( 0, at );
+
+	} catch ( error ) {
+
+		throw new Error( `PBRT loader: ${name} is not readable gzip (${error.message || error.name})`, { cause: error } );
+
+	}
 
 }
 
@@ -180,7 +228,7 @@ export class VirtualFS {
 	/** Drop every .pbrt entry's bytes. Safe only once parsing is complete. */
 	releaseScenes() {
 
-		for ( const rec of this.records ) if ( rec.norm.endsWith( '.pbrt' ) ) this.release( rec );
+		for ( const rec of this.records ) if ( /\.pbrt(\.gz)?$/.test( rec.norm ) ) this.release( rec );
 
 	}
 
@@ -462,11 +510,11 @@ export async function loadPBRTScene( args ) {
 	// be larger than the longest string JavaScript will build.
 	const parseScene = async ( path ) => {
 
-		const bytes = await vfs.readPath( path );
+		const bytes = await sceneText( await vfs.readPath( path ), path );
 		if ( ! bytes ) throw new Error( `PBRT loader: entry "${path}" not readable` );
 
 		const parser = new PBRTParser( {
-			resolveInclude: ( include, currentDir ) => vfs.readPath( include, currentDir ),
+			resolveInclude: async ( include, currentDir ) => sceneText( await vfs.readPath( include, currentDir ), include ),
 			// Depth-first, so this keeps only the open include chain live rather than every
 			// scene file at once — the difference between 5.7 GB resident and a few MB.
 			releaseInclude: ( include, currentDir, bytes ) => vfs.releasePath( include, currentDir, bytes ),
