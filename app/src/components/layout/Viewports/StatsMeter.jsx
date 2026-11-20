@@ -211,7 +211,7 @@ const StatsMeter = ( { viewportMode } ) => {
 			</div>
 
 			<div className="flex items-center gap-1">
-				<span>Memory: <span className="text-foreground">{formatBytes( stats.memoryUsed )}</span></span>
+				<span title="Graphics memory the renderer holds: scene, textures and render buffers">GPU memory: <span className="text-foreground">{formatBytes( stats.memoryUsed )}</span></span>
 				<span className="mx-1">|</span>
 				<span>Peak: <span className="text-foreground">{formatBytes( stats.memoryPeak )}</span></span>
 			</div>

@@ -1,12 +1,10 @@
 import { useEffect, useRef } from 'react';
-import { StatsProfiler } from 'stats-gl';
 import { EngineEvents } from 'rayzee';
 
 // A tile a reading, its recent values as faint bars behind the number (the newest on the right, in the accent).
 const CHIPS = [
-	{ key: 'fps', label: 'fps', width: 56, title: 'Frames drawn a second' },
-	{ key: 'cpu', label: 'cpu', width: 62, title: 'Milliseconds the CPU spends on a frame' },
-	{ key: 'gpu', label: 'gpu', width: 62, title: 'Milliseconds the GPU spends drawing a frame to the screen' },
+	{ key: 'fps', label: 'fps', width: 56, title: 'Frames traced a second' },
+	{ key: 'cpu', label: 'cpu', width: 62, title: 'Milliseconds the CPU works on a frame, time spent waiting for the GPU left out' },
 	{ key: 'compute', label: 'compute', width: 72, title: 'Milliseconds the GPU spends tracing a frame' },
 	{ key: 'denoise', label: 'denoise', width: 92, title: 'Denoised pictures shown a second, and how long the last one took' },
 ];
@@ -34,7 +32,56 @@ function barPaths( samples, width ) {
 
 }
 
-/** The status bar's speed readings, ticked on every engine FRAME event; stats-gl's profiler measures them. */
+// A frame's span from three's frame step to FRAME, less the time inside queue.submit, which blocks while the GPU is behind.
+function frameWorkTimer( renderer ) {
+
+	const { info } = renderer;
+	const queue = renderer.backend?.device?.queue;
+	const reset = info.reset, submit = queue?.submit;
+	let start = 0, waited = 0;
+
+	info.reset = function () {
+
+		start = performance.now();
+		waited = 0;
+		return reset.call( this );
+
+	};
+
+	if ( queue ) queue.submit = function ( buffers ) {
+
+		const t = performance.now();
+		try {
+
+			return submit.call( this, buffers );
+
+		} finally {
+
+			waited += performance.now() - t;
+
+		}
+
+	};
+
+	return {
+		read( now ) {
+
+			const ms = start ? Math.max( 0, now - start - waited ) : 0;
+			start = 0;
+			return ms;
+
+		},
+		dispose() {
+
+			info.reset = reset;
+			if ( queue ) queue.submit = submit;
+
+		},
+	};
+
+}
+
+/** The status bar's speed readings, taken on each FRAME event that traced a frame. */
 export default function StatsPanel( { app } ) {
 
 	const root = useRef( null );
@@ -54,22 +101,20 @@ export default function StatsPanel( { app } ) {
 
 		}
 
-		// The profiler wraps renderer.info.reset to time the CPU; put the original back when done.
-		const infoReset = renderer.info.reset;
-		const profiler = new StatsProfiler( { trackGPU: true, trackCPT: true } );
-		profiler.init( renderer );
+		const timed = app.enableGPUTiming?.( true ) === true;
+		const work = frameWorkTimer( renderer );
 
 		const sums = {}, shown = {};
-		const landed = [];
+		const traced = [], landed = [];
 		let frames = 0, lastPass = 0, barAt = performance.now(), textAt = 0;
+		let tracedCount = app.stages?.pathTracer?.tracedFrames;
 
 		const writeText = () => {
 
 			const text = {
 				fps: [ shown.fps.toFixed( 0 ), '' ],
 				cpu: [ shown.cpu.toFixed( 1 ), ' ms' ],
-				gpu: [ shown.gpu.toFixed( 1 ), ' ms' ],
-				compute: [ shown.compute.toFixed( 1 ), ' ms' ],
+				compute: timed ? [ shown.compute.toFixed( 1 ), ' ms' ] : [ '–', '' ],
 				denoise: [ `${landed.length}/s`, lastPass ? ` · ${lastPass.toFixed( 0 )} ms` : '' ],
 			};
 			for ( const key in text ) {
@@ -83,21 +128,20 @@ export default function StatsPanel( { app } ) {
 
 		const onFrame = () => {
 
-			// Three.js WebGPU only writes renderer.info.{render,compute}.timestamp when
-			// resolveTimestampsAsync() is called — stats-gl reads but never resolves.
-			if ( renderer.backend?.trackTimestamp ) {
-
-				renderer.resolveTimestampsAsync( 'render' );
-				renderer.resolveTimestampsAsync( 'compute' );
-
-			}
-
-			profiler.update();
 			const now = performance.now();
+			const cpu = work.read( now );
+
+			// A tick that traced nothing (a load, a held frame) draws nothing new: it is not a reading.
+			const count = app.stages?.pathTracer?.tracedFrames;
+			if ( count === undefined || count === tracedCount ) return;
+			tracedCount = count;
+
+			if ( timed ) renderer.resolveTimestampsAsync( 'compute' );
+			traced.push( now );
+			while ( now - traced[ 0 ] > 1000 ) traced.shift();
 			while ( landed.length && now - landed[ 0 ] > 1000 ) landed.shift();
 
-			const { fps, cpu, gpu, gpuCompute } = profiler.getData();
-			const reading = { fps, cpu, gpu, compute: gpuCompute, denoise: landed.length };
+			const reading = { fps: traced.length, cpu, compute: renderer.info.compute.timestamp || 0, denoise: landed.length };
 			for ( const key in reading ) {
 
 				sums[ key ] = ( sums[ key ] ?? 0 ) + reading[ key ];
@@ -150,8 +194,8 @@ export default function StatsPanel( { app } ) {
 
 			app.removeEventListener( EngineEvents.FRAME, onFrame );
 			app.removeEventListener( EngineEvents.DENOISING_END, onDenoised );
-			profiler.dispose();
-			renderer.info.reset = infoReset;
+			work.dispose();
+			if ( timed ) app.enableGPUTiming( false );
 
 		};
 

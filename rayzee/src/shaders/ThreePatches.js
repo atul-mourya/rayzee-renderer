@@ -5,7 +5,7 @@
  * `createNodeBuilder` (restores r183 function-scoped `var` emission for compute
  * shaders, preventing a register-allocation regression in the path tracer's hot
  * loop), `createStorageAttribute` / `updateAttribute` (GPU-only storage),
- * `initTimestampQuery` (enlarges the stats-gl timestamp query pool so the
+ * `initTimestampQuery` (enlarges the timestamp query pool so the
  * wavefront tracer's high per-frame compute-pass count doesn't overflow it) and
  * `createProgram` (compute functions' own variables under WebKit's 8 KB).
  *
@@ -203,7 +203,7 @@ WebGPUBackend.prototype.updateAttribute = function ( attribute ) {
 };
 
 // ---------------------------------------------------------------------------
-// 2. Larger timestamp query pool (stats-gl GPU/compute timing)
+// 2. Larger timestamp query pool (GPU timing)
 // ---------------------------------------------------------------------------
 // Three.js lazily creates each timestamp query pool with a hardcoded 2048
 // queries (= 1024 passes) — `WebGPUBackend.initTimestampQuery` / the upstream
@@ -211,7 +211,7 @@ WebGPUBackend.prototype.updateAttribute = function ( attribute ) {
 // compute passes per frame (peak right after a maxBounces change: the survivor
 // curve is invalid, so the bounce loop runs the full `loopBound` at full
 // dispatch with no early-exit — ~560 passes / 1124 queries at production
-// settings). stats-gl resolves once per frame, but the resolve is async and
+// settings). The app's stats strip resolves once per frame, but the resolve is async and
 // `mapAsync` lags several frames under that GPU load, so the counter isn't reset
 // before it overflows → "Maximum number of queries exceeded" + dropped timings.
 //

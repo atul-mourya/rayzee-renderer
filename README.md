@@ -117,7 +117,7 @@ Drop in a 3D model and watch light bounce around it. Nothing to install.
 | Upscaling | Real-ESRGAN on ONNX Runtime Web |
 | App | React 19, Vite 8, Tailwind CSS 4, Radix UI, Lucide icons, Zustand |
 | Video export | WebCodecs, Mediabunny |
-| Tooling | Vitest, ESLint, semantic-release, stats-gl |
+| Tooling | Vitest, ESLint, semantic-release |
 
 </details>
 

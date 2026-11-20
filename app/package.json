@@ -37,7 +37,6 @@
     "react": "19.0.0",
     "react-dom": "19.0.0",
     "react-resizable-panels": "^2.1.6",
-    "stats-gl": "^4.0.2",
     "tailwind-merge": "^2.5.3",
     "tailwindcss-animate": "^1.0.7",
     "three": "^0.187.0",
