@@ -111,6 +111,83 @@ export function approximated( params, name ) {
 
 }
 
+// A curve's batchable kind: its type, basis and degree (each its default when unset) and its point count, or null for one
+// with any other parameter (a ribbon's normals, a texture, a split depth) or a value not plain.
+const CURVE_BATCH_PARAMS = new Set( [ 'type', 'basis', 'degree', 'P', 'width', 'width0', 'width1' ] );
+// Curves a batch, at most: each batch is a mesh, its tree built on a worker of its own.
+const CURVE_BATCH_MAX = 65536;
+function curveKey( { params } ) {
+
+	for ( const name in params ) if ( ! CURVE_BATCH_PARAMS.has( name ) ) return null;
+	const text = ( name, dflt ) => ( params[ name ] ? ( params[ name ].type === 'string' ? params[ name ].value[ 0 ] : null ) : dflt );
+	const number = ( name ) => ( params[ name ] ? ( typeof params[ name ].value[ 0 ] === 'number' && params[ name ].value.length === 1 ? params[ name ].value[ 0 ] : NaN ) : 0 );
+	const P = params.P?.value;
+	if ( ! ArrayBuffer.isView( P ) || params.P.type !== 'point3' ) return null;
+	const type = text( 'type', 'flat' ), basis = text( 'basis', 'bezier' ), degree = number( 'degree' ) || 3;
+	if ( type === null || basis === null || [ 'width', 'width0', 'width1' ].some( ( w ) => Number.isNaN( number( w ) ) ) ) return null;
+	return `${type}|${basis}|${degree}|${P.length}`;
+
+}
+
+/**
+ * Curves of one kind as arrays: each one's P (all the same length), width0 and width1, pbrt's defaults applied (width 1;
+ * width0 and width1 that width). `params` is the first curve's, its P and widths left out: the builder reads the kind
+ * there, the rest here.
+ */
+export class CurveBatch {
+
+	constructor( key, first ) {
+
+		this.key = key;
+		this.stride = first.P.value.length;
+		this.count = 0;
+		this.P = new Float32Array( this.stride * 64 );
+		// Widths as parsed (doubles), as a curve on its own passes them.
+		this.width0 = new Float64Array( 64 );
+		this.width1 = new Float64Array( 64 );
+		this.params = {};
+		for ( const name of [ 'type', 'basis', 'degree' ] ) if ( first[ name ] ) this.params[ name ] = first[ name ];
+
+	}
+
+	/** Lets go of the arrays once the curves are built; the count stays. */
+	release() {
+
+		this.P = new Float32Array( 0 );
+		this.width0 = this.width1 = new Float64Array( 0 );
+
+	}
+
+	add( params ) {
+
+		if ( this.count === this.width0.length ) {
+
+			const grow = ( a, n ) => {
+
+				const b = new a.constructor( n );
+				b.set( a );
+				return b;
+
+			};
+
+			this.P = grow( this.P, this.P.length * 2 );
+			this.width0 = grow( this.width0, this.width0.length * 2 );
+			this.width1 = grow( this.width1, this.width1.length * 2 );
+
+		}
+
+		// Read here, not through param(): an Attribute that set one counts as used.
+		for ( const name of [ 'P', 'width', 'width0', 'width1' ] ) if ( params[ name ]?.fromAttribute ) params[ name ].fromAttribute.read = true;
+		const width = params.width?.value[ 0 ] ?? 1;
+		this.P.set( params.P.value, this.count * this.stride );
+		this.width0[ this.count ] = params.width0?.value[ 0 ] ?? width;
+		this.width1[ this.count ] = params.width1?.value[ 0 ] ?? width;
+		this.count ++;
+
+	}
+
+}
+
 /**
  * What one load did not honour, as pbrt's ReportUnused: each translated directive's parameters that nothing looked up,
  * or that were approximated, counted per `directive type: name`. Holds nothing per directive once it is accounted for.
@@ -1073,22 +1150,57 @@ export class PBRTParser {
 
 	_emitShape( shape ) {
 
-		if ( this.currentObject !== null ) {
+		// pbrt keeps a template shape's whole transform and puts each placement's on top of it,
+		// whatever the transform was at ObjectBegin (kroken defines under one and places at Identity).
+		const list = this.currentObject !== null ? this.ir.objects.get( this.currentObject ) : this.ir.shapes;
+		if ( this._batchCurve( list, shape ) ) return;
+		list.push( shape );
 
-			// pbrt keeps a template shape's whole transform and puts each placement's on top of it,
-			// whatever the transform was at ObjectBegin (kroken defines under one and places at Identity).
-			this.ir.objects.get( this.currentObject ).push( shape );
+	}
 
-		} else {
+	/**
+	 * A one-segment `curve` like the shape before it (same state, kind and size) joins it as a `CurveBatch`: hair writes a
+	 * strand a directive, 3.3M of them in pbrt's curly-hair, at 1.2 KB a shape object. A batch never spans an Include,
+	 * so a repeated include's shapes stay its own.
+	 * @returns {boolean} whether it was batched
+	 */
+	_batchCurve( list, shape ) {
 
-			this.ir.shapes.push( shape );
+		const key = shape.type === 'curve' ? curveKey( shape ) : null;
+		const last = list[ list.length - 1 ];
+		if ( key === null || ! last || last !== this._lastCurve || last.batch?.count >= CURVE_BATCH_MAX ) {
+
+			this._lastCurve = key === null ? null : shape;
+			return false;
 
 		}
+
+		const same = last.ctm === shape.ctm && last.material === shape.material && last.areaLight === null && shape.areaLight === null &&
+			last.reverseOrientation === shape.reverseOrientation && last.interior === shape.interior && last.exterior === shape.exterior &&
+			! last.ctmEnd && ! shape.ctmEnd && ( last.batch ? last.batch.key : curveKey( last ) ) === key;
+		if ( ! same ) {
+
+			this._lastCurve = shape;
+			return false;
+
+		}
+
+		if ( ! last.batch ) {
+
+			last.batch = new CurveBatch( key, last.params );
+			last.batch.add( last.params );
+			last.params = last.batch.params;
+
+		}
+
+		last.batch.add( shape.params );
+		return true;
 
 	}
 
 	async _include( path ) {
 
+		this._lastCurve = null;
 		const dir = this.dirStack[ this.dirStack.length - 1 ];
 		const key = this._includeKey( path, dir );
 		if ( key !== null && this._placeRepeat( key, path ) ) return;
@@ -1110,6 +1222,7 @@ export class PBRTParser {
 
 		} finally {
 
+			this._lastCurve = null;
 			this.dirStack.pop();
 			// Depth-first, so only the open chain is live. Releasing here is what keeps a
 			// multi-gigabyte scene's text from all being resident at once; a file included

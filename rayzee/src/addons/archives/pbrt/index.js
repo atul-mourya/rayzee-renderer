@@ -548,7 +548,10 @@ export async function loadPBRTScene( args ) {
 	if ( sequence ) {
 
 		const first = await parseScene( sequence[ 0 ].path );
-		if ( first.shapes.length + first.instanceCount > MAX_SEQUENCE_PRIMITIVES ) {
+		// A batch of curves counts each.
+		let primitives = first.instanceCount;
+		for ( const shape of first.shapes ) primitives += shape?.batch?.count ?? 1;
+		if ( primitives > MAX_SEQUENCE_PRIMITIVES ) {
 
 			warnings.push( `${sequence.length} animation frames found, but the scene is too large to parse once per frame — loaded "${sequence[ 0 ].path}" only` );
 			sequence = null;

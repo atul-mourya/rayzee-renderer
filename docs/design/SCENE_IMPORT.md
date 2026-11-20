@@ -203,6 +203,14 @@ subtree per element, and the whole thing rarely fits: Moana is 29 GB unpacked.
   file's named systems and transform to itself). A gzip-compressed scene file (`.pbrt.gz`: the hair scenes' geometry)
   is read as its text (`sceneText`: `DecompressionStream` into one buffer of the size gzip's trailer gives, else
   fflate; a damaged one fails naming the file); before 2026-11-20 it stopped the parse.
+- **Curve batches**: hair writes a strand a `Shape "curve"`, and each shape object held 1.2–1.4 KB of the parse: pbrt's
+  curly-hair (3.3M of them) ran Node out of heap. A run of one-segment curves of one kind (type, basis, degree, point
+  count; no other parameter) under one state (CTM, material, orientation, media; no area light, no motion) is one IR
+  shape with a `CurveBatch` (`PBRTParser.js`: P, width0 and width1 as arrays, pbrt's width defaults applied; 66 bytes a
+  curve), at most 65,536 curves, never across an Include (a repeated include keeps its own shapes). The builder
+  tessellates each curve as `_curve` does one (`_curveBatch`), triangles identical; frame sequences key a batch by its
+  arrays' hash. curly-hair: 26.3M triangles, against pbrt (hair colour above) blonde 0.92/0.84/0.70, FLIP 0.29;
+  eumelanin 0.3 0.64/0.71/0.68, 0.38.
 - **Attribute** is pbrt-v4's: `Attribute "shape"` (or `light`, `material`, `medium`, `texture`) sets defaults for the
   directives of that kind that follow in its attribute block (`AttributeEnd` takes them away); a directive's own
   parameter wins, then the latest `Attribute`, as pbrt's ParameterDictionary orders them; attributes set before

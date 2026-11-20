@@ -1201,6 +1201,63 @@ describe( 'PBRT scene builder', () => {
 
 	} );
 
+	describe( 'runs of one-segment curves (hair: a strand a Shape directive)', () => {
+
+		let seed = 7;
+		const rand = () => ( seed = ( seed * 16807 ) % 2147483647 ) / 2147483647;
+		const strands = Array.from( { length: 40 }, ( _, i ) => {
+
+			const P = Array.from( { length: 12 }, ( _, k ) => ( k % 3 === 1 ? k / 3 : i * 0.1 ) + rand() * 0.05 );
+			return { P, w0: 0.01 + rand() * 0.01, w1: 0.002 + rand() * 0.002 };
+
+		} );
+		const curve = ( { P, w0, w1 }, extra = '' ) => `Shape "curve" "string type" [ "cylinder" ] "point3 P" [ ${P.join( ' ' )} ] "float width0" [ ${w0} ] "float width1" [ ${w1} ]${extra}`;
+		const load = async ( lines ) => loadPBRTScene( { ...buildArgs(), vfs: { 'scene.pbrt': enc.encode( `WorldBegin\nMaterial "diffuse"\n${lines.join( '\n' )}\n` ) } } );
+		// Every triangle's corners in order, as positions: the same triangles whatever the vertices' numbering.
+		const positions = ( group ) => group.children.filter( ( c ) => c instanceof Mesh ).flatMap( ( m ) => {
+
+			const p = m.geometry.getAttribute( 'position' ).array, index = m.geometry.index.array;
+			return Array.from( index ).flatMap( ( i ) => [ p[ 3 * i ], p[ 3 * i + 1 ], p[ 3 * i + 2 ] ] );
+
+		} );
+
+		it( 'parses a run as one batch and builds the same triangles as the curves one by one', async () => {
+
+			const parser = new PBRTParser( {} );
+			const ir = await parser.parse( enc.encode( `WorldBegin\n${strands.map( ( s ) => curve( s ) ).join( '\n' )}\n` ), '' );
+			expect( ir.shapes ).toHaveLength( 1 );
+			expect( ir.shapes[ 0 ].batch.count ).toBe( 40 );
+
+			// A parameter the batch does not take ( pbrt's splitdepth ) keeps each curve a shape of its own.
+			const batched = await load( strands.map( ( s ) => curve( s ) ) );
+			const single = await load( strands.map( ( s ) => curve( s, ' "integer splitdepth" 3' ) ) );
+			expect( batched.group.children.filter( ( c ) => c instanceof Mesh ) ).toHaveLength( 1 );
+			expect( positions( batched.group ) ).toEqual( positions( single.group ) );
+			expect( batched.parameters.unused ).toEqual( {} );
+			// A width an Attribute sets is read by the batch, as by a curve alone.
+			const attributed = await load( [ 'Attribute "shape" "float width" 0.02', ...strands.slice( 0, 3 ).map( ( { P } ) => `Shape "curve" "point3 P" [ ${P.join( ' ' )} ]` ) ] );
+			expect( attributed.parameters.unused ).toEqual( {} );
+
+		} );
+
+		it( 'starts a new batch where the state, the kind or an include changes', async () => {
+
+			const parse = ( text, files = {} ) => new PBRTParser( { resolveInclude: async ( p ) => files[ p ] ?? null } ).parse( enc.encode( `WorldBegin\n${text}\n` ), '' );
+			const [ a, b, c ] = strands;
+			const counts = ( ir ) => ir.shapes.map( ( s ) => s.batch?.count ?? 1 );
+			expect( counts( await parse( [ curve( a ), curve( b ), 'Material "conductor"', curve( c ) ].join( '\n' ) ) ) ).toEqual( [ 2, 1 ] );
+			expect( counts( await parse( [ curve( a ), curve( b ), 'Translate 1 0 0', curve( c ) ].join( '\n' ) ) ) ).toEqual( [ 2, 1 ] );
+			expect( counts( await parse( [ curve( a ), curve( b ).replace( 'cylinder', 'flat' ), curve( c ).replace( 'cylinder', 'flat' ) ].join( '\n' ) ) ) ).toEqual( [ 1, 2 ] );
+			expect( counts( await parse( [ curve( a ), 'Include "more.pbrt"', curve( c ) ].join( '\n' ), { 'more.pbrt': enc.encode( curve( b ) ) } ) ) ).toEqual( [ 1, 1, 1 ] );
+			expect( counts( await parse( [ curve( a ), curve( b, ' "integer splitdepth" 3' ), curve( c ) ].join( '\n' ) ) ) ).toEqual( [ 1, 1, 1 ] );
+			// Widths a curve leaves out are pbrt's: width, else 1.
+			const [ shape ] = ( await parse( 'Shape "curve" "point3 P" [ 0 0 0 1 0 0 2 0 0 3 0 0 ] "float width" 0.5\nShape "curve" "point3 P" [ 0 1 0 1 1 0 2 1 0 3 1 0 ]' ) ).shapes;
+			expect( [ ...shape.batch.width0.subarray( 0, 2 ), ...shape.batch.width1.subarray( 0, 2 ) ] ).toEqual( [ 0.5, 1, 0.5, 1 ] );
+
+		} );
+
+	} );
+
 	it( 'empties the archive as it consumes it', async () => {
 
 		// Nulling only the loader's own copy frees nothing while the caller still holds the

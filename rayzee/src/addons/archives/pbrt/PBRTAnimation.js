@@ -107,7 +107,8 @@ class ShapeKeys {
 
 	of( shape ) {
 
-		return `${shape.type}|${shape.reverseOrientation ? 1 : 0}|${paramsKey( shape.params )}|` +
+		const batch = shape.batch ? `#${hashNumbers( shape.batch.P.subarray( 0, shape.batch.count * shape.batch.stride ) )}#${hashNumbers( shape.batch.width0.subarray( 0, shape.batch.count ) )}#${hashNumbers( shape.batch.width1.subarray( 0, shape.batch.count ) )}` : '';
+		return `${shape.type}|${shape.reverseOrientation ? 1 : 0}|${paramsKey( shape.params )}${batch}|` +
 			`${this._material( shape.material )}|${this._light( shape.areaLight )}`;
 
 	}

@@ -184,7 +184,7 @@ const DEFAULT_CURVE_TOLERANCE = 0.05;
 const CURVE_SPLIT_CURVES = 20000;
 
 /** Bumped whenever the same scene files build a different graph, so a stored graph is not reused. */
-export const PBRT_BUILD_REVISION = 48;
+export const PBRT_BUILD_REVISION = 49;
 
 // Ptex pages: all of a scene's Ptex colour maps in this much texture memory at most, on square pages this size.
 const DEFAULT_PTEX_MEMORY = 1024 * 2 ** 20;
@@ -2058,7 +2058,7 @@ export class PBRTSceneBuilder {
 			case 'trianglemesh': return this._triangleMesh( shape.params );
 			case 'bilinearmesh': return this._bilinearMesh( shape.params );
 			case 'loopsubdiv': return this._loopSubdiv( shape.params );
-			case 'curve': return this._curve( shape.params );
+			case 'curve': return shape.batch ? this._curveBatch( shape ) : this._curve( shape.params );
 			case 'curves': return this._curves( shape.params );
 			case 'plymesh': return this._plyShape( shape );
 			case 'sphere': return this._sphere( shape.params );
@@ -2156,6 +2156,71 @@ export class PBRTSceneBuilder {
 		const geo = new BufferGeometry();
 		geo.setAttribute( 'position', new BufferAttribute( built.positions, 3 ) );
 		geo.setIndex( new BufferAttribute( built.indices, 1 ) );
+		geo.computeVertexNormals();
+		packUnitAttribute( geo, 'normal' );
+		return geo;
+
+	}
+
+	/**
+	 * A parser's `CurveBatch`: the curves of one kind a run of `curve` directives gave, each tessellated as `_curve` does
+	 * one, in one geometry (their vertices unshared, so its normals are each curve's own). @private
+	 */
+	async _curveBatch( shape ) {
+
+		const { batch, params } = shape;
+		const degree = Math.round( pFloat( params, 'degree', 3 ) );
+		const basis = pString( params, 'basis', 'bezier' );
+		const type = pString( params, 'type', 'flat' );
+		if ( degree !== 3 || ( basis === 'bezier' && ( batch.stride / 3 - 1 ) % 3 !== 0 ) || batch.stride < 12 ) {
+
+			this.warn( `${batch.count} curve(s) of degree ${degree} or ${batch.stride / 3} points: pbrt needs cubic, 3n + 1 — skipped` );
+			return null;
+
+		}
+
+		let positions = new Float32Array( 3 * 1024 ), indices = new Uint32Array( 3 * 1024 );
+		let vertices = 0, corners = 0, failed = 0;
+		const grow = ( a, n ) => {
+
+			if ( n <= a.length ) return a;
+			const b = new a.constructor( Math.max( n, a.length * 2 ) );
+			b.set( a );
+			return b;
+
+		};
+
+		for ( let i = 0; i < batch.count; i ++ ) {
+
+			if ( ( i & 8191 ) === 8191 ) await this._tick();
+			const built = tessellateCurve( {
+				P: batch.P.subarray( i * batch.stride, ( i + 1 ) * batch.stride ), basis,
+				width0: batch.width0[ i ], width1: batch.width1[ i ], N: null,
+				steps: this.curveSteps, sides: this.curveSides ?? DEFAULT_CURVE_SIDES[ type ] ?? 1, tolerance: this.curveTolerance
+			} );
+			if ( ! built ) {
+
+				failed ++;
+				continue;
+
+			}
+
+			positions = grow( positions, ( vertices * 3 ) + built.positions.length );
+			indices = grow( indices, corners + built.indices.length );
+			positions.set( built.positions, vertices * 3 );
+			for ( let k = 0; k < built.indices.length; k ++ ) indices[ corners + k ] = built.indices[ k ] + vertices;
+			vertices += built.positions.length / 3;
+			corners += built.indices.length;
+
+		}
+
+		if ( failed ) this.warn( `${failed} curve(s) could not be tessellated` );
+		// Built once (a moving placement's template is built again): its arrays go now, not when the build ends.
+		if ( ! this._keepShapes?.has( shape ) ) batch.release();
+		if ( corners === 0 ) return null;
+		const geo = new BufferGeometry();
+		geo.setAttribute( 'position', new BufferAttribute( positions.slice( 0, vertices * 3 ), 3 ) );
+		geo.setIndex( new BufferAttribute( indices.slice( 0, corners ), 1 ) );
 		geo.computeVertexNormals();
 		packUnitAttribute( geo, 'normal' );
 		return geo;
