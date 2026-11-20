@@ -184,8 +184,6 @@
 ### Animation
 
 - [ ] glTF light tracks (intensity, colour) need three's KHR_animation_pointer plugin, which the engine does not register
-- [ ] A session restores hidden objects but skips model lights (`SceneState.js`, `! object.isLight`): a light hidden in
-  the outliner comes back with its eye open while its copy stays off
 - [ ] Timeline scrubber for animation control
 - [ ] Multi-clip blending - cross-fade between animation clips with configurable transition duration
 - [ ] sequence caching for smooth playback / scrubbing

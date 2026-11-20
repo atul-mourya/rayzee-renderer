@@ -426,7 +426,8 @@ describe( 'applySceneState', () => {
 		expect( skipped ).toEqual( [] );
 		expect( leg.visible ).toBe( false );
 		expect( top.visible && lamp.visible && table.visible ).toBe( true );
-		expect( bulb.visible ).toBe( false );
+		// Loaded off, shown before the save: shown again, as an object would be.
+		expect( bulb.visible ).toBe( true );
 		expect( app.updateAllMeshVisibility ).toHaveBeenCalledOnce();
 		expect( table.position.toArray() ).toEqual( [ 0, 5, 0 ] );
 		expect( table.matrixWorld.elements[ 0 ] ).toBe( 2 );
@@ -442,6 +443,50 @@ describe( 'applySceneState', () => {
 		expect( app._dispatchCamerasUpdated ).toHaveBeenCalledOnce();
 		expect( app.timeline.restore ).toHaveBeenCalledWith( { keys: [ 1 ] } );
 		expect( app.reset ).toHaveBeenCalledOnce();
+
+	} );
+
+	it( 'brings a model light hidden in the outliner back hidden, its traced copy too, and one click shows both', async () => {
+
+		const session = ( scene ) => {
+
+			scene.bulb.visible = true;
+			const app = stateApp( scene );
+			const lights = lightManager();
+			lights.transferSceneLights( scene.root );
+			app.lightManager = lights;
+			app.updateAllMeshVisibility = vi.fn( () => lights.followVisibility() );
+			const copy = () => lights.getLights().find( ( l ) => l.type === 'PointLight' );
+			return { app, lights, copy };
+
+		};
+
+		const before = session( loadedScene() );
+		before.app.scene.bulb.visible = false;
+		before.app.updateAllMeshVisibility();
+		expect( before.copy().visible ).toBe( false );
+		const state = json( captureSceneState( before.app ) );
+
+		const after = session( loadedScene() );
+		expect( after.copy().visible ).toBe( true );
+		await applySceneState( after.app, state );
+		expect( after.app.scene.bulb.visible ).toBe( false );
+		expect( after.copy().visible ).toBe( false );
+
+		after.app.scene.bulb.visible = true;
+		after.app.updateAllMeshVisibility();
+		expect( after.copy().visible ).toBe( true );
+
+		// Hidden in the outliner, its copy switched back on in the Lights panel: both come back so.
+		const lit = session( loadedScene() );
+		lit.app.scene.bulb.visible = false;
+		lit.app.updateAllMeshVisibility();
+		lit.lights.scene.getObjectsByProperty( 'isLight', true ).find( ( l ) => l.isPointLight ).visible = true;
+		const litState = json( captureSceneState( lit.app ) );
+		const back = session( loadedScene() );
+		await applySceneState( back.app, litState );
+		expect( back.app.scene.bulb.visible ).toBe( false );
+		expect( back.copy().visible ).toBe( true );
 
 	} );
 

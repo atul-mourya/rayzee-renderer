@@ -66,7 +66,8 @@ turns it off or supplies a host manager; `openHeadless` defaults to off.
   (`viewer/SceneState.js`): host-set settings (`settings.serialize()`), environment (mode, sky params, HDRI
   source), colour (config, view, look, working space, context), every light, cameras (live view,
   user cameras, per-camera effects), timeline keys, host material edits (with values —
-  `_hostSet` is a Map), hidden objects, gizmo-moved objects. Objects are matched by child-index
+  `_hostSet` is a Map), hidden objects (a model's lights too, so its copy and the outliner's eye agree), gizmo-moved
+  objects. Objects are matched by child-index
   path, materials by index, model cameras by index — each **plus a name check**; UUIDs change per
   load. `resolve` answers what the engine cannot reach (a local HDRI, a non-builtin OCIO config).
   `toPortable` / `fromPortable` keep colours, vectors and non-finite numbers through JSON. The live view comes back

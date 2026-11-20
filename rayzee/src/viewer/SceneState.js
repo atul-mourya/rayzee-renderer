@@ -310,6 +310,21 @@ export async function applySceneState( app, state, { resolve = async () => null 
 	const unknown = app.settings.restore( state.settings );
 	if ( unknown.length ) skip( 'settings', 'not settings in this engine', { keys: unknown } );
 
+	// Before the lights: a restored copy then sees its source as restored, and keeps its own saved visibility (a light
+	// hidden in the outliner whose copy was switched back on).
+	if ( sameScene ) {
+
+		const root = app.meshScene;
+		const hidden = new Set( ( state.hidden ?? [] ).map( rebase ).filter( Boolean ).map( path => objectAt( root, path ) ).filter( Boolean ) );
+		root.traverse( object => {
+
+			if ( object !== root ) object.visible = ! hidden.has( object );
+
+		} );
+		app.updateAllMeshVisibility();
+
+	}
+
 	const lights = app.lightManager.restore( state.lights );
 	for ( const light of lights ) {
 
@@ -343,13 +358,6 @@ export async function applySceneState( app, state, { resolve = async () => null 
 		}
 
 		const root = app.meshScene;
-		const hidden = new Set( ( state.hidden ?? [] ).map( rebase ).filter( Boolean ).map( path => objectAt( root, path ) ).filter( Boolean ) );
-		root.traverse( object => {
-
-			if ( object !== root && ! object.isLight ) object.visible = ! hidden.has( object );
-
-		} );
-		app.updateAllMeshVisibility();
 
 		const moved = [];
 		for ( const entry of state.moved ?? [] ) {
