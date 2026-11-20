@@ -220,6 +220,9 @@
   translators and their tests derived from it (`pbrt/defaults.test.js` checks the defaults by hand today).
 - [ ] `bench:pbrt` against pbrt-v4-scenes' published reference images, with their own post applied
   (`docs/design/SCENE_IMPORT.md` → Extending it): today it renders references with a local pbrt-v4 build (`RAYZEE_PBRT`).
+- [ ] **Pick one scene of several**: a zip or folder of several pbrt scenes (pbrt-v4-scenes' hair zip, 11) opens the
+  shortest-named and only the console names the rest; the app has no way to open another (`pbrtEntry` exists). Its
+  numbered names also fool `findFrameSequence`: `hair-eumel-2` and `-8` load as one two-frame animation.
 
 ---
 
