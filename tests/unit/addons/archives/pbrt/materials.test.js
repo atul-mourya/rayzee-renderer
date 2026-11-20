@@ -277,3 +277,65 @@ describe( 'pbrt materials', () => {
 	} );
 
 } );
+
+describe( 'pbrt hair', () => {
+
+	// pbrt-v4 HairBxDF: SigmaAFromConcentration and the inverse of SigmaAFromReflectance at βn 0.3.
+	const reach = 5.969 - 0.215 * 0.3 + 2.532 * 0.09 - 10.73 * 0.027 + 5.574 * 0.0081 + 0.245 * 0.00243;
+	const deep = ( sigma ) => sigma.map( ( s ) => Math.exp( - Math.sqrt( s ) * reach ) );
+	const fibre = ( c ) => c.map( ( r ) => 2 * r / ( 1 + r * r ) );
+	const hair = ( params ) => buildMaterial( { type: 'hair', params }, ctx );
+	const rgb = ( mat ) => mat.color.toArray();
+
+	it( 'colours a fibre so a deep layer of it shows the reflectance pbrt\'s melanins give', async () => {
+
+		const blonde = rgb( await hair( { eumelanin: param( 'float', 0.3 ) } ) );
+		const expected = fibre( deep( [ 0.419, 0.697, 1.37 ].map( ( e ) => 0.3 * e ) ) );
+		blonde.forEach( ( v, c ) => expect( v ).toBeCloseTo( expected[ c ], 6 ) );
+		// Both melanins; then black hair, all but no colour; then none given, pbrt's brown (1.3).
+		const red = rgb( await hair( { eumelanin: param( 'float', 0.1 ), pheomelanin: param( 'float', 0.5 ) } ) );
+		fibre( deep( [ 0.1 * 0.419 + 0.5 * 0.187, 0.1 * 0.697 + 0.5 * 0.4, 0.1 * 1.37 + 0.5 * 1.05 ] ) ).forEach( ( v, c ) => expect( red[ c ] ).toBeCloseTo( v, 6 ) );
+		expect( Math.max( ...rgb( await hair( { eumelanin: param( 'float', 8 ) } ) ) ) ).toBeLessThan( 1e-4 );
+		const brown = fibre( deep( [ 0.419, 0.697, 1.37 ].map( ( e ) => 1.3 * e ) ) );
+		rgb( await hair( {} ) ).forEach( ( v, c ) => expect( v ).toBeCloseTo( brown[ c ], 6 ) );
+
+	} );
+
+	it( 'takes sigma_a first, then reflectance, as pbrt picks among them', async () => {
+
+		const sigma = rgb( await hair( { sigma_a: param( 'rgb', 0.2, 0.4, 0.8 ), reflectance: param( 'rgb', 0.9, 0.9, 0.9 ), eumelanin: param( 'float', 8 ) } ) );
+		fibre( deep( [ 0.2, 0.4, 0.8 ] ) ).forEach( ( v, c ) => expect( sigma[ c ] ).toBeCloseTo( v, 6 ) );
+		const reflectance = rgb( await hair( { reflectance: param( 'rgb', 0.5, 0.25, 2 ), eumelanin: param( 'float', 8 ) } ) );
+		fibre( [ 0.5, 0.25, 1 ] ).forEach( ( v, c ) => expect( reflectance[ c ] ).toBeCloseTo( v, 6 ) );
+
+	} );
+
+	it( 'reads a textured value as its mean, and clamps βm and βn to pbrt\'s [0.01, 1]', async () => {
+
+		const means = { ...ctx, floatTextureMean: async () => 2, textureMeanRGB: async () => [ 0.2, 0.4, 0.8 ] };
+		const textured = rgb( await buildMaterial( { type: 'hair', params: { eumelanin: param( 'texture', 'm' ) } }, means ) );
+		fibre( deep( [ 0.419, 0.697, 1.37 ].map( ( e ) => 2 * e ) ) ).forEach( ( v, c ) => expect( textured[ c ] ).toBeCloseTo( v, 6 ) );
+		const sigma = rgb( await buildMaterial( { type: 'hair', params: { sigma_a: param( 'texture', 's' ) } }, means ) );
+		fibre( deep( [ 0.2, 0.4, 0.8 ] ) ).forEach( ( v, c ) => expect( sigma[ c ] ).toBeCloseTo( v, 6 ) );
+
+		expect( ( await hair( { beta_m: param( 'float', 0 ) } ) ).roughness ).toBeCloseTo( ( 2 * ( 0.00726 + 0.0000812 ) ** 2 ) ** 0.25, 6 );
+		expect( ( await hair( { beta_m: param( 'float', - 0.5 ) } ) ).roughness ).toBe( ( await hair( { beta_m: param( 'float', 0.01 ) } ) ).roughness );
+		// βn past 1 reads as 1: the quintic past it grew past the colour's reach.
+		expect( rgb( await hair( { sigma_a: param( 'rgb', 0.5, 0.5, 0.5 ), beta_n: param( 'float', 2 ) } ) ) ).toEqual( rgb( await hair( { sigma_a: param( 'rgb', 0.5, 0.5, 0.5 ), beta_n: param( 'float', 1 ) } ) ) );
+
+	} );
+
+	it( 'shines as the cuticle\'s dielectric, rougher as βm grows', async () => {
+
+		const smooth = await hair( { beta_m: param( 'float', 0.1 ), eta: param( 'float', 1.6 ) } );
+		const rough = await hair( { beta_m: param( 'float', 0.7 ) } );
+		expect( smooth.metalness ).toBe( 0 );
+		expect( smooth.ior ).toBe( 1.6 );
+		expect( rough.ior ).toBe( 1.55 );
+		// v = ( 0.726 βm + 0.812 βm² + 3.7 βm²⁰ )², GGX α ≈ √( 2v ), roughness = √α.
+		expect( smooth.roughness ).toBeCloseTo( ( 2 * ( 0.0726 + 0.00812 ) ** 2 ) ** 0.25, 6 );
+		expect( rough.roughness ).toBe( 1 );
+
+	} );
+
+} );

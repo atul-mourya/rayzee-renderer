@@ -227,7 +227,17 @@ subtree per element, and the whole thing rarely fits: Moana is 29 GB unpacked.
   over — normals negated, triangles rewound (`turnedOver`), eta inverted — so the medium is its inside and every
   crossing bends as before (`_shapeMedium`). A medium on both sides keeps the inside one; the same medium on both sides
   (a medium filling space) is not supported, reported once. A grid medium (`nanovdb`, `uniformgrid`) inside a shape is
-  a volume (docs/design/VOLUMES.md → pbrt's grid media); its `interface` shape is not built. `diffusetransmission` is the engine's diffuse transmission lobe,
+  a volume (docs/design/VOLUMES.md → pbrt's grid media); its `interface` shape is not built. `hair` (`applyHair`) is a
+  dielectric surface (`eta`, roughness ( 2v )^¼ from βm's longitudinal variance v) of the colour a deep layer of the
+  fibres shows: pbrt's c = exp( −√σa · f( βn ) ), the inverse of its SigmaAFromReflectance, σa from `sigma_a`, else
+  `reflectance` (c itself), else the melanins (none: eumelanin 1.3; a textured one its mean, βm and βn clamped to
+  [0.01, 1] as pbrt's GetBxDF does), each fibre's albedo Kubelka–Munk's for c,
+  2c / ( 1 + c² ) (the fibres' own bounces darken it again; as c alone, light hair read 0.57–0.68 of pbrt). Against pbrt
+  on its straight-hair scenes (engine ÷ pbrt, FLIP): eumelanin 8 0.97/0.98/0.94, 0.22; 2 0.93/0.96/0.95, 0.25; βm 0.1
+  and 0.25 0.88–0.99, 0.28–0.31; light hair too dark and red, eumelanin 0.3 0.68/0.75/0.73, 0.36, βm 0.7 0.66–0.84,
+  0.52 (pbrt's light through the fibres, its TT and TRT lobes, is not there; half of the albedo as diffuse transmission
+  read worse, eumelanin 0.3 0.62/0.70/0.67, FLIP 0.45). As a grey diffuse before, every one read
+  1.6–2.0× in red and green and 3.8–4.2× in blue, FLIP 0.45–0.55. `diffusetransmission` is the engine's diffuse transmission lobe,
   split at T's peak (brightest texel × tint × scale; `ctx.textureMaxRGB` scans the map's bytes, no bake layer). Each
   colour is its lobe's peak over its share × its map's brightest texel, so R and T are exact at every texel pbrt does
   not clamp while max R + max T ≤ 1; a mapped colour may pass 1, colour × map never does. A textured T is the

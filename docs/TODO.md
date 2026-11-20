@@ -213,7 +213,10 @@
 - [ ] **Lights**: `goniometric` → IES; `projection` → gobos; infinite `portal`.
 - [ ] **Cameras**: `realistic` (lens files). (`spherical` opens as the engine's panorama: lat-long for `equirectangular`,
   the equal-area projection for pbrt's default `equalarea`, 2026-11-09.)
-- [ ] **Materials**: `hair`, `measured` load as diffuse.
+- [ ] **Materials**: `measured` loads as diffuse; `hair` is its colour and shine (2026-11-20), light hair too dark and red
+  against pbrt (0.68–0.84, its light through the fibres missing: docs/design/SCENE_IMPORT.md).
+- [ ] **Many `curve` shapes**: pbrt's curly-hair (3.3M one-segment `Shape "curve"`, 713 MB of text) runs Node out of
+  heap while parsing; straight-hair's 1.1M load (8.8M triangles). Each curve is an IR shape of its own.
 - [ ] **Texture filtering** — see Features → Rendering → Texture filtering (kroken's brick dirt read patchy where pbrt's
   MIP-filtered render is even).
 - [ ] **One table per directive**: pbrt-v4's parameter names, types, defaults and the `file:line` they come from, the

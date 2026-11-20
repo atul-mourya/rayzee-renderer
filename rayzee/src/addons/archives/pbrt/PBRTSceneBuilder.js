@@ -184,7 +184,7 @@ const DEFAULT_CURVE_TOLERANCE = 0.05;
 const CURVE_SPLIT_CURVES = 20000;
 
 /** Bumped whenever the same scene files build a different graph, so a stored graph is not reused. */
-export const PBRT_BUILD_REVISION = 47;
+export const PBRT_BUILD_REVISION = 48;
 
 // Ptex pages: all of a scene's Ptex colour maps in this much texture memory at most, on square pages this size.
 const DEFAULT_PTEX_MEMORY = 1024 * 2 ** 20;

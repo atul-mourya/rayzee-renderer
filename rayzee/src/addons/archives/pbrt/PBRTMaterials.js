@@ -745,6 +745,64 @@ async function applyConductorColor( mat, params, ctx, prefix, applyAlbedo, setCo
 
 }
 
+// pbrt-v4 HairBxDF::SigmaAFromConcentration: each melanin's absorption, sRGB.
+const EUMELANIN_SIGMA_A = [ 0.419, 0.697, 1.37 ];
+const PHEOMELANIN_SIGMA_A = [ 0.187, 0.4, 1.05 ];
+
+/**
+ * pbrt's hair is a fibre BSDF (Chiang et al. 2016); here a surface with the colour a volume of those fibres takes and
+ * the fibres' dielectric shine. The colour is the reflectance c that pbrt's SigmaAFromReflectance inverts: c =
+ * exp( −√σa · f( βn ) ), σa from `sigma_a`, `reflectance` (c itself) or the melanins, as pbrt picks among them. The shine
+ * is the cuticle's (`eta`), as rough as the longitudinal spread βm gives (v = ( 0.726 βm + 0.812 βm² + 3.7 βm²⁰ )²,
+ * GGX α ≈ √( 2v )). The fibre's azimuthal spread, its tilt and its forward scattering are not modelled.
+ */
+async function applyHair( mat, params, ctx ) {
+
+	// A float, or a float texture's mean (reported approximated); its default where neither is read.
+	const scalar = async ( key, dflt ) => ( await floatOrMean( params, key, ctx ) ) ?? dflt;
+	// pbrt's GetBxDF clamps both spreads to [0.01, 1].
+	const spread = ( v ) => Math.min( 1, Math.max( 0.01, v ) );
+
+	ctx.warn( 'material "hair": its fibre scattering drawn as a surface of the fibres\' colour and shine' );
+	const betaM = spread( await scalar( 'beta_m', 0.3 ) ), betaN = spread( await scalar( 'beta_n', 0.3 ) );
+	const reach = 5.969 - 0.215 * betaN + 2.532 * betaN ** 2 - 10.73 * betaN ** 3 + 5.574 * betaN ** 4 + 0.245 * betaN ** 5;
+	const fromSigma = ( sigma ) => sigma.map( ( s ) => Math.exp( - Math.sqrt( Math.max( 0, s ) ) * reach ) );
+
+	let color;
+	// A textured spectrum counts as its mean (spectrumMean, reported approximated).
+	if ( param( params, 'sigma_a' ) ) {
+
+		const sigma = param( params, 'sigma_a' ).type === 'texture'
+			? await spectrumMean( params, 'sigma_a', ctx, null )
+			: ( await resolveSpectrum( params, 'sigma_a', ctx, null, { bounded: false } ) ).rgb;
+		color = sigma && fromSigma( sigma );
+
+	} else if ( param( params, 'reflectance' ) || param( params, 'color' ) ) {
+
+		const key = param( params, 'reflectance' ) ? 'reflectance' : 'color';
+		color = ( await spectrumMean( params, key, ctx, null ) )?.map( ( v ) => Math.min( 1, Math.max( 0, v ) ) );
+
+	} else {
+
+		const named = param( params, 'eumelanin' ) || param( params, 'pheomelanin' );
+		const ce = named ? Math.max( 0, await scalar( 'eumelanin', 0 ) ) : 1.3, cp = named ? Math.max( 0, await scalar( 'pheomelanin', 0 ) ) : 0;
+		color = fromSigma( EUMELANIN_SIGMA_A.map( ( e, c ) => ce * e + cp * PHEOMELANIN_SIGMA_A[ c ] ) );
+
+	}
+
+	// c is what a deep layer of fibres shows after many bounces; each fibre's own albedo is Kubelka–Munk's for it.
+	const deep = color ?? fromSigma( EUMELANIN_SIGMA_A.map( ( e ) => 1.3 * e ) );
+	mat.color.setRGB( ...deep.map( ( r ) => 2 * r / ( 1 + r * r ) ) );
+	mat.metalness = 0;
+	mat.ior = await scalar( 'eta', 1.55 );
+	const v = ( 0.726 * betaM + 0.812 * betaM ** 2 + 3.7 * betaM ** 20 ) ** 2;
+	mat.roughness = Math.min( 1, Math.sqrt( Math.sqrt( 2 * v ) ) );
+	// What the colour and the shine leave out: the azimuthal spread (βn only sets the colour), the tilt.
+	if ( param( params, 'alpha' ) ) approximated( params, 'alpha' );
+	approximated( params, 'beta_n' );
+
+}
+
 /**
  * Build a MeshPhysicalMaterial from a pbrt material definition.
  * @param {{type:string, params:object}} def
@@ -1004,7 +1062,13 @@ export async function buildMaterial( def, ctx ) {
 
 		}
 
-		case 'hair':
+		case 'hair': {
+
+			await applyHair( mat, params, ctx );
+			break;
+
+		}
+
 		case 'measured': {
 
 			ctx.warn( `material "${type}" not supported — using diffuse approximation` );
