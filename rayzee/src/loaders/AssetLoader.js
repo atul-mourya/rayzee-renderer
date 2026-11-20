@@ -15,6 +15,7 @@ import { computeInstanceBoundingBoxes } from '../scene/GeometryExtractor.js';
 import { getPlatform, hasImageDecoder, timeSlicer, withHostWorker } from '../Platform.js';
 import { loadPlatformImage, platformImagesPlugin, missingImageDecoderPlugin, browserImagesPlugin } from './PlatformImageLoader.js';
 import { diffuseTransmissionPlugin } from './GLTFDiffuseTransmission.js';
+import { animationPointerPlugin } from './GLTFAnimationPointer.js';
 import { decodersOnDemand, glbInPlace } from './GLTFDecoders.js';
 import { extractSceneMetadata, withSceneAspect } from './SceneMetadata.js';
 import { ISSUE_CODES } from '../EngineIssues.js';
@@ -988,6 +989,7 @@ export class AssetLoader extends EventDispatcher {
 		else if ( typeof createImageBitmap === 'function' ) loader.register( ( parser ) => browserImagesPlugin( parser, onImageFailure ) );
 		else if ( ! hasImageDecoder() ) loader.register( ( parser ) => missingImageDecoderPlugin( parser, onImageFailure ) );
 		loader.register( ( parser ) => diffuseTransmissionPlugin( parser ) );
+		loader.register( ( parser ) => animationPointerPlugin( parser ) );
 		loader.register( () => cameraClipPlugin );
 		loader.register( slicedParsePlugin );
 

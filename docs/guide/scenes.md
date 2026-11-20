@@ -250,7 +250,9 @@ and call `sync()`, or use `setIntensity()`. A model's own clip that moves a ligh
 it during playback and in a video export, over any move of the copy (an edit of its size is kept). Its intensity, colour,
 visibility, range, falloff and cone tracks reach the copy too, each where the clip changes it: an edit of the copy stays
 until the clip next changes that one (stopping puts back the light's loaded values, except for a skinned or morphing
-clip, whose pose stays until its next play; a session saved mid-clip keeps the values it showed). Intensity keys are read
+clip, whose pose stays until its next play; a session saved mid-clip keeps the values it showed). A glTF's light tracks
+are read from KHR_animation_pointer, as Blender's exporter writes them (intensity, colour, range and the spot cones;
+pointers to anything else are left out, with a warning). Intensity keys are read
 in three.js units (candela, lux, and nits at the light's loaded size), as the light was. A light whose parent is hidden
 gives no light, as three.js draws it: at load, while a clip hides the parent, and after `updateAllMeshVisibility()`.
 
