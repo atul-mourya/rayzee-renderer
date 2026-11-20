@@ -391,6 +391,7 @@ export class ArchiveImporter {
 	 *   fraction of its half-width (default 0.05); 0 samples every span `curveSteps` times.
 	 * @param {boolean} [options.instanceIncludes] - place a file included again under the same
 	 *   material as another instance of its first reading (default true).
+	 * @param {number} [options.displacementTriangles] - the most triangles one displaced pbrt plymesh is refined to (1M).
 	 */
 	async loadArchiveFromFile( file, filename, { pbrtEntry = null, element = null, byteBudget, promptBytes, transient = false, ...pbrt } = {} ) {
 
@@ -905,7 +906,7 @@ export class ArchiveImporter {
 			animation: options.animation, maxTriangles: options.maxTriangles, maxPlacements: options.maxPlacements,
 			mergeShapesAbove: options.mergeShapesAbove, curveSteps: options.curveSteps, curveSides: options.curveSides,
 			curveTolerance: options.curveTolerance, instanceIncludes: options.instanceIncludes,
-			ptexMemory: options.ptexMemory,
+			ptexMemory: options.ptexMemory, displacementTriangles: options.displacementTriangles,
 		};
 		const graphKey = source?.archiveId
 			? this.loader._keyed( `pbrt:${SCENE_GRAPH_FORMAT}.${PBRT_BUILD_REVISION}:${VERSION}`, `${source.archiveId}|${entryPath ?? ''}|${[ ...( source.elements ?? [] ) ].sort().join( ',' )}|${JSON.stringify( shape )}` )

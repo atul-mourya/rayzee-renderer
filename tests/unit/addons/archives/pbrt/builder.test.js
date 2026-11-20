@@ -784,6 +784,232 @@ describe( 'PBRT scene builder', () => {
 	} );
 
 
+	describe( 'a plymesh with a displacement texture (pbrt-v4 Displace)', () => {
+
+		// bench/pbrt/scenes/displacement-bumps' plane: 2×2 quads in y = 0, uv over [0, 1]², no normals.
+		const plane = () => {
+
+			const position = [], uv = [], index = [];
+			for ( let j = 0; j < 3; j ++ ) for ( let i = 0; i < 3; i ++ ) {
+
+				position.push( i - 1, 0, j - 1 );
+				uv.push( i / 2, j / 2 );
+
+			}
+
+			for ( let j = 0; j < 2; j ++ ) for ( let i = 0; i < 2; i ++ ) index.push( j * 3 + i, j * 3 + i + 3, j * 3 + i + 4, j * 3 + i, j * 3 + i + 4, j * 3 + i + 1 );
+			const g = new BufferGeometry();
+			g.setAttribute( 'position', new Float32BufferAttribute( position, 3 ) );
+			g.setAttribute( 'uv', new Float32BufferAttribute( uv, 2 ) );
+			g.setIndex( index );
+			return g;
+
+		};
+
+		const grey = ( v ) => new DataTexture( new Uint8Array( [ v, v, v, 255 ] ), 1, 1 );
+		const load = ( scene, { images = {}, geometry = plane, ...extra } = {} ) => {
+
+			const vfs = { 'scene.pbrt': enc.encode( 'WorldBegin\n' + scene ), 'plane.ply': enc.encode( 'ply' ) };
+			for ( const name of Object.keys( images ) ) vfs[ name ] = enc.encode( 'x' );
+			return loadPBRTScene( buildArgs( { vfs, plyParser: geometry, imageFromBytes: async ( bytes, name ) => images[ name ] ?? null, ...extra } ) );
+
+		};
+
+		const meshes = ( group ) => group.children.filter( ( c ) => c instanceof Mesh );
+		const triangles = ( mesh ) => mesh.geometry.index.count / 3;
+		const heights = ( mesh ) => Array.from( mesh.geometry.getAttribute( 'position' ).array ).filter( ( _, i ) => i % 3 === 1 );
+		const SHAPE = 'Shape "plymesh" "string filename" "plane.ply"';
+
+		it( 'dices to pbrt\'s count through the shape\'s transform and moves every vertex along its normal', async () => {
+
+			const { group, parameters } = await load( `
+				Texture "h" "float" "imagemap" "string filename" "h.png" "float scale" 0.25
+				Rotate 20 0 1 0
+				Scale 1.2 1 0.8
+				${SHAPE} "texture displacement" "h" "float edgelength" 0.045
+			`, { images: { 'h.png': grey( 255 ) } } );
+
+			const [ mesh ] = meshes( group );
+			// pbrt-v4 --stats on the bench scene: "Triangles added from displacement mapping 16384".
+			expect( triangles( mesh ) ).toBe( 16384 );
+			expect( new Set( heights( mesh ) ) ).toEqual( new Set( [ 0.25 ] ) );
+			const normal = mesh.geometry.getAttribute( 'normal' );
+			for ( let i = 0; i < normal.count; i += 97 ) expect( [ normal.getX( i ), normal.getY( i ), normal.getZ( i ) ] ).toEqual( [ 0, 1, 0 ] );
+			expect( Object.keys( parameters.unused ).filter( ( k ) => k.startsWith( 'Shape' ) ) ).toEqual( [] );
+			expect( parameters.approximated ).toEqual( {} );
+
+		} );
+
+		it( 'gives a shape naming the same .ply without a texture the file\'s own mesh, and pbrt reads its edgelength', async () => {
+
+			const { group, parameters } = await load( `
+				Texture "h" "float" "imagemap" "string filename" "h.png"
+				${SHAPE} "texture displacement" "h" "float edgelength" 0.3
+				${SHAPE} "float edgelength" 0.3
+			`, { images: { 'h.png': grey( 255 ) } } );
+
+			const counts = meshes( group ).map( triangles ).sort( ( a, b ) => a - b );
+			expect( counts[ 0 ] ).toBe( 8 );
+			expect( counts[ 1 ] ).toBeGreaterThan( 8 );
+			const plain = meshes( group ).find( ( m ) => triangles( m ) === 8 );
+			expect( new Set( heights( plain ) ) ).toEqual( new Set( [ 0 ] ) );
+			expect( parameters.unused[ 'Shape plymesh: edgelength' ] ).toBeUndefined();
+
+		} );
+
+		it( 'reads an image through its encoding, and a scale or mix of one exactly', async () => {
+
+			const linear = srgbToLinear( 128 / 255 );
+			const height = async ( textures, name ) => {
+
+				const { group } = await load( `${textures}\n${SHAPE} "texture displacement" "${name}" "float edgelength" 5`, { images: { 'h.png': grey( 128 ) } } );
+				return heights( meshes( group )[ 0 ] )[ 0 ];
+
+			};
+
+			const image = 'Texture "img" "float" "imagemap" "string filename" "h.png"';
+			expect( await height( image, 'img' ) ).toBeCloseTo( linear, 6 );
+			expect( await height( `${image}\nTexture "s" "float" "scale" "texture tex" "img" "float scale" -2`, 's' ) ).toBeCloseTo( - 2 * linear, 6 );
+			expect( await height( `${image}\nTexture "m" "float" "mix" "texture tex1" "img" "float tex2" 1 "float amount" 0.25`, 'm' ) ).toBeCloseTo( 0.75 * linear + 0.25, 6 );
+			expect( await height( 'Texture "c" "float" "constant" "float value" 0.4', 'c' ) ).toBeCloseTo( 0.4, 6 );
+
+		} );
+
+		it( 'reads the image through its uv scale and offset', async () => {
+
+			const stripes = new DataTexture( new Uint8Array( [ 255, 255, 255, 255, 0, 0, 0, 255 ] ), 2, 1 );
+			const { group } = await load( `Texture "h" "float" "imagemap" "string filename" "h.png" "string encoding" "linear" "float udelta" 0.25
+				${SHAPE} "texture displacement" "h" "float edgelength" 5`, { images: { 'h.png': stripes } } );
+			const { geometry } = meshes( group )[ 0 ];
+			const uv = geometry.getAttribute( 'uv' ), position = geometry.getAttribute( 'position' );
+			// u 0 reads texel 0 (1), u ½ texel 1 (0), as pbrt's s = u + ¼; read at u they would all be ½.
+			for ( let i = 0; i < uv.count; i ++ ) expect( position.getY( i ) ).toBeCloseTo( uv.getX( i ) === 0.5 ? 0 : 1, 6 );
+
+		} );
+
+		it( 'moves a mesh without normals along pbrt\'s, each triangle counted once whatever its area', async () => {
+
+			// A big triangle in y = 0 and a sliver standing up along +z, meeting at the origin.
+			const corner = () => {
+
+				const g = new BufferGeometry();
+				g.setAttribute( 'position', new Float32BufferAttribute( [ 0, 0, 0, 0, 0, 10, 10, 0, 0, 0, 0.01, 0, 0.01, 0, 0 ], 3 ) );
+				g.setAttribute( 'uv', new Float32BufferAttribute( [ 0, 0, 1, 0, 0, 1, 0, 0, 1, 0 ], 2 ) );
+				g.setIndex( [ 0, 1, 2, 0, 3, 4 ] );
+				return g;
+
+			};
+
+			const { group } = await load( `Texture "h" "float" "constant" "float value" 1\n${SHAPE} "texture displacement" "h" "float edgelength" 50`, { geometry: corner } );
+			const position = meshes( group )[ 0 ].geometry.getAttribute( 'position' );
+			// Area-weighted (three's) the origin would move almost straight up; pbrt's, half way to the sliver's −z.
+			expect( [ position.getX( 0 ), position.getY( 0 ), position.getZ( 0 ) ].map( ( v ) => Math.round( v * 1e5 ) / 1e5 ) ).toEqual( [ 0, Math.round( Math.SQRT1_2 * 1e5 ) / 1e5, - Math.round( Math.SQRT1_2 * 1e5 ) / 1e5 ] );
+
+		} );
+
+		it( 'reads past the image\'s edge as its wrap says, and reports a texture it can only bake approximated', async () => {
+
+			const edge = new DataTexture( new Uint8Array( [ 255, 255, 255, 255, 0, 0, 0, 255 ] ), 2, 1 );
+			const height = async ( wrap ) => {
+
+				const { group, parameters } = await load( `Texture "h" "float" "imagemap" "string filename" "h.png" "string encoding" "linear" "string wrap" "${wrap}"
+					${SHAPE} "texture displacement" "h" "float edgelength" 5`, { images: { 'h.png': edge } } );
+				const { geometry } = meshes( group )[ 0 ];
+				const at = geometry.getAttribute( 'uv' ).array.findIndex( ( u, i ) => i % 2 === 0 && u === 0 && geometry.getAttribute( 'uv' ).array[ i + 1 ] === 0.5 ) / 2;
+				return { y: geometry.getAttribute( 'position' ).getY( at ), parameters };
+
+			};
+
+			// u 0 reads half a texel past the left edge: the right texel (0) wrapped, the left (1) clamped, black (0).
+			expect( ( await height( 'repeat' ) ).y ).toBeCloseTo( 0.5, 6 );
+			expect( ( await height( 'clamp' ) ).y ).toBeCloseTo( 1, 6 );
+			expect( ( await height( 'black' ) ).y ).toBeCloseTo( 0.5, 6 );
+			expect( ( await height( 'clamp' ) ).parameters.unused[ 'Texture imagemap: wrap' ] ).toBeUndefined();
+
+			const { parameters } = await load( `Texture "c" "float" "checkerboard" "float tex1" 0 "float tex2" 1\n${SHAPE} "texture displacement" "c"` );
+			expect( parameters.approximated[ 'Shape plymesh: displacement' ] ).toBe( 1 );
+
+		} );
+
+		it( 'refines the rest on the page when a worker fails, and the load goes on', async () => {
+
+			const { PBRTSceneBuilder: Builder } = await import( '@/core/addons/archives/pbrt/PBRTSceneBuilder.js' );
+			const { refineMesh } = await import( '@/core/addons/archives/pbrt/LoopSubdivision.js' );
+			const build = Builder.prototype._build;
+			let jobs = 0, closed = 0;
+			Builder.prototype._build = function ( ir ) {
+
+				// As workerPool: closing it fails the jobs still out.
+				const out = new Set();
+				this._refinePool = {
+					run: ( { mesh, options } ) => new Promise( ( resolve, reject ) => {
+
+						if ( jobs ++ === 0 ) return setTimeout( () => reject( new Error( 'worker died' ) ) );
+						const job = { reject };
+						out.add( job );
+						setTimeout( () => out.has( job ) && resolve( { refined: refineMesh( mesh, options ) } ), 20 );
+
+					} ),
+					close: () => {
+
+						closed ++;
+						for ( const job of out ) job.reject( new Error( 'workers closed' ) );
+						out.clear();
+
+					},
+				};
+				return build.call( this, ir );
+
+			};
+
+			try {
+
+				const { group } = await load( `Texture "h" "float" "imagemap" "string filename" "h.png"
+					${[ 0, 1, 2 ].map( ( i ) => `AttributeBegin Translate ${i} 0 0 ${SHAPE} "texture displacement" "h" "float edgelength" 0.3 AttributeEnd` ).join( '\n' )}`, { images: { 'h.png': grey( 255 ) } } );
+				expect( meshes( group ).map( triangles ).every( ( n ) => n > 8 ) ).toBe( true );
+				expect( closed ).toBe( 1 );
+
+			} finally {
+
+				Builder.prototype._build = build;
+
+			}
+
+		} );
+
+		it( 'leaves a mesh without uv as it is, and reports the texture approximated', async () => {
+
+			const bare = () => {
+
+				const g = plane();
+				g.deleteAttribute( 'uv' );
+				return g;
+
+			};
+
+			const { group, parameters, warnings } = await load( `Texture "h" "float" "imagemap" "string filename" "h.png"\n${SHAPE} "texture displacement" "h"`, { images: { 'h.png': grey( 255 ) }, geometry: bare } );
+			expect( triangles( meshes( group )[ 0 ] ) ).toBe( 8 );
+			expect( parameters.approximated[ 'Shape plymesh: displacement' ] ).toBe( 1 );
+			expect( warnings.some( ( w ) => /no uv/.test( w ) ) ).toBe( true );
+
+		} );
+
+		it( 'grows the edge length past displacementTriangles and reports it approximated', async () => {
+
+			const { group, parameters } = await load( `Texture "h" "float" "imagemap" "string filename" "h.png"\n${SHAPE} "texture displacement" "h" "float edgelength" 0.01`, {
+				images: { 'h.png': grey( 255 ) }, displacementTriangles: 2000
+			} );
+
+			const count = triangles( meshes( group )[ 0 ] );
+			expect( count ).toBeLessThanOrEqual( 2000 );
+			expect( count ).toBeGreaterThan( 1000 );
+			expect( parameters.approximated[ 'Shape plymesh: edgelength' ] ).toBe( 1 );
+
+		} );
+
+	} );
+
+
 	it( 'stops expanding instances at the placement budget and says how many it dropped', async () => {
 
 		const scene = `

@@ -1,0 +1,14 @@
+LookAt 0 2.2 2.6  0 0 0  0 1 0
+Camera "perspective" "float fov" 40
+Film "rgb" "integer xresolution" 256 "integer yresolution" 192 "string filename" "out.exr"
+Integrator "path" "integer maxdepth" 8
+WorldBegin
+LightSource "distant" "point3 from" [ -1 0.45 0.3 ] "point3 to" [ 0 0 0 ] "blackbody L" 6500 "float scale" 4
+LightSource "infinite" "rgb L" [ 0.05 0.05 0.05 ]
+Texture "height" "float" "imagemap" "string filename" "height.png" "float scale" 0.35
+AttributeBegin
+  Material "diffuse" "rgb reflectance" [ 0.5 0.5 0.5 ]
+  Rotate 20 0 1 0
+  Scale 1.2 1 0.8
+  Shape "plymesh" "string filename" "plane.ply" "texture displacement" "height" "float edgelength" 0.045
+AttributeEnd

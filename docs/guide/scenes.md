@@ -148,6 +148,7 @@ Per-load options for pbrt and USD scenes:
 | `maxPlacements` | 6M (60M with storage, unless `memorySpill: false`) | the same, for placements |
 | `curveTolerance` | 0.05 | how far a curve segment may stray, × the curve's half-width; curves become strips with adaptive segments. `0` gives the old uniform strips bit for bit |
 | `instanceIncludes` | `true` | a file included again under the same material, with no side effects, is placed as an instance of its first reading instead of being read and stored again |
+| `displacementTriangles` | 1M | the most triangles one displaced pbrt `plymesh` is refined to (its `displacement` texture and `edgelength`, diced and moved at load as pbrt does): past it the edge length grows until the mesh fits, reported in `asset.parameters_ignored` as approximated. pbrt has no limit (kroken's carpet: 54M) |
 | `ptexMemory` | 1 GiB | texture memory for the scene's Ptex colour maps (Disney's per-face textures: pbrt's `ptex` texture, RenderMan's `PxrPtexture`). Every file's faces share 4096 × 4096 pages, each face's sides halved as often as it takes to fit; `0` gives each map its mean colour instead |
 
 45M is the highest rung measured to survive without the spill, which is why the caps rise only where the build can

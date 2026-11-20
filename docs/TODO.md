@@ -195,8 +195,9 @@
 ## pbrt-v4 import
 
 ### Missing today
-- [ ] **Displacement** (`texture displacement` + `edgelength`): dice to the edge length and displace along the normal at
-  load, as pbrt does — kroken's rug pile, cushion tufting, bricks, rocks. Needs a per-shape triangle cap.
+- [ ] **Displacement past the cap**: a `plymesh`'s displacement is diced at load as pbrt does (2026-11-20), but kroken's
+  ten meshes each pass `displacementTriangles` (1M; pbrt makes 4–54M) and are diced coarser: the carpet at 0.89 cm for
+  pbrt's 0.1. The detail lost could go back as a bump map from the same texture.
 - [ ] **Texture classes**: `dots` (needs pbrt's Perlin noise); `fbm`, `wrinkled`, `windy`, `marble` (3D procedural);
   `directionmix` on shapes other than triangle meshes (plymesh, bilinear patches, quadrics) and nested in `scale` /
   `mix` textures. 2D `checkerboard` and `bilerp` are baked since 2026-10-05.

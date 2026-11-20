@@ -238,6 +238,23 @@ subtree per element, and the whole thing rarely fits: Moana is 29 GB unpacked.
   −0.05), and the image's range is stretched over the map's 8 bits, the distance taking it (a bump reads only height
   differences). Anything else is baked whole at distance 1. Bitterli's scenes carry their bump images unscaled:
   heights of up to one scene unit, as their files say.
+  A `plymesh` naming a `displacement` texture (pbrt reads it on that shape only, with `edgelength`, default 1) is diced
+  and moved at load as pbrt-v4's `TriQuadMesh::Displace` does (`refineMesh` / `displaceRefined`, `LoopSubdivision.js`):
+  each triangle's longest edge halved, recursively, until every edge measured through the shape's transform is under
+  the edge length, a split edge's midpoint shared by both triangles (normal and uv averaged, positions rounded as
+  pbrt's floats, a double-precision .ply's too), each vertex moved along its normal by the texture at its uv (images
+  bilinear at full size, past the edge as their `wrap`; `scale` and `mix` of them exact; anything else baked and
+  reported approximated; pbrt's power-of-two resize, point filter and invert after the lookup left out), the normals
+  rebuilt from the moved surface (pbrt's: each triangle's unit normal once). The
+  triangle counts are pbrt's: the bench plane's 16,384 exactly, kroken's meshes within 3e-6 (an edge at the length
+  rounds either way; in pbrt it moves with the camera's position, render space). pbrt has no limit: kroken's carpet
+  refines to 54M, its chaise longue's nine pieces to 4–11M each. Past `displacementTriangles` (1M, a per-load option)
+  the edge length grows until the mesh fits, near the cap (counts of a sample of the triangles first, as 1 / length²),
+  reported approximated; a mesh already past it is moved undiced. The refinement runs in `RefineWorker`s, every
+  displaced mesh the walk will build started when the build starts (top-level shapes, placed templates): one after
+  another, kroken's ten took 9.6 s; its camera-6 load is 31 s against 27 s undisplaced (40.2M → 43.9M triangles). A
+  failed worker closes the pool and the rest refine on the page. A mesh without uv is left as it is (pbrt stops), reported. `bench/pbrt/scenes/displacement-bumps` holds
+  it against pbrt: engine ÷ pbrt 1.001, FLIP 0.009 (undisplaced, the engine read 0.084 there).
   Textures the engine has no node for are baked on the CPU (`PBRTTextureBake.js`) into 8-bit sRGB DataTextures in
   their image's uv mapping: `mix`, `scale` by a texture, an imagemap's `scale` above 1 or `invert`, and a `mix`
   material with a textured amount (its colours baked, and its clear coat, roughness and metalness into one linear map,

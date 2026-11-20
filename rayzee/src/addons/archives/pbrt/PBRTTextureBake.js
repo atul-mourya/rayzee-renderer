@@ -182,6 +182,39 @@ function sample( layer, s, t, out ) {
 }
 
 /**
+ * A layer's first channel at a mesh's (u, v), through the layer's uv scale and offset: bilinear as pbrt's Image
+ * Bilerp, past the edges as its `wrap` says (`repeat`, `clamp`, `black`).
+ */
+export function sampleLayer( layer, u, v, wrap = 'repeat' ) {
+
+	const { width: w, height: h, channels: n, data } = layer;
+	const x = ( layer.su * u + layer.du ) * w - 0.5, y = ( 1 - ( layer.sv * v + layer.dv ) ) * h - 0.5;
+	const x0 = Math.floor( x ), y0 = Math.floor( y ), fx = x - x0, fy = y - y0;
+	const texel = ( i, j ) => {
+
+		if ( wrap === 'clamp' ) {
+
+			i = Math.min( w - 1, Math.max( 0, i ) ); j = Math.min( h - 1, Math.max( 0, j ) );
+
+		} else if ( wrap === 'black' ) {
+
+			if ( i < 0 || i >= w || j < 0 || j >= h ) return 0;
+
+		} else {
+
+			i = ( ( i % w ) + w ) % w; j = ( ( j % h ) + h ) % h;
+
+		}
+
+		return data[ ( j * w + i ) * n ];
+
+	};
+
+	return ( texel( x0, y0 ) * ( 1 - fx ) + texel( x0 + 1, y0 ) * fx ) * ( 1 - fy ) + ( texel( x0, y0 + 1 ) * ( 1 - fx ) + texel( x0 + 1, y0 + 1 ) * fx ) * fy;
+
+}
+
+/**
  * A bake's result, `data` its bytes ({@link bakeRows}): sRGB (or linear) bytes laid out for a DataTexture (bottom row
  * first), the grid's size, the driving image's uv mapping, and how many terms counted as their mean (`averaged`).
  * @returns {{ data: Uint8Array, width: number, height: number, mapping: { su: number, sv: number, du: number, dv: number, uv: object|null }, averaged: number }}

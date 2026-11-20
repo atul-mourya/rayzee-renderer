@@ -26,13 +26,14 @@ import {
 import { blackbodyRGB, buildMaterial, illuminantRGB, pBool, pFloat, pString, peakBlackbodyRGB, resolveSpectrum, sampledEmissionRGB } from './PBRTMaterials.js';
 import { readNanoVDB, bloscReader } from './NanoVDB.js';
 import { Volume, VolumeGrid, unifyGrids } from '../../../scene/Volumes.js';
-import { makeLayer, layerMean, planBake, bakeRows, bakeResult, combineOf, namedScalars, productOf, mixOf, srgbToLinear, linearToSRGB, hasAlpha, generateUV, uvKey } from './PBRTTextureBake.js';
+import { makeLayer, sampleLayer, layerMean, planBake, bakeRows, bakeResult, combineOf, namedScalars, productOf, mixOf, srgbToLinear, linearToSRGB, hasAlpha, generateUV, uvKey } from './PBRTTextureBake.js';
 import BakeWorker from './BakeWorker.js?worker&inline';
-import { loopSubdivide } from './LoopSubdivision.js';
+import { loopSubdivide, refineMesh, displaceRefined } from './LoopSubdivision.js';
 import { approximated, param } from './PBRTParser.js';
 import { octahedralToEquirect, SRGB_TO_LINEAR } from './EqualAreaOctahedral.js';
 import { tessellateCurve, tessellateCurves, tessellateCurvesAcross } from './PBRTCurves.js';
 import CurveWorker from './CurveWorker.js?worker&inline';
+import RefineWorker from './RefineWorker.js?worker&inline';
 import PtexWorker from './PtexWorker.js?worker&inline';
 import { readPtexInfo, readPtexBlocks, planPtexPages, writePtexFile, ptexUV, ptexPower, ptexLinear } from './Ptex.js';
 import { createWorker, hardwareThreads, hasWorkers } from '../../../Platform.js';
@@ -166,6 +167,8 @@ export { SPILL_TRIANGLE_BUDGET, SPILL_PLACEMENT_BUDGET } from '../../../memory/H
 // and one BufferGeometry + Mesh each measured 3.3 GB — the loader OOM'd before tracing.
 const DEFAULT_MERGE_MIN_SHAPES = 256;
 const MERGE_VERTEX_LIMIT = 4096;
+// A displaced mesh's triangles, at most (`displacementTriangles`): pbrt has none, and kroken's carpet refines to 54M.
+const DISPLACE_MAX_TRIANGLES = 1000000;
 const MERGE_BATCH_TRIANGLES = 500_000;
 // Copies of a template shape textured by position, each stored with its own uv, up to this many triangles in all.
 const MAPPED_COPY_TRIANGLES = 1_000_000;
@@ -181,7 +184,7 @@ const DEFAULT_CURVE_TOLERANCE = 0.05;
 const CURVE_SPLIT_CURVES = 20000;
 
 /** Bumped whenever the same scene files build a different graph, so a stored graph is not reused. */
-export const PBRT_BUILD_REVISION = 46;
+export const PBRT_BUILD_REVISION = 47;
 
 // Ptex pages: all of a scene's Ptex colour maps in this much texture memory at most, on square pages this size.
 const DEFAULT_PTEX_MEMORY = 1024 * 2 ** 20;
@@ -1071,6 +1074,7 @@ export class PBRTSceneBuilder {
 		this.curveSides = resolvers.curveSides ?? null;
 		this.curveTolerance = resolvers.curveTolerance ?? DEFAULT_CURVE_TOLERANCE;
 		this.ptexMemory = resolvers.ptexMemory ?? DEFAULT_PTEX_MEMORY;
+		this.displacementTriangles = resolvers.displacementTriangles ?? DISPLACE_MAX_TRIANGLES;
 		this.ptexPageSize = resolvers.ptexPageSize ?? DEFAULT_PTEX_PAGE_SIZE;
 		this.resolvePtex = resolvers.resolvePtex || ( async () => null );
 		this.resolvePLY = resolvers.resolvePLY || ( async () => null );
@@ -1140,6 +1144,9 @@ export class PBRTSceneBuilder {
 
 			this._curvePool?.close();
 			this._curvePool = undefined;
+			this._refinePool?.close();
+			// Null: a refine still running after a failed build refines on the page rather than start a pool nobody closes.
+			this._refinePool = null;
 			this._bakePool?.close();
 			// Null: a bake still running after a failed build bakes on the page rather than start a pool nobody closes.
 			this._bakePool = null;
@@ -1174,6 +1181,12 @@ export class PBRTSceneBuilder {
 		}
 
 		for ( const template of ir.objects.values() ) for ( const shape of template ) if ( shape.type === 'plymesh' ) this._plyHeld.add( pString( shape.params, 'filename', null ) );
+		// Displaced meshes refine in workers: all start now, side by side, not each when the walk below reaches it
+		// (kroken's ten took 9.6 s one after another). A failure surfaces where the walk awaits it.
+		// Only what the walk builds: top-level shapes (not a medium's boundary) and placed templates.
+		const refineEarly = ( shape ) => shape?.type === 'plymesh' && shape.params.displacement && ! shape.interior && ! shape.exterior && this._buildGeometry( shape ).catch( () => {} );
+		ir.shapes.forEach( refineEarly );
+		for ( const [ name, list ] of ir.instances ) if ( list.count > 0 ) ir.objects.get( name )?.forEach( refineEarly );
 		this._recoveredColors = 0;
 		this._missingPtex = [];
 		this.reportedMeshes = 0;
@@ -1217,7 +1230,7 @@ export class PBRTSceneBuilder {
 			}
 
 			const [ geometry, surface ] = await Promise.all( [
-				this._batches && ! shape.shared ? this._createGeometry( shape ) : this._buildGeometry( shape ),
+				this._batches && ! shape.shared && ! this._geometryCache.has( shape ) ? this._createGeometry( shape ) : this._buildGeometry( shape ),
 				this._getMaterial( shape )
 			] );
 			if ( ! geometry ) continue;
@@ -1983,7 +1996,9 @@ export class PBRTSceneBuilder {
 
 	async _createGeometry( shape ) {
 
-		// A shape's parameters are all read before the first await; its `alpha`, by its material.
+		// A shape's parameters are all read before the first await; its `alpha`, by its material. A displaced mesh is
+		// accounted for at the end: what it approximates is known only once its texture and file are read.
+		if ( shape.type === 'plymesh' && shape.params.displacement ) this._usage?.open( shape.params, `Shape ${shape.type}`, 'alpha' );
 		const read = () => this._shapeGeometry( shape );
 		let geometry = await ( this._usage ? this._usage.translate( shape.params, `Shape ${shape.type}`, read, 'alpha' ) : read() );
 		if ( geometry && this._shapeMedium( shape )?.flip ) geometry = turnedOver( geometry );
@@ -2045,7 +2060,7 @@ export class PBRTSceneBuilder {
 			case 'loopsubdiv': return this._loopSubdiv( shape.params );
 			case 'curve': return this._curve( shape.params );
 			case 'curves': return this._curves( shape.params );
-			case 'plymesh': return this._plyMesh( shape.params );
+			case 'plymesh': return this._plyShape( shape );
 			case 'sphere': return this._sphere( shape.params );
 			case 'disk': return this._disk( shape.params );
 			case 'cylinder': return this._cylinder( shape.params );
@@ -2583,6 +2598,151 @@ export class PBRTSceneBuilder {
 		let pending = this._plyCache.get( filename );
 		if ( ! pending ) this._plyCache.set( filename, pending = this._decodePly( filename ) );
 		return pending;
+
+	}
+
+	/** A `plymesh`, displaced where it names a `displacement` texture (pbrt reads it on this shape only). @private */
+	_plyShape( shape ) {
+
+		const geometry = this._plyMesh( shape.params );
+		const edgeLength = pFloat( shape.params, 'edgelength', 1 );
+		const displacement = param( shape.params, 'displacement' );
+		if ( displacement?.type !== 'texture' ) return geometry;
+		return this._displacedPly( shape, geometry, displacement.value[ 0 ], edgeLength );
+
+	}
+
+	/**
+	 * pbrt's displacement at load (`displaceMesh`): the shared decoded mesh refined and moved into a geometry of the
+	 * shape's own, its edge length measured in world units through the shape's transform.
+	 * @private
+	 */
+	async _displacedPly( shape, pending, name, edgeLength ) {
+
+		const [ geometry, height ] = await Promise.all( [ pending, this._heightAt( name, () => approximated( shape.params, 'displacement' ) ) ] );
+		if ( ! geometry ) return null;
+		const uv = geometry.getAttribute( 'uv' );
+		if ( height === null || ! uv ) {
+
+			// pbrt stops on a mesh without uvs; here it stays undisplaced.
+			this.warn( `plymesh displacement "${name}": ${uv ? 'its texture cannot be read here' : 'the mesh has no uv'} — not displaced` );
+			approximated( shape.params, 'displacement' );
+			return geometry;
+
+		}
+
+		const normal = geometry.userData.pbrtNormals ? geometry.getAttribute( 'normal' ).array : null;
+		const out = displaceRefined( await this._refine( {
+			position: geometry.getAttribute( 'position' ).array, normal, uv: uv.array,
+			index: geometry.index?.array ?? null, faces: this._faceIndices.get( geometry ) ?? null
+		}, { edgeLength, ctm: shape.ctm, maxTriangles: this.displacementTriangles } ), typeof height === 'number' ? () => height : height );
+
+		if ( out.edgeLength > edgeLength ) {
+
+			const grown = Number.isFinite( out.edgeLength ) ? `edge length ${edgeLength} grown to ${out.edgeLength.toPrecision( 3 )}` : 'not diced, its own triangles past the cap';
+			this.warn( `plymesh displacement "${name}": ${grown} to stay within ${this.displacementTriangles} triangles (displacementTriangles)` );
+			approximated( shape.params, 'edgelength' );
+
+		}
+
+		const displaced = new BufferGeometry();
+		displaced.setAttribute( 'position', new Float32BufferAttribute( out.position, 3 ) );
+		displaced.setAttribute( 'normal', new Float32BufferAttribute( out.normal, 3 ) );
+		displaced.setAttribute( 'uv', new Float32BufferAttribute( out.uv, 2 ) );
+		displaced.setIndex( new Uint32BufferAttribute( out.index, 1 ) );
+		displaced.userData.pbrtNormals = true;
+		if ( out.faces ) this._faceIndices.set( displaced, out.faces );
+		return displaced;
+
+	}
+
+	/** refineMesh in a worker (RefineWorker), meshes refined side by side; here where there are none or one fails. @private */
+	async _refine( mesh, options ) {
+
+		if ( this._refinePool === undefined ) {
+
+			this._refinePool = hasWorkers() ? workerPool( RefineWorker, Math.max( 1, hardwareThreads() - 1 ), ( { mesh, options } ) => [ { mesh, options } ] ) : null;
+
+		}
+
+		const pool = this._refinePool;
+		if ( pool ) {
+
+			try {
+
+				return ( await pool.run( { mesh, options } ) ).refined;
+
+			} catch ( error ) {
+
+				// The others' jobs fail with it and come here too: the first closes the pool, each refines here.
+				if ( this._refinePool === pool ) {
+
+					this.warn( `displaced meshes refined on one thread: ${error.message}` );
+					pool.close();
+					this._refinePool = null;
+
+				}
+
+			}
+
+		}
+
+		return refineMesh( mesh, options );
+
+	}
+
+	/**
+	 * A float texture as a function of the mesh's (u, v), as pbrt's displacement evaluates it: images bilinear at
+	 * their full size (pbrt's power-of-two resize, point filter and invert after the lookup left out), `scale` and `mix`
+	 * of them exact; any other texture through its bake, `approximate()` called. Null when unreadable.
+	 * @private
+	 */
+	async _heightAt( name, approximate ) {
+
+		const def = this._textureDef( name );
+		const input = async ( key, dflt ) => {
+
+			const p = param( def.params, key );
+			return p?.type === 'texture' ? this._heightAt( p.value[ 0 ], approximate ) : ( p ? pFloat( def.params, key, dflt ) : dflt );
+
+		};
+
+		if ( def?.class === 'imagemap' ) {
+
+			const layer = await this._imageLayer( name, def, 1 );
+			let wrap = pString( def.params, 'wrap', 'repeat' );
+			if ( wrap !== 'clamp' && wrap !== 'black' ) {
+
+				if ( wrap !== 'repeat' ) approximate();
+				wrap = 'repeat';
+
+			}
+
+			return layer && ! layer.uv ? ( u, v ) => sampleLayer( layer, u, v, wrap ) : null;
+
+		}
+
+		if ( def?.class === 'scale' || def?.class === 'mix' ) {
+
+			const mix = def.class === 'mix';
+			const [ a, b, amount ] = await Promise.all( mix
+				? [ input( 'tex1', 0 ), input( 'tex2', 1 ), input( 'amount', 0.5 ) ]
+				: [ input( 'tex', 1 ), input( 'scale', 1 ), 0 ] );
+			if ( a === null || b === null || amount === null ) return null;
+			const at = ( f, u, v ) => ( typeof f === 'function' ? f( u, v ) : f );
+			const blend = ( u, v, t ) => ( 1 - t ) * at( a, u, v ) + t * at( b, u, v );
+			return mix ? ( u, v ) => blend( u, v, at( amount, u, v ) ) : ( u, v ) => at( a, u, v ) * at( b, u, v );
+
+		}
+
+		if ( def?.class === 'constant' ) return pFloat( def.params, 'value', 1 );
+		// Baked to 8 bits, or for a class nothing here reads a stand-in value: not what pbrt displaces by.
+		approximate();
+		const term = await this._bakeTerm( name, 1 );
+		if ( ! term ) return null;
+		if ( ! term.layer ) return term.rgb[ 0 ];
+		const tint = term.tint?.[ 0 ] ?? 1;
+		return term.layer.uv ? null : ( u, v ) => tint * sampleLayer( term.layer, u, v );
 
 	}
 

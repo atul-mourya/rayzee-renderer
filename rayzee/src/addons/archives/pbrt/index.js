@@ -566,6 +566,7 @@ export async function loadPBRTScene( args ) {
 		curveTolerance: args.curveTolerance,
 		ptexMemory: args.ptexMemory,
 		ptexPageSize: args.ptexPageSize,
+		displacementTriangles: args.displacementTriangles,
 		pause: args.pause,
 		usage,
 		resolvePtex: ( filename ) => vfs.ranged( filename ),

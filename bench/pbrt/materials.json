@@ -13,6 +13,7 @@
 		{ "id": "uniformgrid-glow", "path": "uniformgrid-glow", "entry": "scene.pbrt" },
 		{ "id": "film-iso-wb", "path": "film-iso-wb", "entry": "scene.pbrt" },
 		{ "id": "film-sensor-canon", "path": "film-sensor-canon", "entry": "scene.pbrt" },
-		{ "id": "film-sensor-nikon-wb", "path": "film-sensor-nikon-wb", "entry": "scene.pbrt" }
+		{ "id": "film-sensor-nikon-wb", "path": "film-sensor-nikon-wb", "entry": "scene.pbrt" },
+		{ "id": "displacement-bumps", "path": "displacement-bumps", "entry": "scene.pbrt" }
 	]
 }
