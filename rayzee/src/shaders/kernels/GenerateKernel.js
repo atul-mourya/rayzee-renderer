@@ -79,7 +79,7 @@ export function buildGenerateKernel( params ) {
 		rayBufferRW, hitBufferRW, gBufferRW,
 		resolution, frame,
 		cameraWorldMatrix, cameraProjectionMatrixInverse,
-		cameraProjection, panoLonRange, panoLatRange, panoLevelHorizon,
+		cameraProjection, panoLonRange, panoLatRange, panoLevelHorizon, panoUp,
 		enableDOF, focalLength, aperture, focusDistance, unitsPerMetre, apertureScale, anamorphicRatio, dofMode, dofBlur,
 		cameraClipStart,
 		renderWidth,
@@ -135,7 +135,7 @@ export function buildGenerateKernel( params ) {
 		const ray = Ray.wrap( generateRayFromCamera(
 			jitteredUV, seed,
 			cameraWorldMatrix, cameraProjectionMatrixInverse,
-			cameraProjection, panoLonRange, panoLatRange, panoLevelHorizon,
+			cameraProjection, panoLonRange, panoLatRange, panoLevelHorizon, panoUp,
 			enableDOF, focalLength, aperture, focusDistance, unitsPerMetre, apertureScale, anamorphicRatio, dofMode, dofBlur,
 		) );
 

@@ -45,9 +45,10 @@ describeGPU( 'a pbrt spherical camera\'s panorama', () => {
 	beforeAll( async () => void ( renderer = await createRenderer() ) );
 	afterAll( () => renderer?.dispose() );
 
-	const directions = async ( m, lon, level ) => {
+	const directions = async ( m, lon, level, up = new Vector3( 0, 1, 0 ) ) => {
 
 		const u = cameraRayUniforms();
+		u.panoUp.value.copy( up );
 		u.cameraProjection.value = CAMERA_PROJECTION_IDS.equirectangular;
 		u.panoLonRange.value.set( lon[ 0 ], lon[ 1 ] ).multiplyScalar( Math.PI / 180 );
 		u.panoLatRange.value.set( - Math.PI / 2, Math.PI / 2 );
@@ -78,6 +79,28 @@ describeGPU( 'a pbrt spherical camera\'s panorama', () => {
 			const m = cameraMatrix( [ 0.4, 0, 1 ], mirrored );
 			const free = await directions( m, [ - 180, 180 ], false ), levelled = await directions( m, [ - 180, 180 ], true );
 			free.forEach( ( d, i ) => d.forEach( ( v, c ) => expect( levelled[ i ][ c ], `${mirrored ? 'mirrored' : ''} #${i}` ).toBeCloseTo( v, 4 ) ) );
+
+		}
+
+	} );
+
+	it( 'levels to the view\'s up: under a camera up +z each row sits at its latitude from +z, whatever the pitch', async () => {
+
+		const up = new Vector3( 0, 0, 1 );
+		const zUp = ( look ) => {
+
+			const m = new Matrix4().lookAt( new Vector3(), new Vector3( ...look ).negate(), up );
+			return m.setPosition( 1, 2, 3 );
+
+		};
+
+		const level = await directions( zUp( [ 1, 0.2, 0 ] ), [ - 180, 180 ], true, up );
+		const pitched = await directions( zUp( [ 1, 0.2, 0.6 ] ), [ - 180, 180 ], true, up );
+		for ( let i = 0; i < level.length; i ++ ) {
+
+			// Latitude runs π/2 at the top row to −π/2 at the bottom.
+			expect( level[ i ][ 2 ], `#${i}` ).toBeCloseTo( Math.sin( Math.PI / 2 - Math.PI * UVS[ 2 * i + 1 ] ), 4 );
+			level[ i ].forEach( ( v, c ) => expect( pitched[ i ][ c ], `#${i}` ).toBeCloseTo( v, 4 ) );
 
 		}
 

@@ -323,6 +323,8 @@ export class UniformManager {
 		u( 'panoLonRange', radRange( DEFAULT_STATE.panoramaLonRange ), 'vec2' );
 		u( 'panoLatRange', radRange( DEFAULT_STATE.panoramaLatRange ), 'vec2' );
 		ub( 'panoLevelHorizon', DEFAULT_STATE.panoramaLevelHorizon );
+		// The view's up, unit: a levelled panorama's horizon is square to it (the camera's `up`, as the orbit's).
+		u( 'panoUp', new Vector3( 0, 1, 0 ), 'vec3' );
 
 		// DOF
 		ub( 'enableDOF', DEFAULT_STATE.enableDOF );

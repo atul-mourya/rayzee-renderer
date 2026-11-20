@@ -59,7 +59,7 @@ async function trace( renderer, projection, look = false, dof = true, view = pro
 
 	const args = [
 		uniform( view.matrixWorld.clone() ), uniform( projectionInverseOf( view, new Matrix4() ) ),
-		uniform( projection, 'int' ), uniform( new Vector2( - Math.PI, Math.PI ) ), uniform( new Vector2( - Math.PI / 2, Math.PI / 2 ) ), uniform( 0, 'int' ),
+		uniform( projection, 'int' ), uniform( new Vector2( - Math.PI, Math.PI ) ), uniform( new Vector2( - Math.PI / 2, Math.PI / 2 ) ), uniform( 0, 'int' ), uniform( new Vector3( 0, 1, 0 ) ),
 		uniform( dof ? 1 : 0, 'int' ), uniform( FOCAL_LENGTH ), uniform( F_STOP ), uniform( FOCUS ), uniform( UNITS_PER_METRE ), uniform( APERTURE_SCALE ), uniform( 1.0 ),
 		uniform( look ? 1 : 0, 'int' ), uniform( BLUR ),
 	];

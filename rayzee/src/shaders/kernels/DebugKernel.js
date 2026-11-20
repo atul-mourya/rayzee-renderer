@@ -26,7 +26,7 @@ export function buildDebugKernel( params ) {
 		writeColorTex, writeNDTex, writeAlbedoTex,
 		resolution, renderWidth, renderHeight,
 		cameraWorldMatrix, cameraProjectionMatrixInverse, cameraProjectionMatrix, cameraViewMatrix,
-		cameraProjection, panoLonRange, panoLatRange, panoLevelHorizon,
+		cameraProjection, panoLonRange, panoLatRange, panoLevelHorizon, panoUp,
 		enableDOF, focalLength, aperture, focusDistance, unitsPerMetre, apertureScale, anamorphicRatio, dofMode, dofBlur,
 		cameraClipStart,
 		bvhBuffer, triangleBuffer, materialBuffer,
@@ -50,7 +50,7 @@ export function buildDebugKernel( params ) {
 			const ray = Ray.wrap( generateRayFromCamera(
 				pixelCoord.div( resolution ), seed,
 				cameraWorldMatrix, cameraProjectionMatrixInverse,
-				cameraProjection, panoLonRange, panoLatRange, panoLevelHorizon,
+				cameraProjection, panoLonRange, panoLatRange, panoLevelHorizon, panoUp,
 				enableDOF, focalLength, aperture, focusDistance, unitsPerMetre, apertureScale, anamorphicRatio, dofMode, dofBlur,
 			) );
 

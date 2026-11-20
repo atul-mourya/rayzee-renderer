@@ -156,7 +156,6 @@
 - [ ] https://cloud.needle.tools/hdris FastHDR
 
 ### Camera
-- [ ] Panorama "level horizon" levels to +y: under a scene camera whose up is not +y it turns oddly while orbiting
 
 ### Lighting
 

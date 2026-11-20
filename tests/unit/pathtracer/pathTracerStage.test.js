@@ -249,7 +249,7 @@ describe( 'PathTracerStage camera clip start', () => {
 		const uniforms = new UniformManager();
 		const stage = Object.create( PathTracerStage.prototype );
 		Object.assign( stage, { camera, lastCameraMatrix: camera.matrixWorld.clone(), lastProjectionMatrix: camera.projectionMatrixInverse.clone() } );
-		for ( const name of [ 'cameraWorldMatrix', 'cameraViewMatrix', 'cameraProjectionMatrix', 'cameraProjectionMatrixInverse', 'cameraClipStart' ] ) stage[ name ] = uniforms.get( name );
+		for ( const name of [ 'cameraWorldMatrix', 'cameraViewMatrix', 'cameraProjectionMatrix', 'cameraProjectionMatrixInverse', 'cameraClipStart', 'panoUp' ] ) stage[ name ] = uniforms.get( name );
 		return stage;
 
 	}
@@ -268,6 +268,22 @@ describe( 'PathTracerStage camera clip start', () => {
 		camera.userData.clipStart = 1.1;
 		expect( stage._updateCameraUniforms() ).toBe( true );
 		expect( stage.cameraClipStart.value ).toBe( 1.1 );
+		expect( stage._updateCameraUniforms() ).toBe( false );
+
+	} );
+
+	it( 'hands a levelled panorama the camera\'s up, unit, and counts a change of it as a camera change', async () => {
+
+		const { PerspectiveCamera } = await import( 'three' );
+		const camera = new PerspectiveCamera( 40, 1, 0.5, 100 );
+		camera.updateMatrixWorld();
+		const stage = makeStage( camera );
+
+		expect( stage._updateCameraUniforms() ).toBe( false );
+		expect( stage.panoUp.value.toArray() ).toEqual( [ 0, 1, 0 ] );
+		camera.up.set( 0, 0, 2 );
+		expect( stage._updateCameraUniforms() ).toBe( true );
+		expect( stage.panoUp.value.toArray() ).toEqual( [ 0, 0, 1 ] );
 		expect( stage._updateCameraUniforms() ).toBe( false );
 
 	} );

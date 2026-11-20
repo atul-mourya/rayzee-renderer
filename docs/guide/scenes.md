@@ -210,7 +210,7 @@ engine.settings.set('cameraProjection', 'equirectangular');
 // Optional: crop the sweep. Degrees, [min, max].
 engine.settings.set('panoramaLonRange', [-90, 90]);   // VR180
 engine.settings.set('panoramaLatRange', [0, 90]);     // upper hemisphere only
-engine.settings.set('panoramaLevelHorizon', true);    // default — orbit pitch won't tilt the panorama
+engine.settings.set('panoramaLevelHorizon', true);    // default — orbit pitch won't tilt the panorama (level to the camera's up)
 ```
 
 The mapping puts camera-forward at the image centre, the zenith at the top row, and yaw-right at increasing u. Full-sphere output is 2:1 — **size the canvas accordingly** (`engine.setCanvasSize(w, w / 2)`); the engine renders whatever aspect you give it and will stretch the sphere otherwise. A cropped range changes the natural aspect to match `lonRange / latRange`.

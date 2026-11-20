@@ -16,7 +16,7 @@ import {
 	Fn, vec3, vec4, float, int, uniform,
 	If, normalize, mat3, mix, sin, cos, cross, dot, select, max, abs, sqrt,
 } from 'three/tsl';
-import { Vector2 } from 'three';
+import { Vector2, Vector3 } from 'three';
 
 import { Ray } from './Struct.js';
 import { constructTBN } from './Common.js';
@@ -42,6 +42,7 @@ export function cameraRayUniforms() {
 		panoLonRange: uniform( new Vector2(), 'vec2' ),
 		panoLatRange: uniform( new Vector2(), 'vec2' ),
 		panoLevelHorizon: uniform( 1, 'int' ),
+		panoUp: uniform( new Vector3( 0, 1, 0 ), 'vec3' ),
 		clipStart: uniform( 0, 'float' ),
 		/** @param {import('../pathtracer/UniformManager.js').UniformManager} source */
 		sync( source ) {
@@ -51,6 +52,7 @@ export function cameraRayUniforms() {
 			u.panoLonRange.value.copy( source.get( 'panoLonRange' ).value );
 			u.panoLatRange.value.copy( source.get( 'panoLatRange' ).value );
 			u.panoLevelHorizon.value = source.get( 'panoLevelHorizon' ).value;
+			u.panoUp.value.copy( source.get( 'panoUp' ).value );
 
 		},
 	};
@@ -63,7 +65,7 @@ export const cameraRayOf = ( uv01, cameraWorldMatrix, cameraProjectionMatrixInve
 	origin: cameraRayOrigin( uv01, cameraWorldMatrix, cameraProjectionMatrixInverse, u.cameraProjection ),
 	direction: cameraRayDirection(
 		uv01, cameraWorldMatrix, cameraProjectionMatrixInverse,
-		u.cameraProjection, u.panoLonRange, u.panoLatRange, u.panoLevelHorizon
+		u.cameraProjection, u.panoLonRange, u.panoLatRange, u.panoLevelHorizon, u.panoUp
 	),
 } );
 
@@ -104,7 +106,7 @@ const cameraRayOrigin = Fn( ( [ uv01, cameraWorldMatrix, cameraProjectionMatrixI
 /** World-space primary ray direction for pixel uv, from {@link cameraRayOrigin}. */
 const cameraRayDirection = Fn( ( [
 	uv01, cameraWorldMatrix, cameraProjectionMatrixInverse,
-	cameraProjection, panoLonRange, panoLatRange, panoLevelHorizon
+	cameraProjection, panoLonRange, panoLatRange, panoLevelHorizon, panoUp
 ] ) => {
 
 	const direction = vec3( 0.0 ).toVar();
@@ -121,18 +123,18 @@ const cameraRayDirection = Fn( ( [
 
 		If( panoLevelHorizon.equal( int( 1 ) ), () => {
 
-			// Yaw-only frame — orbit pitch/roll must not tilt the panorama. The flattened column
-			// is normalized below, so it needs no pre-normalize.
-			const flat = vec3( cameraWorldMatrix[ 2 ].x, 0.0, cameraWorldMatrix[ 2 ].z ).toVar();
+			// Yaw-only frame about the view's up (the orbit's: +y, or a scene camera's own) — orbit pitch/roll must not
+			// tilt the panorama. At +y the flattened column is exactly ( x, 0, z ). It is normalized below.
+			const flat = vec3( cameraWorldMatrix[ 2 ] ).sub( panoUp.mul( dot( vec3( cameraWorldMatrix[ 2 ] ), panoUp ) ) ).toVar();
 			// Straight up/down: the camera's own up vector is the horizontal one.
 			If( dot( flat, flat ).lessThan( float( 1e-8 ) ), () => {
 
-				flat.assign( vec3( cameraWorldMatrix[ 1 ].x, 0.0, cameraWorldMatrix[ 1 ].z ) );
+				flat.assign( vec3( cameraWorldMatrix[ 1 ] ).sub( panoUp.mul( dot( vec3( cameraWorldMatrix[ 1 ] ), panoUp ) ) ) );
 
 			} );
 
 			back.assign( normalize( flat ) );
-			up.assign( vec3( 0.0, 1.0, 0.0 ) );
+			up.assign( panoUp );
 			// A mirrored camera (a negative scale: pbrt's handedness) keeps its mirror, as the unlevelled frame does.
 			const mirrored = dot( cross( vec3( cameraWorldMatrix[ 0 ] ), vec3( cameraWorldMatrix[ 1 ] ) ), vec3( cameraWorldMatrix[ 2 ] ) ).lessThan( 0.0 );
 			right.assign( cross( up, back ).mul( select( mirrored, float( - 1.0 ), float( 1.0 ) ) ) );
@@ -193,7 +195,7 @@ const cameraRayDirection = Fn( ( [
 export const generateRayFromCamera = Fn( ( [
 	uv01, rngState,
 	cameraWorldMatrix, cameraProjectionMatrixInverse,
-	cameraProjection, panoLonRange, panoLatRange, panoLevelHorizon,
+	cameraProjection, panoLonRange, panoLatRange, panoLevelHorizon, panoUp,
 	enableDOF, focalLength, aperture, focusDistance, unitsPerMetre, apertureScale, anamorphicRatio, dofMode, dofBlur
 ] ) => {
 
@@ -201,7 +203,7 @@ export const generateRayFromCamera = Fn( ( [
 	// .toVar() so the two reads below don't inline the whole projection graph twice.
 	const rayDirectionWorld = cameraRayDirection(
 		uv01, cameraWorldMatrix, cameraProjectionMatrixInverse,
-		cameraProjection, panoLonRange, panoLatRange, panoLevelHorizon
+		cameraProjection, panoLonRange, panoLatRange, panoLevelHorizon, panoUp
 	).toVar();
 
 	const resultOrigin = rayOriginWorld.toVar();

@@ -67,7 +67,7 @@ Key settings:
 | `cameraProjection` | `string` | 'perspective' | `'perspective'` \| `'orthographic'` \| `'equirectangular'` \| `'equalArea'` (pbrt's square) — see [Camera Projection](scenes.md#camera-projection-orthographic-360-panorama) |
 | `panoramaLonRange` | `[number, number]` | `[-180, 180]` | Panorama longitude sweep, degrees, left→right |
 | `panoramaLatRange` | `[number, number]` | `[-90, 90]` | Panorama latitude sweep, degrees, bottom→top |
-| `panoramaLevelHorizon` | `boolean` | true | Yaw-only panorama basis, so orbit pitch/roll can't tilt the horizon |
+| `panoramaLevelHorizon` | `boolean` | true | Yaw-only panorama basis about the camera's `up` (the orbit's), so orbit pitch/roll can't tilt the horizon |
 | `useAdaptiveSampling` | `boolean` | true | Whole-frame early-stop once convergence reaches `adaptiveStopFraction` |
 | `noiseThreshold` | `number` | 0.1 | √-luminance-normalized per-pixel noise below which a pixel counts as converged (the production preset uses 0.02) |
 | `adaptiveMinSamples` | `number` | 8 | Minimum samples before adaptive sampling can trigger |

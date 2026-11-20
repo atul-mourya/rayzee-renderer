@@ -78,7 +78,8 @@ turns it off or supplies a host manager; `openHeadless` defaults to off.
   scene camera's `up` goes to the view and the controls (`setUp`: three's `_quat`), or their update levelled a rolled
   camera to +y (pbrt-v4's transparent-machines rendered turned 90° from pbrt's picture). The view's up is saved with
   the session (`view.up`; older sessions level) and with a camera saved from the view; the default camera, a new
-  model's first frame and timeline keys (which carry none) are level. The panorama's level horizon still levels to +y.
+  model's first frame and timeline keys (which carry none) are level. The panorama's level horizon levels to that up too
+  (`panoUp`, the camera's `up`; +y exactly by default, so default renders are unchanged; the EXR export's frame alike).
   `app.sceneSource` says where the model came from (`url` / `local-file` / `object3d`, with an
   archive's `element`); `sceneSourceFile` is the File of a local load. An added cloud or smoke (Add menu,
   `VolumeGrid.procedural`) is saved as its recipe (`grid.recipe`: kind, resolution, seed), inputs and place, and drawn

@@ -41,7 +41,7 @@ const uniforms = {
 	cameraViewMatrix: camera.matrixWorldInverse,
 	cameraProjectionMatrixInverse: camera.projectionMatrixInverse,
 	cameraProjectionMatrix: camera.projectionMatrix,
-	cameraProjection: 0, cameraClipStart: 0, panoLonRange: new Vector2(), panoLatRange: new Vector2(), panoLevelHorizon: 1,
+	cameraProjection: 0, cameraClipStart: 0, panoLonRange: new Vector2(), panoLatRange: new Vector2(), panoLevelHorizon: 1, panoUp: new Vector3( 0, 1, 0 ),
 	seedFrame: 0,
 };
 // The path tracer's emission the camera saw directly (getEmission), when a test sets one.

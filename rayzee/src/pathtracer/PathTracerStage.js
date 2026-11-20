@@ -1865,6 +1865,13 @@ export class PathTracerStage extends RenderStage {
 
 	}
 
+	/** A camera's up as the panorama levels to it: unit, and +y exactly while it is +y. @private */
+	_panoUpOf( up ) {
+
+		return ( this._panoUpScratch ??= new Vector3() ).copy( up ).normalize();
+
+	}
+
 	/**
 	 * Update camera uniforms
 	 * @returns {boolean} True if camera changed
@@ -1874,10 +1881,13 @@ export class PathTracerStage extends RenderStage {
 		// Only an imported camera's clip plane: `near` is the viewer's own for its default camera.
 		const clipStart = Math.max( this.camera.userData?.clipStart ?? 0, 0 );
 
+		const up = this.camera.up;
+		const upChanged = up.lengthSq() > 0 && ! this._panoUpOf( up ).equals( this.panoUp.value );
 		if ( ! this._matricesApproxEqual( this.lastCameraMatrix, this.camera.matrixWorld ) ||
 			! this._matricesApproxEqual( this.lastProjectionMatrix, this.camera.projectionMatrixInverse ) ||
-			clipStart !== this.cameraClipStart.value ) {
+			clipStart !== this.cameraClipStart.value || upChanged ) {
 
+			if ( upChanged ) this.panoUp.value.copy( this._panoUpOf( up ) );
 			this.cameraWorldMatrix.value.copy( this.camera.matrixWorld );
 			viewMatrixOf( this.camera, this.cameraViewMatrix.value );
 			this.cameraProjectionMatrix.value.copy( this.camera.projectionMatrix );

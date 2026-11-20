@@ -396,10 +396,12 @@ function cameraMatrices( app, encoders ) {
 	if ( levelled ) {
 
 		const mirrored = right.clone().cross( up ).dot( back ) < 0;
-		const flat = new Vector3( back.x, 0, back.z );
-		if ( flat.lengthSq() < 1e-8 ) flat.set( up.x, 0, up.z );
+		// Square to the view's up, as the rays are levelled.
+		const level = stage?.panoUp?.value ?? camera.up.clone().normalize();
+		const flat = back.clone().addScaledVector( level, - back.dot( level ) );
+		if ( flat.lengthSq() < 1e-8 ) flat.copy( up ).addScaledVector( level, - up.dot( level ) );
 		back.copy( flat );
-		up.set( 0, 1, 0 );
+		up.copy( level );
 		right.crossVectors( up, back.normalize() ).multiplyScalar( mirrored ? - 1 : 1 );
 
 	}
