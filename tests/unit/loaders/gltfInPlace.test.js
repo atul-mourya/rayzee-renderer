@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import { glbInPlace } from '@/core/loaders/GLTFDecoders.js';
+import { glbInPlace, decodersOnDemand } from '@/core/loaders/GLTFDecoders.js';
 
 // A .glb of two meshes: one indexed, one with positions and normals interleaved in one view.
 function makeGLB( { taggedIndices = false } = {} ) {
@@ -116,6 +116,57 @@ describe( 'a .glb parsed in place', () => {
 		const damaged = makeGLB().slice( 0, 60 );
 		const failure = ( loader ) => loader.parseAsync( damaged.slice( 0 ), '' ).then( () => 'loaded', ( error ) => error.message );
 		expect( await failure( glbInPlace( new GLTFLoader() ) ) ).toBe( await failure( new GLTFLoader() ) );
+
+	} );
+
+	it( 'leaves a glTF 1.0 .glb, and one whose JSON is not an object, to three, failing as three fails', async () => {
+
+		const failure = ( loader, data ) => loader.parseAsync( data, '' ).then( () => 'loaded', ( error ) => error.message );
+		const version1 = makeGLB();
+		new DataView( version1 ).setUint32( 4, 1, true );
+		expect( await failure( glbInPlace( new GLTFLoader() ), version1.slice( 0 ) ) ).toBe( await failure( new GLTFLoader(), version1.slice( 0 ) ) );
+
+		// A JSON chunk of `42 `: valid JSON, no glTF.
+		const scalar = makeGLB();
+		const view = new DataView( scalar );
+		new Uint8Array( scalar, 20, view.getUint32( 12, true ) ).fill( 0x20 ).set( [ 0x34, 0x32 ] );
+		const inPlace = await failure( glbInPlace( new GLTFLoader() ), scalar.slice( 0 ) );
+		expect( inPlace ).not.toBe( 'loaded' );
+		expect( inPlace ).toBe( await failure( new GLTFLoader(), scalar.slice( 0 ) ) );
+
+	} );
+
+} );
+
+describe( 'decodersOnDemand', () => {
+
+	beforeAll( () => {
+
+		if ( typeof ProgressEvent === 'undefined' ) vi.stubGlobal( 'ProgressEvent', class extends Event {} );
+
+	} );
+	afterAll( () => vi.unstubAllGlobals() );
+
+	const failure = ( data ) => decodersOnDemand( new GLTFLoader(), null ).parseAsync( data, '' ).then( () => 'loaded', ( error ) => error );
+
+	it( 'says a web page or a file that is no glTF plainly, the parser\'s error kept as the cause', async () => {
+
+		const page = await failure( '<!doctype html><html><body>Not found</body></html>' );
+		expect( page.message ).toMatch( /gave a web page, not a 3D model/ );
+		expect( page.cause ).toBeInstanceOf( SyntaxError );
+		const junk = await failure( new TextEncoder().encode( 'solid cube\nfacet normal 0 0 1' ).buffer );
+		expect( junk.message ).toMatch( /not a glTF model/ );
+
+	} );
+
+	it( 'reads a parsed glTF\'s extensions from the object itself, importing a decoder only for one it names', async () => {
+
+		const loader = decodersOnDemand( new GLTFLoader(), null );
+		const asset = ( used ) => ( { asset: { version: '2.0' }, extensionsUsed: used, scenes: [ { nodes: [] } ], scene: 0 } );
+		await loader.parseAsync( asset( [] ), '' );
+		expect( loader.meshoptDecoder ).toBeFalsy();
+		await loader.parseAsync( asset( [ 'EXT_meshopt_compression' ] ), '' );
+		expect( loader.meshoptDecoder?.supported ).toBeDefined();
 
 	} );
 
