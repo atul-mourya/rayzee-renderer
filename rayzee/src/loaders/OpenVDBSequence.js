@@ -1,5 +1,5 @@
 /**
- * A run of OpenVDB frames as one volume whose grids change over time (loaders/FrameSequence.js), each frame read in a
+ * A run of OpenVDB or NanoVDB frames as one volume whose grids change over time (loaders/FrameSequence.js), each frame read in a
  * worker. Apart from OpenVDB.js, which the worker imports: a module cannot start a worker that imports it.
  */
 
@@ -7,7 +7,7 @@ import { Box3, Matrix4, Vector3 } from 'three';
 import OpenVDBWorker from './OpenVDBWorker.js?worker&inline';
 import { createWorker, hasWorkers } from '../Platform.js';
 import { FrameSequence } from './FrameSequence.js';
-import { readOpenVDB, readVolumeFrame, pickGrids, volumeGroup, upAxisOf } from './OpenVDB.js';
+import { readVDB, readVolumeFrame, pickGrids, volumeGroup, upAxisOf } from './OpenVDB.js';
 import { VolumeGrid, growReserve } from '../scene/Volumes.js';
 
 // Voxels a frame is read at, at most: half the volumes' budget, so its slot can grow a quarter each side; and its side,
@@ -92,12 +92,13 @@ async function sampleExtent( frames, first, names, glow ) {
 	let peak = 0, lit = - 1;
 	for ( const i of picks ) {
 
-		const { grids } = readOpenVDB( i === 0 ? first : new Uint8Array( await frames[ i ]() ) );
+		const { grids } = readVDB( i === 0 ? first : new Uint8Array( await frames[ i ]() ) );
 		peak = Math.max( peak, grids.find( ( g ) => g.name === glow )?.maxValue() ?? 0 );
 		for ( const grid of grids ) {
 
-			const { file_bbox_min: min, file_bbox_max: max } = grid.metadata;
-			if ( ! names.includes( grid.name ) || ! min || ! max || min.some( ( v, k ) => v > max[ k ] ) ) continue;
+			const recorded = names.includes( grid.name ) ? grid.recordedBox : null;
+			if ( ! recorded ) continue;
+			const { min, max } = recorded;
 			if ( lit < 0 ) lit = i;
 			for ( let k = 0; k < 3; k ++ ) {
 
@@ -115,7 +116,7 @@ async function sampleExtent( frames, first, names, glow ) {
 }
 
 /**
- * A run of .vdb frames as a volume in a group named `name`: the first frame read now (the first holding anything, where
+ * A run of .vdb or .nvdb frames as a volume in a group named `name`: the first frame read now (the first holding anything, where
  * the run starts empty), the rest as the timeline reaches them. Grids are picked by the first frame's names, as `volumeFromOpenVDB` picks them. A few frames are sampled for
  * the run's extent: the camera frames it whole, its frames are read at one resolution, and its place on the GPU is
  * sized once.
@@ -126,7 +127,7 @@ async function sampleExtent( frames, first, names, glow ) {
 export async function volumeSequenceFromOpenVDB( frames, { name = 'volume', fps = 24 } = {} ) {
 
 	const bytes = new Uint8Array( await frames[ 0 ]() );
-	const file = readOpenVDB( bytes );
+	const file = readVDB( bytes );
 	const picked = pickGrids( file.grids, name );
 	const names = [ picked.density?.name, picked.glow?.name ].filter( Boolean );
 	const request = { density: picked.density?.name ?? null, emission: picked.glow?.name ?? null, maxVoxels: FRAME_VOXELS, maxSide: FRAME_SIDE, factor: 1 };
@@ -149,7 +150,7 @@ export async function volumeSequenceFromOpenVDB( frames, { name = 'volume', fps 
 
 	request.factor = Math.max( request.factor, first.factor );
 	const empty = () => new VolumeGrid( { width: 1, height: 1, depth: 1, data: new Float32Array( 1 ), transform: ( picked.density ?? picked.glow ).transform ?? new Matrix4() } );
-	const group = volumeGroup( first.grid ?? empty(), first.emission, picked, name, { up: upAxisOf( file.metadata ), peak } );
+	const group = volumeGroup( first.grid ?? empty(), first.emission, picked, name, { up: file.up ?? upAxisOf( file.metadata ), peak } );
 	const volume = group.children[ 0 ];
 	volume.reserve = growReserve( volume );
 	if ( extent ) {

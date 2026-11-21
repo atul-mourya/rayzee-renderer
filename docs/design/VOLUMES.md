@@ -1,7 +1,7 @@
 # Volumes
 
-Smoke, clouds and fire: media whose density changes from point to point, read from a grid (an OpenVDB file, or one a
-host fills or draws from noise). The even and height fog (`shaders/Fog.js`, SHADING.md → Fog) stays as it is; volumes
+Smoke, clouds and fire: media whose density changes from point to point, read from a grid (an OpenVDB or NanoVDB file,
+or one a host fills or draws from noise). The even and height fog (`shaders/Fog.js`, SHADING.md → Fog) stays as it is; volumes
 sit beside it and the two mix. How to use it: [docs/guide/rendering.md](../guide/rendering.md#volumes).
 
 ## What it is
@@ -87,9 +87,10 @@ as the budget asks while the values are written. `volumeFromOpenVDB` picks `dens
 `temperature` grid as blackbody emission (intensity 1, Blender's Quick Smoke), else `flame` / `fire` / `heat` as orange
 emission. Either may be missing, not both: a fire alone (EmberGen writes `temperature` and `flames`, no density) gets a
 density of zeros, so it glows and casts nothing.
-- **Temperature scale** (`kelvinPerUnit`): Blender's 1000 K a unit, raised so the hottest voxel reaches 2500 K. At
-  1000 K EmberGen's grids (peak ~1.3) glowed a dim red; Blender's Mantaflow (peak ~3) keeps 1000. A grid past 100 is
-  taken as kelvin already.
+- **Temperature scale** (`kelvinPerUnit`): Blender's 1000 K a unit, raised so the hottest voxel reaches 2500 K and
+  lowered so it stays at 4500 K at most. At 1000 K EmberGen's grids (peak ~1.3) glowed a dim red; Blender's Mantaflow
+  (peak ~3) keeps 1000; pbrt-v4's explosion (peak 45.5, which its scene reads at 100 K a unit) read 45,500 K, 10⁴× its
+  light, and now 4500 K (pbrt's 4450). A grid past 100 is taken as kelvin already.
 - **Up axis** (`upAxisOf`): a file whose `creator` names a Y-up tool (Houdini — the Moana ocean says "Houdini
   18.0.499/GEO_VDBTranslator" —, Maya, Bifrost, Katana, Clarisse, Nuke) keeps its axes; any other is Z-up and turned
   `rotation.x = −π/2`. Blender and EmberGen write no creator; EmberGen's fire grows from index z 0 up to 120 while x
@@ -100,18 +101,34 @@ floats, an affine map, four grids of three types, inactive values of every flag,
 (`tests/unit/loaders/fixtures/vdb/`, `make.py`) — and on the Moana island's `deepWaterVolume.vdb` (Houdini 18, OpenVDB
 6.2, Blosc): 108M active voxels in 1.3 s, halved to 1868 × 21 × 436 for the 2048-texel limit.
 
+## NanoVDB
+
+`loaders/NanoVDB.js` (`.nvdb`), read through OpenVDB.js's steps: `readVDB` tells the two formats apart by their first
+bytes, and `vdbFormat` takes both extensions, so single files, numbered runs, zips and folders load as `.vdb` ones do.
+It reads what nanovdb's `io::readGrids` reads, any ABI 32 file: segments of grids raw, Zip or Blosc (a header "NanoVDB0"
+to 32.6, "NanoVDB2" from 32.7: OpenVDB 12 on writes the new magic numbers by default, which the pbrt-era reader
+refused), or a raw grid buffer (`GridHandle::write`, 32.6 on; a grid "NanoVDB1", or "NanoVDB0" told from a file by
+`GridData::isValid`'s fields). Scalar grids: float, double, half and the quantised Fp4, Fp8, Fp16 and FpN (code × step
++ minimum, rounded as nanovdb rounds it); vector, index and point grids are listed and left out. A grid is read dense
+over its active box with `getValue`'s values (inactive voxels and tiles included) from its root, internal and leaf
+nodes; index → world is its map. Past 2²⁷ voxels or 2048 a side a value is the mean of f³ voxels, read so (as OpenVDB
+grids are): the packer would halve it anyway. A constant tile adds its share to each coarse voxel it covers, so a large
+pruned interior costs as many steps as coarse voxels (OpenVDB.js still adds tiles voxel by voxel).
+- **Checked** against nanovdb itself (C++ dumps of `getValue` at seeded voxels; `make.cpp` and `make-pbrt.cpp` beside
+  the fixtures in `tests/unit/loaders/fixtures/nanovdb/`): every type of OpenVDB's nanovdb 32.11 bit for bit (built
+  with `-ffp-contract=off`: a fused multiply–add rounds a quantised value once), and pbrt-v4's 32.3. On pbrt-v4-scenes'
+  `explosion` (two grids, 4.5M active voxels each, 161 × 364 × 153, Zip): ~37k sampled voxels equal nanovdb's reader,
+  world-space trilinear lookups within 6e-5; each grid reads in ~150 ms, its hottest voxel in ~15 ms.
+- **Up axis**: a NanoVDB file names no creator. Those in circulation (that explosion, OpenVDB's sample volumes
+  converted) are Houdini's, Y-up, so a file is kept as it is; pbrt's scene turns the explosion 90° into its Z-up world.
+
 ## pbrt's grid media
 
 pbrt-v4's `nanovdb` and `uniformgrid` media inside a shape (`MediumInterface "smoke" ""`) become volumes
 (`_gridMediumVolumes`, `addons/archives/pbrt/PBRTSceneBuilder.js`), placed by the transform where the medium was made:
-- **NanoVDB** (`addons/archives/pbrt/NanoVDB.js`): files of ABI 32 (pbrt-v4's nanovdb, 32.3), segments of grids raw,
-  Zip or Blosc; float grids only, as pbrt reads them (`grid<float>()`). A grid is read dense over its active box with
-  `getValue`'s values (inactive voxels and tiles included) from its root, internal and leaf nodes; index → world is its
-  map. Past 2²⁷ voxels or 2048 a side a value is the mean of f³ voxels, read so (OpenVDB grids are read the same way):
-  the packer would halve it anyway. A constant tile then adds its share to each coarse voxel it covers, so a large
-  pruned interior costs as many steps as coarse voxels (OpenVDB.js still adds tiles voxel by voxel). On pbrt-v4-scenes' `explosion` (two grids, 4.5M active voxels each, 161 × 364 ×
-  153): every one of ~37k sampled voxels equals nanovdb's own reader (a C++ dump; `make.cpp` beside the test fixture
-  makes it), world-space trilinear lookups within 6e-5; each grid reads in ~150 ms.
+- **NanoVDB**: read as a `.nvdb` file is (above, `readVDB`, imported on first use: an add-on may not import a core
+  loader statically), each grid placed where the medium was made. pbrt reads float grids only; the other types are read
+  too.
 - **Inputs**: extinction σa + σs (× `scale`), one number a point, so its luminance where the channels differ
   (`approximated`); the albedo σs over it, per channel; `g`. Emission is pbrt's σa × Le (`emissionFromAbsorption`), Le
   as the ramp: `Lescale` × pbrt's blackbody peaking at 1 (`peakBlackbodyRGB`, as the film reads it, not scaled to
@@ -161,7 +178,7 @@ kinds of frames can use them:
   the atlas itself, the kernels were rebuilt, twice where a frame ran during the upload (no atlas between), and
   EmberGen's fire showed 54 of its 101 frames on its first play. Frames are never halved by the packer: they are read at
   most 2²⁶ voxels and 2046 a side, coarser for the rest of the run once one needed it, so resolution does not flicker.
-- **VDB frames** (`loaders/OpenVDBSequence.js`, its worker `OpenVDBWorker.js`): the first frame is read at load, the
+- **VDB frames** (`loaders/OpenVDBSequence.js`, its worker `OpenVDBWorker.js`; `.vdb` or `.nvdb`): the first frame is read at load, the
   grids picked by its names; the rest in a worker, kept 2 s after its last frame. Five frames (first, last, three
   between) are opened at load for their recorded active boxes and hottest voxel (`sampleExtent`): the union sizes the
   slot (× 1.1), the resolution every frame is read at and `volume.extent`, which the model bounds and so the camera

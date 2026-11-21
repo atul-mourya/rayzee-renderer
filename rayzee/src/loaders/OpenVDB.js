@@ -1,11 +1,13 @@
 /**
  * OpenVDB files (.vdb), read as OpenVDB's io reads them: grids' names, types, transforms and metadata, and scalar grids
  * (float, half, double; any tree) as a dense box of their active voxels. Zip, Blosc or no compression; linear maps.
+ * NanoVDB files (.nvdb, NanoVDB.js) go through the same steps: `readVDB` tells the two apart.
  */
 
 import { Group, Matrix4 } from 'three';
 import { unzlibSync } from 'three/addons/libs/fflate.module.js';
 import { Volume, VolumeGrid, unifyGrids } from '../scene/Volumes.js';
+import { isNanoVDB, readNanoVDB } from './NanoVDB.js';
 
 const MAGIC = 0x56444220;
 const COMPRESS_ZIP = 0x1, COMPRESS_ACTIVE_MASK = 0x2, COMPRESS_BLOSC = 0x4;
@@ -145,22 +147,35 @@ export function readOpenVDB( buffer ) {
 
 }
 
+/**
+ * An OpenVDB or a NanoVDB file's grids, told apart by its first bytes; their grids read alike. `up` is a NanoVDB file's
+ * (see readNanoVDB); an OpenVDB file's is `upAxisOf` its metadata.
+ * @param {ArrayBuffer|Uint8Array} buffer
+ * @returns {{ metadata: Object, up?: string, grids: Array<{ name: string, scalar: boolean, toVolumeGrid: Function, maxValue: Function }> }}
+ */
+export function readVDB( buffer ) {
+
+	const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array( buffer );
+	return isNanoVDB( bytes ) ? readNanoVDB( bytes, { blosc: bloscDecompress } ) : readOpenVDB( bytes );
+
+}
+
 // Names simulators give a grid that glows: a temperature (blackbody), or a flame.
 const TEMPERATURE = /^(temperature|temp)$/i, FLAME = /^(flame|flames|fire|heat|emission)$/i;
 
 /**
- * An OpenVDB file as a volume in a group named after it, its grids picked by `pickGrids`.
+ * An OpenVDB or NanoVDB file as a volume in a group named after it, its grids picked by `pickGrids`.
  * @param {ArrayBuffer|Uint8Array} buffer
  * @param {{ name?: string, maxVoxels?: number }} [options]
  * @returns {Group}
  */
 export function volumeFromOpenVDB( buffer, { name = 'volume', maxVoxels } = {} ) {
 
-	const { grids, metadata } = readOpenVDB( buffer );
+	const { grids, metadata, up } = readVDB( buffer );
 	const picked = pickGrids( grids, name );
 	const frame = frameGrids( picked.density?.toVolumeGrid( { maxVoxels } ) ?? null, picked.glow?.toVolumeGrid( { maxVoxels } ) ?? null );
-	if ( ! frame ) throw new Error( `OpenVDB: "${name}" holds no voxel` );
-	return volumeGroup( frame.grid, frame.emission, picked, name, { up: upAxisOf( metadata ), peak: picked.glow?.maxValue() ?? 0 } );
+	if ( ! frame ) throw new Error( `VDB: "${name}" holds no voxel` );
+	return volumeGroup( frame.grid, frame.emission, picked, name, { up: up ?? upAxisOf( metadata ), peak: picked.glow?.maxValue() ?? 0 } );
 
 }
 
@@ -183,7 +198,7 @@ export function pickGrids( grids, name = 'volume' ) {
 	const density = scalar.find( ( g ) => /^density$/i.test( g.name ) ) ?? scalar.find( ( g ) => g.gridClass === 'fog volume' && ! TEMPERATURE.test( g.name ) && ! FLAME.test( g.name ) ) ?? null;
 	const temperature = scalar.find( ( g ) => TEMPERATURE.test( g.name ) );
 	const glow = temperature ?? scalar.find( ( g ) => FLAME.test( g.name ) ) ?? null;
-	if ( ! density && ! glow ) throw new Error( `OpenVDB: "${name}" has no density, temperature or flame grid (its grids: ${grids.map( ( g ) => `${g.name} (${g.valueType})` ).join( ', ' )})` );
+	if ( ! density && ! glow ) throw new Error( `VDB: "${name}" has no density, temperature or flame grid (its grids: ${grids.map( ( g ) => `${g.name} (${g.valueType})` ).join( ', ' )})` );
 	return { density, glow, blackbody: !! temperature };
 
 }
@@ -195,7 +210,7 @@ export function pickGrids( grids, name = 'volume' ) {
  */
 export function readVolumeFrame( bytes, { density, emission, maxVoxels, maxSide, factor = 1 } ) {
 
-	const { grids } = readOpenVDB( bytes instanceof Uint8Array ? bytes : new Uint8Array( bytes ) );
+	const { grids } = readVDB( bytes );
 	const read = ( name ) => ( name ? grids.find( ( g ) => g.name === name )?.toVolumeGrid( { maxVoxels, maxSide, factor } ) ?? null : null );
 	return frameGrids( read( density ), read( emission ) ) ?? { grid: null, emission: null, factor };
 
@@ -209,9 +224,10 @@ export const upAxisOf = ( metadata ) => ( Y_UP_CREATORS.test( metadata?.creator 
 
 /**
  * Kelvin a unit of a temperature grid whose hottest voxel is `peak`: Blender's 1000, raised so that voxel reaches at
- * least 2500 K (EmberGen's grids peak near 1); a grid already in kelvin (past 100) is read as kelvin.
+ * least 2500 K (EmberGen's grids peak near 1) and lowered so it stays at 4500 K at most (a grid in hundreds of kelvin);
+ * a grid already in kelvin (past 100) is read as kelvin.
  */
-const kelvinPerUnit = ( peak ) => ( peak > 100 ? 1 : peak > 0 ? Math.max( 1000, 2500 / peak ) : 1000 );
+const kelvinPerUnit = ( peak ) => ( peak > 100 ? 1 : peak > 0 ? Math.min( Math.max( 1000, 2500 / peak ), 4500 / peak ) : 1000 );
 
 /**
  * A volume of these grids in a group of its own, glowing as `picked` says, stood upright (`up`: the file's vertical
@@ -351,6 +367,14 @@ class OpenVDBGrid {
 	get gridClass() {
 
 		return this.metadata.class ?? 'unknown';
+
+	}
+
+	/** The active index box ({ min, max }) the file records, else null. */
+	get recordedBox() {
+
+		const { file_bbox_min: min, file_bbox_max: max } = this.metadata;
+		return min && max && min.every( ( v, k ) => v <= max[ k ] ) ? { min, max } : null;
 
 	}
 

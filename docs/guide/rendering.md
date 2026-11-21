@@ -114,8 +114,8 @@ engine.settings.setMany({ fogDensity: 0.1, fogColor: '#fff4e6', fogAnisotropy: 0
 ## Volumes
 
 Smoke, clouds and fire whose density changes from point to point: a `Volume` in the scene holding a grid of density,
-and optionally one of emission or temperature. Open an OpenVDB file (`loadFile( 'plume.vdb' )`, with
-`rayzee/addons/formats` on the core), or build a grid yourself:
+and optionally one of emission or temperature. Open an OpenVDB or NanoVDB file (`loadFile( 'plume.vdb' )` or
+`'plume.nvdb'`, with `rayzee/addons/formats` on the core), or build a grid yourself:
 
 ```js
 import { Volume, VolumeGrid } from 'rayzee'
@@ -141,10 +141,15 @@ const grid = new VolumeGrid( { width, height, depth, data /* Float32Array */, tr
   `density` (else the first fog volume) is the density; a `temperature` grid glows as a black body, else a `flame`,
   `fire` or `heat` grid glows orange. A fire with no density grid (EmberGen's) glows and casts no shadow. The
   temperature is read at Blender's 1000 K a unit, raised so the hottest voxel reaches 2500 K where it would not
-  (EmberGen's grids peak near 1), or at 1 K where the grid is already in kelvin. A file Houdini, Maya and the like
+  (EmberGen's grids peak near 1) and lowered so it stays at 4500 K at most, or at 1 K where the grid is already in
+  kelvin. A file Houdini, Maya and the like
   wrote stays as it is; any other (Blender, EmberGen: Z-up, and they name no creator) is stood upright
   (`rotation.x = −π/2`). Level sets and vector grids are not read.
-- **Sequences.** A run of numbered `.vdb` files (`fire_0001.vdb`, `fire_0002.vdb`, …) opened together — the files
+- **NanoVDB.** `.nvdb` files as any version of NanoVDB writes them (pbrt-v4's, OpenVDB 12 and later's), zipped,
+  Blosc-compressed, uncompressed or a raw grid buffer; float, double, half and quantised (Fp4, Fp8, Fp16, FpN) grids.
+  Grids are picked and glow as an OpenVDB file's do. A NanoVDB file names no creator, so it is kept as it is (Y-up:
+  those in circulation are Houdini's); turn the volume if yours stands on its side.
+- **Sequences.** A run of numbered `.vdb` or `.nvdb` files (`fire_0001.vdb`, `fire_0002.vdb`, …) opened together — the files
   selected at once, their folder, or a zip — loads as one volume that changes over time: `engine.sequences` lists it,
   `engine.seekSequences( seconds )` shows the frame at that time (resolving once it is on the GPU), and the viewer's
   timeline plays it and exports it as video. Frames are read in a worker, two ahead, and written into the volume's

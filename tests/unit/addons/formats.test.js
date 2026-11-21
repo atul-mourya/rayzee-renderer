@@ -78,7 +78,7 @@ describe( 'file formats', () => {
 		expect( loader.getFileFormat( 'a.USDA' ) ).toMatchObject( { type: 'model', label: 'USD' } );
 		expect( loader.getFileFormat( 'sky.exr' ) ).toMatchObject( { type: 'environment' } );
 		expect( Object.keys( loader.getSupportedFormats( 'model' ) ).sort() ).toEqual(
-			[ '3mf', 'dae', 'fbx', 'glb', 'gltf', 'obj', 'ply', 'stl', 'usd', 'usda', 'usdc', 'usdz', 'vdb' ]
+			[ '3mf', 'dae', 'fbx', 'glb', 'gltf', 'nvdb', 'obj', 'ply', 'stl', 'usd', 'usda', 'usdc', 'usdz', 'vdb' ]
 		);
 
 	} );
@@ -94,6 +94,23 @@ describe( 'file formats', () => {
 		expect( volume.isVolume ).toBe( true );
 		expect( [ volume.grid.name, volume.emissionGrid.name, volume.blackbody, volume.emits ] ).toEqual( [ 'density', 'temperature', true, true ] );
 		expect( volume.grid.max ).toBeCloseTo( 0.987, 3 );
+
+	} );
+
+	it( 'loads a NanoVDB file through the same format, raw or zipped, as OpenVDB 12 and pbrt-v4 write them', async () => {
+
+		const loader = newLoader().registerFormat( vdbFormat );
+		vi.spyOn( loader, 'onModelLoad' ).mockResolvedValue();
+		for ( const name of [ 'density-raw.nvdb', 'fog-zip.nvdb' ] ) {
+
+			const bytes = readFileSync( new URL( `../loaders/fixtures/nanovdb/${name}`, import.meta.url ) );
+			await loader._loadModelFileByExtension( new File( [ bytes ], name ), name );
+			const [ volume ] = loader.targetModel.children;
+			expect( [ loader.targetModel.name, volume.isVolume, volume.grid.name, volume.grid.max ] ).toEqual( [ name, true, 'density', 1 ] );
+
+		}
+
+		expect( loader.targetModel.children[ 0 ].emissionGrid.name ).toBe( 'temperature' );
 
 	} );
 

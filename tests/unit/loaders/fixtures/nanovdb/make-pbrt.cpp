@@ -1,8 +1,8 @@
 // The NanoVDB fixture, written by nanovdb itself (pbrt-v4's copy, ABI 32.3): a fog sphere (negative coordinates,
 // constant tiles inside) and a temperature box, Zip, one segment. Prints, as JSON, what nanovdb reads back: metadata and
 // getValue at seeded coordinates.
-//   clang++ -std=c++17 -I pbrt-v4/src/ext/openvdb/nanovdb -DNANOVDB_USE_ZIP make.cpp -lz -o make
-//   ./make . > fog-zip-nanovdb.json
+//   clang++ -std=c++17 -I pbrt-v4/src/ext/openvdb/nanovdb -DNANOVDB_USE_ZIP make-pbrt.cpp -lz -o make-pbrt
+//   ./make-pbrt . > fog-zip-nanovdb.json
 #include <nanovdb/NanoVDB.h>
 #include <nanovdb/util/IO.h>
 #include <nanovdb/util/GridBuilder.h>

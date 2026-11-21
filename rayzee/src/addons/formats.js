@@ -4,7 +4,7 @@ import { fetchBytes, loadPlatformImage } from '../loaders/PlatformImageLoader.js
 
 /**
  * File formats beyond glTF and .hdr — `rayzee/addons/formats`: FBX, OBJ, STL, PLY, Collada, 3MF and USD models, OpenVDB
- * volumes, and EXR environments. PathTracerApp registers all of them itself; on the renderer core, register the ones you
+ * and NanoVDB volumes, and EXR environments. PathTracerApp registers all of them itself; on the renderer core, register the ones you
  * read (each loader is downloaded the first time its format is read, and a bundler drops the formats you leave out):
  *
  * @example
@@ -346,14 +346,14 @@ export const usdFormat = {
 };
 
 export const vdbFormat = {
-	name: 'OpenVDB (smoke, clouds, fire)', label: 'VDB', type: 'model', extensions: [ 'vdb' ],
+	name: 'OpenVDB and NanoVDB (smoke, clouds, fire)', label: 'VDB', type: 'model', extensions: [ 'vdb', 'nvdb' ],
 	async parse( file, { filename } ) {
 
 		const { volumeFromOpenVDB } = await import( '../loaders/OpenVDB.js' );
 		return { model: volumeFromOpenVDB( await file.arrayBuffer(), { name: filename } ) };
 
 	},
-	// A run of numbered frames (`fire_0001.vdb`, …) plays as one volume on the timeline.
+	// A run of numbered frames (`fire_0001.vdb`, `fire_0001.nvdb`, …) plays as one volume on the timeline.
 	async parseSequence( frames, { filename, fps } ) {
 
 		const { volumeSequenceFromOpenVDB } = await import( '../loaders/OpenVDBSequence.js' );

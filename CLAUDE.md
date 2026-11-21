@@ -611,22 +611,22 @@ bench gates and measurements.
   (`fogSegmentLight`); every shadow ray takes the fog's transmittance. ⚠️ The fog's shadow rays go through one call
   site (`traceFogLight`): each `traceShadowRay` call inlines the whole BVH walk. ⚠️ A segment's emitter point is drawn
   from either side (`sampleLightBVHTriangleAnySide`): drawn as surface NEE draws, the far sides were weighed below 1.
-- **Volumes** (`scene/Volumes.js`, `shaders/Volume.js`, `loaders/OpenVDB.js`; full notes
+- **Volumes** (`scene/Volumes.js`, `shaders/Volume.js`, `loaders/OpenVDB.js`, `loaders/NanoVDB.js`; full notes
   [docs/design/VOLUMES.md](docs/design/VOLUMES.md)): a `Volume` (Object3D) holds a `VolumeGrid` of density and
   optionally one of emission or temperature; `app.updateVolumes()` after an edit. Every volume and its majorant grid is
   packed into one half-float 3D texture, headers in one uniform array (`VOLUME_LAYOUT`); delta tracking and ratio
   tracking over the majorants in Shade's fog block (`volumeFreeFlight`, `pointScatterLight`) and `traceShadowRay`.
   Compiled in only while some volume is packed (`_volumesNeeded()`): off, every kernel's WGSL is main's. Path
   integrator only. A scene of volumes alone gets a hidden anchor triangle (`anchorVolumes`): the build needs one.
-  **Sequences** (`loaders/FrameSequence.js`): numbered `.vdb` frames (a zip, folder or several files) play on the
+  **Sequences** (`loaders/FrameSequence.js`): numbered `.vdb` / `.nvdb` frames (a zip, folder or several files) play on the
   timeline (`seekSequences( time )`; `timeline.settled()` before a video frame); a frame is written into its volume's
   reserved atlas slot, a bigger one grows the slot; neither rebuilds a shader.
   ⚠️ Every TSL `Loop` counter is `i` in WGSL: a nested loop hides the outer one, so hold an outer index in a `.toVar()`
   (the volume index read inside the majorant walk was the cell loop's). ⚠️ A `Data3DTexture` written by hand needs
   `needsUpdate` before `initTexture`, else three.js makes a 1×1 2D placeholder. ⚠️ OpenVDB writes nothing for an empty
   half-float block (a full-float one still gets a size). pbrt's `nanovdb` / `uniformgrid` media bounded only by
-  `interface` shapes become volumes clipped to them (`pbrt/NanoVDB.js`; ⚠️ its Blosc decoder is imported on first use:
-  the add-on may not import a core loader statically).
+  `interface` shapes become volumes clipped to them (`readVDB`, ⚠️ imported on first use: an add-on may not import a
+  core loader statically). ⚠️ OpenVDB 12 on writes NanoVDB's new magic numbers ("NanoVDB2" files, "NanoVDB1" grids).
 - ⚠️ `bench:ab` read +7–9 % on identical code for two scenes on one day: net any A/B of a self-run.
 
 ### State-Engine Synchronization Pattern

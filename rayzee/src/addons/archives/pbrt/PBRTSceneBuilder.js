@@ -24,7 +24,6 @@ import {
 	RepeatWrapping, UnsignedByteType, DataUtils, Color
 } from 'three';
 import { blackbodyRGB, buildMaterial, illuminantRGB, pBool, pFloat, pString, peakBlackbodyRGB, resolveSpectrum, sampledEmissionRGB } from './PBRTMaterials.js';
-import { readNanoVDB, bloscReader } from './NanoVDB.js';
 import { Volume, VolumeGrid, unifyGrids } from '../../../scene/Volumes.js';
 import { makeLayer, sampleLayer, layerMean, planBake, bakeRows, bakeResult, combineOf, namedScalars, productOf, mixOf, srgbToLinear, linearToSRGB, hasAlpha, generateUV, uvKey } from './PBRTTextureBake.js';
 import BakeWorker from './BakeWorker.js?worker&inline';
@@ -184,7 +183,7 @@ const DEFAULT_CURVE_TOLERANCE = 0.05;
 const CURVE_SPLIT_CURVES = 20000;
 
 /** Bumped whenever the same scene files build a different graph, so a stored graph is not reused. */
-export const PBRT_BUILD_REVISION = 49;
+export const PBRT_BUILD_REVISION = 50;
 
 // Ptex pages: all of a scene's Ptex colour maps in this much texture memory at most, on square pages this size.
 const DEFAULT_PTEX_MEMORY = 1024 * 2 ** 20;
@@ -3540,8 +3539,9 @@ export class PBRTSceneBuilder {
 
 			}
 
-			let { grids, blosc } = readNanoVDB( bytes );
-			if ( blosc ) ( { grids } = readNanoVDB( bytes, { blosc: await bloscReader() } ) );
+			// A core loader, imported on first use: an add-on may not import one statically.
+			const { readVDB } = await import( '../../../loaders/OpenVDB.js' );
+			const { grids } = readVDB( bytes );
 			const gridName = pString( params, 'gridname', 'density' ), temperatureName = pString( params, 'temperaturename', 'temperature' );
 			// As pbrt's readGrid: a fog volume or a grid of no class.
 			const named = ( n ) => {
@@ -3554,14 +3554,23 @@ export class PBRTSceneBuilder {
 
 			const densityGrid = named( gridName );
 			if ( ! densityGrid ) throw new Error( `"${file}" has no "${gridName}" grid (its grids: ${grids.map( ( g ) => g.name ).join( ', ' )})` );
-			density = densityGrid.toVolumeGrid( world );
+			// A grid read in its own world space, placed where the medium was made.
+			const placed = ( grid ) => {
+
+				grid?.transform.premultiply( world );
+				return grid;
+
+			};
+
+			density = placed( densityGrid.toVolumeGrid() );
+			if ( ! density ) throw new Error( `"${file}": "${gridName}" holds no voxel` );
 			await this._tick();
 			const temperatureGrid = named( temperatureName );
 			const leScale = pFloat( params, 'Lescale', 1 );
 			// A temperature grid holding no voxel gives no light, the density kept (pbrt's Le is then 0).
-			if ( temperatureGrid && leScale > 0 && temperatureGrid.voxelCount > 0 ) {
+			emission = leScale > 0 ? placed( temperatureGrid?.toVolumeGrid() ) ?? null : null;
+			if ( emission ) {
 
-				emission = temperatureGrid.toVolumeGrid( world );
 				ramp = blackbodyRamp( leScale, offset, temperatureScale );
 				await this._tick();
 

@@ -80,7 +80,7 @@ The environment and the sun are set in the [Tracer tab](tracer.md#environment), 
 ## Smoke, clouds and fire
 
 **Add → Cloud** puts a cloud above what the camera looks at; **Add → Smoke** a column of smoke in front of it, both
-sized to the view. A `.vdb` file opened from **File → Open…** comes in the same way. Select one in the **Outliner** (it
+sized to the view. A `.vdb` or `.nvdb` file opened from **File → Open…** comes in the same way. Select one in the **Outliner** (it
 cannot be clicked in the view) and move it with its handle; the **Material** tab then shows:
 
 | Setting | What it does |
