@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { DirectionalLight, PointLight, SpotLight, Vector3 } from 'three';
 import { loadPBRTScene } from '@/core/addons/archives/pbrt/index.js';
 import { blackbodyRGB, resolveSpectrum, sampledEmissionRGB } from '@/core/addons/archives/pbrt/PBRTMaterials.js';
+import { blackbodyToLinearRGB } from '@/core/color/WhiteBalance.js';
 
 const enc = new TextEncoder();
 
@@ -63,13 +64,21 @@ describe( 'pbrt lights', () => {
 
 	} );
 
-	it( 'brings a blackbody light to luminance 1, as pbrt does', async () => {
+	it( 'keeps a blackbody lamp\'s temperature, editable, at luminance 1 as pbrt does', async () => {
 
-		const { group } = await build( `LightSource "point" "blackbody I" [ 3000 ]` );
+		const { group } = await build( `LightSource "point" "blackbody I" [ 3000 ]\nLightSource "spot" "blackbody I" [ 20000 ]` );
 		const [ point ] = lamps( group, PointLight );
-		const c = point.color.clone().multiplyScalar( point.intensity / ( 4 * Math.PI ) );
-		expect( 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b ).toBeCloseTo( 1 );
-		expect( c.r ).toBeGreaterThan( c.b );
+		expect( point.userData ).toMatchObject( { useTemperature: true, temperature: 3000 } );
+		const tint = blackbodyToLinearRGB( 3000 );
+		const c = point.color.toArray().map( ( v, i ) => v * tint[ i ] * point.intensity / ( 4 * Math.PI ) );
+		expectRGB( c, blackbodyRGB( 3000 ) );
+
+		// Past the app's range it stays pbrt's colour.
+		const [ spot ] = lamps( group, SpotLight );
+		expect( spot.userData.useTemperature ).toBeUndefined();
+		const s = spot.color.clone().multiplyScalar( spot.intensity / ( 4 * Math.PI ) );
+		expect( 0.2126 * s.r + 0.7152 * s.g + 0.0722 * s.b ).toBeCloseTo( 1 );
+		expect( s.b ).toBeGreaterThan( s.r );
 
 	} );
 
@@ -166,8 +175,8 @@ describe( 'pbrt lights', () => {
 
 			const { group, parameters } = await build( `LightSource "point" ${spectrum}` );
 			const [ point ] = lamps( group, PointLight );
-			const c = point.color.clone().multiplyScalar( point.intensity / ( 4 * Math.PI ) );
-			return { rgb: [ c.r, c.g, c.b ], approximated: parameters.approximated };
+			const tint = point.userData.useTemperature ? blackbodyToLinearRGB( point.userData.temperature ) : [ 1, 1, 1 ];
+			return { rgb: point.color.toArray().map( ( v, i ) => v * tint[ i ] * point.intensity / ( 4 * Math.PI ) ), approximated: parameters.approximated };
 
 		};
 

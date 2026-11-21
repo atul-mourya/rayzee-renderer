@@ -53,6 +53,7 @@ function bakeHere( plan, combine, options ) {
 }
 
 const LAMP_TYPES = new Set( [ 'distant', 'point', 'spot' ] );
+const LAMP_KELVIN = [ 1000, 12000 ];
 
 // pbrt scales a light's spectrum to luminance 1 unless it is RGB, so a blackbody of any temperature is equally bright.
 async function lightRGB( params, name, ctx ) {
@@ -4707,7 +4708,11 @@ export class PBRTSceneBuilder {
 
 			};
 
-			const rgb = await lightRGB( l.params, l.type === 'distant' ? 'L' : 'I', ctx );
+			const key = l.type === 'distant' ? 'L' : 'I';
+			// A blackbody in the app's range stays an editable temperature (LightSerializer's tint, luminance 1 as pbrt's).
+			const blackbody = param( l.params, key );
+			const kelvin = blackbody?.type === 'blackbody' && blackbody.value[ 0 ] >= LAMP_KELVIN[ 0 ] && blackbody.value[ 0 ] <= LAMP_KELVIN[ 1 ] ? blackbody.value[ 0 ] : 0;
+			const rgb = kelvin ? [ 1, 1, 1 ] : await lightRGB( l.params, key, ctx );
 			let scale = pFloat( l.params, 'scale', 1 );
 			const from = point( 'from', [ 0, 0, 0 ] );
 			const to = point( 'to', [ 0, 0, 1 ] );
@@ -4747,6 +4752,7 @@ export class PBRTSceneBuilder {
 			if ( ! ( peak > 0 ) || ! ( scale > 0 ) ) continue;
 			light.color.setRGB( rgb[ 0 ] / peak, rgb[ 1 ] / peak, rgb[ 2 ] / peak );
 			light.intensity = peak * scale;
+			if ( kelvin ) Object.assign( light.userData, { useTemperature: true, temperature: kelvin } );
 			light.name = `pbrt ${l.type}`;
 			light.position.copy( from );
 			light.decay = 2;
