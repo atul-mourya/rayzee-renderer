@@ -857,7 +857,8 @@ ${body}` );
     }` ) );
 		expect( material.metalness ).toBeCloseTo( 0.25 );
 		expect( material.color.toArray().map( v => Math.round( v * 1000 ) / 1000 ) ).toEqual( [ 0.55, 0.5, 0.4 ] );
-		expect( material.roughness ).toBeCloseTo( 0.3 );
+		// A lobe's roughness is GGX α: the engine's is its square root.
+		expect( material.roughness ).toBeCloseTo( Math.sqrt( 0.3 ) );
 
 	} );
 
@@ -876,9 +877,26 @@ ${body}` );
         uniform token info:id = "ND_uniform_edf"
         color3f inputs:color = (8, 4, 1)
     }` ) );
-		expect( [ material.transmission, material.ior, material.roughness ] ).toEqual( [ 1, 1.33, 0.1 ] );
+		expect( [ material.transmission, material.ior, material.roughness ] ).toEqual( [ 1, 1.33, Math.sqrt( 0.1 ) ] );
 		expect( material.color.toArray() ).toEqual( [ 0.9, 1, 0.7 ] );
 		expect( [ ...material.emissive.toArray(), material.emissiveIntensity ] ).toEqual( [ 1, 0.5, 0.125, 8 ] );
+
+	} );
+
+	it( 'reads a roughness_anisotropy as MaterialX\'s α, as Blender writes one under each lobe', async () => {
+
+		const { material, result } = await materialOf( graph( `    def Shader "alpha"
+    {
+        uniform token info:id = "ND_roughness_anisotropy"
+        float inputs:roughness = 0.4
+    }
+    def Shader "bsdf"
+    {
+        uniform token info:id = "ND_dielectric_bsdf"
+        float2 inputs:roughness.connect = </mat/alpha.outputs:out>
+    }` ) );
+		expect( material.roughness ).toBeCloseTo( 0.4, 9 );
+		expect( result.warnings.some( w => /roughness_anisotropy/.test( w ) ) ).toBe( false );
 
 	} );
 

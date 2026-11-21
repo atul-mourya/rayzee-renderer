@@ -2035,6 +2035,16 @@ export class USDSceneReader {
 
 			}
 
+			case 'roughness_anisotropy': {
+
+				// MaterialX's α from a roughness: r², stretched along u by the anisotropy (Blender writes one per lobe).
+				const r = await value( 'roughness', 0 ), anisotropy = await value( 'anisotropy', 0 );
+				if ( ! isNum( r ) || ! isNum( anisotropy ) ) return null;
+				const alpha = Math.min( 1, Math.max( 1e-6, r * r ) ), aspect = Math.sqrt( 1 - Math.min( 0.98, Math.max( 0, anisotropy ) ) );
+				return { value: [ Math.min( 1, alpha / aspect ), alpha * aspect ] };
+
+			}
+
 			case 'artistic_ior':
 				// Gulbrandsen's reflectivity is the conductor's colour at normal incidence.
 				return { artistic: { reflectivity: await input( 'reflectivity' ), edge: await input( 'edge_color' ) } };
@@ -2671,6 +2681,8 @@ export class USDSceneReader {
 		};
 
 		const weight = w * await num( 'weight', 1 );
+		// A microfacet lobe's `roughness` is GGX α (MaterialX's fallback 0.05); the engine's roughness is √α.
+		const alphaRoughness = async () => Math.sqrt( Math.min( 1, Math.max( 0, await num( 'roughness', 0.05 ) ) ) );
 		switch ( mtlxNode( id ) ) {
 
 			case 'oren_nayar_diffuse_bsdf':
@@ -2692,7 +2704,7 @@ export class USDSceneReader {
 
 				}
 
-				lobes.push( { kind: 'conductor', w: weight, color, roughness: await num( 'roughness', 0.2 ), normal: await t( 'normal' ) } );
+				lobes.push( { kind: 'conductor', w: weight, color, roughness: await alphaRoughness(), normal: await t( 'normal' ) } );
 				return;
 
 			}
@@ -2701,7 +2713,7 @@ export class USDSceneReader {
 			case 'generalized_schlick_bsdf': {
 
 				const mode = ( await t( 'scatter_mode' ) )?.value ?? 'R';
-				const roughness = await num( 'roughness', 0.05 );
+				const roughness = await alphaRoughness();
 				const normal = await t( 'normal' );
 				if ( mtlxNode( id ) === 'generalized_schlick_bsdf' ) {
 
