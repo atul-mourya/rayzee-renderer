@@ -1,6 +1,6 @@
 import { Box3, BufferGeometry, Vector3, RectAreaLight, Color, FloatType, LinearFilter, EquirectangularReflectionMapping,
 	TextureLoader, SRGBColorSpace, Mesh, MeshPhysicalMaterial,
-	CircleGeometry, LoadingManager, EventDispatcher, LoaderUtils
+	CircleGeometry, LoadingManager, EventDispatcher, LoaderUtils, DataUtils, HalfFloatType, RGBAFormat
 } from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { HDRLoader } from 'three/addons/loaders/HDRLoader.js';
@@ -22,6 +22,7 @@ import { ISSUE_CODES } from '../EngineIssues.js';
 import { ENGINE_DEFAULTS } from '../EngineDefaults.js';
 import { createLogger } from '../Logger.js';
 import { expandByVolumes } from '../scene/Volumes.js';
+import { rec709FromChromaticities } from '../color/WhiteBalance.js';
 
 const log = createLogger( 'assets' );
 
@@ -848,7 +849,8 @@ export class AssetLoader extends EventDispatcher {
 			}
 
 			texture.generateMipmaps = true;
-			if ( AssetLoader._isNetworkUrl( envUrl ) ) setEnvironmentSource( texture, envUrl );
+			const from = texture.userData.convertedFrom;
+			if ( AssetLoader._isNetworkUrl( envUrl ) ) setEnvironmentSource( texture, from ? `${envUrl}|${from}` : envUrl );
 
 			this.applyEnvironmentToScene( texture );
 			this.dispatchEvent( { type: 'load', texture, url: envUrl, filename: envUrl.split( /[?#]/ )[ 0 ].split( '/' ).pop() } );
@@ -921,12 +923,15 @@ export class AssetLoader extends EventDispatcher {
 	 * @param {string} extension
 	 * @param {{loader?: Object}} [options] - a three.js loader to read the file with, for a format nothing registered
 	 */
-	/** `quiet` leaves the loading bar to a larger load this environment is part of. */
-	async loadEnvironmentByExtension( url, extension, { loader = null, quiet = false } = {} ) {
+	/**
+	 * `quiet` leaves the loading bar to a larger load this environment is part of. A file recording other primaries (its
+	 * `chromaticities`) is converted to linear Rec.709 unless `convertColor` is false.
+	 */
+	async loadEnvironmentByExtension( url, extension, { loader = null, quiet = false, convertColor = true } = {} ) {
 
 		const format = this._formats.get( extension );
 		if ( ! loader && format?.type === 'environment' ) loader = this.loaderCache[ extension ] ??= await format.createLoader( this._loadingManager );
-		if ( ! loader && extension === 'hdr' ) loader = this.loaderCache.hdr ??= new HDRLoader( this._loadingManager ).setDataType( FloatType );
+		if ( ! loader && extension === 'hdr' ) loader = this.hdrLoader();
 		if ( ! loader && ADDON_FORMATS[ extension ] ) throw this.formatError( `environment.${extension}` );
 
 		const cancelable = AssetLoader._isNetworkUrl( url );
@@ -965,10 +970,19 @@ export class AssetLoader extends EventDispatcher {
 		if ( ! quiet ) this._downloadComplete( "Processing Environment...", 62 );
 
 		if ( this.maxEnvironmentWidth ) limitEnvironmentWidth( texture, this.maxEnvironmentWidth );
+		const toRec709 = convertColor && rec709FromChromaticities( texture.userData?.chromaticities );
+		if ( toRec709 && await convertLinearPixels( texture, toRec709 ) ) texture.userData.convertedFrom = texture.userData.chromaticities.map( ( v ) => + v.toFixed( 5 ) ).join( ' ' );
 		texture.mapping = EquirectangularReflectionMapping;
 		texture.minFilter = LinearFilter;
 		texture.magFilter = LinearFilter;
 		return texture;
+
+	}
+
+	/** The HDR loader, keeping each file's primaries. */
+	hdrLoader() {
+
+		return this.loaderCache.hdr ??= new HDRFileLoader( this._loadingManager ).setDataType( FloatType );
 
 	}
 
@@ -1598,6 +1612,45 @@ export class AssetLoader extends EventDispatcher {
 		this._listeners = undefined;
 
 	}
+
+}
+
+/** three's HDRLoader, keeping the file's PRIMARIES line as the texture's `chromaticities`. */
+class HDRFileLoader extends HDRLoader {
+
+	_applyTexData( texture, texData ) {
+
+		super._applyTexData( texture, texData );
+		const c = /^PRIMARIES\s*=\s*(.+)$/m.exec( texData.header ?? '' )?.[ 1 ].trim().split( /\s+/ ).map( Number );
+		if ( c?.length === 8 && c.every( Number.isFinite ) ) texture.userData.chromaticities = c;
+
+	}
+
+}
+
+/**
+ * A float or half-float RGBA image's linear RGB through `m` (row-major 3×3), in place, a page turn every slice. Negative
+ * light is clipped at 0, in and out: a sky takes none. False where the image is not float RGBA.
+ * @returns {Promise<boolean>}
+ */
+export async function convertLinearPixels( texture, m ) {
+
+	const { data } = texture.image ?? {};
+	const half = texture.type === HalfFloatType;
+	if ( texture.format !== RGBAFormat || ! data || ( ! half && texture.type !== FloatType ) ) return false;
+	const get = half ? ( i ) => DataUtils.fromHalfFloat( data[ i ] ) : ( i ) => data[ i ];
+	const set = half ? ( i, v ) => ( data[ i ] = DataUtils.toHalfFloat( v ) ) : ( i, v ) => ( data[ i ] = v );
+	const slice = timeSlicer();
+	for ( let i = 0; i < data.length; i += 4 ) {
+
+		if ( ( i & 0x3ffff ) === 0 ) await slice();
+		const r = Math.max( 0, get( i ) ), g = Math.max( 0, get( i + 1 ) ), b = Math.max( 0, get( i + 2 ) );
+		for ( let c = 0; c < 3; c ++ ) set( i + c, Math.max( 0, m[ c * 3 ] * r + m[ c * 3 + 1 ] * g + m[ c * 3 + 2 ] * b ) );
+
+	}
+
+	texture.needsUpdate = true;
+	return true;
 
 }
 

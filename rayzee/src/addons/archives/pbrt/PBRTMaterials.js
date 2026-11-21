@@ -11,6 +11,7 @@
 import { MeshPhysicalMaterial, Color, DoubleSide } from 'three';
 import { namedScattering } from './PBRTScattering.js';
 import { dipoleReflectance, albedoForReflectance } from '../../../materials/Scattering.js';
+import { rec709FromChromaticities } from '../../../color/WhiteBalance.js';
 import { approximated, param, NAMED_SPECTRUM } from './PBRTParser.js';
 import { uvKey } from './PBRTTextureBake.js';
 
@@ -181,25 +182,7 @@ export function exrColorSpace( bytes ) {
  */
 export function rec709From( name ) {
 
-	const [ rx, ry, gx, gy, bx, by, wx, wy ] = EXR_SPACES[ name ];
-	const xyz = ( x, y ) => [ x / y, 1, ( 1 - x - y ) / y ];
-	const P = [ xyz( rx, ry ), xyz( gx, gy ), xyz( bx, by ) ]; // columns
-	const W = xyz( wx, wy );
-	// Scale each primary so that RGB ( 1, 1, 1 ) is the white: S = P⁻¹ W.
-	const m = [ P[ 0 ][ 0 ], P[ 1 ][ 0 ], P[ 2 ][ 0 ], P[ 0 ][ 1 ], P[ 1 ][ 1 ], P[ 2 ][ 1 ], P[ 0 ][ 2 ], P[ 1 ][ 2 ], P[ 2 ][ 2 ] ];
-	const inv = invert3( m );
-	const S = [ 0, 1, 2 ].map( ( r ) => inv[ r * 3 ] * W[ 0 ] + inv[ r * 3 + 1 ] * W[ 1 ] + inv[ r * 3 + 2 ] * W[ 2 ] );
-	const toXYZ = m.map( ( v, i ) => v * S[ i % 3 ] );
-	return [ 0, 1, 2 ].flatMap( ( r ) => [ 0, 1, 2 ].map( ( c ) => XYZ_TO_REC709[ r * 3 ] * toXYZ[ c ] + XYZ_TO_REC709[ r * 3 + 1 ] * toXYZ[ 3 + c ] + XYZ_TO_REC709[ r * 3 + 2 ] * toXYZ[ 6 + c ] ) );
-
-}
-
-function invert3( m ) {
-
-	const [ a, b, c, d, e, f, g, h, i ] = m;
-	const A = e * i - f * h, B = - ( d * i - f * g ), C = d * h - e * g;
-	const det = a * A + b * B + c * C;
-	return [ A, - ( b * i - c * h ), b * f - c * e, B, a * i - c * g, - ( a * f - c * d ), C, - ( a * h - b * g ), a * e - b * d ].map( ( v ) => v / det );
+	return rec709FromChromaticities( EXR_SPACES[ name ], { adapt: false } ) ?? [ 1, 0, 0, 0, 1, 0, 0, 0, 1 ];
 
 }
 

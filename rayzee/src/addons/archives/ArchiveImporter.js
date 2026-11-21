@@ -7,7 +7,7 @@
  * renderer.assetLoader.setArchiveImporter( new ArchiveImporter( renderer.assetLoader ) );
  */
 
-import { FloatType, HalfFloatType, RGBAFormat, DataUtils, EquirectangularReflectionMapping, Texture, SRGBColorSpace, NoColorSpace, RepeatWrapping, LoadingManager, Group, Box3, MeshPhysicalMaterial, DataTexture, DoubleSide } from 'three';
+import { FloatType, EquirectangularReflectionMapping, Texture, SRGBColorSpace, NoColorSpace, RepeatWrapping, LoadingManager, Group, Box3, MeshPhysicalMaterial, DataTexture, DoubleSide } from 'three';
 import { HDRLoader } from 'three/addons/loaders/HDRLoader.js';
 import { strFromU8 } from 'three/addons/libs/fflate.module.js';
 import {
@@ -25,6 +25,7 @@ import { pfmTexture } from './pbrt/PFM.js';
 import { exrColorSpace, rec709From } from './pbrt/PBRTMaterials.js';
 import { parseBinaryPLY } from './pbrt/BinaryPLY.js';
 import { extractSceneMetadata } from '../../loaders/SceneMetadata.js';
+import { convertLinearPixels } from '../../loaders/AssetLoader.js';
 import { ISSUE_CODES, ISSUE_SEVERITY, EngineIssueError } from '../../EngineIssues.js';
 import { ARCHIVE_FORMATS } from '../../loaders/ArchiveFormats.js';
 import { withHostWorker, getPlatform, nextTask, timeSlicer } from '../../Platform.js';
@@ -1085,13 +1086,15 @@ export class ArchiveImporter {
 		const url = ext === 'pfm' ? null : URL.createObjectURL( blob );
 		try {
 
-			const texture = url ? await this.loader.loadEnvironmentByExtension( url, ext, { loader: ext === 'exr' ? await this._exrLoader() : null, quiet: true } ) : pfmTexture( bytes );
+			const loader = ext === 'exr' ? await this._exrLoader() : ext === 'hdr' ? this.loader.hdrLoader?.() ?? null : null;
+			const texture = url ? await this.loader.loadEnvironmentByExtension( url, ext, { loader, quiet: true, convertColor: ! pbrt } ) : pfmTexture( bytes );
 			texture.mapping = EquirectangularReflectionMapping;
 			const space = pbrt && ext === 'exr' ? exrColorSpace( bytes ) : 'sRGB';
 			// pbrt reads it so too, with a warning: no degradation to record.
 			if ( space === null ) log.warn( `${fname}: its chromaticities name no colour space pbrt knows; read as sRGB, as pbrt does` );
-			else if ( space !== 'sRGB' ) await toRec709( texture, rec709From( space ) );
-			setEnvironmentSource( texture, `bytes:${await sampleHash( blob )}${space && space !== 'sRGB' ? `:${space}` : ''}` );
+			else if ( space !== 'sRGB' ) await convertLinearPixels( texture, rec709From( space ) );
+			const converted = space && space !== 'sRGB' ? space : texture.userData.convertedFrom;
+			setEnvironmentSource( texture, `bytes:${await sampleHash( blob )}${converted ? `:${converted}` : ''}` );
 			texture.userData[ ARCHIVE_PATH ] = fname;
 			texture.userData[ ARCHIVE_LOADER ] = 'environment';
 			return texture;
@@ -1314,7 +1317,7 @@ export class ArchiveImporter {
 		if ( ext === 'exr' || ext === 'hdr' ) {
 
 			const loader = ext === 'hdr'
-				? ( this.loader.loaderCache.hdr || ( this.loader.loaderCache.hdr = new HDRLoader().setDataType( FloatType ) ) )
+				? ( this.loader.hdrLoader?.() ?? ( this.loader.loaderCache.hdr ??= new HDRLoader().setDataType( FloatType ) ) )
 				: await this._exrLoader();
 			tex = await this._loadViaObjectURL( loader, bytes );
 			// HDR/EXR maps are linear — leave colorSpace as the loader set it.
@@ -1953,29 +1956,5 @@ export class ArchiveImporter {
 		return blobUrl;
 
 	}
-
-}
-
-// A float or half-float RGBA image's linear RGB through a 3 × 3 matrix (rows), in place, a page turn every slice.
-async function toRec709( texture, m ) {
-
-	const { data } = texture.image;
-	if ( texture.format !== RGBAFormat || ! data ) return;
-	const half = texture.type === HalfFloatType;
-	if ( ! half && texture.type !== FloatType ) return;
-	const get = half ? ( i ) => DataUtils.fromHalfFloat( data[ i ] ) : ( i ) => data[ i ];
-	const set = half ? ( i, v ) => ( data[ i ] = DataUtils.toHalfFloat( v ) ) : ( i, v ) => ( data[ i ] = v );
-	const slice = timeSlicer();
-	for ( let i = 0; i < data.length; i += 4 ) {
-
-		if ( ( i & 0x3ffff ) === 0 ) await slice();
-		// pbrt takes the file's colour clamped at 0 (ClampZero) before it is a spectrum.
-		const r = Math.max( 0, get( i ) ), g = Math.max( 0, get( i + 1 ) ), b = Math.max( 0, get( i + 2 ) );
-		// Light outside Rec.709 clipped at 0: a sky takes no negative light.
-		for ( let c = 0; c < 3; c ++ ) set( i + c, Math.max( 0, m[ c * 3 ] * r + m[ c * 3 + 1 ] * g + m[ c * 3 + 2 ] * b ) );
-
-	}
-
-	texture.needsUpdate = true;
 
 }

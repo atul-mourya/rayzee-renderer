@@ -189,6 +189,11 @@ saying the environment was left converted.
   from the screen on the camera scene, against 6.8 for raw light). Photo viewers still show EXR and HDR files in
   normal range; an HDR screen's picture with its highlights goes in a JPEG, HEIC or AVIF with a gain map
   (`exportImage( { gainMap: true } )`), which Preview, Photos, Chrome and Safari show in HDR.
+- **Reading those back.** An EXR or `.hdr` sky recording primaries (`WorkerEXRLoader` and `AssetLoader`'s HDR loader keep
+  them as `userData.chromaticities`) is converted to linear Rec.709 on load (`rec709FromChromaticities`,
+  `color/WhiteBalance.js`: Bradford to D65, as configs adapt ACES's D60; `convertLinearPixels` clips at 0), so an ACEScg
+  or Display P3 export opens as the light it held; the working space then converts it as any sky. Recorded as
+  `convertedFrom` in its sampling table's key. pbrt scenes keep pbrt's reading (four named spaces, no adaptation).
 - **Saved renders in HDR** (the Results page). A save keeps the render's light as an EXR ("Keep HDR copy", on by
   default), and its `rayzee` attribute records how the picture was shown: `display` (the exposure, auto exposure's
   included, the backdrop state and the exposure a solid backdrop is held at) from `getProvenance()`, and the viewer's

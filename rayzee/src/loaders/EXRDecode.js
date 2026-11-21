@@ -103,8 +103,16 @@ export function decodeEXR( buffer, { type = HalfFloatType, outputFormat = RGBAFo
 
 }
 
-/** three's EXRLoader, decoding through decodeEXR. */
+/** three's EXRLoader, decoding through decodeEXR; the file's `chromaticities` kept on the texture. */
 export class WorkerEXRLoader extends EXRLoader {
+
+	_applyTexData( texture, texData ) {
+
+		super._applyTexData( texture, texData );
+		const c = texData.header?.chromaticities;
+		if ( c ) texture.userData.chromaticities = [ c.redX, c.redY, c.greenX, c.greenY, c.blueX, c.blueY, c.whiteX, c.whiteY ];
+
+	}
 
 	load( url, onLoad, onProgress, onError ) {
 

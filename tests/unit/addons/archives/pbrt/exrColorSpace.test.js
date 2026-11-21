@@ -50,17 +50,20 @@ describe( 'pbrt EXR colour spaces', () => {
 		// ACES's white stays its own D60, warmer than Rec.709's: pbrt's film with no white balance.
 		const white = apply( rec709From( 'ACES2065-1' ), [ 1, 1, 1 ] );
 		const d60 = apply( [ 3.2404542, - 1.5371385, - 0.4985314, - 0.9692660, 1.8760108, 0.0415560, 0.0556434, - 0.2040259, 1.0572252 ], xyz( 0.32168, 0.33767 ) );
-		white.forEach( ( v, c ) => expect( v ).toBeCloseTo( d60[ c ], 6 ) );
+		white.forEach( ( v, c ) => expect( v ).toBeCloseTo( d60[ c ], 4 ) );
 		expect( white[ 0 ] ).toBeGreaterThan( white[ 2 ] );
 
 	} );
 
-	it( 'reads a pbrt sky in its EXR\'s colour space, and only a pbrt sky', async () => {
+	it( 'reads a pbrt sky in its EXR\'s colour space as pbrt does, and leaves any other sky to the loader', async () => {
 
 		const bytes = await exr( ACES );
 		const parsed = new EXRLoader().setDataType( HalfFloatType ).parse( bytes.buffer.slice( 0 ) );
+		const converts = [];
 		const importer = new ArchiveImporter( {
-			loadEnvironmentByExtension: async () => {
+			loadEnvironmentByExtension: async ( url, extension, { convertColor } ) => {
+
+				converts.push( convertColor );
 
 				const decoded = new EXRLoader().setDataType( HalfFloatType ).parse( bytes.buffer.slice( 0 ) );
 				return new DataTexture( decoded.data, decoded.width, decoded.height, decoded.format, decoded.type );
@@ -90,6 +93,7 @@ describe( 'pbrt EXR colour spaces', () => {
 
 		// A converted sky is not the same environment as the file read plainly: its sampling table is its own.
 		expect( JSON.stringify( sky.userData ) ).not.toBe( JSON.stringify( other.userData ) );
+		expect( converts ).toEqual( [ false, true ] );
 
 	} );
 

@@ -383,6 +383,11 @@ await engine.environmentManager.generateSolid()      // Solid color sky
 engine.environmentManager.markDirty()        // Flag environment for GPU re-upload
 ```
 
+An EXR or `.hdr` sky that records its primaries (an EXR's `chromaticities`, a Radiance `PRIMARIES` line: ACEScg, Display
+P3, Rec.2020 …, as `exportImage()` writes them) is converted to linear Rec.709 as it loads, its white carried to D65, light
+outside Rec.709 clipped at 0; the texture keeps them as `userData.chromaticities`. A pbrt scene's sky follows pbrt instead
+(its four colour spaces, no white adaptation).
+
 The physical sky (mode `'procedural'`) is set through `params`, then baked. It is baked and
 importance-sampled entirely on the GPU (~1.6 ms per sun move), so bake on every slider event rather
 than debouncing: requests made in one task become one bake, and the promise resolves once the

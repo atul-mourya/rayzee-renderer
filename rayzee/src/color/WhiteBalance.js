@@ -55,16 +55,48 @@ const invert = m => {
 const xyz = ( [ x, y ] ) => [ x / y, 1, ( 1 - x - y ) / y ];
 
 // RGB → XYZ for the primaries, scaled so RGB 1 is the white.
-const REC709_TO_XYZ = ( () => {
+function toXYZ( primaries, white ) {
 
-	const p = PRIMARIES.map( xyz );
+	const p = primaries.map( xyz );
 	const P = [ p[ 0 ][ 0 ], p[ 1 ][ 0 ], p[ 2 ][ 0 ], p[ 0 ][ 1 ], p[ 1 ][ 1 ], p[ 2 ][ 1 ], p[ 0 ][ 2 ], p[ 1 ][ 2 ], p[ 2 ][ 2 ] ];
-	const s = apply( invert( P ), xyz( WHITE ) );
+	const s = apply( invert( P ), xyz( white ) );
 	return P.map( ( v, i ) => v * s[ i % 3 ] );
 
-} )();
+}
+
+const REC709_TO_XYZ = toXYZ( PRIMARIES, WHITE );
 const XYZ_TO_REC709 = invert( REC709_TO_XYZ );
 const BRADFORD_INV = invert( BRADFORD );
+
+// Bradford from one white's XYZ to another's.
+function adaptation( from, to ) {
+
+	const s = apply( BRADFORD, from ), d = apply( BRADFORD, to );
+	return mul( BRADFORD_INV, mul( [ d[ 0 ] / s[ 0 ], 0, 0, 0, d[ 1 ] / s[ 1 ], 0, 0, 0, d[ 2 ] / s[ 2 ] ], BRADFORD ) );
+
+}
+
+/**
+ * Linear RGB of a file's chromaticities (red, green, blue and white xy, as an EXR or a Radiance header records them) as
+ * linear Rec.709, row-major: its white carried to D65 (Bradford, as colour configs do) unless `adapt` is false. Null for
+ * Rec.709 itself (within 0.2 %) or numbers that make no colour space.
+ * @param {number[]} chromaticities
+ * @param {{ adapt?: boolean }} [options]
+ * @returns {?number[]}
+ */
+export function rec709FromChromaticities( chromaticities, { adapt = true } = {} ) {
+
+	const c = chromaticities;
+	if ( c?.length !== 8 || ! c.every( Number.isFinite ) || ! ( c[ 7 ] > 0 ) || [ 1, 3, 5 ].some( ( i ) => c[ i ] === 0 ) ) return null;
+	const white = [ c[ 6 ], c[ 7 ] ];
+	let m = toXYZ( [[ c[ 0 ], c[ 1 ] ], [ c[ 2 ], c[ 3 ] ], [ c[ 4 ], c[ 5 ] ]], white );
+	if ( ! m.every( Number.isFinite ) ) return null;
+	if ( adapt ) m = mul( adaptation( xyz( white ), xyz( WHITE ) ), m );
+	const out = mul( XYZ_TO_REC709, m );
+	if ( ! out.every( Number.isFinite ) ) return null;
+	return out.every( ( v, i ) => Math.abs( v - ( i % 4 === 0 ? 1 : 0 ) ) < 2e-3 ) ? null : out;
+
+}
 
 /** The chromaticity pbrt white-balances from at `kelvin`: CIE daylight, a blackbody below a CCT of 4000 K. */
 function sourceWhite( kelvin ) {
@@ -104,10 +136,7 @@ export function whiteBalanceMatrix( kelvin, working = getWorkingMatrix() ) {
 
 	if ( typeof kelvin !== 'number' || ! ( kelvin > 0 ) ) return null;
 
-	const src = apply( BRADFORD, xyz( sourceWhite( Math.max( kelvin, 1000 ) ) ) );
-	const dst = apply( BRADFORD, xyz( WHITE ) );
-	const scale = [ dst[ 0 ] / src[ 0 ], 0, 0, 0, dst[ 1 ] / src[ 1 ], 0, 0, 0, dst[ 2 ] / src[ 2 ] ];
-	const m = mul( XYZ_TO_REC709, mul( BRADFORD_INV, mul( scale, mul( BRADFORD, REC709_TO_XYZ ) ) ) );
+	const m = mul( XYZ_TO_REC709, mul( adaptation( xyz( sourceWhite( Math.max( kelvin, 1000 ) ) ), xyz( WHITE ) ), REC709_TO_XYZ ) );
 	return working ? mul( working, mul( m, invert( working ) ) ) : m;
 
 }
