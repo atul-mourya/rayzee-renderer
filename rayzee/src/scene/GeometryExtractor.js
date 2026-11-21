@@ -252,6 +252,74 @@ function linearDir( v, e ) {
 
 }
 
+/**
+ * Texture coordinates for a triangle of a mesh with none: projected along its face's main axis, over the mesh's largest
+ * extent (`box`, object space), as Blender's Generated coordinates read but unstretched, nothing mirrored. `flip` says
+ * the corners arrive in reverse order.
+ */
+function boxUV( ax, ay, az, bx, by, bz, cx, cy, cz, flip, box, out ) {
+
+	const ux = bx - ax, uy = by - ay, uz = bz - az, vx = cx - ax, vy = cy - ay, vz = cz - az;
+	const s = flip ? - 1 : 1;
+	const nx = s * ( uy * vz - uz * vy ), ny = s * ( uz * vx - ux * vz ), nz = s * ( ux * vy - uy * vx );
+	const X = Math.abs( nx ), Y = Math.abs( ny ), Z = Math.abs( nz );
+	const axis = X >= Y && X >= Z ? 0 : Y >= Z ? 1 : 2;
+	const facing = ( axis === 0 ? nx : axis === 1 ? ny : nz ) > 0;
+	project( ax, ay, az, axis, facing, box, out, 0 );
+	project( bx, by, bz, axis, facing, box, out, 2 );
+	project( cx, cy, cz, axis, facing, box, out, 4 );
+	return out;
+
+}
+
+function triangleUV( flip, out ) {
+
+	out[ 0 ] = 0; out[ 1 ] = 0;
+	out[ 2 ] = 1; out[ 3 ] = flip ? 1 : 0;
+	out[ 4 ] = 1; out[ 5 ] = flip ? 0 : 1;
+	return out;
+
+}
+
+function project( x, y, z, axis, facing, { min, max, inv }, out, o ) {
+
+	if ( axis === 0 ) {
+
+		out[ o ] = ( facing ? max.z - z : z - min.z ) * inv;
+		out[ o + 1 ] = ( y - min.y ) * inv;
+
+	} else if ( axis === 1 ) {
+
+		out[ o ] = ( x - min.x ) * inv;
+		out[ o + 1 ] = ( facing ? max.z - z : z - min.z ) * inv;
+
+	} else {
+
+		out[ o ] = ( facing ? x - min.x : max.x - x ) * inv;
+		out[ o + 1 ] = ( y - min.y ) * inv;
+
+	}
+
+}
+
+// pbrt's uv for a triangle with none (`userData.missingUV: 'triangle'`).
+const TRIANGLE_UV = Object.freeze( { triangle: true } );
+
+/**
+ * What a mesh without uvs reads: `userData.missingUV` 'zero' (three.js and USD: every corner 0, 0), 'triangle'
+ * (pbrt's ( 0, 0 ), ( 1, 0 ), ( 1, 1 )), else the object-space box boxUV() projects over.
+ */
+function missingUV( geometry, positions ) {
+
+	const rule = geometry.userData?.missingUV;
+	if ( rule === 'zero' ) return null;
+	if ( rule === 'triangle' ) return TRIANGLE_UV;
+	const { min, max } = geometry.boundingBox ?? new Box3().setFromBufferAttribute( positions );
+	const size = Math.max( max.x - min.x, max.y - min.y, max.z - min.z );
+	return { min, max, inv: size > 0 ? 1 / size : 1 };
+
+}
+
 const meshTriangles = ( g ) => Math.ceil( ( g.index ? g.index.count : ( g.attributes.position?.count ?? 0 ) ) / 3 );
 
 /** An attribute read straight from its array, as `_vertexReader`'s fast case reads it. */
@@ -1561,6 +1629,7 @@ export class GeometryExtractor {
 		if ( ! geometry.attributes.normal ) geometry.computeVertexNormals();
 		const normals = geometry.attributes.normal;
 		const uvs = geometry.attributes.uv;
+		const box = uvs ? null : missingUV( geometry, positions );
 		const indices = geometry.index ? geometry.index.array : null;
 
 		// Whole triangles only, as three.js draws them: a trailing vertex or two read past the end as NaN.
@@ -1579,7 +1648,7 @@ export class GeometryExtractor {
 				const normalMatrix = new Matrix3().getNormalMatrix( world );
 				this.extractTrianglesInBatch(
 					positions, normals, uvs, indices, triangleCount, materialIndex, meshIndex,
-					world, normalMatrix, determinant3( world.elements ) < 0
+					world, normalMatrix, determinant3( world.elements ) < 0, box
 				);
 
 			}
@@ -1594,12 +1663,12 @@ export class GeometryExtractor {
 		// cross product yields would point into the surface. Swap two corners and it points out.
 		const flip = bake && determinant3( bakeMatrix.elements ) < 0;
 
-		this.extractTrianglesInBatch( positions, normals, uvs, indices, triangleCount, materialIndex, meshIndex, bakeMatrix, bakeNormal, flip );
+		this.extractTrianglesInBatch( positions, normals, uvs, indices, triangleCount, materialIndex, meshIndex, bakeMatrix, bakeNormal, flip, box );
 
 	}
 
 	// triangle extraction that stores directly in texture format
-	extractTrianglesInBatch( positions, normals, uvs, indices, triangleCount, materialIndex, meshIndex, bakeMatrix = null, bakeNormal = null, flipWinding = false ) {
+	extractTrianglesInBatch( positions, normals, uvs, indices, triangleCount, materialIndex, meshIndex, bakeMatrix = null, bakeNormal = null, flipWinding = false, box = null ) {
 
 		// Track per-material triangle count for sort-bin remap (item 41)
 		while ( this.materialTriangleCounts.length <= materialIndex ) this.materialTriangleCounts.push( 0 );
@@ -1610,7 +1679,7 @@ export class GeometryExtractor {
 
 		const deferred = this._fills && triangleCount > DEFER_FILL_TRIANGLES;
 		const job = {
-			positions, normals, uvs, indices, materialIndex, meshIndex, flipWinding, start: this.currentTriangleIndex,
+			positions, normals, uvs, indices, materialIndex, meshIndex, flipWinding, box, start: this.currentTriangleIndex,
 			// Pooled matrices: a deferred fill keeps its own copy.
 			bm: deferred ? bakeMatrix?.elements.slice() : bakeMatrix?.elements, bn: deferred ? bakeNormal?.elements.slice() : bakeNormal?.elements,
 		};
@@ -1631,7 +1700,7 @@ export class GeometryExtractor {
 	}
 
 	/** @private */
-	_fillGeneral( { positions, normals, uvs, indices, materialIndex, meshIndex, flipWinding, start, bm, bn }, from, to ) {
+	_fillGeneral( { positions, normals, uvs, indices, materialIndex, meshIndex, flipWinding, box, start, bm, bn }, from, to ) {
 
 		// Pre-allocate objects for positions, normals, and UVs
 		const posA = this._getVec3( 0 );
@@ -1647,6 +1716,7 @@ export class GeometryExtractor {
 		const uvC = this._getVec2( 2 );
 
 		const readPosition = this._vertexReader( positions ), readNormal = this._vertexReader( normals ), readUV = uvs && this._vertexReader( uvs );
+		const projected = new Float64Array( 6 );
 
 		// Batch process triangles to avoid excessive function calls
 		for ( let i = from; i < to; i ++ ) {
@@ -1676,6 +1746,8 @@ export class GeometryExtractor {
 				uvA.set( 0, 0 );
 				uvB.set( 0, 0 );
 				uvC.set( 0, 0 );
+				if ( box?.triangle ) triangleUV( flipWinding, projected );
+				else if ( box ) boxUV( posA.x, posA.y, posA.z, posB.x, posB.y, posB.z, posC.x, posC.y, posC.z, flipWinding, box, projected );
 
 			}
 
@@ -1701,13 +1773,25 @@ export class GeometryExtractor {
 				materialIndex,
 				meshIndex
 			);
+			if ( ! uvs && box ) this._writeUVs( start + i, projected );
 
 		}
 
 	}
 
+	/** @private */
+	_writeUVs( triangleIndex, uv ) {
+
+		const L = TRIANGLE_DATA_LAYOUT;
+		const o = this.triangles.baseOf( triangleIndex ), f = this.triangleFloatChunks.chunkFor( triangleIndex );
+		f[ o + L.UV_AB_OFFSET ] = uv[ 0 ]; f[ o + L.UV_AB_OFFSET + 1 ] = uv[ 1 ];
+		f[ o + L.UV_AB_OFFSET + 2 ] = uv[ 2 ]; f[ o + L.UV_AB_OFFSET + 3 ] = uv[ 3 ];
+		f[ o + L.UV_C_OFFSET ] = uv[ 4 ]; f[ o + L.UV_C_OFFSET + 1 ] = uv[ 5 ];
+
+	}
+
 	/** `_fillTriangles` over plain float arrays, record for record the same: one chunk lookup a run, no vectors. @private */
-	_fillPlain( { positions, normals, uvs, indices, materialIndex, meshIndex, flipWinding, start, bm, bn }, from, to ) {
+	_fillPlain( { positions, normals, uvs, indices, materialIndex, meshIndex, flipWinding, box, start, bm, bn }, from, to ) {
 
 		const L = TRIANGLE_DATA_LAYOUT;
 		const P = positions.array, ps = positions.itemSize;
@@ -1720,6 +1804,7 @@ export class GeometryExtractor {
 		const slots = [ L.POSITION_A_OFFSET, L.POSITION_B_OFFSET, L.POSITION_C_OFFSET ];
 		const normalSlots = [ L.NORMAL_A_PACKED_OFFSET, L.NORMAL_B_PACKED_OFFSET, L.NORMAL_C_PACKED_OFFSET ];
 		const uvSlots = [ L.UV_AB_OFFSET, L.UV_AB_OFFSET + 2, L.UV_C_OFFSET ];
+		const projected = new Float64Array( 6 );
 
 		for ( let i = from; i < to; ) {
 
@@ -1759,6 +1844,20 @@ export class GeometryExtractor {
 					u[ o + normalSlots[ k ] ] = packNormalOct( nx * inv, ny * inv, nz * inv );
 					f[ o + uvSlots[ k ] ] = T ? T[ v * 2 ] : 0;
 					f[ o + uvSlots[ k ] + 1 ] = T ? T[ v * 2 + 1 ] : 0;
+
+				}
+
+				if ( ! T && box ) {
+
+					const a = corners[ 0 ] * ps, b1 = corners[ 1 ] * ps, c1 = corners[ 2 ] * ps;
+					if ( box.triangle ) triangleUV( flipWinding, projected );
+					else boxUV( P[ a ], P[ a + 1 ], P[ a + 2 ], P[ b1 ], P[ b1 + 1 ], P[ b1 + 2 ], P[ c1 ], P[ c1 + 1 ], P[ c1 + 2 ], flipWinding, box, projected );
+					for ( let k = 0; k < 3; k ++ ) {
+
+						f[ o + uvSlots[ k ] ] = projected[ k * 2 ];
+						f[ o + uvSlots[ k ] + 1 ] = projected[ k * 2 + 1 ];
+
+					}
 
 				}
 

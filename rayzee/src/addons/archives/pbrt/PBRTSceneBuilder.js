@@ -183,7 +183,7 @@ const DEFAULT_CURVE_TOLERANCE = 0.05;
 const CURVE_SPLIT_CURVES = 20000;
 
 /** Bumped whenever the same scene files build a different graph, so a stored graph is not reused. */
-export const PBRT_BUILD_REVISION = 50;
+export const PBRT_BUILD_REVISION = 51;
 
 // Ptex pages: all of a scene's Ptex colour maps in this much texture memory at most, on square pages this size.
 const DEFAULT_PTEX_MEMORY = 1024 * 2 ** 20;
@@ -1081,6 +1081,8 @@ export class PBRTSceneBuilder {
 		this.resolveEnvironment = resolvers.resolveEnvironment || resolvers.resolveImage || ( async () => null );
 		this.resolveFile = resolvers.resolveFile || ( async () => null );
 		this.convertHandedness = resolvers.convertHandedness === true;
+		// What a mesh without uvs reads (GeometryExtractor's `missingUV`): pbrt's triangle uv, USD's 0, 0.
+		this.missingUV = resolvers.missingUV ?? 'triangle';
 		this._usage = resolvers.usage ?? null;
 		this.pause = resolvers.pause ?? null;
 		this._shapesDone = 0;
@@ -1305,6 +1307,12 @@ export class PBRTSceneBuilder {
 		if ( this._recoveredColors > 0 ) this.warn(
 			`${this._recoveredColors} unreadable texture(s) fell back to the like-named material's colour`
 		);
+
+		group.traverse( ( object ) => {
+
+			if ( object.isMesh && ! object.geometry.getAttribute( 'uv' ) ) object.geometry.userData.missingUV = this.missingUV;
+
+		} );
 
 		return {
 			group, camera, environment, animations,

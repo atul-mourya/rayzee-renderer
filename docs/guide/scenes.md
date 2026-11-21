@@ -368,6 +368,12 @@ An emissive material glows from the faces its `side` shows unless it has an `emi
 are an ordinary surface of its colour. A light panel with `side: DoubleSide, emissiveSide: FrontSide` is dark from
 behind instead of see-through, as pbrt's one-sided area lights are; the pbrt importer builds them so.
 
+A mesh without texture coordinates (STL, many scans and CAD exports) reads its maps through a box projection: each
+triangle along its main axis, one unit of the map across the mesh's largest extent, nothing mirrored — Blender's
+Generated coordinates, unstretched. Its geometry is left as it is. `geometry.userData.missingUV` says otherwise:
+`'zero'` reads every corner at 0, 0 (three.js's own; the USD importer sets it), `'triangle'` pbrt's ( 0, 0 ), ( 1, 0 ),
+( 1, 1 ) (the pbrt importer sets it).
+
 ## engine.environmentManager
 
 Environment maps, sky modes, and procedural generation.

@@ -5,6 +5,7 @@ import {
 	DoubleSide,
 	FrontSide,
 	BackSide,
+	Box3,
 	Vector3
 } from 'three';
 import { PolyHavenService } from './PolyHavenService';
@@ -295,9 +296,20 @@ export class PolyHavenMaterialLoader {
 		const geometry = object.geometry;
 		const position = geometry?.attributes.position;
 		const uv = geometry?.attributes.uv;
-		if ( ! material.displacementMap || ! position || ! uv ) return;
+		if ( ! material.displacementMap || ! position ) return;
 
 		object.updateWorldMatrix( true, false );
+		const { repeat } = material.displacementMap;
+		if ( ! uv ) {
+
+			// The engine projects a mesh without uvs over its largest extent: one uv unit is that, as placed.
+			const size = new Box3().setFromBufferAttribute( position ).getSize( new Vector3() );
+			const extent = Math.max( size.x, size.y, size.z ) * object.matrixWorld.getMaxScaleOnAxis();
+			if ( extent > 0 ) this._setRelief( material, extent / Math.sqrt( Math.abs( repeat.x * repeat.y ) ) );
+			return;
+
+		}
+
 		const index = geometry.index;
 		const triangles = Math.floor( ( index ? index.count : position.count ) / 3 );
 		const stride = Math.max( 1, Math.floor( triangles / 10000 ) );
@@ -316,8 +328,12 @@ export class PolyHavenMaterialLoader {
 		}
 
 		if ( ! ( worldArea > 0 && uvArea > 0 ) ) return;
-		const { repeat } = material.displacementMap;
-		const tileWidth = Math.sqrt( worldArea / uvArea / Math.abs( repeat.x * repeat.y ) );
+		this._setRelief( material, Math.sqrt( worldArea / uvArea / Math.abs( repeat.x * repeat.y ) ) );
+
+	}
+
+	static _setRelief( material, tileWidth ) {
+
 		material.displacementScale = this.RELIEF_OF_TILE * tileWidth;
 		material.displacementBias = - 0.5 * material.displacementScale;
 

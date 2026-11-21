@@ -14,7 +14,7 @@ export { USDFiles, USDStage } from './USDStage.js';
 
 /** Bumped whenever the same USD files translate to a different graph, so a stored one is not reused (the builder's own
  * changes bump PBRT_BUILD_REVISION). */
-export const USD_BUILD_REVISION = 1;
+export const USD_BUILD_REVISION = 2;
 
 export const USD_LAYER = /\.(usd|usda|usdc)$/i;
 
@@ -101,7 +101,7 @@ export async function loadUSDScene( args ) {
 	const builder = new PBRTSceneBuilder( {
 		maxTriangles: args.maxTriangles, maxPlacements: args.maxPlacements, mergeShapesAbove: args.mergeShapesAbove,
 		curveSteps: args.curveSteps, curveSides: args.curveSides, curveTolerance: args.curveTolerance, pause: args.pauseBuild,
-		ptexMemory: args.ptexMemory, ptexPageSize: args.ptexPageSize, resolvePtex: args.resolvePtex,
+		ptexMemory: args.ptexMemory, ptexPageSize: args.ptexPageSize, resolvePtex: args.resolvePtex, missingUV: 'zero',
 	} );
 
 	const parseStart = performance.now();
