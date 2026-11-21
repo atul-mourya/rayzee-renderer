@@ -1,8 +1,9 @@
 import { BufferAttribute, BufferGeometry, Float32BufferAttribute, Uint16BufferAttribute, Uint32BufferAttribute } from 'three';
 
 /**
- * Binary .ply meshes as three's PLYLoader reads them, byte for byte, without its per-value objects: what pbrt exporters
- * write (`vertex` position, normal, uv; `face` vertex_indices). Null for anything else, which PLYLoader then reads.
+ * Binary .ply meshes as three's PLYLoader reads them, byte for byte, without its per-value objects (`vertex` position,
+ * normal, uv; `face` vertex_indices): what scanners and pbrt exporters write. Null for anything else, which PLYLoader
+ * then reads.
  */
 
 // No prototype: a type named `toString` is unknown, not a function.

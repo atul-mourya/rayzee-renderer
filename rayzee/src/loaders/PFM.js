@@ -1,4 +1,4 @@
-import { DataTexture, FloatType, LinearFilter, RGBAFormat } from 'three';
+import { DataTexture, DataTextureLoader, FloatType, LinearFilter, RGBAFormat } from 'three';
 
 /**
  * Portable float map: "PF" (RGB) or "Pf" (grey), width and height, then a scale whose sign is the byte
@@ -55,5 +55,16 @@ export function pfmTexture( bytes ) {
 	texture.magFilter = LinearFilter;
 	texture.needsUpdate = true;
 	return texture;
+
+}
+
+/** .pfm images as a three.js loader (`rayzee/addons/formats`' sky format). */
+export class PFMLoader extends DataTextureLoader {
+
+	parse( buffer ) {
+
+		return { ...decodePFM( new Uint8Array( buffer ) ), format: RGBAFormat, type: FloatType };
+
+	}
 
 }

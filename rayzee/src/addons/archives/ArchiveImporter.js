@@ -21,9 +21,7 @@ import { encodeSceneGraph, writeSceneGraph, decodeSceneGraph, SceneGraphUnsuppor
 import { VERSION } from '../../Version.js';
 import { loadPBRTScene, pickEntryPath, VirtualFS, PBRT_BUILD_REVISION, texturePixels } from './pbrt/index.js';
 import { loadUSDScene, listUSDRootLayers, listUSDParts, USDFiles, USDStage, USD_LAYER, USD_BUILD_REVISION } from './usd/index.js';
-import { pfmTexture } from './pbrt/PFM.js';
 import { exrColorSpace, rec709From } from './pbrt/PBRTMaterials.js';
-import { parseBinaryPLY } from './pbrt/BinaryPLY.js';
 import { extractSceneMetadata } from '../../loaders/SceneMetadata.js';
 import { convertLinearPixels } from '../../loaders/AssetLoader.js';
 import { ISSUE_CODES, ISSUE_SEVERITY, EngineIssueError } from '../../EngineIssues.js';
@@ -895,6 +893,7 @@ export class ArchiveImporter {
 
 		}
 
+		const { parseBinaryPLY } = await import( '../../loaders/BinaryPLY.js' );
 		const plyParser = ( buf ) => parseBinaryPLY( buf ) ?? this.loader.loaderCache.ply.parse( buf );
 		// Read again only from an archive's own file: an unpacked .tar.gz's storage can be evicted once the load lets go of
 		// it, and an archive held in memory would be kept whole for the scene's life.
@@ -1087,7 +1086,7 @@ export class ArchiveImporter {
 		try {
 
 			const loader = ext === 'exr' ? await this._exrLoader() : ext === 'hdr' ? this.loader.hdrLoader?.() ?? null : null;
-			const texture = url ? await this.loader.loadEnvironmentByExtension( url, ext, { loader, quiet: true, convertColor: ! pbrt } ) : pfmTexture( bytes );
+			const texture = url ? await this.loader.loadEnvironmentByExtension( url, ext, { loader, quiet: true, convertColor: ! pbrt } ) : ( await import( '../../loaders/PFM.js' ) ).pfmTexture( bytes );
 			texture.mapping = EquirectangularReflectionMapping;
 			const space = pbrt && ext === 'exr' ? exrColorSpace( bytes ) : 'sRGB';
 			// pbrt reads it so too, with a warning: no degradation to record.
@@ -1324,7 +1323,7 @@ export class ArchiveImporter {
 
 		} else if ( ext === 'pfm' ) {
 
-			tex = pfmTexture( bytes );
+			tex = ( await import( '../../loaders/PFM.js' ) ).pfmTexture( bytes );
 
 		} else if ( ext === 'tga' ) {
 

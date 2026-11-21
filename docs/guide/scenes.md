@@ -6,10 +6,10 @@ Loading models and environments, and the camera, lights, materials and animation
 
 ```js
 await engine.loadModel(url)                  // Load a GLB/GLTF by URL
-await engine.loadFile(fileOrUrl)              // Any supported file: GLB/GLTF/FBX/OBJ/STL/PLY/DAE/3MF/USD/USDZ, VDB/NVDB, archives, HDR/EXR
+await engine.loadFile(fileOrUrl)              // Any supported file: GLB/GLTF/FBX/OBJ/STL/PLY/DAE/3MF/USD/USDZ, VDB/NVDB, archives, HDR/EXR/PFM
 await engine.loadFile({ files })              // A folder of files — see Loading a folder
 await engine.loadObject3D(object3d, name?)    // Load a Three.js Object3D directly (name is optional, defaults to 'object3d')
-await engine.loadEnvironment(url)             // Load HDR/EXR environment map
+await engine.loadEnvironment(url)             // Load HDR/EXR/PFM environment map
 engine.cancelLoad()                           // Abort an in-flight download (network phase only; no-op once processing starts)
 ```
 
@@ -375,7 +375,7 @@ Environment maps, sky modes, and procedural generation.
 ```js
 engine.environmentManager.params             // Current environment parameters
 engine.environmentManager.texture            // The loaded environment texture
-await engine.loadEnvironment(url)            // Load HDR/EXR environment map (method on engine)
+await engine.loadEnvironment(url)            // Load HDR/EXR/PFM environment map (method on engine)
 await engine.environmentManager.setEnvironmentMap(tex) // Set a custom environment texture
 await engine.environmentManager.setMode(mode)   // 'hdri' | 'procedural' | 'color'
 await engine.environmentManager.generateProcedural() // Physical sky: spectral, multiple scattering, analytic sun (core: needs rayzee/addons/physical-sky)

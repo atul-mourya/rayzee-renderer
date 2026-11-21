@@ -232,7 +232,7 @@ const MenuBar = ( { onOpenImportModal, onOpenStorage, onOpenRecent } ) => {
 			event.target.value = '';
 			toast( {
 				title: 'Cannot open this file',
-				description: `Rayzee opens 3D models, scene archives (.zip, .tar), skies (.hdr, .exr) and .rayzee projects. A model made of several files opens with all of them selected, or with Open Folder…`,
+				description: `Rayzee opens 3D models, scene archives (.zip, .tar), skies (.hdr, .exr, .pfm) and .rayzee projects. A model made of several files opens with all of them selected, or with Open Folder…`,
 				variant: 'destructive',
 			} );
 			return;

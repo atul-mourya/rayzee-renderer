@@ -147,6 +147,22 @@ describe( 'file formats', () => {
 
 	} );
 
+	it( 'reads a binary PLY without three\'s loader, and an ASCII one with it', async () => {
+
+		const header = new TextEncoder().encode( PLY_FACE.replace( 'ascii', 'binary_little_endian' ).split( 'end_header\n' )[ 0 ] + 'end_header\n' );
+		const body = new DataView( new ArrayBuffer( 9 * 4 + 1 + 3 * 4 ) );
+		[ 0, 0, 0, 1, 0, 0, 0, 1, 0 ].forEach( ( v, i ) => body.setFloat32( i * 4, v, true ) );
+		body.setUint8( 36, 3 );
+		[ 0, 1, 2 ].forEach( ( v, i ) => body.setInt32( 37 + i * 4, v, true ) );
+		const cache = {};
+		const binary = await plyFormat.parse( new File( [ header, body ], 'b.ply' ), { filename: 'b.ply', cache } );
+		expect( binary.model.geometry.index.count ).toBe( 3 );
+		expect( cache.ply ).toBeUndefined();
+		await plyFormat.parse( new File( [ PLY_FACE ], 'a.ply' ), { filename: 'a.ply', cache } );
+		expect( cache.ply ).toBeDefined();
+
+	} );
+
 	it( 'reads FBX and USD with three\'s loaders, made once a cache', async () => {
 
 		const cache = {};

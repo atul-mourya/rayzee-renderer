@@ -4,7 +4,7 @@ import { fetchBytes, loadPlatformImage } from '../loaders/PlatformImageLoader.js
 
 /**
  * File formats beyond glTF and .hdr — `rayzee/addons/formats`: FBX, OBJ, STL, PLY, Collada, 3MF and USD models, OpenVDB
- * and NanoVDB volumes, and EXR environments. PathTracerApp registers all of them itself; on the renderer core, register the ones you
+ * and NanoVDB volumes, and EXR and PFM environments. PathTracerApp registers all of them itself; on the renderer core, register the ones you
  * read (each loader is downloaded the first time its format is read, and a bundler drops the formats you leave out):
  *
  * @example
@@ -113,8 +113,16 @@ export const plyFormat = {
 	name: 'PLY (Polygon File Format)', label: 'PLY', type: 'model', extensions: [ 'ply' ],
 	async parse( file, { filename, cache } ) {
 
-		cache.ply ??= new ( await import( 'three/addons/loaders/PLYLoader.js' ) ).PLYLoader();
-		const geometry = cache.ply.parse( await file.arrayBuffer() );
+		const buffer = await file.arrayBuffer();
+		const { parseBinaryPLY } = await import( '../loaders/BinaryPLY.js' );
+		let geometry = parseBinaryPLY( buffer );
+		if ( ! geometry ) {
+
+			cache.ply ??= new ( await import( 'three/addons/loaders/PLYLoader.js' ) ).PLYLoader();
+			geometry = cache.ply.parse( buffer );
+
+		}
+
 		let model;
 		if ( geometry.index !== null ) {
 
@@ -372,5 +380,15 @@ export const exrFormat = {
 	},
 };
 
+export const pfmFormat = {
+	name: 'PFM (Portable Float Map)', label: 'PFM', type: 'environment', extensions: [ 'pfm' ],
+	async createLoader( manager ) {
+
+		const { PFMLoader } = await import( '../loaders/PFM.js' );
+		return new PFMLoader( manager );
+
+	},
+};
+
 /** Every format above. */
-export const allFormats = [ fbxFormat, objFormat, stlFormat, plyFormat, colladaFormat, threeMFFormat, usdFormat, vdbFormat, exrFormat ];
+export const allFormats = [ fbxFormat, objFormat, stlFormat, plyFormat, colladaFormat, threeMFFormat, usdFormat, vdbFormat, exrFormat, pfmFormat ];

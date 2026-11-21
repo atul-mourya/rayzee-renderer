@@ -147,7 +147,7 @@ const FORMATS = { addOn: 'rayzee/addons/formats', install: 'assetLoader.register
 const ADDON_FORMATS = {
 	zip: ARCHIVES, gz: ARCHIVES, tgz: ARCHIVES, tar: ARCHIVES,
 	fbx: FORMATS, obj: FORMATS, stl: FORMATS, ply: FORMATS, dae: FORMATS, '3mf': FORMATS,
-	usd: FORMATS, usda: FORMATS, usdc: FORMATS, usdz: FORMATS, exr: FORMATS,
+	usd: FORMATS, usda: FORMATS, usdc: FORMATS, usdz: FORMATS, exr: FORMATS, pfm: FORMATS,
 };
 
 // A throwaway stand-in for a geometry the engine must not mutate: the split's mergeGroups()

@@ -4,7 +4,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { PLYLoader } from 'three/examples/jsm/loaders/PLYLoader.js';
-import { parseBinaryPLY } from '@/core/addons/archives/pbrt/BinaryPLY.js';
+import { parseBinaryPLY } from '@/core/loaders/BinaryPLY.js';
 
 const SET = {
 	char: [ 1, 'setInt8' ], uchar: [ 1, 'setUint8' ], uint8: [ 1, 'setUint8' ], short: [ 2, 'setInt16' ], ushort: [ 2, 'setUint16' ],

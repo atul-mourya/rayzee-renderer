@@ -105,7 +105,7 @@ subtree per element, and the whole thing rarely fits: Moana is 29 GB unpacked.
   (`_lastPlyUse`), never while a template or an unmerged shape holds it: Zero-Day names one file from
   up to 320 shapes, and freeing on the first merge failed the load with a detached ArrayBuffer.
   Binary `.ply` files of the shape pbrt exporters write (vertex x y z, optional normal and uv, float or double; face
-  `vertex_indices`, other face properties skipped) are read by `pbrt/BinaryPLY.js` straight into typed arrays — the same
+  `vertex_indices`, other face properties skipped) are read by `loaders/BinaryPLY.js` (a standalone binary `.ply` too) straight into typed arrays — the same
   attributes, classes, index and bounds as three's PLYLoader, byte for byte on every mesh of six local scenes — and
   anything else (ASCII, colours, texcoord lists, other elements, the `__MACOSX` copies) by PLYLoader. Watercolor's
   803 meshes: 8.2 s of PLYLoader, its load 80 → 72 s.
@@ -146,7 +146,7 @@ subtree per element, and the whole thing rarely fits: Moana is 29 GB unpacked.
   missing, holding a word that is not a number, odd or not increasing in λ is warned about once and left as before.
   Against pbrt-v4 (a spectral area light on a spectral sphere), Rayzee ÷ pbrt mean R / G / B: 0.985 / 1.001 / 0.953,
   the same as the samples written inline; before, it read white on grey (0.71 / 1.14 / 4.48). `.pfm` images load
-  (`addons/archives/pbrt/PFM.js`). An area light is
+  (`loaders/PFM.js`; a `.pfm` sky opens on its own too, `pfmFormat`). An area light is
   one-sided unless `"bool twosided"`: a surface on both faces (`DoubleSide`) emitting from its front (`emissiveSide:
   FrontSide`), so from behind it is dark, never a hole, as in pbrt; its triangles rewound to face the vertex normals, or
   turned over by ReverseOrientation where it has none (`_facingEmission`). An area light's `power` scales its radiance

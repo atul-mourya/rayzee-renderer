@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { DirectionalLight, PointLight, SpotLight, Vector3 } from 'three';
 import { loadPBRTScene } from '@/core/addons/archives/pbrt/index.js';
-import { decodePFM } from '@/core/addons/archives/pbrt/PFM.js';
 import { blackbodyRGB, resolveSpectrum, sampledEmissionRGB } from '@/core/addons/archives/pbrt/PBRTMaterials.js';
 
 const enc = new TextEncoder();
@@ -300,42 +299,6 @@ describe( 'pbrt lights', () => {
 		} );
 		expect( frames.frames ).toHaveLength( 3 );
 		expect( frames.warnings.filter( ( w ) => w.includes( '"gone.spd"' ) ) ).toHaveLength( 1 );
-
-	} );
-
-} );
-
-describe( 'PFM', () => {
-
-	const pfm = ( header, floats, little ) => {
-
-		const head = enc.encode( header );
-		const bytes = new Uint8Array( head.length + floats.length * 4 );
-		bytes.set( head );
-		const view = new DataView( bytes.buffer, head.length );
-		floats.forEach( ( v, i ) => view.setFloat32( i * 4, v, little ) );
-		return bytes;
-
-	};
-
-	it( 'reads RGB rows bottom first in either byte order, scaled by |scale|', () => {
-
-		const rows = [ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12 ];
-		const little = decodePFM( pfm( 'PF\n2 2\n-1.0\n', rows, true ) );
-		expect( [ little.width, little.height ] ).toEqual( [ 2, 2 ] );
-		expect( [ ...little.data.slice( 0, 8 ) ] ).toEqual( [ 1, 2, 3, 1, 4, 5, 6, 1 ] );
-
-		const big = decodePFM( pfm( 'PF\n2 2\n2\n', rows, false ) );
-		expect( big.data[ 12 ] ).toBe( 20 );
-
-	} );
-
-	it( 'reads grey images into all three channels and rejects others', () => {
-
-		const grey = decodePFM( pfm( 'Pf 1 1 -1 ', [ 0.5 ], true ) );
-		expect( [ ...grey.data ] ).toEqual( [ 0.5, 0.5, 0.5, 1 ] );
-		expect( () => decodePFM( enc.encode( 'P6\n1 1\n255\n' ) ) ).toThrow();
-		expect( () => decodePFM( pfm( 'PF\n2 2\n-1\n', [ 1, 2 ], true ) ) ).toThrow( /truncated/ );
 
 	} );
 

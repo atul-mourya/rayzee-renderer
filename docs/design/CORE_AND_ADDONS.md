@@ -40,7 +40,7 @@ are the only way to one.
 | Picture | AI upscaler, auto exposure, local exposure, the OCIO colour pipeline (basic colour — linear working space, texture interpretation, tone mapping — stays core) |
 | Light transport | Bidirectional, bidirectional + photons (VCM) |
 | Skies and lamps | Physical sky, IES profiles, gobos |
-| Importers | pbrt, USD (`.usd` / `.usda` / `.usdc`), scene archives and folders (`rayzee/addons/archives`); FBX, OBJ, STL, PLY, Collada, 3MF, USDZ and EXR (`rayzee/addons/formats`) |
+| Importers | pbrt, USD (`.usd` / `.usda` / `.usdc`), scene archives and folders (`rayzee/addons/archives`); FBX, OBJ, STL, PLY, Collada, 3MF, USDZ, EXR and PFM (`rayzee/addons/formats`) |
 | Storage | The on-disk store behind the download and scene caches and the memory spill (the caches themselves are core and run without it) |
 
 ## Rules between the layers

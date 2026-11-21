@@ -276,7 +276,7 @@ section applies to it.
 
 | Add-on | Import | Install | When | Without it |
 |---|---|---|---|---|
-| File formats | `fbxFormat`, `objFormat`, `stlFormat`, `plyFormat`, `colladaFormat`, `threeMFFormat`, `usdFormat`, `exrFormat` or `allFormats` from `rayzee/addons/formats` | `renderer.assetLoader.registerFormat(objFormat, exrFormat)` | after `init()` | only glTF/GLB, `.hdr` and images load; any other file's error names the add-on |
+| File formats | `fbxFormat`, `objFormat`, `stlFormat`, `plyFormat`, `colladaFormat`, `threeMFFormat`, `usdFormat`, `exrFormat`, `pfmFormat` or `allFormats` from `rayzee/addons/formats` | `renderer.assetLoader.registerFormat(objFormat, exrFormat)` | after `init()` | only glTF/GLB, `.hdr` and images load; any other file's error names the add-on |
 | Physical sky | `PhysicalSky` from `rayzee/addons/physical-sky` | `renderer.environmentManager.setProceduralSky(PhysicalSky)` | after `init()` | `'procedural'` mode records `capability.missing` (throws under `strict`) |
 | Scene archives, folders and pbrt | `ArchiveImporter` from `rayzee/addons/archives` | `renderer.assetLoader.setArchiveImporter(new ArchiveImporter(renderer.assetLoader))` | after `init()` | `.zip`, `.tar`, `.tgz` and folders do not load, and the error names the add-on |
 | Bidirectional and VCM | `BidirectionalIntegrator` from `rayzee/addons/bidirectional` | `renderer.stages.pathTracer.registerIntegrator(['bidirectional', 'vcm'], pt => new BidirectionalIntegrator(pt))` | after `init()` | choosing either integrator records `capability.missing` (throws under `strict`) and keeps the current one |
@@ -327,7 +327,7 @@ Colour, storage and the integrators have no loader: colour and storage are used 
 the moment it is chosen (a lazy one would trace plain frames meanwhile and break reproducible renders).
 
 **File formats.** The core reads glTF/GLB (Draco, KTX2 and meshopt decoders are fetched only for a file that uses
-them), `.hdr` and LDR images. FBX, OBJ, STL, PLY, Collada, 3MF, USDZ and EXR are formats to register — import only
+them), `.hdr` and LDR images. FBX, OBJ, STL, PLY, Collada, 3MF, USDZ, EXR and PFM are formats to register — import only
 those you read and a bundler leaves the rest out; each three.js loader is downloaded the first time its format is read
 (a `.usd` / `.usda` / `.usdc` layer is read by the engine's own USD importer, in the archives add-on below):
 
