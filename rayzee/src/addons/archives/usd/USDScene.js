@@ -11,7 +11,8 @@ import {
 	ClampToEdgeWrapping, MirroredRepeatWrapping, BoxGeometry, SphereGeometry, CylinderGeometry, ConeGeometry,
 	CapsuleGeometry, PlaneGeometry, LatheGeometry, Vector2,
 } from 'three';
-import { cloneMaterial } from '../pbrt/PBRTSceneBuilder.js';
+import { cloneMaterial, lensEffects } from '../pbrt/PBRTSceneBuilder.js';
+import { mixMaterials } from '../pbrt/PBRTMaterials.js';
 
 const DEG = Math.PI / 180;
 const GRID = 1 / 255;
@@ -61,7 +62,7 @@ const mtlxNode = id => {
 };
 
 // The MaterialX surfaces read here, and the method each goes to.
-const MTLX_SURFACES = { open_pbr_surface: 'openPbrSurface', standard_surface: 'standardSurface', gltf_pbr: 'gltfPbrSurface', UsdPreviewSurface: 'previewSurface', surface: 'bsdfSurface' };
+const MTLX_SURFACES = { open_pbr_surface: 'openPbrSurface', standard_surface: 'standardSurface', gltf_pbr: 'gltfPbrSurface', UsdPreviewSurface: 'previewSurface', surface: 'bsdfSurface', mix: 'mixSurface' };
 const MTLX_ADDRESS = { periodic: 'repeat', mirror: 'mirror', clamp: 'clamp', constant: 'black' };
 // A UV set's placement as an affine map, u' = a·u + b·v + c and v' = d·u + e·v + f.
 const UV_IDENTITY = [ 1, 0, 0, 0, 1, 0 ];
@@ -540,7 +541,7 @@ function thinCurves( curve, rate, salt ) {
 export class USDSceneReader {
 
 	/** `pause( prims, counting )` is awaited every 256 prims, `counting` during the counting pass. */
-	constructor( stage, { maxTriangles = Infinity, maxPlacements = Infinity, curveSteps = 2, resolveImage = async () => null, warn = () => {}, pause = null } = {} ) {
+	constructor( stage, { maxTriangles = Infinity, maxPlacements = Infinity, curveSteps = 2, resolveImage = async () => null, warn = () => {}, pause = null, bakes = null } = {} ) {
 
 		this.stage = stage;
 		this.pause = pause;
@@ -549,6 +550,8 @@ export class USDSceneReader {
 		this.maxPlacements = maxPlacements;
 		this.curveSteps = curveSteps;
 		this.resolveImage = resolveImage;
+		// The scene builder's bakes (bakeTextureMix, bakeMaterialMix) for mixes a texture drives.
+		this.bakes = bakes;
 		this.warn = warn;
 		this.ir = emptyIR();
 		this.cameras = [];
@@ -593,6 +596,13 @@ export class USDSceneReader {
 		const walked = performance.now();
 		this.shareGeometry();
 		const render = this.renderRequest();
+		// A lens as pbrt's: radius focal / 2N (focal in tenths of a unit), once the render's framing is set.
+		for ( const { camera, focal, fStop, focusDistance } of this._cameraPrims.values() ) {
+
+			if ( camera.isPerspectiveCamera && fStop > 0 && focusDistance > 0 ) camera.userData.__rayzeeEffects = lensEffects( camera, focal / ( 20 * fStop ), focusDistance );
+
+		}
+
 		this.timings = { countMs: counted - start, walkMs: walked - counted, shareMs: performance.now() - walked };
 		return { ir: this.ir, cameras: this.cameras, lights: this.lights, dome: this.pickDome(), render, cost: this.cost };
 
@@ -1579,6 +1589,7 @@ export class USDSceneReader {
 	async applyColor( mat, slot, term, surface, mapSlot ) {
 
 		if ( ! term ) return;
+		if ( term.mixOf && mapSlot && await this.applyMix( mat, slot, term.mixOf, surface, mapSlot ) ) return;
 		if ( Array.isArray( term.value ) ) mat[ slot ].setRGB( term.value[ 0 ], term.value[ 1 ], term.value[ 2 ] );
 		else if ( typeof term.value === 'number' ) mat[ slot ].setRGB( term.value, term.value, term.value );
 		else if ( term.ptex && slot === 'color' ) {
@@ -1601,6 +1612,34 @@ export class USDSceneReader {
 			}
 
 		}
+
+	}
+
+	/** A MaterialX mix of a texture baked into one colour map (the scene builder's bakeTextureMix); false where it cannot be. */
+	async applyMix( mat, slot, { fg, bg, mix }, surface, mapSlot ) {
+
+		const part = async ( term, srgb ) => {
+
+			if ( isValue( term?.value ) ) return { rgb: isNum( term.value ) ? [ term.value, term.value, term.value ] : term.value.slice( 0, 3 ) };
+			if ( ! term?.texture ) return null;
+			const map = await this.image( term.texture, srgb && term.texture.colorSpace !== 'raw' );
+			return map && { texture: this.transformTexture( map, term.transform ), tint: term.texture.scale ?? null };
+
+		};
+
+		const parts = this.bakes && await Promise.all( [ part( bg, true ), part( fg, true ), part( mix, false ) ] );
+		const baked = parts && ! parts.includes( null ) && await this.bakes.bakeTextureMix( ...parts, `MaterialX mix (${slot})` );
+		if ( ! baked ) {
+
+			this.warnOnce( 'mtlx:mix', 'MaterialX mixes of a texture are read as their larger part' );
+			return false;
+
+		}
+
+		mat[ mapSlot ] = baked;
+		mat[ slot ].setRGB( 1, 1, 1 );
+		surface.uvSet = [ fg, bg, mix ].find( ( t ) => t?.texture )?.texture.uvSet ?? surface.uvSet;
+		return true;
 
 	}
 
@@ -1947,9 +1986,10 @@ export class USDSceneReader {
 
 				const [ fg, bg, mix ] = await Promise.all( [ input( 'fg' ), input( 'bg' ), input( 'mix' ) ] );
 				if ( isValue( fg?.value ) && isValue( bg?.value ) && isNum( mix?.value ) ) return { value: zip( bg.value, fg.value, ( b, f ) => b + ( f - b ) * mix.value ) };
-				this.warnOnce( 'mtlx:mix', 'MaterialX mixes of a texture are read as their larger part' );
+				// A colour slot bakes the mix (applyColor); anything else reads its larger part.
 				const front = ! isNum( mix?.value ) || mix.value >= 0.5;
-				return ( front ? fg : bg ) ?? ( front ? bg : fg );
+				const larger = ( front ? fg : bg ) ?? ( front ? bg : fg );
+				return larger && { ...larger, mixOf: { fg, bg, mix } };
 
 			}
 
@@ -2277,6 +2317,39 @@ export class USDSceneReader {
 
 	}
 
+	/**
+	 * MaterialX's mix of two surfaces, as pbrt's mix material: factors lerped by the amount; one a texture drives bakes the
+	 * colours and finish by it (the scene builder's bakeMaterialMix), the rest weighed by its mean.
+	 */
+	async mixSurface( shader ) {
+
+		const side = async ( name ) => {
+
+			const source = await this.stage.connectionSource( shader, `inputs:${name}` );
+			const read = MTLX_SURFACES[ mtlxNode( source?.prim.value( 'info:id' ) ?? 'ND_' ) ];
+			return read ? this[ read ]( source.prim ) : null;
+
+		};
+
+		const [ fg, bg ] = await Promise.all( [ side( 'fg' ), side( 'bg' ) ] );
+		if ( ! fg || ! bg ) return fg ?? bg;
+		const amount = await this.term( shader, 'mix' );
+		let t = isNum( amount?.value ) ? Math.min( 1, Math.max( 0, amount.value ) ) : 0.5;
+		let baked = null;
+		if ( amount?.texture ) {
+
+			const mask = await this.image( amount.texture, false );
+			baked = mask && await this.bakes?.bakeMaterialMix( bg.material, fg.material, this.transformTexture( mask, amount.transform ), 'MaterialX mix of surfaces' );
+			if ( baked ) t = baked.mean;
+			else this.warnOnce( 'mtlx:mixsurface', 'MaterialX mixes of surfaces driven by a texture are read as an even split' );
+
+		}
+
+		const larger = t < 0.5 ? bg : fg;
+		return { ...larger, material: mixMaterials( new MeshPhysicalMaterial( { side: DoubleSide } ), bg.material, fg.material, t, baked ) };
+
+	}
+
 	/** OpenPBR Surface 1.1, which Blender writes for its Principled BSDF. */
 	async openPbrSurface( shader ) {
 
@@ -2535,9 +2608,32 @@ export class USDSceneReader {
 	 */
 	async bsdfSurface( shader ) {
 
+		// A mix a texture drives at the top (Blender's Mix Shader): each side a material, mixed as pbrt's mix material.
+		const top = this.bakes && await this.stage.connectionSource( shader, 'inputs:bsdf' );
+		if ( top && mtlxNode( top.prim.value( 'info:id' ) ?? 'ND_' ) === 'mix_bsdf' ) {
+
+			const amount = await this.term( top.prim, 'mix' );
+			const mask = amount?.texture && await this.image( amount.texture, false );
+			if ( mask ) {
+
+				const [ fg, bg ] = await Promise.all( [ this.lobeSurface( shader, top.prim, 'inputs:fg' ), this.lobeSurface( shader, top.prim, 'inputs:bg' ) ] );
+				const baked = await this.bakes.bakeMaterialMix( bg.material, fg.material, this.transformTexture( mask, amount.transform ), 'MaterialX BSDF mix' );
+				if ( baked ) return { ...( baked.mean < 0.5 ? bg : fg ), material: mixMaterials( new MeshPhysicalMaterial( { side: DoubleSide } ), bg.material, fg.material, baked.mean, baked ) };
+
+			}
+
+		}
+
+		return this.lobeSurface( shader, shader, 'inputs:bsdf' );
+
+	}
+
+	/** The material the BSDF graph below `prim`'s `attribute` makes, with `shader`'s emission and opacity. */
+	async lobeSurface( shader, prim, attribute ) {
+
 		const lobes = [];
 		const emission = [];
-		await this.mtlxLobes( shader, 'inputs:bsdf', 1, lobes, 0 );
+		await this.mtlxLobes( prim, attribute, 1, lobes, 0 );
 		await this.mtlxEmission( shader, 'inputs:edf', 1, emission, 0 );
 
 		const mat = new MeshPhysicalMaterial( { side: DoubleSide } );
@@ -2846,7 +2942,7 @@ export class USDSceneReader {
 		matrix.decompose( camera.position, camera.quaternion, scale );
 		camera.updateMatrixWorld( true );
 		this.cameras.push( camera );
-		this._cameraPrims.set( prim.path, { camera, h, v, focal } );
+		this._cameraPrims.set( prim.path, { camera, h, v, focal, fStop: prim.value( 'fStop' ) ?? 0, focusDistance: prim.value( 'focusDistance' ) ?? 0 } );
 
 	}
 

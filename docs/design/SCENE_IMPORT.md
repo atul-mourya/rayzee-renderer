@@ -432,7 +432,12 @@ USDLoader. Each layer is read only when composition reaches it (`USDFiles` over 
   Strength × Distance, negative when inverted — taken to `bumpScale` per texel by the map's size; not `bumpDistance`,
   whose heights are scene units);
   under a coat, its own normal map (`geometry_coat_normal`, `coat_normal`, `clearcoat_normal`; a coat height map is dropped).
-  A texture mixed with a colour keeps its larger part. A lobe's `roughness` is GGX α (`roughness_anisotropy`, which
+  A `mix` a texture takes part in is baked into one colour map by the pbrt builder's baker (`bakeTextureMix`), elsewhere
+  read as its larger part. A `mix` of two surfaces is pbrt's mix material (`mixMaterials`): factors lerped, sheen,
+  iridescence, anisotropy and subsurface from the side bringing more; driven by a texture, the colours and finish are
+  baked by it (`bakeMaterialMix`) and the rest weighed by its mean. Blender (5.1) writes its Mix Shader as a `mix_bsdf`
+  under a `surface`: a constant one weighs the lobes; one a texture drives at the top makes each side a material and
+  mixes them so (`bsdfSurface`), deeper ones split evenly. A lobe's `roughness` is GGX α (`roughness_anisotropy`, which
   Blender writes under each lobe, gives r²): the engine's roughness is √α. `hsvadjust` on a constant is MaterialX's, in HSV, saturation
   kept within [0, 1] (it was three's HSL: (1, 0.5, 0.5) at half saturation is (1, 0.75, 0.75), not (0.875, 0.625, 0.625));
   hue shifts of a texture and procedural nodes (noise, ramps) are dropped — each said once. three's MaterialXLoader is not used: it reads `.mtlx` documents, translates only
@@ -447,7 +452,9 @@ USDLoader. Each layer is read only when composition reaches it (`USDFiles` over 
   Blender writes the render size's shape there, Moana its 2.39:1), the RenderSettings the stage names (else the only one)
   as `sceneMetadata.render` (size, shape with `pixelAspectRatio`; its camera first, conformed by
   `aspectRatioConformPolicy`; renderer namespaces such as `ri:` are not read), an authored `clippingRange` as the clip start
-  (camera rays begin that far in front, as in Cycles), Rect/Disk/Sphere/Distant lights in the engine's
+  (camera rays begin that far in front, as in Cycles), an authored `fStop` and `focusDistance` as the camera's own depth
+  of field (pbrt's `lensEffects`: radius focalLength / 2N; Moana's cameras author no f-stop and stay sharp),
+  Rect/Disk/Sphere/Distant lights in the engine's
   units, and the first dome light that lights the scene as the environment: USD's lat-long centre faces +Z (OpenEXR), the
   engine's +X, so `environmentRotation` = 90° − the dome's yaw. A `DomeLight_1` stands on its `poleAxis` (by default the
   stage's up axis; `Z` turns DomeLight's +Y onto +Z). Light linking is ignored. Light units follow UsdLux: the
@@ -499,6 +506,10 @@ USDLoader. Each layer is read only when composition reaches it (`USDFiles` over 
   Through the app (File → Open Folder, all parts): ~5 fps at 512² afterwards. ⚠️ The outliner drew a row per shape
   (1.36M DOM nodes, ~1 fps): it now mounts children 200 at a time. Chrome's `usedJSHeapSize` (5.4 GB here) counts the
   engine's ArrayBuffers too — matrix lists, table, TLAS, order maps, sky — not only JS objects.
+- **Subdivision surfaces are drawn as their cages**, as usdview shows them at its default complexity: `subdivisionScheme`
+  is not read. Moana authors `catmullClark` on every mesh (all quads; 13,667 meshes and 8.7M faces in isCoral alone), and
+  one level is 4× the triangles of a scene already at 111.6M. pbrt's `LoopSubdivision.js` does Loop only; Catmull–Clark
+  would also need face-varying uvs, Ptex faces and creases carried through.
 
 ## Lights from Blender's glTF exporter
 glTF lights are photometric: point and spot in candela, sun in lux. Blender's exporter multiplies its watts by 683

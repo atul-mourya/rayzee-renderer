@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { Vector3, Matrix4, Texture, SRGBColorSpace, MirroredRepeatWrapping, ClampToEdgeWrapping } from 'three';
+import { Vector3, Matrix4, Texture, DataTexture, SRGBColorSpace, MirroredRepeatWrapping, ClampToEdgeWrapping } from 'three';
 import { USDFiles, loadUSDScene } from '@/core/addons/archives/usd/index.js';
 import { blackbodyToLinearRGB } from '@/core/color/WhiteBalance.js';
 
@@ -602,6 +602,98 @@ ${extra}` ), 'wood.png': '', 'rough.png': '', 'normal.png': '', 'leather.png': '
 
 	} );
 
+	const surfaces = ( mix ) => `    token outputs:mtlx:surface.connect = </mat/m.outputs:out>
+    def Shader "red"
+    {
+        uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+        color3f inputs:base_color = (1, 0, 0)
+        float inputs:specular_roughness = 0.2
+    }
+    def Shader "blue"
+    {
+        uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+        color3f inputs:base_color = (0, 0, 1)
+        float inputs:base_metalness = 1
+        float inputs:specular_roughness = 0.6
+        float inputs:fuzz_weight = 1
+    }
+    def Shader "m"
+    {
+        uniform token info:id = "ND_mix_surfaceshader"
+        token inputs:fg.connect = </mat/red.outputs:out>
+        token inputs:bg.connect = </mat/blue.outputs:out>
+        ${mix}
+    }
+    def Shader "mask"
+    {
+        uniform token info:id = "ND_image_float"
+        asset inputs:file = @./mask.png@
+    }`;
+	// 2 × 2 RGBA8 images: red, blue, and a mask black on the left and white on the right.
+	const pixels = ( rgba ) => {
+
+		const texture = new DataTexture( new Uint8Array( [ ...rgba( 0 ), ...rgba( 1 ), ...rgba( 0 ), ...rgba( 1 ) ] ), 2, 2 );
+		texture.needsUpdate = true;
+		return texture;
+
+	};
+
+	const painted = { resolveImage: async path => pixels( /mask/.test( path ) ? ( x ) => [ 255 * x, 255 * x, 255 * x, 255 ] : /red/.test( path ) ? () => [ 255, 0, 0, 255 ] : () => [ 0, 0, 255, 255 ] ) };
+	const columns = ( texture ) => [ 0, 1 ].map( ( x ) => Array.from( texture.image.data.slice( x * 4, x * 4 + 3 ) ) );
+	const withImages = ( layers ) => ( { ...layers, 'red.png': '', 'blue.png': '', 'mask.png': '' } );
+
+	it( 'reads a mix of two surfaces as pbrt\'s mix material, the fuzz of the one that has it kept', async () => {
+
+		const { material, result } = await materialOf( scene( surfaces( 'float inputs:mix = 0.25' ) ) );
+		expect( material.color.toArray().map( ( v ) => + v.toFixed( 6 ) ) ).toEqual( [ 0.25, 0, 0.75 ] );
+		expect( material.metalness ).toBeCloseTo( 0.75, 9 );
+		expect( material.roughness ).toBeCloseTo( 0.5, 9 );
+		expect( material.sheen ).toBeCloseTo( 0.75, 9 );
+		expect( result.warnings.some( w => /no surface shader/.test( w ) ) ).toBe( false );
+
+	} );
+
+	it( 'bakes a mix a texture drives: a colour mix into one map, a mix of surfaces into its colours and finish', async () => {
+
+		const colour = await materialOf( withImages( scene( `    token outputs:mtlx:surface.connect = </mat/pbr.outputs:surface>
+    def Shader "pbr"
+    {
+        uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+        color3f inputs:base_color.connect = </mat/blend.outputs:out>
+    }
+    def Shader "red"
+    {
+        uniform token info:id = "ND_image_color3"
+        asset inputs:file = @./red.png@
+    }
+    def Shader "blue"
+    {
+        uniform token info:id = "ND_image_color3"
+        asset inputs:file = @./blue.png@
+    }
+    def Shader "mask"
+    {
+        uniform token info:id = "ND_image_float"
+        asset inputs:file = @./mask.png@
+    }
+    def Shader "blend"
+    {
+        uniform token info:id = "ND_mix_color3"
+        color3f inputs:fg.connect = </mat/red.outputs:out>
+        color3f inputs:bg.connect = </mat/blue.outputs:out>
+        float inputs:mix.connect = </mat/mask.outputs:out>
+    }` ) ), painted );
+		expect( columns( colour.material.map ) ).toEqual( [[ 0, 0, 255 ], [ 255, 0, 0 ]] );
+		expect( colour.result.warnings.some( w => /mixes of a texture/.test( w ) ) ).toBe( false );
+
+		const { material } = await materialOf( withImages( scene( surfaces( 'float inputs:mix.connect = </mat/mask.outputs:out>' ) ) ), painted );
+		expect( columns( material.map ) ).toEqual( [[ 0, 0, 255 ], [ 255, 0, 0 ]] );
+		// Roughness and metalness through the surface map (G, B), the mask's mean weighing the rest.
+		expect( [ material.roughness, material.metalness, material.roughnessMap === material.metalnessMap ] ).toEqual( [ 1, 1, true ] );
+		expect( material.sheen ).toBeCloseTo( 0.5, 9 );
+
+	} );
+
 	it( 'reads Standard Surface and glTF PBR', async () => {
 
 		const standard = await materialOf( scene( `    token outputs:mtlx:surface.connect = </mat/ss.outputs:out>
@@ -929,6 +1021,41 @@ ${body}` );
 
 	} );
 
+	it( 'bakes a BSDF mix a texture drives at the top, as Blender writes its Mix Shader: each side a material', async () => {
+
+		const { material, result } = await materialOf( withImages( graph( `    def Shader "diffuse"
+    {
+        uniform token info:id = "ND_oren_nayar_diffuse_bsdf"
+        color3f inputs:color = (1, 0, 0)
+    }
+    def Shader "metal"
+    {
+        uniform token info:id = "ND_conductor_bsdf"
+        color3f inputs:ior = (0.18, 0.42, 1.37)
+        float2 inputs:roughness = (0.36, 0.36)
+    }
+    def Shader "mask"
+    {
+        uniform token info:id = "ND_image_float"
+        asset inputs:file = @./mask.png@
+    }
+    def Shader "bsdf"
+    {
+        uniform token info:id = "ND_mix_bsdf"
+        token inputs:fg.connect = </mat/diffuse.outputs:out>
+        token inputs:bg.connect = </mat/metal.outputs:out>
+        float inputs:mix.connect = </mat/mask.outputs:out>
+    }` ) ), painted );
+		// Black on the left, the gold of that metal's index; white on the right, the red diffuse.
+		const [ left, right ] = columns( material.map );
+		expect( left[ 0 ] > left[ 1 ] && left[ 1 ] > left[ 2 ] && left[ 2 ] > 0 ).toBe( true );
+		expect( right ).toEqual( [ 255, 0, 0 ] );
+		const finish = [ 0, 1 ].map( ( x ) => Array.from( material.metalnessMap.image.data.slice( x * 4 + 1, x * 4 + 3 ) ) );
+		expect( finish ).toEqual( [[ 153, 255 ], [ 255, 0 ]] );
+		expect( result.warnings.some( w => /driven by a texture/.test( w ) ) ).toBe( false );
+
+	} );
+
 	it( 'places a copy of a texture, leaving the image other materials share as it was', async () => {
 
 		const shared = `def Material "other"
@@ -1018,6 +1145,28 @@ ${clipping}    float focalLength = 35
 }` );
 		expect( ( await load( { 'root.usda': camera( '    float2 clippingRange = (1.1, 100)\n' ) } ) ).cameras[ 0 ].userData.clipStart ).toBeCloseTo( 1.1 );
 		expect( ( await load( { 'root.usda': camera( '' ) } ) ).cameras[ 0 ].userData.clipStart ).toBeUndefined();
+
+	} );
+
+	it( 'gives a camera its lens: an f-stop and focus distance as its depth of field, none without them', async () => {
+
+		const camera = ( lens ) => usda( `def Camera "shot"
+{
+${lens}    float focalLength = 50
+    float verticalAperture = 24
+}` );
+		const [ shot ] = ( await load( { 'root.usda': camera( '    float fStop = 2\n    float focusDistance = 3\n' ) } ) ).cameras;
+		const effects = shot.userData.__rayzeeEffects;
+		// Radius 50 mm / 2 / 2 in tenths of a unit: 1.25 units.
+		const tanHalf = Math.tan( shot.fov * Math.PI / 360 );
+		expect( effects ).toMatchObject( { enableDOF: true, focusDistance: 3, autoFocusMode: 'manual' } );
+		expect( effects.dofBlur ).toBeCloseTo( 1.25 / ( 3 * tanHalf ), 9 );
+		expect( effects.focalLength * 0.001 / ( 2 * effects.aperture ) ).toBeCloseTo( 1.25, 9 );
+		for ( const lens of [ '', '    float fStop = 2\n', '    float focusDistance = 3\n' ] ) {
+
+			expect( ( await load( { 'root.usda': camera( lens ) } ) ).cameras[ 0 ].userData.__rayzeeEffects ).toBeUndefined();
+
+		}
 
 	} );
 

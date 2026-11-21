@@ -786,6 +786,100 @@ async function applyHair( mat, params, ctx ) {
 
 }
 
+const MIXED_LAYERS = [
+	[ 'sheen', 'sheenColor', 'sheenRoughness', 'sheenColorMap', 'sheenRoughnessMap' ],
+	[ 'iridescence', 'iridescenceIOR', 'iridescenceThicknessRange', 'iridescenceMap', 'iridescenceThicknessMap' ],
+	[ 'anisotropy', 'anisotropyRotation', 'anisotropyMap' ],
+	[ 'subsurface', 'subsurfaceColor', 'subsurfaceRadius', 'subsurfaceRadiusScale', 'subsurfaceAnisotropy' ],
+];
+
+/**
+ * Two materials as one, `t` of the way from `matA` to `matB`, into `mat`: colours, factors and coat lerped (pbrt's
+ * `mix`, a MaterialX mix of surfaces). `baked` (a bake by a texture amount: its `texture` the colours, `surface` the
+ * coat, roughness, metalness and specular as R, G, B, A) replaces what it holds; maps otherwise come from the larger side.
+ */
+export function mixMaterials( mat, matA, matB, t, baked = null ) {
+
+	const lerp = ( a, b ) => a * ( 1 - t ) + b * t;
+	// A colour made for its map's brightest texel (diffusetransmission's pbrtFlat) mixes at that peak, so the
+	// dominant side's map darkens it and never takes it past 1.
+	const flatOf = ( m, key ) => ( m.userData.pbrtFlat ? new Color( ...m.userData.pbrtFlat[ key ] ) : m[ key ] );
+	// An inner mix with a baked surface keeps its values in userData: its factors there are 1s under a map.
+	const surface = ( m, key ) => m.userData.pbrtSurface?.[ key ] ?? m[ key ] ?? 0;
+	mat.color.lerpColors( flatOf( matA, 'color' ), flatOf( matB, 'color' ), t );
+	mat.roughness = lerp( surface( matA, 'roughness' ), surface( matB, 'roughness' ) );
+	mat.metalness = lerp( surface( matA, 'metalness' ), surface( matB, 'metalness' ) );
+	// MeshPhysicalMaterial's own default is a full specular lobe, which pbrt's diffuse does not have.
+	const specular = ( m ) => m.userData.pbrtSurface?.specularIntensity ?? m.specularIntensity ?? 1;
+	mat.specularIntensity = lerp( specular( matA ), specular( matB ) );
+	mat.ior = lerp( matA.ior ?? 1.5, matB.ior ?? 1.5 );
+	mat.transmission = lerp( matA.transmission ?? 0, matB.transmission ?? 0 );
+	mat.thickness = lerp( matA.thickness ?? 0, matB.thickness ?? 0 );
+	const coatA = surface( matA, 'clearcoat' ) * ( 1 - t ), coatB = surface( matB, 'clearcoat' ) * t;
+	mat.clearcoat = coatA + coatB;
+	// Weighed by the coat each side brings: a coat on one side alone keeps that side's roughness.
+	const coatRoughness = ( m ) => m.clearcoatRoughness ?? 0;
+	mat.clearcoatRoughness = coatA + coatB > 0 ? ( coatA * coatRoughness( matA ) + coatB * coatRoughness( matB ) ) / ( coatA + coatB ) : lerp( coatRoughness( matA ), coatRoughness( matB ) );
+	mat.emissive.lerpColors( matA.emissive, matB.emissive, t );
+	const dtA = matA.diffuseTransmission ?? 0, dtB = matB.diffuseTransmission ?? 0;
+	if ( dtA > 0 || dtB > 0 ) {
+
+		mat.diffuseTransmission = lerp( dtA, dtB );
+		const white = new Color( 1, 1, 1 );
+		mat.diffuseTransmissionColor = new Color().lerpColors( flatOf( matA, 'diffuseTransmissionColor' ) ?? white, flatOf( matB, 'diffuseTransmissionColor' ) ?? white, t );
+		mat.diffuseTransmissionColorMap = ( t < 0.5 ? matA : matB ).diffuseTransmissionColorMap ?? null;
+
+	}
+
+	mat.emissiveIntensity = lerp( matA.emissiveIntensity ?? 0, matB.emissiveIntensity ?? 0 );
+	// Each layer's weight lerped, its settings from the side bringing more of it.
+	for ( const [ weight, ...keys ] of MIXED_LAYERS ) {
+
+		const a = matA[ weight ] ?? 0, b = matB[ weight ] ?? 0;
+		if ( ! ( a > 0 || b > 0 ) ) continue;
+		mat[ weight ] = lerp( a, b );
+		const from = a * ( 1 - t ) >= b * t ? matA : matB;
+		for ( const key of keys ) if ( from[ key ] !== undefined ) mat[ key ] = from[ key ]?.isColor ? from[ key ].clone() : Array.isArray( from[ key ] ) ? [ ...from[ key ] ] : from[ key ];
+
+	}
+
+	// Maps can't be lerped — pick the dominant side, unless the amount's own texture baked them together.
+	mat.map = ( t < 0.5 ? matA.map : matB.map ) || null;
+	mat.normalMap = ( t < 0.5 ? matA.normalMap : matB.normalMap ) || null;
+	if ( baked?.texture ) {
+
+		mat.map = baked.texture;
+		mat.color.setRGB( 1, 1, 1 );
+
+	}
+
+	if ( baked?.surface ) {
+
+		mat.userData.pbrtSurface = { roughness: mat.roughness, metalness: mat.metalness, clearcoat: mat.clearcoat, specularIntensity: mat.specularIntensity };
+		mat.roughnessMap = mat.metalnessMap = baked.surface;
+		mat.roughness = mat.metalness = 1;
+		// The engine reads the coat and specular maps through the base colour map's transform: only where they agree.
+		const aligned = oneMapping( baked.surface, mat.map );
+		if ( mat.clearcoat > 0 && aligned ) {
+
+			mat.clearcoatMap = baked.surface;
+			mat.clearcoat = 1;
+
+		}
+
+		if ( specular( matA ) !== specular( matB ) && aligned ) {
+
+			mat.specularIntensityMap = baked.surface;
+			mat.specularIntensity = 1;
+
+		}
+
+	}
+
+	return mat;
+
+}
+
 /**
  * Build a MeshPhysicalMaterial from a pbrt material definition.
  * @param {{type:string, params:object}} def
@@ -951,7 +1045,7 @@ export async function buildMaterial( def, ctx ) {
 			// instead of warning per shape. Recursive: mix-in-mix terminates as the
 			// chain bottoms out at a non-mix.
 			const matNames = param( params, 'materials' )?.value || [];
-			let t = Math.max( 0, Math.min( 1, pFloat( params, 'amount', 0.5 ) ) );
+			const t = Math.max( 0, Math.min( 1, pFloat( params, 'amount', 0.5 ) ) );
 			const defA = matNames[ 0 ] ? ctx.namedMaterials?.get( matNames[ 0 ] ) : null;
 			const defB = matNames[ 1 ] ? ctx.namedMaterials?.get( matNames[ 1 ] ) : null;
 
@@ -962,72 +1056,7 @@ export async function buildMaterial( def, ctx ) {
 				// metalness are baked by that texture (`ctx.bakeMaterialMix`) and the rest is weighed by its mean.
 				const amountP = params.amount;
 				const baked = amountP?.type === 'texture' ? await ctx.bakeMaterialMix?.( matA, matB, amountP.value[ 0 ] ) : null;
-				if ( baked ) t = baked.mean;
-				const lerp = ( a, b ) => a * ( 1 - t ) + b * t;
-				// A colour made for its map's brightest texel (diffusetransmission's pbrtFlat) mixes at that peak, so the
-				// dominant side's map darkens it and never takes it past 1.
-				const flatOf = ( m, key ) => ( m.userData.pbrtFlat ? new Color( ...m.userData.pbrtFlat[ key ] ) : m[ key ] );
-				// An inner mix with a baked surface keeps its values in userData: its factors there are 1s under a map.
-				const surface = ( m, key ) => m.userData.pbrtSurface?.[ key ] ?? m[ key ] ?? 0;
-				mat.color.lerpColors( flatOf( matA, 'color' ), flatOf( matB, 'color' ), t );
-				mat.roughness = lerp( surface( matA, 'roughness' ), surface( matB, 'roughness' ) );
-				mat.metalness = lerp( surface( matA, 'metalness' ), surface( matB, 'metalness' ) );
-				// MeshPhysicalMaterial's own default is a full specular lobe, which pbrt's diffuse does not have.
-				const specular = ( m ) => m.userData.pbrtSurface?.specularIntensity ?? m.specularIntensity ?? 1;
-				mat.specularIntensity = lerp( specular( matA ), specular( matB ) );
-				mat.ior = lerp( matA.ior ?? 1.5, matB.ior ?? 1.5 );
-				mat.transmission = lerp( matA.transmission ?? 0, matB.transmission ?? 0 );
-				mat.thickness = lerp( matA.thickness ?? 0, matB.thickness ?? 0 );
-				const coatA = surface( matA, 'clearcoat' ) * ( 1 - t ), coatB = surface( matB, 'clearcoat' ) * t;
-				mat.clearcoat = coatA + coatB;
-				// Weighed by the coat each side brings: a coat on one side alone keeps that side's roughness.
-				const coatRoughness = ( m ) => m.clearcoatRoughness ?? 0;
-				mat.clearcoatRoughness = coatA + coatB > 0 ? ( coatA * coatRoughness( matA ) + coatB * coatRoughness( matB ) ) / ( coatA + coatB ) : lerp( coatRoughness( matA ), coatRoughness( matB ) );
-				mat.emissive.lerpColors( matA.emissive, matB.emissive, t );
-				const dtA = matA.diffuseTransmission ?? 0, dtB = matB.diffuseTransmission ?? 0;
-				if ( dtA > 0 || dtB > 0 ) {
-
-					mat.diffuseTransmission = lerp( dtA, dtB );
-					const white = new Color( 1, 1, 1 );
-					mat.diffuseTransmissionColor = new Color().lerpColors( flatOf( matA, 'diffuseTransmissionColor' ) ?? white, flatOf( matB, 'diffuseTransmissionColor' ) ?? white, t );
-					mat.diffuseTransmissionColorMap = ( t < 0.5 ? matA : matB ).diffuseTransmissionColorMap ?? null;
-
-				}
-
-				mat.emissiveIntensity = lerp( matA.emissiveIntensity ?? 0, matB.emissiveIntensity ?? 0 );
-				// Maps can't be lerped — pick the dominant side, unless the amount's own texture baked them together.
-				mat.map = ( t < 0.5 ? matA.map : matB.map ) || null;
-				mat.normalMap = ( t < 0.5 ? matA.normalMap : matB.normalMap ) || null;
-				if ( baked?.texture ) {
-
-					mat.map = baked.texture;
-					mat.color.setRGB( 1, 1, 1 );
-
-				}
-
-				if ( baked?.surface ) {
-
-					mat.userData.pbrtSurface = { roughness: mat.roughness, metalness: mat.metalness, clearcoat: mat.clearcoat, specularIntensity: mat.specularIntensity };
-					mat.roughnessMap = mat.metalnessMap = baked.surface;
-					mat.roughness = mat.metalness = 1;
-					// The engine reads the coat and specular maps through the base colour map's transform: only where they agree.
-					const aligned = oneMapping( baked.surface, mat.map );
-					if ( mat.clearcoat > 0 && aligned ) {
-
-						mat.clearcoatMap = baked.surface;
-						mat.clearcoat = 1;
-
-					}
-
-					if ( specular( matA ) !== specular( matB ) && aligned ) {
-
-						mat.specularIntensityMap = baked.surface;
-						mat.specularIntensity = 1;
-
-					}
-
-				}
-
+				mixMaterials( mat, matA, matB, baked ? baked.mean : t, baked );
 				break;
 
 			}

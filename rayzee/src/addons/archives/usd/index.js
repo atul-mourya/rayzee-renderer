@@ -110,14 +110,24 @@ export async function loadUSDScene( args ) {
 	const openMs = performance.now() - parseStart;
 	const reader = new USDSceneReader( stage, {
 		maxTriangles: builder.maxTriangles, maxPlacements: builder.maxPlacements, curveSteps: builder.curveSteps,
-		resolveImage: args.resolveImage, warn, pause: args.pauseRead,
+		resolveImage: args.resolveImage, warn, pause: args.pauseRead, bakes: builder,
 	} );
-	const read = await reader.read();
-	if ( stage.omittedArcs > 0 ) warn( `${stage.omittedArcs} reference(s) into the parts left out of this load skipped` );
-	const parseMs = performance.now() - parseStart;
+	let read, built, parseMs, buildStart;
+	try {
 
-	const buildStart = performance.now();
-	const built = await builder.build( read.ir );
+		read = await reader.read();
+		if ( stage.omittedArcs > 0 ) warn( `${stage.omittedArcs} reference(s) into the parts left out of this load skipped` );
+		parseMs = performance.now() - parseStart;
+		buildStart = performance.now();
+		built = await builder.build( read.ir );
+
+	} finally {
+
+		builder.closePools();
+		builder.releaseImages();
+
+	}
+
 	for ( const object of [ ...read.cameras, ...read.lights ] ) built.group.add( object );
 
 	let environment = null;

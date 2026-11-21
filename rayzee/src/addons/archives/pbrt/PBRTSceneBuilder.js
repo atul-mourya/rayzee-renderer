@@ -621,11 +621,11 @@ function bakedTexture( { data, width, height, mapping }, { srgb = true } = {} ) 
 }
 
 /**
- * pbrt's thin lens as the camera's own effects (CameraManager applies them when the camera is chosen): the same
- * aperture radius in either DOF mode — `dofBlur` for 'look', a full-frame lens and its f-number for 'physical' at one
- * scene unit a metre — focused by hand at pbrt's distance.
+ * A thin lens of `radius` (scene units) as the camera's own effects (CameraManager applies them when the camera is
+ * chosen): the same aperture radius in either DOF mode — `dofBlur` for 'look', a full-frame lens and its f-number for
+ * 'physical' at one scene unit a metre — focused by hand at `focusDistance`.
  */
-function lensEffects( camera, radius, focusDistance ) {
+export function lensEffects( camera, radius, focusDistance ) {
 
 	const ortho = camera.isOrthographicCamera === true;
 	const tanHalf = ortho ? 1 : Math.tan( camera.fov * Math.PI / 360 );
@@ -1144,16 +1144,23 @@ export class PBRTSceneBuilder {
 
 		} finally {
 
-			this._curvePool?.close();
-			this._curvePool = undefined;
-			this._refinePool?.close();
-			// Null: a refine still running after a failed build refines on the page rather than start a pool nobody closes.
-			this._refinePool = null;
-			this._bakePool?.close();
-			// Null: a bake still running after a failed build bakes on the page rather than start a pool nobody closes.
-			this._bakePool = null;
+			this.closePools();
 
 		}
+
+	}
+
+	/** Closes the worker pools a build or a bake started. */
+	closePools() {
+
+		this._curvePool?.close();
+		this._curvePool = undefined;
+		this._refinePool?.close();
+		// Null: a refine still running after a failed build refines on the page rather than start a pool nobody closes.
+		this._refinePool = null;
+		this._bakePool?.close();
+		// Null: a bake still running after a failed build bakes on the page rather than start a pool nobody closes.
+		this._bakePool = null;
 
 	}
 
@@ -4325,16 +4332,49 @@ export class PBRTSceneBuilder {
 
 	}
 
-	// A texture already built for a material (an image or a bake) as a layer, in the mapping it carries.
+	// A texture already built for a material (an image or a bake) as a layer, in the mapping it carries; null for one
+	// turned or sheared by its own matrix.
 	async _textureLayer( texture, channels ) {
 
+		const m = texture.matrixAutoUpdate === false ? texture.matrix.elements : null;
+		if ( m && ( m[ 1 ] !== 0 || m[ 3 ] !== 0 ) ) return null;
 		const pixels = await this._readPixels( texture );
 		if ( ! pixels ) return null;
 		const srgb = ! pixels.float && texture.colorSpace === SRGBColorSpace;
+		const mapping = m ? { su: m[ 0 ], sv: m[ 4 ], du: m[ 6 ], dv: m[ 7 ] } : { su: texture.repeat.x, sv: texture.repeat.y, du: texture.offset.x, dv: texture.offset.y };
 		return makeLayer( pixels, {
-			channels, decode: pixels.float ? null : ( srgb ? srgbToLinear : ( v ) => v ),
-			mapping: { su: texture.repeat.x, sv: texture.repeat.y, du: texture.offset.x, dv: texture.offset.y, uv: texture.userData.pbrtUV ?? null }
+			channels, decode: pixels.float ? null : ( srgb ? srgbToLinear : ( v ) => v ), mapping: { ...mapping, uv: texture.userData.pbrtUV ?? null }
 		} );
+
+	}
+
+	// A colour or mask for a bake: `{ texture, tint? }` read through _textureLayer, else `{ rgb }` as it is.
+	async _partTerm( part, channels ) {
+
+		if ( ! part?.texture ) return part?.rgb ? { rgb: part.rgb } : null;
+		const layer = await this._textureLayer( part.texture, channels );
+		return layer && { layer, tint: part.tint ?? null };
+
+	}
+
+	/**
+	 * ( 1 − amount ) · a + amount · b, as one sRGB map (MaterialX's `mix` of a texture): each part `{ texture, tint? }`
+	 * or `{ rgb }`, `amount` read as one channel. Null where a part cannot be read here.
+	 */
+	async bakeTextureMix( a, b, amount, label = 'texture mix' ) {
+
+		const terms = await Promise.all( [ this._partTerm( a, 3 ), this._partTerm( b, 3 ), this._partTerm( amount, 1 ) ] );
+		if ( terms.some( ( t ) => ! t ) || ! terms.some( ( t ) => t.layer ) ) return null;
+		const baked = await this._bake( label, [ { ...terms[ 0 ], clamp: true }, { ...terms[ 1 ], clamp: true }, terms[ 2 ] ], { op: 'mix' }, { perChannel: ! terms[ 2 ].layer } );
+		return baked && bakedTexture( baked );
+
+	}
+
+	/** _bakeMaterialMix with its amount a texture (MaterialX's mix of two surfaces); null where it cannot be read here. */
+	async bakeMaterialMix( matA, matB, amount, label = 'material mix' ) {
+
+		const term = await this._partTerm( { texture: amount }, 1 );
+		return term && this._bakeMaterialMixBy( matA, matB, term, label );
 
 	}
 
@@ -4347,7 +4387,13 @@ export class PBRTSceneBuilder {
 	async _bakeMaterialMix( matA, matB, amountName ) {
 
 		const amount = await this._bakeTerm( amountName, 1 );
-		if ( ! amount ) return null;
+		return amount && this._bakeMaterialMixBy( matA, matB, amount, `mix amount "${amountName}"` );
+
+	}
+
+	/** @private */
+	async _bakeMaterialMixBy( matA, matB, amount, label ) {
+
 		if ( ! amount.layer ) return { mean: amount.rgb[ 0 ], texture: null };
 
 		const mean = layerMean( amount.layer );
@@ -4360,7 +4406,7 @@ export class PBRTSceneBuilder {
 		if ( ! own( matA ) && ! own( matB ) && sa.some( ( v, i ) => Math.abs( v - sb[ i ] ) > 1e-4 ) ) {
 
 			const alphaOf = { op: 'lerp', a: sa[ 3 ], b: sb[ 3 ], term: 2 };
-			const baked = await this._bake( `mix amount "${amountName}" (surface)`, [ { rgb: sa.slice( 0, 3 ) }, { rgb: sb.slice( 0, 3 ) }, amount ], { op: 'mix' }, { linear: true, alphaOf } );
+			const baked = await this._bake( `${label} (surface)`, [ { rgb: sa.slice( 0, 3 ) }, { rgb: sb.slice( 0, 3 ) }, amount ], { op: 'mix' }, { linear: true, alphaOf } );
 			surface = baked ? bakedTexture( baked, { srgb: false } ) : null;
 
 		}
@@ -4375,7 +4421,7 @@ export class PBRTSceneBuilder {
 
 		const a = await term( matA ), b = await term( matB );
 		if ( ! a || ! b ) return { mean, texture: null, surface };
-		const baked = await this._bake( `mix amount "${amountName}"`, [ a, b, amount ], { op: 'mix' }, { perChannel: ! amount.layer } );
+		const baked = await this._bake( label, [ a, b, amount ], { op: 'mix' }, { perChannel: ! amount.layer } );
 		return { mean, texture: baked ? bakedTexture( baked ) : null, surface };
 
 	}
