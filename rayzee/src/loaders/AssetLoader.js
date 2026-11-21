@@ -141,6 +141,9 @@ const CORE_FORMATS = {
 	'jpeg': { type: 'image', name: 'JPEG' }, 'webp': { type: 'image', name: 'WebP' },
 };
 
+// glTF extensions that only describe the file.
+const GLTF_METADATA = new Set( [ 'KHR_xmp_json_ld', 'KHR_xmp' ] );
+
 // Formats an add-on reads, for the error that names it.
 const ARCHIVES = { addOn: 'rayzee/addons/archives', install: 'assetLoader.setArchiveImporter()' };
 const FORMATS = { addOn: 'rayzee/addons/formats', install: 'assetLoader.registerFormat()' };
@@ -1031,6 +1034,18 @@ export class AssetLoader extends EventDispatcher {
 
 	}
 
+	/** The extensions a glTF uses that nothing reads, as pbrt's and USD's ignored parameters are reported. */
+	_reportGLTFExtensions( gltf, entry ) {
+
+		const { json, extensions = {}, plugins = {} } = gltf.parser ?? {};
+		const ignored = ( json?.extensionsUsed ?? [] ).filter( ( name ) => ! extensions[ name ] && ! plugins[ name ] && ! GLTF_METADATA.has( name ) );
+		if ( ! ignored.length ) return;
+		const message = `${ignored.length} glTF extension(s) not read in "${entry}": ${ignored.join( ', ' )}`;
+		log.warn( message );
+		this._issues?.warn( ISSUE_CODES.ASSET_PARAMETERS_IGNORED, message, { entry, unused: Object.fromEntries( ignored.map( ( name ) => [ name, 1 ] ) ), approximated: {} } );
+
+	}
+
 	_throwDeferred() {
 
 		const error = this._deferredError;
@@ -1203,6 +1218,7 @@ export class AssetLoader extends EventDispatcher {
 
 			const data = await withHostWorker( () => loader.parseAsync( arrayBuffer, '' ) );
 			this._throwDeferred();
+			this._reportGLTFExtensions( data, filename );
 
 			this.releaseTargetModel();
 

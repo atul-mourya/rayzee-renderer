@@ -1568,6 +1568,7 @@ export class ArchiveImporter {
 			const data = extension === 'gltf' ? await textOf( fileContent ) : await bufferOf( fileContent );
 			const gltf = await withHostWorker( () => new Promise( ( resolve, reject ) => loader.parse( data, '', resolve, reject ) ) );
 			this.loader._throwDeferred();
+			this.loader._reportGLTFExtensions?.( gltf, filePath );
 			return gltf;
 
 		} finally {
