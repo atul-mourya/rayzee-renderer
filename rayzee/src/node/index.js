@@ -3,8 +3,8 @@
  *
  *   import { configurePlatform, openHeadless } from 'rayzee';
  *   import { nodePlatform } from 'rayzee/node';
- *   configurePlatform( nodePlatform( { decodeImage } ) );
+ *   configurePlatform( nodePlatform( { decodeImage } ) );   // Deno: denoPlatform( { decodeImage } )
  */
 export { NodeWorker } from './NodeWorker.js';
-export { nodePlatform } from './NodePlatform.js';
+export { nodePlatform, denoPlatform } from './NodePlatform.js';
 export { XMLDOMParser } from './XMLDOMParser.js';

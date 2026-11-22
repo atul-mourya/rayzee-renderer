@@ -261,6 +261,12 @@ app.dispose();
   included) are read and decoded by the platform, a `file:` URL through its `readFile`; one that cannot be fetched is
   left without an image, as in a browser.
 
+**Deno** runs the same build on its own WebGPU (wgpu): `configurePlatform( denoPlatform( { decodeImage } ) )` from
+`rayzee/node` — `nodePlatform` plus no-op animation frames, `NodeWorker` as the global `Worker` and no
+`createImageBitmap` / `OffscreenCanvas` (Deno half-has both). Run with `--node-modules-dir`; the bench corpus matches
+the Chrome goldens there too. A Deno built with ray queries (`wgpu-ray-query`, not yet a release's) also searches with
+the GPU's ray tracing hardware (`hardwareRayTracing`, [Rendering](rendering.md)).
+
 Measured on this bench's corpus: all 29 scenes match the Chrome goldens (`npm run bench:node`, RMSE
 ≤ 0.0036, no pixel over 0.02 — the readback's tone map accounts for most of it), and a textured glTF with an
 HDR or a PNG sky matches Chrome block for block within 0.05 of a level. Not available

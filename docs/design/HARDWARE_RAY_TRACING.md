@@ -176,7 +176,7 @@ untouched.
    second without readbacks 1–9 % slower. ⚠️ Readbacks are slow there: one each frame (the GPU timer) added ~30 ms a
    frame. The bench corpus under Deno: all 59 scenes pass against the Chrome goldens (OIDN ratio 0.554 against 0.553).
    A 64-sample final render: classroom 2.96 s on Node, 3.25 s on Deno; room 11.16 / 11.86 s (readbacks +4–7 % of the
-   time on Deno, +1–4 % on Node). A Deno host would carry the shims in a `denoPlatform()`.
+   time on Deno, +1–4 % on Node). The shims are `denoPlatform()` (`rayzee/node`).
 2. **A host binding** giving JavaScript acceleration structures: through Deno's WebGPU (Rust, in the wgpu repository) or
    a Node add-on over wgpu. It takes the standard draft's names (`acceleration-structure`, `createAccelerationStructure`,
    `buildAccelerationStructure`), so the engine's code is the one a browser will need; the Firefox prototype's
@@ -217,17 +217,25 @@ the adapter has it and, with the setting on, hands the kernels a `SceneSearch` w
 
   | Scene | Walk | Hardware |
   |---|---|---|
-  | Classroom | 37.2 / 46.7 ms | **13.4 / 16.9 (2.8×)** |
-  | Room (1.9M triangles) | 111.9 / 175.6 | **34.7 / 60.2 (3.2× / 2.9×)** |
-  | 100K-instance field | 16.7 / 17.3 | **5.9–10.6** (the timer is noisy at this size) |
+  | Classroom | 37.2 / 46.7 ms | **13.6 / 17.0 (2.7×)** |
+  | Room (1.9M triangles) | 113.5 / 175.5 | **35.0 / 60.8 (3.2× / 2.9×)** |
+  | zero-day (2.2M triangles, 7,595 meshes) | 103.7 / 112.9 | **19.6 / 22.4 (5.3× / 5.0×)** |
+  | 100K-instance field | 16.5 / 17.4 | **6.1 / 6.9 (2.7× / 2.5×)** |
+  | 900K-instance field | 16.7 / 17.2 | **7.3 / 7.1 (2.3× / 2.4×)** |
 
-  Extend 6–8× faster (room 28.0 → 3.8 ms), Shade 2.5–3× (room 80 → 27 ms).
+  Extend 6–13× faster (room 28.3 → 3.8 ms, zero-day 51.7 → 4.1), Shade 2.5–4× (room 81 → 27 ms). Each pair's
+  pictures checked equal in brightness: a test loop once rendered empty scenes (zsh passed `--model /path` as one
+  argument) and read as a 4 ms frame.
 - ⚠️ **On Metal, wgpu (naga 29) never ends a candidate loop**: `rayQueryProceed` returns a flag set at initialisation
   and never cleared (`RAY_QUERY_MODERN_SUPPORT = false`), so `while ( rayQueryProceed( &rq ) )` spins every thread. On
   the room it hung the GPU until macOS's watchdog restarted WindowServer (the Mac rebooted). One `rayQueryProceed` a
   query and opaque geometry only, until naga supports it; `tests/unit/pathtracer/hardwareSearch.test.js` fails on a `while ( rayQueryProceed`.
 - ⚠️ naga's Metal output also ignored `CULL_BACK_FACING` / `CULL_FRONT_FACING` (a TODO on winding): patched locally;
   `CULL_BACK_FACING` culls what three.js calls a triangle's back. The engine no longer relies on either.
+- ⚠️ wgpu-core 29 keeps a TLAS's BLAS dependencies one an instance, and walks them at every use of the TLAS and every
+  submission (Metal marks each resident): 900K instances of 3 BLASes cost ~110 ms a frame and made Shade slower than
+  the walk. Patched locally to keep each BLAS once (`command/ray_tracing.rs`, a `HashSet` of `Arc` pointers): the
+  900K-instance field 17.7 ms on the walk, 19.5 → 5.6 ms on the hardware.
 - NormalDepth, DepthPass and GPU picking search with the path tracer's search too (`pathTracer.kernelSearch`, their
   kernels rebuilt when it changes): NRD's output within 0.7 % a block, 96 of 96 picks identical. Light tracing's
   camera-culled shadow rays search as camera rays do, along −direction (`cameraCulledShadowHit`): VCM within 0.5 % a

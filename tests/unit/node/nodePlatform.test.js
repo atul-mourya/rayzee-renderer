@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { nodePlatform } from '@/core/node/NodePlatform.js';
+import { nodePlatform, denoPlatform } from '@/core/node/NodePlatform.js';
 import { NodeWorker } from '@/core/node/NodeWorker.js';
 import { XMLDOMParser } from '@/core/node/XMLDOMParser.js';
 
@@ -133,6 +133,40 @@ describe( 'nodePlatform', () => {
 		expect( [ GPUQueue.prototype.writeBuffer, GPUQueue.prototype.writeTexture ] ).toEqual( wrapped );
 		queue.writeBuffer( 'b', 0, new Uint8Array( new SharedArrayBuffer( 8 ) ) );
 		expect( calls ).toHaveLength( 1 );
+
+	} );
+
+} );
+
+describe( 'denoPlatform', () => {
+
+	it( 'is nodePlatform plus the globals Deno lacks or half-has', () => {
+
+		const names = [ 'requestAnimationFrame', 'cancelAnimationFrame', 'createImageBitmap', 'OffscreenCanvas', 'Worker' ];
+		const saved = Object.fromEntries( names.map( ( name ) => [ name, Object.getOwnPropertyDescriptor( globalThis, name ) ] ) );
+		try {
+
+			installQueue();
+			globalThis.createImageBitmap = () => {};
+
+			globalThis.OffscreenCanvas = class {};
+			const platform = denoPlatform();
+			expect( platform.Worker ).toBe( NodeWorker );
+			expect( globalThis.Worker ).toBe( NodeWorker );
+			expect( globalThis.requestAnimationFrame() ).toBe( 0 );
+			expect( globalThis.createImageBitmap ).toBeUndefined();
+			expect( globalThis.OffscreenCanvas ).toBeUndefined();
+
+		} finally {
+
+			for ( const [ name, descriptor ] of Object.entries( saved ) ) {
+
+				if ( descriptor ) Object.defineProperty( globalThis, name, descriptor );
+				else delete globalThis[ name ];
+
+			}
+
+		}
 
 	} );
 
