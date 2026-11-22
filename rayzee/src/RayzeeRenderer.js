@@ -4,6 +4,7 @@ import { Scene, EventDispatcher, Box3, Matrix4, REVISION } from 'three';
 import { RectAreaLightTexturesLib } from 'three/addons/lights/RectAreaLightTexturesLib.js';
 import { SceneHelpers } from './scene/SceneHelpers.js';
 import { PathTracer } from './pathtracer/PathTracer.js';
+import { RAY_QUERY_FEATURE } from './pathtracer/HardwareSearch.js';
 import { measureUploadPacing, textureLayerSink } from './pathtracer/PathTracerStage.js';
 import { Compositor } from './pipeline/Compositor.js';
 import { RenderPipeline } from './pipeline/RenderPipeline.js';
@@ -2086,6 +2087,8 @@ export class RayzeeRenderer extends EventDispatcher {
 				strict: this._issues.strict,
 				deterministic: this.isDeterministic,
 				lockstep: !! stage?.accumulationLockstep,
+				search: stage?.searchName ?? null,
+				searchFallback: stage?.searchFallback ?? null,
 			},
 			render: stage ? {
 				width: stage.width,
@@ -3083,7 +3086,7 @@ export class RayzeeRenderer extends EventDispatcher {
 		try {
 
 			device = await adapter.requestDevice( {
-				requiredFeatures: THREE_DEVICE_FEATURES.filter( ( name ) => adapter.features.has( name ) ),
+				requiredFeatures: [ ...THREE_DEVICE_FEATURES, RAY_QUERY_FEATURE ].filter( ( name ) => adapter.features.has( name ) ),
 				requiredLimits,
 			} );
 
@@ -3221,6 +3224,8 @@ export class RayzeeRenderer extends EventDispatcher {
 	_wireEvents() {
 
 		this.settings.bind( this._settingsBindings() );
+		// Before any kernel builds, so the first scene's compile is the only one.
+		this.stages.pathTracer?.setHardwareRayTracing?.( this.settings.get( 'hardwareRayTracing' ) );
 
 		this.renderer.toneMappingExposure = this.settings.get( 'exposure' ) ?? 1.0;
 

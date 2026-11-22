@@ -282,6 +282,7 @@ export class PathTracerStage extends RenderStage {
 		this.materialData.callbacks.onTriangleDataChanged = ( runs = null ) => {
 
 			if ( ! this.triangleShadeAttr ) return;
+			this.placementEdits ++;
 			if ( ! runs ) return this._uploadTriangles( 0, this._triangleRecordCount, { geo: false } );
 			for ( let r = 0; r < runs.length; ) {
 
@@ -350,6 +351,10 @@ export class PathTracerStage extends RenderStage {
 		this._triangleRecordCount = 0;
 		this.triangleStorageNode = null;
 		this.triangleCount = 0;
+		// Edits uploaded since the scene was set: placements (moves, visibility, material flags) and geometry (refits). A
+		// search with structures of its own follows them (pathtracer/HardwareSearch.js).
+		this.placementEdits = 0;
+		this.geometryEdits = 0;
 
 		// BVH data (storage buffer for WebGPU)
 		this.bvhStorageAttr = null;
@@ -1502,6 +1507,7 @@ export class PathTracerStage extends RenderStage {
 	_flushBVHEdits() {
 
 		if ( ! this.bvhStorageAttr ) return;
+		if ( this._dirtyBVHLeaves?.size ) this.placementEdits ++;
 		// Not on the GPU yet: the wide build copies the edits in.
 		if ( this.bvhStorageAttr.binaryOnly ) {
 
@@ -1620,6 +1626,7 @@ export class PathTracerStage extends RenderStage {
 	 */
 	updateTriangleData( triangleData, ranges ) {
 
+		this.geometryEdits ++;
 		if ( triangleData?.chunks?.length > 1 ) this._triangleRecords = triangleData;
 		else if ( triangleData ) this._triangleFlat = triangleData.chunks ? triangleData.chunks[ 0 ] : triangleData;
 		if ( ranges ) this.updateBufferRanges( ranges, [] );
@@ -1642,6 +1649,7 @@ export class PathTracerStage extends RenderStage {
 
 	updateBVHData( bvhData, ranges ) {
 
+		this.placementEdits ++;
 		if ( this._wideBuilt ) {
 
 			if ( bvhData?.chunks?.length > 1 ) this._bvhRecords = bvhData;
@@ -1684,6 +1692,9 @@ export class PathTracerStage extends RenderStage {
 	 * @param {Array<{offset: number, count: number}>} bvhRanges - Dirty BVH node ranges (element index + count)
 	 */
 	updateBufferRanges( triRanges, bvhRanges ) {
+
+		if ( triRanges.length > 0 ) this.geometryEdits ++;
+		if ( bvhRanges.length > 0 ) this.placementEdits ++;
 
 		if ( this.triangleGeoAttr && triRanges.length > 0 ) {
 

@@ -7,7 +7,8 @@
  * loop), `createStorageAttribute` / `updateAttribute` (GPU-only storage),
  * `initTimestampQuery` (enlarges the timestamp query pool so the
  * wavefront tracer's high per-frame compute-pass count doesn't overflow it) and
- * `createProgram` (compute functions' own variables under WebKit's 8 KB).
+ * `createProgram` (compute functions' own variables under WebKit's 8 KB), and `createComputePipeline` / `compute`
+ * (kernels that search a hardware ray tracing structure, through a backend's `rayQueries`).
  *
  * Exports `gpuOnlyStorageAttribute()`, a storage attribute with no CPU backing array.
  */
@@ -473,6 +474,62 @@ WebGPUBackend.prototype.createProgram = function ( program ) {
 		program.code = code;
 
 	}
+
+};
+
+// ---------------------------------------------------------------------------
+// 4. Kernels with a hardware search
+// ---------------------------------------------------------------------------
+// TSL has no acceleration-structure binding nor ray query. A backend's `rayQueries` (pathtracer/HardwareSearch.js)
+// claims a compute program that calls its WGSL placeholders: the pipeline is built from the program rewritten to search
+// the structure, bound in one group after three's, and each dispatch of it binds that group.
+
+const _origCreateComputePipeline = WebGPUBackend.prototype.createComputePipeline;
+const _origCompute = WebGPUBackend.prototype.compute;
+
+WebGPUBackend.prototype.createComputePipeline = function ( pipeline, bindings, promises = null ) {
+
+	const rayQueries = this.rayQueries;
+	const source = pipeline.computeProgram.code;
+	if ( ! rayQueries?.claims( source ) ) return _origCreateComputePipeline.call( this, pipeline, bindings, promises );
+
+	const device = this.device;
+	const group = bindings.length;
+	const label = `computePipeline_rayQuery_${ pipeline.computeProgram.name ?? '' }`;
+	const module = device.createShaderModule( { label, code: compactFunctionVariables( rayQueries.rewrite( source, group ) ) } );
+	const layout = device.createPipelineLayout( { bindGroupLayouts: [ ...bindings.map( ( b ) => this.get( b ).layout.layoutGPU ), rayQueries.layout ] } );
+	const descriptor = { label, layout, compute: { module, entryPoint: this.get( pipeline.computeProgram ).module.entryPoint } };
+	const pipelineGPU = this.get( pipeline );
+	pipelineGPU.rayQueryGroup = group;
+	const failed = ( err ) => {
+
+		pipelineGPU.error = true;
+		rayQueries.failed( err );
+
+	};
+
+	if ( promises === null ) {
+
+		device.pushErrorScope( 'validation' );
+		pipelineGPU.pipeline = device.createComputePipeline( descriptor );
+		device.popErrorScope().then( ( err ) => err && failed( err ) );
+		return;
+
+	}
+
+	promises.push( device.createComputePipelineAsync( descriptor ).then( ( gpu ) => {
+
+		pipelineGPU.pipeline = gpu;
+
+	}, failed ) );
+
+};
+
+WebGPUBackend.prototype.compute = function ( computeGroup, computeNode, bindings, pipeline, dispatchSize = null ) {
+
+	const group = this.get( pipeline ).rayQueryGroup;
+	if ( group !== undefined ) this.get( computeGroup ).passEncoderGPU.setBindGroup( group, this.rayQueries.group );
+	return _origCompute.call( this, computeGroup, computeNode, bindings, pipeline, dispatchSize );
 
 };
 

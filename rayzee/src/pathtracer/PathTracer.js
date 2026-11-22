@@ -39,6 +39,8 @@ import { LIGHT_FLOATS } from './UniformManager.js';
 import { MAX_STORAGE_TEXTURE_SIZE } from './StorageTexturePool.js';
 import { readPixels } from '../output/TextureReadback.js';
 import { ISSUE_CODES } from '../EngineIssues.js';
+import { checkSceneSearch, MAX_SEARCH_DISAGREEMENT } from '../shaders/kernels/SearchCheck.js';
+import { HardwareSearch, hardwareSearchSupported } from './HardwareSearch.js';
 import { getWorkingMatrix } from '../color/WorkingMatrix.js';
 import { createLogger, fmt } from '../Logger.js';
 import { deviceMemoryGB } from '../memory/HostMemory.js';
@@ -87,6 +89,14 @@ export class PathTracer extends PathTracerStage {
 		// The background compile of the kernels last built (_compileKernels), and its build's number.
 		this._kernelsCompiling = null;
 		this._kernelGeneration = 0;
+		// A search standing in for the BVH walk (SceneResources SceneSearch), checked against it after each build; the one
+		// the kernels were built with (null where the scene needs the walk), and the hardware's.
+		this._search = null;
+		this._compiledSearch = null;
+		this._hardware = null;
+		this._searchChecked = 0;
+		this._searchStale = false;
+		this._searchRecheck = null;
 
 		// Aux MRT (normalDepth + albedo) feeds only the denoiser/OIDN. When no denoiser is active the
 		// wavefront skips those writes (Generate/Shade G-buffer + FinalWrite stores). Gated by a live
@@ -627,6 +637,10 @@ export class PathTracer extends PathTracerStage {
 		// Kernels not built yet (first frame / mid-resize) — skip until ready.
 		if ( ! this.isReady || ! this._wavefrontReady ) return;
 
+		// The search's structures follow the scene's edits; changed, it is checked again, at most every 2 s.
+		if ( this._compiledSearch?.beforeFrame?.() ) this._searchStale = true;
+		if ( this._searchStale ) this._recheckSearch();
+
 		// The packed light buffer was grow-reallocated at runtime (emissive set grew) or a light list grew —
 		// the compiled kernels still bind the old one, so rebuild before rendering. Likewise a changed output request.
 		// A layer some material now uses is compiled in at once; one nothing uses any more waits for the next build.
@@ -1162,7 +1176,8 @@ export class PathTracer extends PathTracerStage {
 	_compileKernels() {
 
 		const generation = ++ this._kernelGeneration;
-		if ( ! KernelManager.canCompileInBackground ) {
+		const search = this._compiledSearch;
+		if ( ! KernelManager.canCompileInBackground && ! search ) {
 
 			this._kernelsCompiling = null;
 			this._wavefrontReady = true;
@@ -1172,16 +1187,102 @@ export class PathTracer extends PathTracerStage {
 
 		const kernels = this._kernelManager;
 		this.emit( 'pathtracer:compiling', { compiling: true } );
-		this._kernelsCompiling = kernels.compile()
-			.catch( ( error ) => log.warn( `background kernel compile failed — compiling at first dispatch: ${error?.message ?? error}` ) )
-			.then( () => {
+		const compiled = KernelManager.canCompileInBackground
+			? kernels.compile().catch( ( error ) => log.warn( `background kernel compile failed — compiling at first dispatch: ${error?.message ?? error}` ) )
+			: Promise.resolve();
+		this._kernelsCompiling = compiled
+			.then( () => ( search && generation === this._kernelGeneration ? this._searchAgrees( search ) : true ) )
+			.then( ( agrees ) => {
 
 				if ( generation !== this._kernelGeneration ) return;
 				this._kernelsCompiling = null;
+				if ( ! agrees ) return this.setSceneSearch( null );
 				this._wavefrontReady = true;
 				this.emit( 'pathtracer:compiling', { compiling: false } );
 
 			} );
+
+	}
+
+	/**
+	 * Finds hits with `search` in place of the BVH walk (null: the walk): the kernels are rebuilt with it, and each build
+	 * traces it against the walk first (shaders/kernels/SearchCheck.js) — past MAX_SEARCH_DISAGREEMENT it is dropped and
+	 * `search.disagrees` recorded.
+	 * @param {?import('../shaders/SceneResources.js').SceneSearch} search
+	 */
+	setSceneSearch( search ) {
+
+		if ( search === this._search ) return;
+		this._search = search;
+		if ( ! this._kernelManager ) return;
+		this._kernelManager.dispose();
+		this._wavefrontReady = false;
+		this._buildWavefrontKernels();
+
+	}
+
+	/**
+	 * Searches with the GPU's ray tracing hardware where the device has it (HardwareSearch.js), else the BVH walk. A
+	 * scene the hardware cannot hold (compact layout, copy clusters, data on disk) keeps the walk.
+	 * @param {boolean} enabled
+	 */
+	setHardwareRayTracing( enabled ) {
+
+		if ( enabled && ! this._hardware && hardwareSearchSupported( this.renderer?.backend?.device ) ) this._hardware = new HardwareSearch( this );
+		if ( ! this._hardware ) return;
+		if ( enabled ) this.setSceneSearch( this._hardware.search );
+		else if ( this._search === this._hardware.search ) this.setSceneSearch( null );
+
+	}
+
+	/** The search the kernels find hits with: 'hardware', or 'bvh' (the walk). */
+	get searchName() {
+
+		return this._compiledSearch?.name ?? 'bvh';
+
+	}
+
+	/** Why the walk searches where the hardware could: the scene it cannot hold, or null. */
+	get searchFallback() {
+
+		return this._search && ! this._compiledSearch ? this._search.reason?.() ?? null : null;
+
+	}
+
+	/** @private */
+	_recheckSearch() {
+
+		const search = this._compiledSearch;
+		if ( this._searchRecheck || performance.now() - this._searchChecked < 2000 ) return;
+		this._searchStale = false;
+		this._searchRecheck = this._searchAgrees( search ).then( ( agrees ) => {
+
+			this._searchRecheck = null;
+			if ( ! agrees && this._compiledSearch === search ) this.setSceneSearch( null );
+
+		} );
+
+	}
+
+	/** @private */
+	async _searchAgrees( search ) {
+
+		try {
+
+			const failure = search.failure?.();
+			if ( failure ) throw new Error( failure );
+			const result = await checkSceneSearch( this, { ...this._kernelResources, search: null }, search );
+			this._searchChecked = performance.now();
+			if ( ! result || result.disagreement <= MAX_SEARCH_DISAGREEMENT ) return true;
+			this.issues?.warn( ISSUE_CODES.SEARCH_DISAGREES, `the hit search disagreed with the BVH walk on ${result.disagree} of ${result.rays} rays: the walk is used`, result );
+
+		} catch ( error ) {
+
+			this.issues?.warn( ISSUE_CODES.SEARCH_DISAGREES, `the hit search could not be checked: the walk is used (${error?.message ?? error})`, { error: String( error?.message ?? error ) } );
+
+		}
+
+		return false;
 
 	}
 
@@ -2153,7 +2254,10 @@ export class PathTracer extends PathTracerStage {
 		const freshLinearBuckets = buildBucketTextureNodes( _mat.linearBuckets );
 		// This renderer's resources, in the build context of each kernel that samples them (SceneResources.js).
 		// Alpha-cutout shadow rays sample albedo (sRGB pool).
-		const resources = {
+		// The search prepares its structures for this scene first; one that cannot leaves the walk in place.
+		const search = this._search?.prepare?.() === false ? null : this._search;
+		this._compiledSearch = search;
+		const resources = this._kernelResources = {
 			srgbBuckets: freshSrgbBuckets,
 			linearBuckets: freshLinearBuckets,
 			shadowAlbedoMaps: freshSrgbBuckets,
@@ -2177,6 +2281,7 @@ export class PathTracer extends PathTracerStage {
 				headers: this._volumeHeaders, atlas: this._volumeAtlasNode, invAtlasSize: this._volumeAtlasInverse, count: this._volumeCount,
 				emission: this._volumeChannels > 1, seed: this.seedFrame,
 			} : null,
+			search,
 		};
 		this._compiledFog = resources.fog !== null;
 		this._compiledVolumes = this._volumesNeeded();
@@ -2204,8 +2309,9 @@ export class PathTracer extends PathTracerStage {
 			maxRayCount: this._wfMaxRayCount,
 			shadowTerminatorOffset: this.shadowTerminatorOffset,
 		} );
+		// In the scene's resources for its search alone: Extend samples no texture.
 		this._kernelManager.register( 'extend',
-			extFn().compute(
+			withSceneResources( extFn(), resources ).compute(
 				[ Math.ceil( maxRays / EXTEND_WG_SIZE ), 1, 1 ],
 				[ EXTEND_WG_SIZE, 1, 1 ]
 			)
@@ -2551,6 +2657,8 @@ export class PathTracer extends PathTracerStage {
 
 	dispose() {
 
+		this._hardware?.dispose();
+		this._hardware = this._search = this._compiledSearch = null;
 		super.dispose();
 		this._packedBuffers?.dispose();
 		this._queueManager?.dispose();

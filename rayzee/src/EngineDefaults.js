@@ -26,6 +26,7 @@ export const ENGINE_DEFAULTS = deepFreeze( {
 	shadowTerminatorOffset: 0.1, // Cycles' Geometry Offset at Blender's default; 0 turns it off
 	globalIlluminationIntensity: 1,
 	wavefrontSortMaterials: true, // sort rays by material before Shade (above 8 materials); read when kernels build
+	hardwareRayTracing: true, // find hits with the GPU's ray tracing hardware where the host's WebGPU offers ray queries
 
 	// Sampling and convergence
 	maxSamples: 60,

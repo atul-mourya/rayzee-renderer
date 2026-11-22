@@ -93,7 +93,8 @@ here, or `engine.settings` before loading the model.
 
 **Provenance.** `engine.getProvenance()` — also `frame.provenance` from `captureHeadless` — is plain
 JSON naming what produced the image: engine and three.js versions, the adapter, every live setting with its source, the colour pipeline, the render size and
-samples, whether it ran headless, strict, deterministic or lockstepped, the denoisers (`denoise.live`, and
+samples, whether it ran headless, strict, deterministic or lockstepped, which hit search ran (`mode.search`: `'bvh'` or
+`'hardware'`), the denoisers (`denoise.live`, and
 `denoise.final`: the OIDN tier, weights file, precision and tile), and the camera as it was rendered (`camera`:
 `position`, `worldToCamera`, `projection` — three.js's column-major matrices, looking down −z, a mirrored camera's
 mirror kept — `fov`, `aspect`, `near`, `far`, `orthographic`). An exported EXR also carries the camera as OpenEXR's

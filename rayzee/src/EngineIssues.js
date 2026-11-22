@@ -44,6 +44,7 @@ export const ISSUE_CODES = Object.freeze( {
 	SETTING_IGNORED: 'setting.ignored',
 	RENDER_NON_FINITE_SAMPLES: 'render.non_finite_samples',
 	VOLUME_DOWNSAMPLED: 'volume.downsampled',
+	SEARCH_DISAGREES: 'search.disagrees',
 } );
 
 /** Strict throws on ERROR only. */
