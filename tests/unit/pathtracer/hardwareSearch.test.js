@@ -194,6 +194,7 @@ describe( 'HardwareSearch', () => {
 		const s = stage();
 		const search = new HardwareSearch( s );
 		expect( s.renderer.backend.rayQueries ).toBe( search );
+		expect( s.geoUsage ).toBe( 1 << 10 ); // the geo store is created as a BLAS input, built from in place
 		search.prepare();
 		const kernel = 'fn rayzeeRayQueryClosestHit ( origin: vec3f, direction: vec3f, cull: u32 ) -> vec4u {\n\treturn vec4u( 0u );\n}\nfn main() {}\n';
 		expect( search.claims( kernel ) ).toBe( true );
@@ -207,6 +208,7 @@ describe( 'HardwareSearch', () => {
 		expect( code ).not.toMatch( /while\s*\(\s*rayQueryProceed/ );
 		search.dispose();
 		expect( s.renderer.backend.rayQueries ).toBe( null );
+		expect( s.geoUsage ).toBe( 0 );
 
 	} );
 

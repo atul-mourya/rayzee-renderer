@@ -355,6 +355,8 @@ export class PathTracerStage extends RenderStage {
 		// search with structures of its own follows them (pathtracer/HardwareSearch.js).
 		this.placementEdits = 0;
 		this.geometryEdits = 0;
+		// Usage bits beyond WebGPU's own the geo store is created with (a hardware search's structure input), or 0.
+		this.geoUsage = 0;
 
 		// BVH data (storage buffer for WebGPU)
 		this.bvhStorageAttr = null;
@@ -956,6 +958,8 @@ export class PathTracerStage extends RenderStage {
 			? new StorageParts( n * TRI_SHADE_ROWS * 4, TRI_SHADE_ROWS * 4, max, Uint32Array )
 			: new StorageParts( n * 2, 2, max, Uint32Array, 2 );
 		shade.withoutUV = ! textureCoordinates;
+		// A hardware search builds its structures from the geo store in place where it may (geoUsage, HardwareSearch.js).
+		if ( geo && this.geoUsage ) for ( const attr of geo.attrs ) attr.extraUsage = this.geoUsage;
 		this._assertBindings( { geo: geo ? geo.attrs.length : 1, shade: shade.attrs.length, bvh: 1 } );
 		geo?.create( this.renderer.backend );
 		shade.create( this.renderer.backend );

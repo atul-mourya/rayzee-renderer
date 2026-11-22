@@ -23,9 +23,12 @@ const LANES = TRIANGLE_DATA_LAYOUT.FLOATS_PER_TRIANGLE;
 const FLAGS_LANE = TRIANGLE_DATA_LAYOUT.MATERIAL_FLAGS_OFFSET;
 // TLAS instances a scene may hold: wgpu's custom data and DX12's instance id are 24 bits.
 const MAX_INSTANCES = LEAF_BITS;
-// Triangles past which the walk searches: the structures copy the geo store (48 B a triangle) and build their own BLASes
-// beside it, memory the walk does not need.
+// Triangles past which the walk searches: the BLASes beside the geo store (and a copy of it, where it was created without
+// BLAS_INPUT) are memory the walk does not need.
 const MAX_TRIANGLES = 20_000_000;
+
+// wgpu's BufferUsages::BLAS_INPUT: a geo store created with it is read in place by the build, not copied.
+const BLAS_INPUT = 1 << 10;
 
 const MISS = 0xffffffff;
 const closestHitFn = /*@__PURE__*/ wgslFn( `
@@ -184,6 +187,7 @@ export class HardwareSearch {
 			{ binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } },
 		] } );
 		this.backend.rayQueries = this;
+		stage.geoUsage = BLAS_INPUT;
 
 		/** @type {import('../shaders/SceneResources.js').SceneSearch} */
 		this.search = {
@@ -476,6 +480,7 @@ export class HardwareSearch {
 		this.table?.destroy();
 		this.table = null;
 		if ( this.backend.rayQueries === this ) this.backend.rayQueries = null;
+		this.stage.geoUsage = 0;
 
 	}
 

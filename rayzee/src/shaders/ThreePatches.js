@@ -105,7 +105,8 @@ WebGPUBackend.prototype.createStorageAttribute = function ( attribute ) {
 	data.buffer = this.device.createBuffer( {
 		label: bufferAttribute.name,
 		size: bufferAttribute.gpuByteLength,
-		usage: GPUBufferUsage.STORAGE | GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
+		// `extraUsage`: bits beyond WebGPU's own (a hardware search's structure input, HardwareSearch.js)
+		usage: GPUBufferUsage.STORAGE | GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST | ( bufferAttribute.extraUsage ?? 0 ),
 	} );
 
 };
