@@ -1235,6 +1235,13 @@ export class PathTracer extends PathTracerStage {
 
 	}
 
+	/** The search this scene's kernels were built with, for another stage's kernels to use too; null = the walk. */
+	get kernelSearch() {
+
+		return this._compiledSearch;
+
+	}
+
 	/** The search the kernels find hits with: 'hardware', or 'bvh' (the walk). */
 	get searchName() {
 

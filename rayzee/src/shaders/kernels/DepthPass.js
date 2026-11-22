@@ -55,6 +55,7 @@ export class DepthPass {
 		const resources = {
 			srgbBuckets: buildBucketTextureNodes( owned ), linearBuckets: buildBucketTextureNodes( null ),
 			shadowAlbedoMaps: null, goboMaps: null, iesProfiles: null, alphaShadows: null,
+			search: stage.kernelSearch ?? null,
 		};
 		const kernel = withSceneResources( this._kernel( nodes, storage( materials, 'vec4', materials.count ).toReadOnly(), storage( attribute, 'float', width * height ) ), resources )
 			.compute( [ Math.ceil( width / WG ), Math.ceil( height / WG ), 1 ], [ WG, WG, 1 ] );

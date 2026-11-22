@@ -591,7 +591,8 @@ Highlights:
   from each hit, both ways); past 0.1 % of rays answered differently the walk is used and `search.disagrees` recorded.
   `tests/gpu/sceneSearch.test.js` holds a brute-force search to the walk and a wrong one to the drop.
   The hardware's (`pathtracer/HardwareSearch.js`, setting `hardwareRayTracing`) is one, where the device has ray queries:
-  its placeholders are filled and its structures bound by `ThreePatches.js` §4.
+  its placeholders are filled and its structures bound by `ThreePatches.js` §4. NormalDepth, DepthPass and GPU picking
+  build with the path tracer's (`pathTracer.kernelSearch`).
 
 Mesh visibility is maintained CPU-side by `PathTracerStage._patchTLASLeafVisibility()` (driven by `updateAllMeshVisibility()`, `setMeshVisibilityData()` and `updateMeshVisibility()`), which writes the flag into the combined BVH buffer at the TLAS leaf — or the copy's hidden bit in its cluster leaf; `_flushBVHEdits()` uploads only the touched leaves. World visibility is resolved by walking the parent chain (`_isWorldVisible`).
 

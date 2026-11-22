@@ -228,8 +228,10 @@ the adapter has it and, with the setting on, hands the kernels a `SceneSearch` w
   query and opaque geometry only, until naga supports it; `tests/unit/pathtracer/hardwareSearch.test.js` fails on a `while ( rayQueryProceed`.
 - ⚠️ naga's Metal output also ignored `CULL_BACK_FACING` / `CULL_FRONT_FACING` (a TODO on winding): patched locally;
   `CULL_BACK_FACING` culls what three.js calls a triangle's back. The engine no longer relies on either.
-- Not on the hardware yet: NormalDepth, DepthPass and GPU picking (built without the search), and light tracing's
-  camera-culled shadow rays. Kernels with the search use two more storage buffers: Shade reaches 10 of 10.
+- NormalDepth, DepthPass and GPU picking search with the path tracer's search too (`pathTracer.kernelSearch`, their
+  kernels rebuilt when it changes): NRD's output within 0.7 % a block, 96 of 96 picks identical. Not on the hardware
+  yet: light tracing's camera-culled shadow rays. Kernels with the search use two more storage buffers: Shade reaches
+  10 of 10.
 
 Gate: quality goldens within noise, ≥ 99.9 % of rays agreeing with the software walk in a GPU test, and frames as much
 faster as Phase 0 projected.
@@ -240,8 +242,10 @@ faster as Phase 0 projected.
 - **Alpha-tested and transmissive shadows**: done without a candidate loop (above); a candidate loop would let a
   see-through instance's opaque triangles end the search early, once naga's Metal output can run one.
 - **Moves — done**: a move, visibility or material-flag change rebuilds the TLAS (3.7 / 30 / 297 ms at 100K / 1M / 6M
-  instances); a refit copies the geo store again and rebuilds every BLAS (not yet only the refitted ones). The draft
-  adds refit and compaction; wgpu's binding has neither.
+  instances); a refit rebuilds the BLASes of the templates whose triangles it wrote (`takeGeometryEdits`): on the room,
+  one 17k-triangle mesh ~7 ms of GPU against ~46 ms for every BLAS. The geo store is created with wgpu's BLAS_INPUT
+  usage, so the BLASes are built from it in place, with no copy. The draft adds refit and compaction; wgpu's binding has
+  neither.
 - **Large scenes**: ~290 B a TLAS instance (1.7 GB at 6M) and at most 16.7M instances a TLAS (DX12's limit, wgpu's
   24-bit id): the island's 51M placements (~15 GB) do not fit. Small instanced copies grouped into shared BLASes, or
   such scenes kept on the software walk. The compact layout (spilled scenes) keeps no plain positions, which a BLAS reads.
