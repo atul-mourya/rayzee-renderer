@@ -180,6 +180,15 @@ describe( 'HardwareSearch', () => {
 		s.geometryEdits ++;
 		expect( search.refresh() ).toBe( true );
 		expect( s.gpu.calls.updates.at( - 1 ) ).toMatchObject( { kind: 'geometries', geometries: [ 0, 1, 2 ] } );
+		// a refit of template 2's triangle (3) rebuilds its BLAS alone; edits of unknown extent rebuild every one
+		s.takeGeometryEdits = () => [[ 3, 1 ]];
+		s.geometryEdits ++;
+		search.refresh();
+		expect( s.gpu.calls.updates.at( - 1 ) ).toMatchObject( { kind: 'geometries', geometries: [ 2 ] } );
+		s.takeGeometryEdits = () => null;
+		s.geometryEdits ++;
+		search.refresh();
+		expect( s.gpu.calls.updates.at( - 1 ).geometries ).toEqual( [ 0, 1, 2 ] );
 		// more instances than the scene was built for: built anew
 		s._instanceTable.visible = [ 1, 1, 1, 1 ];
 		s.placementEdits ++;

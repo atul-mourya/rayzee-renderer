@@ -305,10 +305,9 @@ export class HardwareSearch {
 		let ok;
 		if ( versions.geometry !== was.geometry ) {
 
-			// Refits: positions changed (three uploads them at its next dispatch; copied now, they must be there first).
+			// Refits: the BLASes of the templates whose triangles were written again (a background rebuild reorders them too).
 			this._upload( built.geo );
-			const all = new Uint32Array( built.geometryCount ).map( ( _, i ) => i );
-			ok = this.scene.updateGeometries( this.backend.get( built.geo ).buffer, all, words );
+			ok = this.scene.updateGeometries( this.backend.get( built.geo ).buffer, this._editedGeometries(), words );
 
 		} else {
 
@@ -326,6 +325,24 @@ export class HardwareSearch {
 
 		this._writeTable( lookup, false );
 		return true;
+
+	}
+
+	_editedGeometries() {
+
+		const { table, geometryOf, geometryCount } = this._built;
+		const ranges = this.stage.takeGeometryEdits?.() ?? null;
+		if ( ! ranges ) return new Uint32Array( geometryCount ).map( ( _, i ) => i );
+		const edited = [];
+		for ( let t = 0; t < table.templateCount; t ++ ) {
+
+			if ( geometryOf[ t ] < 0 ) continue;
+			const start = table.tplTriOffset[ t ], end = start + table.tplTriCount[ t ];
+			if ( ranges.some( ( [ first, count ] ) => first < end && first + count > start ) ) edited.push( geometryOf[ t ] );
+
+		}
+
+		return new Uint32Array( edited );
 
 	}
 
@@ -360,8 +377,13 @@ export class HardwareSearch {
 
 	}
 
-	// Each template's mask: its sides (a template mixing them shows both) and whether every triangle blocks light.
+	// Each template's mask: its sides (a template mixing them shows both) and whether every triangle blocks light. Read
+	// from every triangle's flags, so kept until a material edit.
 	_masks() {
+
+		const built = this._built;
+		if ( built.masks && built.materialEdits === this.stage.materialEdits ) return built.masks;
+		built.materialEdits = this.stage.materialEdits;
 
 		const stage = this.stage;
 		const table = this._built.table;
@@ -391,7 +413,7 @@ export class HardwareSearch {
 
 		}
 
-		return { masks, sides };
+		return ( built.masks = { masks, sides } );
 
 	}
 
