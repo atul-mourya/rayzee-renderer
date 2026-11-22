@@ -825,7 +825,7 @@ const makeTraverseBVHShadow = ( cameraCulled ) => Fn( ( [
 ], builder ) => {
 
 	const { alphaShadows } = sceneResources( builder );
-	const search = cameraCulled ? null : sceneSearch( builder )?.shadowHit;
+	const search = sceneSearch( builder )?.[ cameraCulled ? 'cameraCulledShadowHit' : 'shadowHit' ];
 
 	// Objects' trees 4-wide (bvh/WideBVH.js) fold their leaves too; a wide node's tag sits among the leaf tags.
 	const wide = bvhBuffer.value?.wide === true;

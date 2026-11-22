@@ -208,6 +208,7 @@ describe( 'HardwareSearch', () => {
 		const kernel = 'fn rayzeeRayQueryClosestHit ( origin: vec3f, direction: vec3f, cull: u32 ) -> vec4u {\n\treturn vec4u( 0u );\n}\nfn main() {}\n';
 		expect( search.claims( kernel ) ).toBe( true );
 		expect( search.claims( 'fn main() {}' ) ).toBe( false );
+		for ( const name of [ 'ShadowHit', 'CulledShadowHit' ] ) expect( search.claims( `fn rayzeeRayQuery${name}( origin: vec3f` ) ).toBe( true );
 		const code = search.rewrite( kernel, 2 );
 		expect( code.startsWith( 'enable wgpu_ray_query;' ) ).toBe( true );
 		expect( code ).toContain( 'rayQueryInitialize' );

@@ -229,9 +229,10 @@ the adapter has it and, with the setting on, hands the kernels a `SceneSearch` w
 - ⚠️ naga's Metal output also ignored `CULL_BACK_FACING` / `CULL_FRONT_FACING` (a TODO on winding): patched locally;
   `CULL_BACK_FACING` culls what three.js calls a triangle's back. The engine no longer relies on either.
 - NormalDepth, DepthPass and GPU picking search with the path tracer's search too (`pathTracer.kernelSearch`, their
-  kernels rebuilt when it changes): NRD's output within 0.7 % a block, 96 of 96 picks identical. Not on the hardware
-  yet: light tracing's camera-culled shadow rays. Kernels with the search use two more storage buffers: Shade reaches
-  10 of 10.
+  kernels rebuilt when it changes): NRD's output within 0.7 % a block, 96 of 96 picks identical. Light tracing's
+  camera-culled shadow rays search as camera rays do, along −direction (`cameraCulledShadowHit`): VCM within 0.5 % a
+  block; the corpus's bidirectional and VCM scenes pass. Kernels with the search use two more storage buffers: Shade
+  reaches 10 of 10.
 
 Gate: quality goldens within noise, ≥ 99.9 % of rays agreeing with the software walk in a GPU test, and frames as much
 faster as Phase 0 projected.
@@ -258,7 +259,7 @@ faster as Phase 0 projected.
   again once 2 s have passed since the last check (emptied on purpose: caught, 4,095 of 4,096 rays, and the next render
   equals the walk's). Rounding counts as agreement — a bounce either search hits within 10⁻³ of the origin's scale, a
   camera hit on a face whose winding and interpolated normal face the ray differently.
-- **The bidirectional integrator**: light tracing's camera-culled shadow rays, and its connections.
+- **The bidirectional integrator — done**: its connections take `shadowHit`, light tracing `cameraCulledShadowHit`.
 
 ### Phase 4 — the browser (the app)
 

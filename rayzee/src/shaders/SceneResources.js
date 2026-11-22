@@ -36,6 +36,8 @@
  *   `cull` (bool) keeps only the sides a camera ray sees (`sideAccepts`), else either side
  * @property {function( { origin: Node, direction: Node, maxDistance: Node } ): SearchHit} [shadowHit] - within
  *   `maxDistance`, any triangle that blocks whatever the settings (`shadowFlagsSettle`), else the nearest one
+ * @property {function( { origin: Node, direction: Node, maxDistance: Node } ): SearchHit} [cameraCulledShadowHit] - as
+ *   shadowHit, among the faces a camera ray along −direction keeps (light tracing's)
  *
  * @typedef {Object} SearchHit
  * @property {Node} didHit - bool

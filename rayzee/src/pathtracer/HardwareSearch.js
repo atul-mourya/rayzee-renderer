@@ -47,7 +47,13 @@ const unpackBarycentrics = /*@__PURE__*/ wgslFn( `
 	}
 ` );
 
-const PLACEHOLDER = /fn\s+rayzeeRayQuery(ClosestHit|ShadowHit)\s*\(/;
+const culledShadowHitFn = /*@__PURE__*/ wgslFn( `
+	fn rayzeeRayQueryCulledShadowHit( origin: vec3f, direction: vec3f, tMax: f32 ) -> vec4u {
+		return vec4u( 0u, 0xffffffffu, 0u, 0u );
+	}
+` );
+
+const PLACEHOLDER = /fn\s+rayzeeRayQuery(ClosestHit|ShadowHit|CulledShadowHit)\s*\(/;
 
 // A query returns distance bits, triangle, TLAS leaf + 1 (0: baked into world space), barycentrics as 2 × 16-bit unorm.
 const searchHit = ( query ) => ( {
@@ -145,7 +151,39 @@ const SHADOW_BODY = /* wgsl */`{
 	return vec4u( 0u, 0xffffffffu, 0u, 0u );
 }`;
 
-const BODIES = { rayzeeRayQueryClosestHit: CLOSEST_BODY, rayzeeRayQueryShadowHit: SHADOW_BODY };
+// Light tracing's shadow ray stands in for a camera ray along −direction: the nearest face that ray keeps, searched as
+// a camera ray's are.
+const CULLED_SHADOW_BODY = /* wgsl */`{
+	let o = abs( origin );
+	var tMin = 8e-6 * max( 1.0, max( o.x, max( o.y, o.z ) ) );
+	for ( var k = 0u; k < 8u; k ++ ) {
+		var rq: ray_query;
+		rayQueryInitialize( &rq, rayzeeTLAS, RayDesc( 1u, 0xffu, tMin, tMax, origin, direction ) );
+		rayQueryProceed( &rq );
+		let hit = rayQueryGetCommittedIntersection( &rq );
+		if ( hit.kind == RAY_QUERY_INTERSECTION_NONE ) {
+			break;
+		}
+		let entry = rayzeeInstances[ hit.instance_index + 1u ];
+		let tri = entry.y + hit.primitive_index;
+		let side = entry.x >> ${SIDE_SHIFT}u;
+		var keep = side == 2u;
+		if ( ! keep ) {
+			let b = hit.barycentrics;
+			let n = normalize( rayzeeNormal( rayzeeGeo[ tri * 3u ].w ) * ( 1.0 - b.x - b.y )
+				+ rayzeeNormal( rayzeeGeo[ tri * 3u + 1u ].w ) * b.x + rayzeeNormal( rayzeeGeo[ tri * 3u + 2u ].w ) * b.y );
+			let d = - dot( hit.world_to_object * vec4f( direction, 0.0 ), n );
+			keep = ( side == 0u && d < -0.0001 ) || ( side == 1u && d > 0.0001 );
+		}
+		if ( keep ) {
+			return vec4u( bitcast<u32>( hit.t ), tri, entry.x & ${LEAF_BITS}u, pack2x16unorm( hit.barycentrics ) );
+		}
+		tMin = max( hit.t * 1.0000003, hit.t + 1e-30 );
+	}
+	return vec4u( 0u, 0xffffffffu, 0u, 0u );
+}`;
+
+const BODIES = { rayzeeRayQueryClosestHit: CLOSEST_BODY, rayzeeRayQueryShadowHit: SHADOW_BODY, rayzeeRayQueryCulledShadowHit: CULLED_SHADOW_BODY };
 
 /** A function's body in WGSL `code`, from the `{` after its name to the matching `}`. */
 function bodyOf( code, name ) {
@@ -194,6 +232,7 @@ export class HardwareSearch {
 			name: 'hardware',
 			closestHit: ( { origin, direction, cull } ) => searchHit( closestHitFn( origin, direction, select( cull, uint( 1 ), uint( 0 ) ) ).toVar() ),
 			shadowHit: ( { origin, direction, maxDistance } ) => searchHit( shadowHitFn( origin, direction, maxDistance ).toVar() ),
+			cameraCulledShadowHit: ( { origin, direction, maxDistance } ) => searchHit( culledShadowHitFn( origin, direction, maxDistance ).toVar() ),
 			prepare: () => this.prepare(),
 			beforeFrame: () => this.refresh(),
 			failure: () => this._failure,
