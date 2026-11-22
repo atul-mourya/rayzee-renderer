@@ -360,6 +360,8 @@ export class PathTracerStage extends RenderStage {
 		this._geometryEditRanges = []; // [ first triangle, count ] since the last takeGeometryEdits(); null = all
 		// Usage bits beyond WebGPU's own the geo store is created with (a hardware search's structure input), or 0.
 		this.geoUsage = 0;
+		// The host's memory in GB, which a hardware search's structures may take a share of (the renderer sets it).
+		this.hostMemoryGB = 4;
 
 		// BVH data (storage buffer for WebGPU)
 		this.bvhStorageAttr = null;

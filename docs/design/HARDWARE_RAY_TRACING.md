@@ -259,8 +259,9 @@ faster as Phase 0 projected.
   24-bit id): the island's 51M placements (~15 GB) do not fit. Small instanced copies grouped into shared BLASes, or
   such scenes kept on the software walk. The compact layout (spilled scenes) keeps no plain positions, which a BLAS reads.
   Built: the walk (and `mode.searchFallback` says why) for the compact layout, copy clusters, a store in parts, data on
-  disk and past 20M triangles — the copy of the geo store and the BLASes beside it, unmeasured past the room. Giving the
-  geo store the BLAS-input usage would drop the copy.
+  disk, and structures past a quarter of the host's memory. Their size, from wgpu's own (`GPURayScene.byteSize`): 147 /
+  204 / 235 B a triangle (classroom, room, zero-day) and ~220 B an instance (the fields): estimated at 240 and 224 B. On
+  this 24 GB Mac the 40M-triangle kroken (~9 GB) keeps the walk. The geo store is a BLAS input itself: no copy.
 - **Robustness — built with Phase 1**: after each kernel build with a search, 4,096 camera rays, a bounce and a shadow
   ray from each hit, traced both ways before the first frame; past 0.1 % answered differently, the walk and
   `search.disagrees`. That would have caught Metal's wrong 6M TLAS. Built: after an edit the structures follow, checked

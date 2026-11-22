@@ -166,6 +166,12 @@ describe( 'HardwareSearch', () => {
 		clustered._instanceTable.clusterCount = 2;
 		expect( new HardwareSearch( clustered ).prepare() ).toBe( false );
 
+		// past a quarter of the host's memory: 20M triangles at ~240 B take ~4.5 GB, a 16 GB host allows 4
+		const big = new HardwareSearch( stage( { triangleCount: 20_000_000, hostMemoryGB: 16 } ) );
+		expect( big.prepare() ).toBe( false );
+		expect( big.reason ).toMatch( /quarter of the host's 16 GB/ );
+		expect( new HardwareSearch( stage( { triangleCount: 20_000_000, hostMemoryGB: 24 } ) ).prepare() ).toBe( true );
+
 	} );
 
 	it( 'follows edits: placements rebuild the instances, geometry the BLASes too', () => {

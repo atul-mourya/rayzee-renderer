@@ -23,9 +23,11 @@ const LANES = TRIANGLE_DATA_LAYOUT.FLOATS_PER_TRIANGLE;
 const FLAGS_LANE = TRIANGLE_DATA_LAYOUT.MATERIAL_FLAGS_OFFSET;
 // TLAS instances a scene may hold: wgpu's custom data and DX12's instance id are 24 bits.
 const MAX_INSTANCES = LEAF_BITS;
-// Triangles past which the walk searches: the BLASes beside the geo store (and a copy of it, where it was created without
-// BLAS_INPUT) are memory the walk does not need.
-const MAX_TRIANGLES = 20_000_000;
+// What the structures take on the GPU, measured on Metal (wgpu's own sizes): 150–235 B a triangle in BLASes, ~220 B an
+// instance in the TLAS. Past a quarter of the host's memory the walk searches: that memory is the walk's to keep.
+const BYTES_PER_TRIANGLE = 240;
+const BYTES_PER_INSTANCE = 224;
+const MEMORY_SHARE = 0.25;
 
 // wgpu's BufferUsages::BLAS_INPUT: a geo store created with it is read in place by the build, not copied.
 const BLAS_INPUT = 1 << 10;
@@ -402,7 +404,9 @@ export class HardwareSearch {
 		if ( stage.compactLayout ) return { ok: false, reason: 'compact layout: no plain positions' };
 		if ( table.clusterCount > 0 ) return { ok: false, reason: 'copy clusters' };
 		if ( stage._geoParts?.attrs.length > 1 ) return { ok: false, reason: 'triangle store in parts' };
-		if ( stage.triangleCount > MAX_TRIANGLES ) return { ok: false, reason: `${stage.triangleCount} triangles: past ${MAX_TRIANGLES}` };
+		const bytes = stage.triangleCount * BYTES_PER_TRIANGLE + table.count * BYTES_PER_INSTANCE;
+		const budget = ( stage.hostMemoryGB ?? 4 ) * 2 ** 30 * MEMORY_SHARE;
+		if ( bytes > budget ) return { ok: false, reason: `the structures would take ~${( bytes / 2 ** 30 ).toFixed( 1 )} GB: past a quarter of the host's ${stage.hostMemoryGB ?? 4} GB` };
 		if ( ! stage._triangleFlat && ! stage._triangleRecords?.chunks?.every( Boolean ) ) return { ok: false, reason: 'triangle records on disk' };
 		if ( ! stage.cpuTree && ! stage._bvhRecords ) return { ok: false, reason: 'BVH on disk' };
 		return { ok: true, table, geo };

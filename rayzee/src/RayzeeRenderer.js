@@ -3225,6 +3225,7 @@ export class RayzeeRenderer extends EventDispatcher {
 
 		this.settings.bind( this._settingsBindings() );
 		// Before any kernel builds, so the first scene's compile is the only one.
+		if ( this.stages.pathTracer ) this.stages.pathTracer.hostMemoryGB = deviceMemoryGB( this._hostMemoryGB ).gb;
 		this.stages.pathTracer?.setHardwareRayTracing?.( this.settings.get( 'hardwareRayTracing' ) );
 
 		this.renderer.toneMappingExposure = this.settings.get( 'exposure' ) ?? 1.0;
