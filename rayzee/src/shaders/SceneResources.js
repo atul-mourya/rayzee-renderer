@@ -24,27 +24,6 @@
  *   rougher; false = every lobe as authored
  * @property {?Object} [fog] - the fog's uniforms ( density, color, anisotropy, boxMin, boxMax, falloff, floor ) while it has a density
  *   (path tracing only); every shadow ray takes its transmittance. null = no fog
- * @property {?SceneSearch} [search] - another way to find hits (a hardware search); null = the BVH walk everywhere
- */
-
-/**
- * A search that stands in for the BVH walk (`shaders/BVHTraversal.js`). Each method is optional: a missing one leaves
- * that walk in place. Each takes TSL nodes and returns a {@link SearchHit}.
- *
- * @typedef {Object} SceneSearch
- * @property {function( { origin: Node, direction: Node, cull: Node } ): SearchHit} [closestHit] - the nearest triangle;
- *   `cull` (bool) keeps only the sides a camera ray sees (`sideAccepts`), else either side
- * @property {function( { origin: Node, direction: Node, maxDistance: Node } ): SearchHit} [shadowHit] - within
- *   `maxDistance`, any triangle that blocks whatever the settings (`shadowFlagsSettle`), else the nearest one
- * @property {function( { origin: Node, direction: Node, maxDistance: Node } ): SearchHit} [cameraCulledShadowHit] - as
- *   shadowHit, among the faces a camera ray along −direction keeps (light tracing's)
- *
- * @typedef {Object} SearchHit
- * @property {Node} didHit - bool
- * @property {Node} distance - float, along the unit direction; read only on a hit
- * @property {Node} triangle - int, the triangle record
- * @property {Node} instanceLeaf - int, the placement's TLAS leaf; -1 for geometry baked into world space
- * @property {Node} barycentrics - vec2, the weights of the triangle's second and third corners
  */
 
 import { context } from 'three/tsl';
@@ -65,13 +44,6 @@ export function sceneResources( builder ) {
 	return resources;
 
 }
-
-/**
- * The hit search the kernel being built uses in place of the BVH walk, or null. Read without the throw: kernels that
- * build no scene resources (picking, depth) search too.
- * @returns {?SceneSearch}
- */
-export const sceneSearch = ( builder ) => builder.context[ KEY ]?.search ?? null;
 
 const SEED_KEY = 'rayzeeSamplerSeed';
 

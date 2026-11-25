@@ -29,7 +29,6 @@
   - [Animation and transforms](/design/ANIMATION.md)
   - [Storage and memory spill](/design/STORAGE.md)
   - [Headless rendering, inside](/design/HEADLESS.md)
-  - [Hardware ray tracing](/design/HARDWARE_RAY_TRACING.md)
   - [Wavefront vs megakernel](/articles/wavefront-vs-megakernel.md)
 - **Contributing**
   - [Regression bench](/design/BENCH.md)

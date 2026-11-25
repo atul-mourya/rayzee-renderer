@@ -91,13 +91,14 @@ const SETTING_ROUTES = {
 	integrator: { handler: 'handleIntegrator', reset: true },
 	shadowRays: { handler: 'handleShadowRays', reset: true },
 	pathRegularization: { handler: 'handlePathRegularization', reset: true },
-	hardwareRayTracing: { handler: 'handleHardwareRayTracing', reset: true },
 	environmentRotation: { handler: 'handleEnvironmentRotation' },
 	// Read when the kernels next build.
 	wavefrontSortMaterials: { handler: 'handleWavefrontSortMaterials', reset: false },
 	// No target: read when a model loads (setMaxTextureSize() also reprocesses the scene now).
 	maxTextureSize: { reset: false },
 	areaLightIntensityScale: { reset: false },
+	// Does nothing: kept so hosts that set it still run (the hardware search was withdrawn in 12.12.1).
+	hardwareRayTracing: { reset: false },
 
 };
 
@@ -354,12 +355,6 @@ export class RenderSettings extends EventDispatcher {
 			handlePathRegularization: ( value ) => {
 
 				stages.pathTracer?.setPathRegularization?.( value );
-
-			},
-
-			handleHardwareRayTracing: ( value ) => {
-
-				stages.pathTracer?.setHardwareRayTracing?.( value );
 
 			},
 

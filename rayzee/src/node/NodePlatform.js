@@ -91,7 +91,7 @@ export function nodePlatform( { decodeImage, threads } = {} ) {
 }
 
 /**
- * {@link nodePlatform} for Deno (its WebGPU is wgpu's, with ray queries where it was built with them), and the globals
+ * {@link nodePlatform} for Deno (its WebGPU is wgpu's), and the globals
  * Deno lacks or half-has: no-op animation frames (three.js stops its frame loop through them, and the kernels then
  * compile in the background), {@link NodeWorker} as the global `Worker` (Deno's takes modules only, and three's Draco
  * and KTX2 decoders start classic ones), and no `createImageBitmap` / `OffscreenCanvas` (Deno has both but no 2D

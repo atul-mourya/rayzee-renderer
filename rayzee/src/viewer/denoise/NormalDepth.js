@@ -152,10 +152,8 @@ export class NormalDepth extends RenderStage {
 		const triSwapped = pt.triangleGeoAttr && pt.triangleGeoAttr !== this._lastTriAttr;
 		const bvhSwapped = pt.bvhStorageAttr && pt.bvhStorageAttr !== this._lastBvhAttr;
 		const matSwapped = matAttr && matAttr !== this._lastMatAttr;
-		// The path tracer's search (its hardware's, or the walk after a failed check): searched with here too.
-		const searchSwapped = ( pt.kernelSearch ?? null ) !== ( this._search ?? null );
 
-		if ( triSwapped || bvhSwapped || matSwapped || searchSwapped ) {
+		if ( triSwapped || bvhSwapped || matSwapped ) {
 
 			// Buffer identity changed → compute's bind group is stale; rebuild.
 			this._computeNode?.dispose?.();
@@ -211,7 +209,6 @@ export class NormalDepth extends RenderStage {
 		const resources = {
 			srgbBuckets: buildBucketTextureNodes( null ), linearBuckets: this._linearBuckets,
 			shadowAlbedoMaps: null, goboMaps: null, iesProfiles: null, alphaShadows: null,
-			search: this._search = this.pathTracer.kernelSearch ?? null,
 		};
 		const camWorld = this.cameraWorldMatrix;
 		const camProjInv = this.cameraProjectionMatrixInverse;

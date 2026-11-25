@@ -282,8 +282,6 @@ export class PathTracerStage extends RenderStage {
 		this.materialData.callbacks.onTriangleDataChanged = ( runs = null ) => {
 
 			if ( ! this.triangleShadeAttr ) return;
-			this.placementEdits ++;
-			this.materialEdits ++;
 			if ( ! runs ) return this._uploadTriangles( 0, this._triangleRecordCount, { geo: false } );
 			for ( let r = 0; r < runs.length; ) {
 
@@ -352,16 +350,6 @@ export class PathTracerStage extends RenderStage {
 		this._triangleRecordCount = 0;
 		this.triangleStorageNode = null;
 		this.triangleCount = 0;
-		// Edits uploaded since the scene was set: placements (moves, visibility, material flags) and geometry (refits). A
-		// search with structures of its own follows them (pathtracer/HardwareSearch.js).
-		this.placementEdits = 0;
-		this.geometryEdits = 0;
-		this.materialEdits = 0; // of those placement edits, the material flags'
-		this._geometryEditRanges = []; // [ first triangle, count ] since the last takeGeometryEdits(); null = all
-		// Usage bits beyond WebGPU's own the geo store is created with (a hardware search's structure input), or 0.
-		this.geoUsage = 0;
-		// The host's memory in GB, which a hardware search's structures may take a share of (the renderer sets it).
-		this.hostMemoryGB = 4;
 
 		// BVH data (storage buffer for WebGPU)
 		this.bvhStorageAttr = null;
@@ -963,8 +951,6 @@ export class PathTracerStage extends RenderStage {
 			? new StorageParts( n * TRI_SHADE_ROWS * 4, TRI_SHADE_ROWS * 4, max, Uint32Array )
 			: new StorageParts( n * 2, 2, max, Uint32Array, 2 );
 		shade.withoutUV = ! textureCoordinates;
-		// A hardware search builds its structures from the geo store in place where it may (geoUsage, HardwareSearch.js).
-		if ( geo && this.geoUsage ) for ( const attr of geo.attrs ) attr.extraUsage = this.geoUsage;
 		this._assertBindings( { geo: geo ? geo.attrs.length : 1, shade: shade.attrs.length, bvh: 1 } );
 		geo?.create( this.renderer.backend );
 		shade.create( this.renderer.backend );
@@ -1516,7 +1502,6 @@ export class PathTracerStage extends RenderStage {
 	_flushBVHEdits() {
 
 		if ( ! this.bvhStorageAttr ) return;
-		if ( this._dirtyBVHLeaves?.size ) this.placementEdits ++;
 		// Not on the GPU yet: the wide build copies the edits in.
 		if ( this.bvhStorageAttr.binaryOnly ) {
 
@@ -1635,8 +1620,6 @@ export class PathTracerStage extends RenderStage {
 	 */
 	updateTriangleData( triangleData, ranges ) {
 
-		this.geometryEdits ++;
-		if ( ! ranges ) this._geometryEditRanges = null;
 		if ( triangleData?.chunks?.length > 1 ) this._triangleRecords = triangleData;
 		else if ( triangleData ) this._triangleFlat = triangleData.chunks ? triangleData.chunks[ 0 ] : triangleData;
 		if ( ranges ) this.updateBufferRanges( ranges, [] );
@@ -1659,7 +1642,6 @@ export class PathTracerStage extends RenderStage {
 
 	updateBVHData( bvhData, ranges ) {
 
-		this.placementEdits ++;
 		if ( this._wideBuilt ) {
 
 			if ( bvhData?.chunks?.length > 1 ) this._bvhRecords = bvhData;
@@ -1701,19 +1683,7 @@ export class PathTracerStage extends RenderStage {
 	 * @param {Array<{offset: number, count: number}>} triRanges - Dirty triangle ranges (element index + count)
 	 * @param {Array<{offset: number, count: number}>} bvhRanges - Dirty BVH node ranges (element index + count)
 	 */
-	/** The triangle ranges geometry edits uploaded since the last call ( [ first, count ] each), or null for all. */
-	takeGeometryEdits() {
-
-		const edits = this._geometryEditRanges;
-		this._geometryEditRanges = [];
-		return edits;
-
-	}
-
 	updateBufferRanges( triRanges, bvhRanges ) {
-
-		if ( triRanges.length > 0 ) this.geometryEdits ++;
-		if ( bvhRanges.length > 0 ) this.placementEdits ++;
 
 		if ( this.triangleGeoAttr && triRanges.length > 0 ) {
 
@@ -1722,10 +1692,7 @@ export class PathTracerStage extends RenderStage {
 			for ( const r of triRanges ) {
 
 				const first = Math.floor( r.offset / lanes );
-				const count = Math.ceil( ( r.offset + r.count ) / lanes ) - first;
-				this._uploadTriangles( first, count );
-				const edits = this._geometryEditRanges;
-				if ( edits ) this._geometryEditRanges = edits.length < 1024 ? ( edits.push( [ first, count ] ), edits ) : null;
+				this._uploadTriangles( first, Math.ceil( ( r.offset + r.count ) / lanes ) - first );
 
 			}
 

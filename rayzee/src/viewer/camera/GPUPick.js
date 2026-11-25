@@ -3,7 +3,6 @@ import { StorageBufferAttribute } from 'three/webgpu';
 import { Vector3 } from 'three';
 import { Ray, HitInfo } from '../../shaders/Struct.js';
 import { traverseBVH } from '../../shaders/BVHTraversal.js';
-import { withSceneResources } from '../../shaders/SceneResources.js';
 import { offsetRayOrigin } from '../../shaders/Common.js';
 import { KernelManager } from '../../pathtracer/KernelManager.js';
 
@@ -49,14 +48,14 @@ export class GPUPick {
 
 	async _trace( stage, origin, direction, skipMesh ) {
 
-		const key = [ stage.bvhStorageAttr, stage._bvhParts, stage._geoParts, stage._clusterParts, stage._shadeParts, stage.kernelSearch ];
+		const key = [ stage.bvhStorageAttr, stage._bvhParts, stage._geoParts, stage._clusterParts, stage._shadeParts ];
 		if ( ! this._key || key.some( ( k, i ) => k !== this._key[ i ] ) ) {
 
 			const nodes = stage.sceneStorageNodes?.();
 			if ( ! nodes ) return undefined;
 			this._kernel?.dispose();
 			this._key = key;
-			this._kernel = this._build( nodes, stage.kernelSearch ?? null );
+			this._kernel = this._build( nodes );
 			this._ready = KernelManager.canCompileInBackground ? this.renderer.compileComputeAsync( this._kernel ) : null;
 
 		}
@@ -79,13 +78,12 @@ export class GPUPick {
 
 	}
 
-	_build( { bvh, triangles }, search ) {
+	_build( { bvh, triangles } ) {
 
 		const out = storage( this._out, 'uint', OUT_LANES );
 		const { skipMesh } = this;
 
-		// In the path tracer's search (the hardware's, where it has one): nothing else of the scene's resources is read.
-		return withSceneResources( Fn( () => {
+		return Fn( () => {
 
 			const origin = vec3( this.origin ).toVar();
 			const direction = vec3( this.direction ).toVar();
@@ -120,7 +118,7 @@ export class GPUPick {
 
 			} );
 
-		} )(), { search } ).compute( 1, [ 1, 1, 1 ] );
+		} )().compute( 1, [ 1, 1, 1 ] );
 
 	}
 

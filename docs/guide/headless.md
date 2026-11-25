@@ -93,8 +93,7 @@ here, or `engine.settings` before loading the model.
 
 **Provenance.** `engine.getProvenance()` — also `frame.provenance` from `captureHeadless` — is plain
 JSON naming what produced the image: engine and three.js versions, the adapter, every live setting with its source, the colour pipeline, the render size and
-samples, whether it ran headless, strict, deterministic or lockstepped, which hit search ran (`mode.search`: `'bvh'` or
-`'hardware'`), the denoisers (`denoise.live`, and
+samples, whether it ran headless, strict, deterministic or lockstepped, the denoisers (`denoise.live`, and
 `denoise.final`: the OIDN tier, weights file, precision and tile), and the camera as it was rendered (`camera`:
 `position`, `worldToCamera`, `projection` — three.js's column-major matrices, looking down −z, a mirrored camera's
 mirror kept — `fov`, `aspect`, `near`, `far`, `orthographic`). An exported EXR also carries the camera as OpenEXR's
@@ -264,8 +263,7 @@ app.dispose();
 **Deno** runs the same build on its own WebGPU (wgpu): `configurePlatform( denoPlatform( { decodeImage } ) )` from
 `rayzee/node` — `nodePlatform` plus no-op animation frames, `NodeWorker` as the global `Worker` and no
 `createImageBitmap` / `OffscreenCanvas` (Deno half-has both). Run with `--node-modules-dir`; the bench corpus matches
-the Chrome goldens there too. A Deno built with ray queries (`wgpu-ray-query`, not yet a release's) also searches with
-the GPU's ray tracing hardware (`hardwareRayTracing`, [Rendering](rendering.md)).
+the Chrome goldens there too.
 
 Measured on this bench's corpus: all 29 scenes match the Chrome goldens (`npm run bench:node`, RMSE
 ≤ 0.0036, no pixel over 0.02 — the readback's tone map accounts for most of it), and a textured glTF with an

@@ -1,4 +1,4 @@
-import { sceneResources, sceneSearch } from './SceneResources.js';
+import { sceneResources } from './SceneResources.js';
 import {
 	Fn,
 	wgslFn,
@@ -401,43 +401,6 @@ export const sideAccepts = ( side, rayDotNormal ) => side.equal( int( 2 ) )
 	.or( side.equal( int( 0 ) ).and( rayDotNormal.lessThan( - 0.0001 ) ) )
 	.or( side.equal( int( 1 ) ).and( rayDotNormal.greaterThan( 0.0001 ) ) );
 
-// A closest hit's record from what any search finds (distance, triangle, barycentrics, placement): the walk fetches
-// normal, uv, material and mesh once, after its loop, and so does a search standing in for it.
-function completeHit( closestHit, ray, bvhBuffer, triangleBuffer, closestTriIdx, closestU, closestV, hitInstLeaf ) {
-
-	If( closestHit.didHit, () => {
-
-		closestHit.hitPoint.assign( ray.origin.add( ray.direction.mul( closestHit.dst ) ) );
-
-		const w = float( 1.0 ).sub( closestU ).sub( closestV );
-
-		// Re-fetch the winning triangle's normals — trading 3 storage reads (once)
-		// for ~3 regs freed across every BVH iteration.
-		const geoRows = triangleGeoRows( triangleBuffer, closestTriIdx ).map( ( row ) => row.toVar() );
-		const [ nA, nB, nC ] = geoRows.map( ( row ) => unpackTriangleNormal( row.w ) );
-		const objectNormal = normalize( nA.mul( w ).add( nB.mul( closestU ) ).add( nC.mul( closestV ) ) ).toVar();
-		If( hitInstLeaf.greaterThanEqual( int( 0 ) ), () => {
-
-			objectNormal.assign( normalize( instanceNormalToWorld( instanceRows( bvhBuffer, hitInstLeaf ), objectNormal ) ) );
-
-		} );
-
-		closestHit.normal.assign( objectNormal );
-
-		const uvData1 = uintBitsToFloat( triangleRow( triangleBuffer, closestTriIdx, 3 ) );
-		const uvData2 = triangleRow( triangleBuffer, closestTriIdx, 4 ).toVar();
-		closestHit.uv.assign(
-			uvData1.xy.mul( w ).add( uvData1.zw.mul( closestU ) ).add( uintBitsToFloat( uvData2.xy ).mul( closestV ) )
-		);
-		closestHit.materialIndex.assign( int( uvData2.z.bitAnd( uint( TRI_MATERIAL_MASK ) ) ) );
-		closestHit.meshIndex.assign( int( uvData2.w ) );
-		closestHit.instanceLeaf.assign( hitInstLeaf );
-		closestHit.triangleIndex.assign( closestTriIdx );
-
-	} );
-
-}
-
 // Factory: the boxTests/triTests debug counters are compiled OUT of the hot closest-hit
 // path (extend/normalDepth use traverseBVH = trackStats false) — only the debug viz reads
 // them, and keeping them live across the traversal loop costs registers/occupancy.
@@ -447,7 +410,7 @@ const makeTraverseBVH = ( trackStats ) => Fn( ( [
 	triangleBuffer,
 	insideMedium, // optional: when true (ray inside a medium), bypass front/back culling
 	cullBackFaces, // optional, default true: false hits either side, as shadow rays do
-], builder ) => {
+] ) => {
 
 	// Culling is for what the camera sees through; a bounce culling it leaks light through hollow models.
 	const eitherSide = ( insideMedium ?? tslBool( false ) ).or( ( cullBackFaces ?? tslBool( true ) ).not() ).toVar();
@@ -477,21 +440,6 @@ const makeTraverseBVH = ( trackStats ) => Fn( ( [
 	const closestTriIdx = int( - 1 ).toVar();
 	const closestU = float( 0.0 ).toVar();
 	const closestV = float( 0.0 ).toVar();
-
-	const search = sceneSearch( builder )?.closestHit;
-	if ( search ) {
-
-		const hit = search( { origin: ray.origin, direction: ray.direction, cull: eitherSide.not() } );
-		closestHit.didHit.assign( hit.didHit );
-		closestHit.dst.assign( select( hit.didHit, hit.distance, float( 1e20 ) ) );
-		closestTriIdx.assign( hit.triangle );
-		const barycentrics = vec2( hit.barycentrics ).toVar();
-		closestU.assign( barycentrics.x );
-		closestV.assign( barycentrics.y );
-		completeHit( closestHit, ray, bvhBuffer, triangleBuffer, closestTriIdx, closestU, closestV, int( hit.instanceLeaf ).toVar() );
-		return closestHit;
-
-	}
 
 	// Stack (native WGSL array — O(1) read/write)
 	const stack = createStack( stackDepth );
@@ -802,7 +750,37 @@ const makeTraverseBVH = ( trackStats ) => Fn( ( [
 
 	} );
 
-	completeHit( closestHit, ray, bvhBuffer, triangleBuffer, closestTriIdx, closestU, closestV, hitInstLeaf );
+	// Deferred: compute normal, hitPoint, UVs, and fetch matIdx/meshIndex once for the final closest hit
+	If( closestHit.didHit, () => {
+
+		closestHit.hitPoint.assign( ray.origin.add( ray.direction.mul( closestHit.dst ) ) );
+
+		const w = float( 1.0 ).sub( closestU ).sub( closestV );
+
+		// Re-fetch the winning triangle's normals — trading 3 storage reads (once)
+		// for ~3 regs freed across every BVH iteration.
+		const geoRows = triangleGeoRows( triangleBuffer, closestTriIdx ).map( ( row ) => row.toVar() );
+		const [ nA, nB, nC ] = geoRows.map( ( row ) => unpackTriangleNormal( row.w ) );
+		const objectNormal = normalize( nA.mul( w ).add( nB.mul( closestU ) ).add( nC.mul( closestV ) ) ).toVar();
+		If( hitInstLeaf.greaterThanEqual( int( 0 ) ), () => {
+
+			objectNormal.assign( normalize( instanceNormalToWorld( instanceRows( bvhBuffer, hitInstLeaf ), objectNormal ) ) );
+
+		} );
+
+		closestHit.normal.assign( objectNormal );
+
+		const uvData1 = uintBitsToFloat( triangleRow( triangleBuffer, closestTriIdx, 3 ) );
+		const uvData2 = triangleRow( triangleBuffer, closestTriIdx, 4 ).toVar();
+		closestHit.uv.assign(
+			uvData1.xy.mul( w ).add( uvData1.zw.mul( closestU ) ).add( uintBitsToFloat( uvData2.xy ).mul( closestV ) )
+		);
+		closestHit.materialIndex.assign( int( uvData2.z.bitAnd( uint( TRI_MATERIAL_MASK ) ) ) );
+		closestHit.meshIndex.assign( int( uvData2.w ) );
+		closestHit.instanceLeaf.assign( hitInstLeaf );
+		closestHit.triangleIndex.assign( closestTriIdx );
+
+	} );
 
 	return closestHit;
 
@@ -825,7 +803,6 @@ const makeTraverseBVHShadow = ( cameraCulled ) => Fn( ( [
 ], builder ) => {
 
 	const { alphaShadows } = sceneResources( builder );
-	const search = sceneSearch( builder )?.[ cameraCulled ? 'cameraCulledShadowHit' : 'shadowHit' ];
 
 	// Objects' trees 4-wide (bvh/WideBVH.js) fold their leaves too; a wide node's tag sits among the leaf tags.
 	const wide = bvhBuffer.value?.wide === true;
@@ -845,28 +822,6 @@ const makeTraverseBVHShadow = ( cameraCulled ) => Fn( ( [
 		boxTests: int( 0 ),
 		triTests: int( 0 ),
 	} ).toVar();
-
-	if ( search ) {
-
-		// The record() below, for what the search found.
-		const hit = search( { origin: ray.origin, direction: ray.direction, maxDistance: maxShadowDist } );
-		If( hit.didHit, () => {
-
-			const triIndex = int( hit.triangle ).toVar();
-			const uvData2 = triangleRow( triangleBuffer, triIndex, 4 ).toVar();
-			closestHit.didHit.assign( true );
-			closestHit.dst.assign( hit.distance );
-			closestHit.materialIndex.assign( int( uvData2.z.bitAnd( uint( TRI_MATERIAL_MASK ) ) ) );
-			closestHit.meshIndex.assign( int( uvData2.w ) );
-			closestHit.instanceLeaf.assign( hit.instanceLeaf );
-			closestHit.hitPoint.assign( ray.origin.add( ray.direction.mul( closestHit.dst ) ) );
-			closestHit.uv.assign( hit.barycentrics );
-			closestHit.triangleIndex.assign( triIndex );
-
-		} );
-		return closestHit;
-
-	}
 
 	const stack = createStack( stackDepth );
 	const stackPtr = int( 1 ).toVar();

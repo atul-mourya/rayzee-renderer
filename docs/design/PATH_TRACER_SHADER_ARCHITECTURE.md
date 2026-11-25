@@ -582,17 +582,6 @@ Highlights:
 - Copy clusters (only compiled for a clustered tree, `copyRecordBase` on the buffer): a cluster leaf pushes `COPY_ENTRY | leaf << 2 | k` for each copy whose byte box the ray reaches, nearest first; popping one moves the ray into that copy's space from its record and handles it with `Continue()` (nesting the node visit in an `Else` overflowed the JS stack building a large Shade). A copy's hidden bit skips it, and `instanceLeaf` is then the record index.
 - Triangle intersection is inline; front/back/double-side culling uses the per-triangle side flag (bits 24–25 of `flags`, row 5, in the shade buffer), for the camera's view only: Extend culls a ray not yet `REDIRECTED` or flagged `UNDER_SURFACE` (it dipped under its own facet). Other bounces hit both sides, as shadow rays always have. Rays inside a medium bypass culling to hit glass/SSS back faces.
 - `traverseBVHShadow` is the any-hit early-exit variant for shadow rays; `traverseBVHShadowCameraCulled` applies the camera's culling (bidirectional light tracing); `traverseBVHDebug` counts box and triangle tests for the debug views.
-- **Another search can stand in for the walk** (a hardware search, `HARDWARE_RAY_TRACING.md`): a `SceneSearch` in the
-  kernel's build context (`SceneResources.js`, `search`) gives only distance, triangle, placement and barycentrics, and
-  the walk's own code completes the record (`completeHit` for a closest hit; the shadow walk's record for a shadow hit).
-  `closestHit` serves every closest-hit kernel built with it, `shadowHit` every shadow ray but the camera-culled one.
-  Without one, every kernel's WGSL is the walk's, byte for byte. `pathTracer.setSceneSearch( search )` rebuilds the
-  kernels with it and checks it first (`shaders/kernels/SearchCheck.js`: 4,096 camera rays, a bounce and a shadow ray
-  from each hit, both ways); past 0.1 % of rays answered differently the walk is used and `search.disagrees` recorded.
-  `tests/gpu/sceneSearch.test.js` holds a brute-force search to the walk and a wrong one to the drop.
-  The hardware's (`pathtracer/HardwareSearch.js`, setting `hardwareRayTracing`) is one, where the device has ray queries:
-  its placeholders are filled and its structures bound by `ThreePatches.js` §4. NormalDepth, DepthPass and GPU picking
-  build with the path tracer's (`pathTracer.kernelSearch`).
 
 Mesh visibility is maintained CPU-side by `PathTracerStage._patchTLASLeafVisibility()` (driven by `updateAllMeshVisibility()`, `setMeshVisibilityData()` and `updateMeshVisibility()`), which writes the flag into the combined BVH buffer at the TLAS leaf — or the copy's hidden bit in its cluster leaf; `_flushBVHEdits()` uploads only the touched leaves. World visibility is resolved by walking the parent chain (`_isWorldVisible`).
 

@@ -41,7 +41,7 @@ exports[`defaults that shape pixels — a change here says how renders change in
   "groundProjectionHeight": 15,
   "groundProjectionLevel": 0,
   "groundProjectionRadius": 100,
-  "hardwareRayTracing": true,
+  "hardwareRayTracing": false,
   "integrator": "path",
   "interactionModeEnabled": true,
   "maxBounces": 3,
