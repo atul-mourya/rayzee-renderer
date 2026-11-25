@@ -10,8 +10,7 @@ import {
 
 import { evaluateMaterialResponse } from '../../shaders/MaterialEvaluation.js';
 import { calculateMaterialPDF } from '../../shaders/LightsSampling.js';
-import { traceShadowRayRefractiveOpaque } from '../../shaders/LightsDirect.js';
-import { traverseBVHShadowCameraCulled } from '../../shaders/BVHTraversal.js';
+import { traceShadowRayCameraCulled } from '../../shaders/LightsDirect.js';
 import { offsetRayOrigin, SHADOW_END, sanitizeRGB } from '../../shaders/Common.js';
 import { pcgHash } from '../../shaders/Random.js';
 import { regularizePathContribution } from '../../shaders/PathTracerCore.js';
@@ -127,9 +126,9 @@ export function buildLightSplatKernel( params ) {
 		const segment = cameraPosition.sub( origin ).toVar();
 		const segmentLength = length( segment ).toVar();
 		// This segment stands in for the primary ray, which sees through the faces it culls and starts at the clip plane.
-		const visibility = traceShadowRayRefractiveOpaque(
+		const visibility = traceShadowRayCameraCulled(
 			origin, segment.div( segmentLength ), segmentLength.sub( clipAlong ).mul( SHADOW_END ),
-			traverseBVHShadowCameraCulled, bvhBuffer, triangleBuffer, materialBuffer,
+			bvhBuffer, triangleBuffer, materialBuffer,
 		);
 
 		If( visibility.greaterThan( 0.0 ), () => {

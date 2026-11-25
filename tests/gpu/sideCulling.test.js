@@ -104,7 +104,7 @@ async function trace( renderer, { bvh, triangles, count }, { origins, dirs }, in
 			? traverseBVH( ray, bvhNode, tris )
 			: traverseBVH( ray, bvhNode, tris, tslBool( insideMedium ), tslBool( cullBackFaces ) ) ).toVar();
 		const shadow = traverseBVHShadow( ray, bvhNode, tris, float( 25 ) ).toVar();
-		out.element( instanceIndex ).assign( vec4( float( hit.get( 'didHit' ) ), float( shadow.get( 'didHit' ) ), float( 0 ), float( 0 ) ) );
+		out.element( instanceIndex ).assign( vec4( float( hit.get( 'didHit' ) ), float( shadow ), float( 0 ), float( 0 ) ) );
 
 	} )(), { alphaShadows: null } ).compute( rayCount );
 

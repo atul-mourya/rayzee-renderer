@@ -2,7 +2,7 @@
 // Direct lighting calculations including shadow ray tracing
 // and contribution calculations for all light types.
 
-import { sceneResources, usesGlass, usesTransmissionMaps } from './SceneResources.js';
+import { sceneResources, usesGlass, usesSeeThrough, usesTransmissionMaps } from './SceneResources.js';
 import {
 	Fn,
 	float,
@@ -12,6 +12,10 @@ import {
 	If,
 	Loop,
 	Break,
+	Continue,
+	uint,
+	vec2,
+	intBitsToFloat,
 	dot,
 	cross,
 	normalize,
@@ -27,10 +31,10 @@ import {
 	uintBitsToFloat,
 } from 'three/tsl';
 
-import { Ray, ShadowMaterial, HitInfo } from './Struct.js';
+import { Ray, ShadowMaterial } from './Struct.js';
 import {
 	REC709_LUMINANCE_COEFFICIENTS, getShadowMaterial, instanceRows,
-	instanceFaceNormalToWorld, triangleRow, triangleGeoRows, shadowFlagsSettle, offsetRayOrigin,
+	instanceFaceNormalToWorld, triangleRow, triangleGeoRows, offsetRayOrigin,
 	getDatafromStorageBuffer, MATERIAL_SLOT, MATERIAL_SLOTS, transmissionTint, kernelFunction,
 } from './Common.js';
 import { fresnelDielectric } from './Fresnel.js';
@@ -38,20 +42,27 @@ import { calculateBeerLawAbsorption } from './MaterialTransmission.js';
 import { getTransformedUV, sampleBucket } from './TextureSampling.js';
 import { fogTransmittance } from './Fog.js';
 import { volumeTransmittance } from './Volume.js';
+import { shadowSurfaceLane, traverseBVHShadow, traverseBVHShadowCameraCulled } from './BVHTraversal.js';
+import { TRI_MATERIAL_MASK } from '../scene/BufferLayout.js';
 
 // ================================================================================
 // SHADOW RAY TRACING
 // ================================================================================
 
+// A walk keeps the nearest SHADOW_SURFACES surfaces light passes; a ray resolves SHADOW_SURFACE_BUDGET of them, then
+// lets the light through. ⚠️ Every walk sets up 5 ints a kept surface: more than 4 slowed the small scenes.
+const SHADOW_SURFACES = 4;
+const SHADOW_SURFACE_BUDGET = 16;
+
 // The light that gets through, as a colour: glass tints it as a camera path through it is tinted. Where glass blocks
 // (`refractiveBlocks`) nothing is coloured, so the result is a float; in a scene without glass a number carries it.
-// Note: traverseBVH is passed as a parameter to avoid circular dependency
-const makeTraceShadowRay = ( refractiveBlocks ) => kernelFunction( 'traceShadowRay', {
+// Where no material lets light through, any hit blocks. Else a walk (`shadowWalk`, BVHTraversal's) keeps the surfaces
+// light passes, resolved after it nearest first. One that may yet block ends its walk at itself: where every one may
+// (glass blocks, or the scene's only such surfaces are alpha-tested), one is kept a walk.
+const makeTraceShadowRay = ( refractiveBlocks, shadowWalk = traverseBVHShadow ) => kernelFunction( 'traceShadowRay', {
 	origin: 'vec3', dir: 'vec3', maxDist: 'float', return: refractiveBlocks ? 'float' : 'vec3',
 }, ( [
 	origin, dir, maxDist,
-	// BVH traversal function and textures passed as parameters
-	traverseBVHShadowFn,
 	bvhBuffer,
 	triangleBuffer,
 	materialBuffer,
@@ -63,41 +74,12 @@ const makeTraceShadowRay = ( refractiveBlocks ) => kernelFunction( 'traceShadowR
 	const transmittance = ( glass ? vec3( 1.0 ) : float( 1.0 ) ).toVar();
 	const block = () => transmittance.assign( glass ? vec3( 0.0 ) : float( 0.0 ) );
 	const faint = () => ( glass ? max( transmittance.x, max( transmittance.y, transmittance.z ) ) : transmittance ).lessThan( 1e-4 );
-	const rayOrigin = origin.toVar();
-	const remainingDist = float( maxDist ).toVar();
 	// As values: the loop below is the first reader of `dir`, and an expression read there first is zero after it.
 	const segment = fog || volumes ? { from: vec3( origin ).toVar(), dir: vec3( dir ).toVar(), length: float( maxDist ).toVar() } : null;
 
-	const MAX_SHADOW_TRANSMISSIONS = 16;
-
-	Loop( { start: int( 0 ), end: int( MAX_SHADOW_TRANSMISSIONS ) }, () => {
-
-		const shadowRay = Ray( { origin: rayOrigin, direction: dir } );
-
-		const shadowHit = HitInfo.wrap( traverseBVHShadowFn(
-			shadowRay,
-			bvhBuffer,
-			triangleBuffer,
-			remainingDist,
-		) );
-
-		// No hit within remaining distance to light
-		If( shadowHit.didHit.not(), () => {
-
-			Break();
-
-		} );
-
-		// Opaque fast-path: check the per-triangle blocker bit, set at extraction time when
-		// alphaMode/transparent/transmission/opacity all indicate a fully opaque surface.
-		// Short-circuits the 7-slot getShadowMaterial fetch and the whole alpha decision tree.
-		const flags = triangleRow( triangleBuffer, shadowHit.triangleIndex, 4 ).z;
-		If( shadowFlagsSettle( flags, alphaShadows ), () => {
-
-			block();
-			Break();
-
-		} );
+	// One surface light may pass, built inside the loop over them (Break() leaves it): `travelled()` is the distance
+	// since the surface before, `pass()` moves on past this one.
+	const surface = ( shadowHit, travelled, pass ) => {
 
 		// Fetch material for the hit surface (thin reader: 7 slots instead of 27)
 		const shadowMaterial = ShadowMaterial.wrap( getShadowMaterial( shadowHit.materialIndex, materialBuffer ) );
@@ -175,10 +157,7 @@ const makeTraceShadowRay = ( refractiveBlocks ) => kernelFunction( 'traceShadowR
 		// ---------------------------------------------------------------
 		If( alphaCutout, () => {
 
-			// Alpha-transparent surface — advance ray past it
-			const alphaEps = max( float( 1e-5 ), length( shadowHit.hitPoint ).mul( 1e-6 ) );
-			rayOrigin.assign( shadowHit.hitPoint.add( dir.mul( alphaEps ) ) );
-			remainingDist.subAssign( shadowHit.dst.add( alphaEps ) );
+			pass();
 
 		} ).ElseIf( shadowMaterial.transmission.greaterThan( 0.0 ), ! glass ? () => {
 
@@ -215,7 +194,6 @@ const makeTraceShadowRay = ( refractiveBlocks ) => kernelFunction( 'traceShadowR
 			} );
 
 			const geomNormal = objNormal;
-			shadowHit.normal.assign( geomNormal );
 
 			const entering = dot( dir, geomNormal ).lessThan( 0.0 );
 			const N = select( entering, geomNormal, geomNormal.negate() );
@@ -223,11 +201,10 @@ const makeTraceShadowRay = ( refractiveBlocks ) => kernelFunction( 'traceShadowR
 			// Apply absorption if exiting medium
 			If( entering.not().and( shadowMaterial.attenuationDistance.greaterThan( 0.0 ) ), () => {
 
-				const dist = length( shadowHit.hitPoint.sub( rayOrigin ) );
 				transmittance.mulAssign( calculateBeerLawAbsorption(
 					shadowMaterial.attenuationColor,
 					shadowMaterial.attenuationDistance,
-					dist,
+					travelled(),
 				) );
 
 			} );
@@ -253,10 +230,7 @@ const makeTraceShadowRay = ( refractiveBlocks ) => kernelFunction( 'traceShadowR
 
 			} );
 
-			// Continue ray past transmissive surface
-			const passEps = max( float( 1e-5 ), length( shadowHit.hitPoint ).mul( 1e-6 ) );
-			rayOrigin.assign( shadowHit.hitPoint.add( dir.mul( passEps ) ) );
-			remainingDist.subAssign( shadowHit.dst.add( passEps ) );
+			pass();
 
 		} ).ElseIf( shadowMaterial.transparent, () => {
 
@@ -270,10 +244,7 @@ const makeTraceShadowRay = ( refractiveBlocks ) => kernelFunction( 'traceShadowR
 
 			} );
 
-			// Continue ray past transparent surface
-			const passEps = max( float( 1e-5 ), length( shadowHit.hitPoint ).mul( 1e-6 ) );
-			rayOrigin.assign( shadowHit.hitPoint.add( dir.mul( passEps ) ) );
-			remainingDist.subAssign( shadowHit.dst.add( passEps ) );
+			pass();
 
 		} ).Else( () => {
 
@@ -283,7 +254,108 @@ const makeTraceShadowRay = ( refractiveBlocks ) => kernelFunction( 'traceShadowR
 
 		} );
 
-	} );
+	};
+
+	const seeThrough = usesSeeThrough( builder );
+
+	if ( ! seeThrough ) {
+
+		If( shadowWalk( Ray( { origin, direction: dir } ), bvhBuffer, triangleBuffer, maxDist ), () => {
+
+			block();
+
+		} );
+
+	} else {
+
+		const rayOrigin = origin.toVar();
+		const remainingDist = float( maxDist ).toVar();
+
+		const resolved = int( 0 ).toVar();
+
+		Loop( { start: int( 0 ), end: int( SHADOW_SURFACE_BUDGET ), name: 'shadowWalks' }, () => {
+
+			const eager = refractiveBlocks || seeThrough < 2;
+			const surfaces = {
+				cap: eager ? 1 : SHADOW_SURFACES, eager, alphaShadows,
+				count: int( 0 ).toVar(), limit: float( remainingDist ).toVar(),
+			};
+
+			If( shadowWalk( Ray( { origin: rayOrigin, direction: dir } ), bvhBuffer, triangleBuffer, remainingDist, surfaces ), () => {
+
+				block();
+				Break();
+
+			} );
+
+			// Nearest first: a medium's absorption is over the distance since the surface before. `from` is where that
+			// stretch starts, a step past the last surface; one within the step is skipped.
+			const lastT = float( - 1.0 ).toVar();
+			const lastK = int( - 1 ).toVar();
+			const from = float( 0.0 ).toVar();
+
+			Loop( { start: int( 0 ), end: surfaces.count, name: 'shadowSurface' }, () => {
+
+				const pick = int( - 1 ).toVar();
+				const pickT = float( 1e30 ).toVar();
+				Loop( { start: int( 0 ), end: surfaces.count, name: 'shadowScan' }, ( { shadowScan } ) => {
+
+					const t = intBitsToFloat( shadowSurfaceLane( surfaces, shadowScan, 2 ) ).toVar();
+					const later = t.greaterThan( lastT ).or( t.equal( lastT ).and( shadowScan.greaterThan( lastK ) ) );
+					If( later.and( t.lessThan( pickT ) ), () => {
+
+						pick.assign( shadowScan );
+						pickT.assign( t );
+
+					} );
+
+				} );
+				lastT.assign( pickT );
+				lastK.assign( pick );
+
+				If( pickT.greaterThan( surfaces.limit ).or( resolved.greaterThanEqual( int( SHADOW_SURFACE_BUDGET ) ) ), () => {
+
+					Break();
+
+				} );
+
+				If( pickT.lessThanEqual( from ), () => {
+
+					Continue();
+
+				} );
+
+				resolved.addAssign( 1 );
+
+				const triangleIndex = shadowSurfaceLane( surfaces, pick, 0 ).toVar();
+				const hitPoint = rayOrigin.add( dir.mul( pickT ) ).toVar();
+
+				surface( {
+					triangleIndex,
+					instanceLeaf: shadowSurfaceLane( surfaces, pick, 1 ).toVar(),
+					uv: vec2( intBitsToFloat( shadowSurfaceLane( surfaces, pick, 3 ) ), intBitsToFloat( shadowSurfaceLane( surfaces, pick, 4 ) ) ).toVar(),
+					materialIndex: int( triangleRow( triangleBuffer, triangleIndex, 4 ).z.bitAnd( uint( TRI_MATERIAL_MASK ) ) ).toVar(),
+				}, () => pickT.sub( from ), () => {
+
+					from.assign( pickT.add( max( float( 1e-5 ), length( hitPoint ).mul( 1e-6 ) ) ) );
+
+				} );
+
+			} );
+
+			// A surface stopped the light, the walk reached the ray's end, or the budget is spent.
+			If( faint().or( surfaces.limit.greaterThanEqual( remainingDist ) ).or( resolved.greaterThanEqual( int( SHADOW_SURFACE_BUDGET ) ) ), () => {
+
+				Break();
+
+			} );
+
+			rayOrigin.addAssign( dir.mul( from ) );
+			remainingDist.subAssign( from );
+
+		} );
+
+	}
 
 	let light = fog ? transmittance.mul( fogTransmittance( fog, segment.from, segment.dir, segment.length ) ) : transmittance;
 	if ( volumes ) {
@@ -305,6 +377,9 @@ export const traceShadowRay = /*@__PURE__*/ makeTraceShadowRay( false );
 
 // For the bidirectional strategies: their light paths carry what refracts, so glass must block.
 export const traceShadowRayRefractiveOpaque = /*@__PURE__*/ makeTraceShadowRay( true );
+
+// Light tracing's ray to the camera: glass blocks, and the faces the camera would cull are passed.
+export const traceShadowRayCameraCulled = /*@__PURE__*/ makeTraceShadowRay( true, traverseBVHShadowCameraCulled );
 
 // ================================================================================
 // RAY OFFSET CALCULATION

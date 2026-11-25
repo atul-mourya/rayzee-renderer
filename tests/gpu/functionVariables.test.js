@@ -128,6 +128,7 @@ async function largestFunctions( integrator ) {
 	pt._clearcoatNormalsNeeded = () => ! pt._integrator;
 	pt._regularizeNeeded = () => ! pt._integrator;
 	md.hasTransmission = md.hasTransmissionMaps = md.hasBumpMaps = md.hasRelativeIOR = () => true;
+	md.seeThroughLevel = () => 2;
 	const releaseHitDistance = pt.requestOutput( 'hitDistance', { encode: ( d, z ) => d.div( z.max( 1e-4 ) ).clamp( 0.0, 1.0 ) } );
 	const releaseEmission = pt.requestOutput( 'emission' );
 	app.settings.set( 'fogDensity', integrator === 'path' ? 0.05 : 0 );

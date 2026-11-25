@@ -792,6 +792,9 @@ export const shadowFlagsSettle = ( flags, alphaShadows ) => {
 
 };
 
+// Whether these flags' material is alpha-tested and otherwise solid: where alpha is tested, a hit on it may yet block.
+export const shadowFlagsAlphaTested = ( flags ) => flags.shiftRight( uint( TRI_BLOCKER_ALPHA_SHIFT ) ).bitAnd( uint( 1 ) ).equal( uint( 1 ) );
+
 // A packed copy record's rotation (BufferLayout packCopyRecord): three components of 20 bits, the dropped one rebuilt.
 const copyRotation = /*@__PURE__*/ wgslFn( `
 	fn copyRotation( lo: u32, hi: u32 ) -> vec4f {

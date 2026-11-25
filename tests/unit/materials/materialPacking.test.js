@@ -742,6 +742,35 @@ describe( 'MaterialDataManager', () => {
 
 	} );
 
+	it( 'knows what shadow rays meet besides blockers, and says so when an edit changes it', () => {
+
+		const manager = new MaterialDataManager( null );
+		const data = new Float32Array( 2 * F );
+		packMaterial( data, 0, { color: [ 0.2, 0.8, 0.3 ] } );
+		packMaterial( data, F, {} );
+		manager.setMaterialData( data );
+		expect( manager.seeThroughLevel() ).toBe( 0 );
+
+		let changed = 0;
+		manager.callbacks.onMaterialFeaturesChanged = () => changed ++;
+		// Alpha-tested and otherwise solid: it may block.
+		manager.updateMaterialProperty( 1, 'alphaMode', 1 );
+		expect( changed ).toBe( 1 );
+		expect( manager.seeThroughLevel() ).toBe( 1 );
+
+		// Transparent at full opacity is still solid; under it, light always passes.
+		manager.updateMaterialProperty( 0, 'transparent', 1 );
+		expect( manager.seeThroughLevel() ).toBe( 1 );
+		manager.updateMaterialProperty( 0, 'opacity', 0.4 );
+		expect( changed ).toBe( 3 );
+		expect( manager.seeThroughLevel() ).toBe( 2 );
+
+		manager.updateMaterialProperty( 0, 'opacity', 1 );
+		manager.updateMaterialProperty( 1, 'transmission', 0.5 );
+		expect( manager.seeThroughLevel() ).toBe( 2 );
+
+	} );
+
 	it( 'knows whether a coat can lean apart from its base', () => {
 
 		const manager = new MaterialDataManager( null );

@@ -27,7 +27,6 @@ vi.mock( '@/core/bvh/ReinsertionOptimizer.js', () => ( {
 } ) );
 
 import { BVHBuilder } from '@/core/bvh/BVHBuilder.js';
-import { traverseBVHShadow } from '@/core/shaders/BVHTraversal.js';
 import { traceShadowRay } from '@/core/shaders/LightsDirect.js';
 import { buildBucketTextureNodes } from '@/core/shaders/TextureSampling.js';
 import { withSceneResources } from '@/core/shaders/SceneResources.js';
@@ -132,7 +131,7 @@ async function shadowTransmittance( renderer, { bvh, triangles, count }, xs ) {
 
 		const transmittance = traceShadowRay(
 			origins.element( instanceIndex ).xyz, vec3( 0, 0, - 1 ), float( 2 ),
-			traverseBVHShadow, bvhNode, tris, materialNode,
+			bvhNode, tris, materialNode,
 		);
 		out.element( instanceIndex ).assign( vec4( transmittance, 1 ) );
 

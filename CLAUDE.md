@@ -571,6 +571,14 @@ bench gates and measurements.
 - **Light through glass**: `traceShadowRay` crosses glass straight and returns a colour (path integrator; the
   bidirectional `traceShadowRayRefractiveOpaque` stays a float), and a path refracted to an emitter is MIS-weighed from
   the last opaque scatter. Compiled in only while some material transmits (`usesGlass`). `glass-tinted-light` gates it.
+- **Surfaces light passes**: a shadow ray's walk (`traverseBVHShadow`, a plain function built in place, returning
+  `blocked`) keeps the nearest 4 such surfaces past its stack's end and `traceShadowRay` resolves them after it, nearest
+  first; a fifth shrinks `limit` and the ray walks on from there (16 resolved, then the light passes). A walk a surface
+  was a quarter of an interior's shadow time. Compiled by `seeThrough` (`materialData.seeThroughLevel()`): 0 any hit
+  blocks, 1 alpha-tested surfaces only (one a walk), 2 the list. ⚠️ A surface that may yet block (blocker bit 27, or
+  all where glass blocks) ends its walk at itself. ⚠️ Each kept slot is 5 ints every walk sets up: 8 slots cost small
+  scenes 7–9 %. ⚠️ three wraps a plain function passed to a `Fn` as a `Fn`: the walk is chosen in
+  `makeTraceShadowRay`, never passed in.
 - **Transmission map**: factor × the map's R, in Shade and in shadow rays. ⚠️ `SceneProcessor` adopts every per-type
   texture list through `_adoptTextureLists` (`TEXTURE_LISTS`): a list kept from an earlier extraction drops that map
   type after `rebuildMaterials()`.

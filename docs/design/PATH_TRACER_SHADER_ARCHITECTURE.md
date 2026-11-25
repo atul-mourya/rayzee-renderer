@@ -103,7 +103,7 @@ Built and dispatched by `addons/bidirectional/BidirectionalIntegrator.js`, never
 | `EmissiveSampling.js` | `sampleEmissiveTriangle()`, `calculateEmissiveTriangleContribution()`, `calculateEmissiveLightPdf()`, `sampleSphericalTriangle()` | NEE from emissive triangles (uniform CDF path) |
 | `LightBVHSampling.js` | `sampleLightBVHTriangle()`, `calculateLightBVHPdf()` | Stochastic light BVH descent, and the same density for a BSDF hit |
 | `LightsCore.js` | Light structs and getters, `sampleSpotGoboMask()`, `sampleDirectionalGoboMask()`, `sampleIESProfile()`, `sampleSphQuad()` | Lamp definitions, gobo and IES lookups, spherical-rectangle sampling |
-| `LightsDirect.js` | `traceShadowRay()`, `traceShadowRayRefractiveOpaque()`, `calculateRayOffset()`, importance estimators | Shadow rays (alpha-cutout shadows included), per-lamp importance |
+| `LightsDirect.js` | `traceShadowRay()`, `traceShadowRayRefractiveOpaque()`, `traceShadowRayCameraCulled()`, `calculateRayOffset()`, importance estimators | Shadow rays (alpha-cutout shadows included), per-lamp importance |
 | `LightsIndirect.js` | `calculateIndirectLighting()` | Turns the sampled direction into the bounce: throughput and the pdf carried to the next vertex's MIS |
 | `LightsSampling.js` | `calculateDirectLightingUnified()`, `calculateMaterialPDF()` | Lamp NEE (one lamp by weighted reservoir over the four lists) MIS'd with BSDF hits, then environment and sun NEE |
 | `Fresnel.js` | `fresnelDielectric()`, `dielectricFresnelWeight()`, `fresnelSchlick()`, `iorToFresnel0()`, `dielectricF0()` | Exact unpolarised Fresnel at every dielectric interface (base layer, clear coat, glass, SSS boundary, glass shadows), as Cycles uses; Schlick for metals and iridescence; IOR↔F0 |
@@ -217,7 +217,8 @@ The store is bound as `uvec4`; positions and UVs are float bit patterns read wit
 
 `flags` packs `materialIndex | side << 24 | shadowBlockerBits << 26`. The two blocker bits say
 whether a shadow ray settles on this triangle without fetching its material: bit 26 always, bit
-27 only while alpha-cutout shadows are off.
+27 only while alpha-cutout shadows are off. While they are on, bit 27 marks a surface that may yet
+block, which ends the shadow walk at itself (SHADING.md, "Surfaces light passes").
 
 On the GPU the five rows live in two buffers: rows 1–3 (positions and normals, 48 B) in
 `triangleGeoAttr` and rows 4–5 (UVs, flags, mesh index) in `triangleShadeAttr`. When no material
@@ -581,7 +582,7 @@ Highlights:
 - Per-mesh visibility: at a BLAS-pointer leaf the visibility flag (slot `[2]`) is checked before pushing the BLAS root — an entire hidden mesh's BLAS is skipped. There is no separate visibility buffer.
 - Copy clusters (only compiled for a clustered tree, `copyRecordBase` on the buffer): a cluster leaf pushes `COPY_ENTRY | leaf << 2 | k` for each copy whose byte box the ray reaches, nearest first; popping one moves the ray into that copy's space from its record and handles it with `Continue()` (nesting the node visit in an `Else` overflowed the JS stack building a large Shade). A copy's hidden bit skips it, and `instanceLeaf` is then the record index.
 - Triangle intersection is inline; front/back/double-side culling uses the per-triangle side flag (bits 24–25 of `flags`, row 5, in the shade buffer), for the camera's view only: Extend culls a ray not yet `REDIRECTED` or flagged `UNDER_SURFACE` (it dipped under its own facet). Other bounces hit both sides, as shadow rays always have. Rays inside a medium bypass culling to hit glass/SSS back faces.
-- `traverseBVHShadow` is the any-hit early-exit variant for shadow rays; `traverseBVHShadowCameraCulled` applies the camera's culling (bidirectional light tracing); `traverseBVHDebug` counts box and triangle tests for the debug views.
+- `traverseBVHShadow` is the shadow ray's walk, a plain function built where it is called: it returns whether a blocker was hit (early exit) and, handed a list, keeps the nearest surfaces light passes for `traceShadowRay` to resolve (SHADING.md, "Surfaces light passes"); `traverseBVHShadowCameraCulled` applies the camera's culling (bidirectional light tracing); `traverseBVHDebug` counts box and triangle tests for the debug views.
 
 Mesh visibility is maintained CPU-side by `PathTracerStage._patchTLASLeafVisibility()` (driven by `updateAllMeshVisibility()`, `setMeshVisibilityData()` and `updateMeshVisibility()`), which writes the flag into the combined BVH buffer at the TLAS leaf — or the copy's hidden bit in its cluster leaf; `_flushBVHEdits()` uploads only the touched leaves. World visibility is resolved by walking the parent chain (`_isWorldVisible`).
 

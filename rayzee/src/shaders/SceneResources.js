@@ -14,6 +14,8 @@
  * @property {?Object<string, boolean>} materialLayers - the MATERIAL_LAYERS some material uses; null = all of them
  * @property {boolean} [lightRadius] - some point or spot light has a radius (path tracing only); false = all are points
  * @property {boolean} [glass] - some material transmits; false = shadow rays never cross glass, and carry a number, not a colour
+ * @property {number} [seeThrough] - what shadow rays meet besides blockers: 0 nothing, any hit blocks; 1 alpha-tested
+ *   surfaces only, each of which may block; 2 surfaces light always passes (glass, less than opaque)
  * @property {boolean} [transmissionMaps] - some material has a transmission map; false = shadow rays never sample one
  * @property {boolean} [clearcoatNormals] - some coated material has a normal or bump map; false = every coat follows N
  * @property {boolean} [bumpMaps] - some material has a bump map; false = no shading reads one
@@ -86,6 +88,16 @@ export function usesLightRadius( builder ) {
 export function usesGlass( builder ) {
 
 	return builder.context[ KEY ]?.glass ?? true;
+
+}
+
+/**
+ * What the kernel being built has shadow rays resolve besides blockers (SceneResources' `seeThrough`: 0, 1 or 2).
+ * Outside a scene kernel (a test), 2.
+ */
+export function usesSeeThrough( builder ) {
+
+	return builder.context[ KEY ]?.seeThrough ?? 2;
 
 }
 

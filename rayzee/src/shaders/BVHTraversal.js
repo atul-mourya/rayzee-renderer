@@ -1,4 +1,3 @@
-import { sceneResources } from './SceneResources.js';
 import {
 	Fn,
 	wgslFn,
@@ -15,6 +14,7 @@ import {
 	abs,
 	sign,
 	min,
+	max,
 	normalize,
 	mix,
 	notEqual,
@@ -24,6 +24,8 @@ import {
 	uvec3,
 	uintBitsToFloat,
 	floatBitsToUint,
+	floatBitsToInt,
+	intBitsToFloat,
 	bool as tslBool,
 } from 'three/tsl';
 
@@ -35,7 +37,7 @@ import {
 import { HitInfo } from './Struct.js';
 import {
 	getDatafromStorageBuffer, storageRows, instanceRows, instanceNormalToWorld, unpackTriangleNormal, triangleRow, triangleGeoRows, shadowFlagsSettle,
-	clusterLeaf,
+	shadowFlagsAlphaTested, clusterLeaf,
 } from './Common.js';
 import { MIN_TRAVERSAL_STACK } from '../bvh/TraversalStack.js';
 
@@ -791,18 +793,28 @@ export const traverseBVH = /*@__PURE__*/ makeTraverseBVH( false );
 export const traverseBVHDebug = /*@__PURE__*/ makeTraverseBVH( true );
 
 // ================================================================================
-// SHADOW RAY TRAVERSAL (OPTIMIZED - early exit on any hit)
+// SHADOW RAY TRAVERSAL
 // ================================================================================
 
-// cameraCulled: skip the faces a camera ray along −direction would cull, for a ray standing in for one.
-const makeTraverseBVHShadow = ( cameraCulled ) => Fn( ( [
-	ray,
-	bvhBuffer,
-	triangleBuffer,
-	maxShadowDist,
-], builder ) => {
+/** Ints a kept surface takes: its triangle, its instance leaf, and the bits of t, u and v. */
+const SHADOW_SURFACE_INTS = 5;
 
-	const { alphaShadows } = sceneResources( builder );
+/** Lane `lane` of kept surface `k` (an int; t, u and v through intBitsToFloat). */
+export const shadowSurfaceLane = ( surfaces, k, lane ) => surfaces.hits.element( int( k ).mul( int( SHADOW_SURFACE_INTS ) ).add( int( surfaces.base + lane ) ) );
+
+/**
+ * A shadow ray's walk, built where it is called: returns whether something blocks the ray (a bool variable).
+ *
+ * Without `surfaces` any hit blocks. With it — `{ cap, eager, alphaShadows, count, limit }`, the last two variables — a
+ * hit `shadowFlagsSettle` leaves open is a surface light may pass, and the walk goes on: the nearest `cap` are kept, in
+ * no order (`surfaces.hits` from `surfaces.base`, set here; read with {@link shadowSurfaceLane}). Nothing past `limit`
+ * is looked for, and a kept surface past it is void: it shrinks to a surface left out, and to a kept one that may yet
+ * block (an alpha-tested one, or all of them with `eager`), which ends the search as a blocker would. The caller
+ * resolves the kept surfaces up to `limit`, and where it shrank walks again from there.
+ *
+ * cameraCulled: skip the faces a camera ray along −direction would cull, for a ray standing in for one.
+ */
+const makeShadowWalk = ( cameraCulled ) => ( ray, bvhBuffer, triangleBuffer, maxShadowDist, surfaces = null ) => {
 
 	// Objects' trees 4-wide (bvh/WideBVH.js) fold their leaves too; a wide node's tag sits among the leaf tags.
 	const wide = bvhBuffer.value?.wide === true;
@@ -810,20 +822,12 @@ const makeTraverseBVHShadow = ( cameraCulled ) => Fn( ( [
 	const isLeafTag = wide ? ( tag ) => leafTagTest( true )( tag ).and( tag.notEqual( uint( WIDE_NODE ) ) ) : leafTagTest( folded );
 	const stackDepth = stackDepthOf( bvhBuffer );
 
-	const closestHit = HitInfo( {
-		didHit: false,
-		dst: maxShadowDist,
-		hitPoint: vec3( 0.0 ),
-		normal: vec3( 0.0 ),
-		uv: vec2( 0.0 ),
-		materialIndex: int( - 1 ),
-		meshIndex: int( - 1 ),
-		instanceLeaf: int( - 1 ),
-		boxTests: int( 0 ),
-		triTests: int( 0 ),
-	} ).toVar();
+	const blocked = tslBool( false ).toVar();
+	const limit = surfaces ? surfaces.limit : float( maxShadowDist ).toVar();
 
-	const stack = createStack( stackDepth );
+	// Kept surfaces sit past the stack's end, in its array.
+	const stack = createStack( stackDepth + ( surfaces ? surfaces.cap * SHADOW_SURFACE_INTS : 0 ) );
+	if ( surfaces ) Object.assign( surfaces, { hits: stack, base: stackDepth } );
 	const stackPtr = int( 1 ).toVar();
 	stack.element( int( 0 ) ).assign( int( 0 ) );
 
@@ -840,7 +844,6 @@ const makeTraverseBVHShadow = ( cameraCulled ) => Fn( ( [
 
 	const instLeaf = int( - 1 ).toVar();
 	const instExit = int( 0 ).toVar();
-	const blocked = tslBool( false ).toVar();
 
 	// Built over copy clusters: the copies' transforms are records from vec4 `copyRecordBase` (BufferLayout).
 	const clustered = bvhBuffer.value?.copyRecordBase !== undefined;
@@ -913,40 +916,68 @@ const makeTraverseBVHShadow = ( cameraCulled ) => Fn( ( [
 		const pB = uintBitsToFloat( rowOf( 1 ).xyz );
 		const pC = uintBitsToFloat( rowOf( 2 ).xyz );
 
-		const triResult = RayTriangleGeometryShadow( { rayOrigin, rayDir: rayDirection, pA, pB, pC, closestHitDst: closestHit.dst, woopParams } );
+		const triResult = RayTriangleGeometryShadow( { rayOrigin, rayDir: rayDirection, pA, pB, pC, closestHitDst: limit, woopParams } );
 
 		If( triResult.w.greaterThan( 0.5 ), () => {
 
-			// Per-mesh visibility is handled at the BLAS-pointer level.
-			const uvData2 = triangleRow( triangleBuffer, triIndex, 4 ).toVar();
+			// Per-mesh visibility is handled at the BLAS-pointer level. The flags are read only where they decide something.
+			const flags = cameraCulled || surfaces ? triangleRow( triangleBuffer, triIndex, 4 ).z.toVar() : null;
 
-			const record = () => {
+			const block = () => {
 
-				closestHit.didHit.assign( true );
-				closestHit.dst.assign( triResult.x );
-				closestHit.materialIndex.assign( int( uvData2.z.bitAnd( uint( TRI_MATERIAL_MASK ) ) ) );
-				closestHit.meshIndex.assign( int( uvData2.w ) );
-				closestHit.instanceLeaf.assign( instLeaf );
+				blocked.assign( true );
+				Break();
 
-				// Hit point is cheap (origin + dir*t). Geometric normal is deferred
-				// to traceShadowRay — only the transmission branch needs it, so we
-				// skip the cross+normalize for the (much more common) opaque-blocker
-				// and alpha-cutout paths. Normal stays vec3(0) from struct init.
-				closestHit.hitPoint.assign( worldOrigin.add( worldDirection.mul( triResult.x ) ) );
+			};
 
-				closestHit.uv.assign( vec2( triResult.y, triResult.z ) );
-				closestHit.triangleIndex.assign( triIndex );
+			// Full, the farthest kept gives way to a nearer one.
+			const keep = () => {
 
-				// An opaque blocker settles the ray. A surface light passes through has to be
-				// the nearest one, or the layers behind the first find are never counted.
-				If( shadowFlagsSettle( uvData2.z, alphaShadows ), () => {
+				const slot = int( surfaces.count ).toVar();
 
-					blocked.assign( true );
-					Break();
+				If( surfaces.count.lessThan( int( surfaces.cap ) ), () => {
+
+					surfaces.count.addAssign( 1 );
+
+				} ).Else( () => {
+
+					const far = ( surfaces.cap === 1 ? intBitsToFloat( shadowSurfaceLane( surfaces, 0, 2 ) ) : float( - 1.0 ) ).toVar();
+					const farSlot = int( 0 ).toVar();
+					if ( surfaces.cap > 1 ) Loop( { start: int( 0 ), end: int( surfaces.cap ), name: 'kept' }, ( { kept } ) => {
+
+						const t = intBitsToFloat( shadowSurfaceLane( surfaces, kept, 2 ) ).toVar();
+						If( t.greaterThan( far ), () => {
+
+							far.assign( t );
+							farSlot.assign( kept );
+
+						} );
+
+					} );
+
+					limit.assign( min( limit, max( triResult.x, far ) ) );
+					slot.assign( select( triResult.x.lessThan( far ), farSlot, int( - 1 ) ) );
+
+				} );
+
+				If( slot.greaterThanEqual( int( 0 ) ), () => {
+
+					shadowSurfaceLane( surfaces, slot, 0 ).assign( triIndex );
+					shadowSurfaceLane( surfaces, slot, 1 ).assign( instLeaf );
+					shadowSurfaceLane( surfaces, slot, 2 ).assign( floatBitsToInt( triResult.x ) );
+					shadowSurfaceLane( surfaces, slot, 3 ).assign( floatBitsToInt( triResult.y ) );
+					shadowSurfaceLane( surfaces, slot, 4 ).assign( floatBitsToInt( triResult.z ) );
+					limit.assign( surfaces.eager ? triResult.x : select( shadowFlagsAlphaTested( flags ), triResult.x, limit ) );
 
 				} );
 
 			};
+
+			const settle = surfaces ? () => {
+
+				If( shadowFlagsSettle( flags, surfaces.alphaShadows ), block ).Else( keep );
+
+			} : block;
 
 			if ( cameraCulled ) {
 
@@ -954,10 +985,9 @@ const makeTraverseBVHShadow = ( cameraCulled ) => Fn( ( [
 				const n = normalize( unpackTriangleNormal( rowOf( 0 ).w ).mul( w )
 					.add( unpackTriangleNormal( rowOf( 1 ).w ).mul( triResult.y ) )
 					.add( unpackTriangleNormal( rowOf( 2 ).w ).mul( triResult.z ) ) );
-				If( sideAccepts( triangleSide( uvData2.z ), rayDirection.dot( n ).negate() ), record );
+				If( sideAccepts( triangleSide( flags ), rayDirection.dot( n ).negate() ), settle );
 
-			} else record();
-
+			} else settle();
 
 		} );
 
@@ -991,7 +1021,7 @@ const makeTraverseBVHShadow = ( cameraCulled ) => Fn( ( [
 
 				} ).Else( clustered ? () => {
 
-					pushHitCopies( node, nodeIndex, nodeData0, worldOrigin, worldInvDir, stack, stackPtr, closestHit.dst, stackDepth );
+					pushHitCopies( node, nodeIndex, nodeData0, worldOrigin, worldInvDir, stack, stackPtr, limit, stackDepth );
 
 				} : () => {
 
@@ -1052,12 +1082,12 @@ const makeTraverseBVHShadow = ( cameraCulled ) => Fn( ( [
 					// termination. SA build ordering improves cache locality (larger-SA
 					// child = left = first in DFS flat layout).
 					const minDst = min( dstA, dstB );
-					If( minDst.lessThan( closestHit.dst ), () => {
+					If( minDst.lessThan( limit ), () => {
 
 						const aCloser = dstA.lessThan( dstB );
 
 						// Push far child first (processed last)
-						If( select( aCloser, dstB, dstA ).lessThan( closestHit.dst ).and( stackPtr.lessThan( int( stackDepth ) ) ), () => {
+						If( select( aCloser, dstB, dstA ).lessThan( limit ).and( stackPtr.lessThan( int( stackDepth ) ) ), () => {
 
 							stack.element( stackPtr ).assign( select( aCloser, rightChild, leftChild ) );
 							stackPtr.addAssign( 1 );
@@ -1080,7 +1110,7 @@ const makeTraverseBVHShadow = ( cameraCulled ) => Fn( ( [
 
 					const inInst = instLeaf.greaterThanEqual( int( 0 ) );
 					pushWideChildren( node, nodeData0, select( inInst, rayOrigin, worldOrigin ).toVar(), select( inInst, invDir, worldInvDir ).toVar(),
-						stack, stackPtr, closestHit.dst, stackDepth );
+						stack, stackPtr, limit, stackDepth );
 
 				} ).Else( binary );
 				else binary();
@@ -1109,9 +1139,9 @@ const makeTraverseBVHShadow = ( cameraCulled ) => Fn( ( [
 
 	} );
 
-	return closestHit;
+	return blocked;
 
-} );
+};
 
-export const traverseBVHShadow = /*@__PURE__*/ makeTraverseBVHShadow( false );
-export const traverseBVHShadowCameraCulled = /*@__PURE__*/ makeTraverseBVHShadow( true );
+export const traverseBVHShadow = /*@__PURE__*/ makeShadowWalk( false );
+export const traverseBVHShadowCameraCulled = /*@__PURE__*/ makeShadowWalk( true );

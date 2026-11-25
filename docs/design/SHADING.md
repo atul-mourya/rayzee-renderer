@@ -171,6 +171,35 @@ the shadow terminator, shadow-ray picking, sized lights and fog. CLAUDE.md keeps
   an edit to `transmission` rebuilds): otherwise shadow rays carry a number and Shade leaves the glass crossing and its
   tint out. Carrying a colour everywhere cost 24155522.glb (no glass) +2.5 % Shade; gated, +0.17 %, inside the runs'
   spread. `tests/gpu/glassShadow.test.js`; `glass-tinted-light` gates it.
+- **Surfaces light passes** (`traceShadowRay`, `traverseBVHShadow`) — a shadow ray used to walk the tree once for every
+  surface it passed: find the nearest, resolve it, start again past it. A window pane is two, so a sunlit ray through
+  one walked three times: a quarter of an interior's shadow time (24155522.glb at 1024², 25 of 119 ms a sample). Now a
+  walk keeps the nearest 4 such surfaces (`SHADOW_SURFACES`: triangle, instance leaf and the bits of t, u, v, as ints
+  past the stack's end in its array) and goes on to the ray's end; `traceShadowRay` resolves them after it, nearest
+  first, with the material code it had. A fifth shrinks the walk's `limit` to the nearest surface left out, and the ray
+  walks again from the last one resolved; after 16 resolved (`SHADOW_SURFACE_BUDGET`) the light goes through, as after
+  16 walks before.
+  - A surface that may yet block ends its walk at itself, as the nearest always did: an alpha-tested one (blocker
+    bit 27, `shadowFlagsAlphaTested`), and every surface where glass blocks (the bidirectional rays), which keep one a
+    walk. Kept like the rest, a wall flagged BLEND or a leaf card sent every ray it stops on to the ray's end.
+  - What a scene compiles is `seeThrough` in the build context (`MaterialDataManager.seeThroughLevel()`; an edit that
+    raises it rebuilds): 0, no material lets light through — any hit blocks, no flags read; 1, alpha-tested ones
+    only — one kept a walk; 2, some always pass (glass, less than opaque) — the 4.
+  - Measured against main, interleaved (`bench:ab`): 24155522 −15.8 %, 24233846 −18.1 %, 24090819 −13.2 %, bathroom
+    −5.9 %, five other models within ±3 %; the corpus 17 faster and 34 unchanged of 59 (glass −9 to −11 %, scenes with
+    nothing see-through −1 to −7 %). At 1024² with alpha shadows on, as a final render has them, the three interiors
+    −12 to −17 %. A canopy of 1,500 cut-out cards: unchanged; with a glass ball beside it +2.5 %.
+  - ⚠️ Every walk that has the list sets it up, 5 ints a surface. At 8 the small cut-out scenes lost 7–9 %; at 16, in
+    arrays of its own, 36 corpus scenes lost 4–10 %; an array of its own at 4 measured like the stack's. `alpha-cutout`
+    (cut-outs beside sheer panels) is still +3 % at 4, where the interiors gain most (2: −13.5 %, 3: −13.9 %, 4:
+    −15.9 %, 8: −14.0 % on 24155522).
+  - ⚠️ The loop around the walk costs nothing: kept, but left after one walk, it timed like no loop (93.6 against
+    93.0 ms). The walks it ran were the cost.
+  - ⚠️ three wraps a plain function passed to a `Fn` as a `Fn` of its own, so the walk is chosen where the shadow
+    ray is made (`makeTraceShadowRay`), not passed in: `traceShadowRayCameraCulled` is light tracing's.
+  - Pictures are the same but for rounding: a surface's point is no longer rebuilt from a moved origin
+    (`glass-tinted-light` 1e-5 rmse; the interiors a few pixels in a million, either way, mean unchanged).
+    `tests/gpu/shadowSurfaces.test.js`.
 - **Bump maps** (`processBump`, `shaders/TextureSampling.js`) — two meanings. With `bumpDistance` (≠ 0; scene units,
   world space) the map is a height, 0 → 1 spanning that distance, negative pressing it in — pbrt's `displacement` and
   Cycles' Bump Distance — and the normal is the bumped surface's own: Mikkelsen's surface gradient,

@@ -72,7 +72,6 @@ import {
 	traceShadowRay,
 } from './LightsDirect.js';
 
-import { traverseBVHShadow } from './BVHTraversal.js';
 import { evaluateMaterialResponseFromDots, evaluateDiffuseTransmission } from './MaterialEvaluation.js';
 import { calculateBSDFSamplingPDFFromMaterial, diffuseTransmissionWeight, diffuseTransmissionPdf } from './MaterialProperties.js';
 import { getRandomSample1D, getRandomSample2D, SAMPLER_DIM_AUX_BASE } from './Random.js';
@@ -950,7 +949,7 @@ const makeDirectLighting = ( throughSurfaces, picked = null ) => Fn( ( [
 
 	// Binds BVH params so shadow-ray sites at varying call depths use a 3-arg call
 	const shadow = Fn( ( [ origin, dir, maxDist ] ) =>
-		traceShadowRay( origin, dir, maxDist, traverseBVHShadow, bvhBuffer, triangleBuffer, materialBuffer )
+		traceShadowRay( origin, dir, maxDist, bvhBuffer, triangleBuffer, materialBuffer )
 	);
 
 	// Light from behind a surface that passes light through diffusely: its shadow ray leaves from the other side,

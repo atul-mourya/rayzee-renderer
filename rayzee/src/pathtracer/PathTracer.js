@@ -636,6 +636,7 @@ export class PathTracer extends PathTracerStage {
 			const needed = this._layersToCompile();
 			if ( MATERIAL_LAYERS.some( ( layer ) => needed[ layer ] && ! this._compiledLayers?.[ layer ] ) ) this._outputsChanged = true;
 			if ( ! this._compiledGlass && this.materialData.hasTransmission() ) this._outputsChanged = true;
+			if ( this.materialData.seeThroughLevel() > this._compiledSeeThrough ) this._outputsChanged = true;
 			if ( ! this._compiledTransmissionMaps && this.materialData.hasTransmissionMaps() ) this._outputsChanged = true;
 			if ( ! this._compiledBumpMaps && this.materialData.hasBumpMaps() ) this._outputsChanged = true;
 			if ( ! this._compiledEmissionMaps && this.materialData.hasEmissionMaps() ) this._outputsChanged = true;
@@ -2163,6 +2164,7 @@ export class PathTracer extends PathTracerStage {
 			materialLayers: this._compiledLayers = this._layersToCompile(),
 			lightRadius: this._compiledLightRadius = this._lightRadiusNeeded(),
 			glass: this._compiledGlass = this.materialData.hasTransmission(),
+			seeThrough: this._compiledSeeThrough = this.materialData.seeThroughLevel(),
 			transmissionMaps: this._compiledTransmissionMaps = this.materialData.hasTransmissionMaps(),
 			bumpMaps: this._compiledBumpMaps = this.materialData.hasBumpMaps(),
 			emissionMaps: this._compiledEmissionMaps = this.materialData.hasEmissionMaps(),

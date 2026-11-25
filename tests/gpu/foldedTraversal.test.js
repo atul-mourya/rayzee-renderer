@@ -100,7 +100,7 @@ async function trace( renderer, bvhNodes, folded, triangles, { origins, dirs } )
 		const ray = Ray( { origin: o.element( instanceIndex ).xyz, direction: d.element( instanceIndex ).xyz } );
 		const hit = traverseBVH( ray, bvh, tris ).toVar();
 		const shadow = traverseBVHShadow( ray, bvh, tris, float( 25 ) ).toVar();
-		out.element( instanceIndex ).assign( vec4( hit.get( 'dst' ), float( hit.get( 'triangleIndex' ) ), float( shadow.get( 'didHit' ) ), float( 0 ) ) );
+		out.element( instanceIndex ).assign( vec4( hit.get( 'dst' ), float( hit.get( 'triangleIndex' ) ), float( shadow ), float( 0 ) ) );
 
 	} )(), { alphaShadows: null } ).compute( RAYS );
 

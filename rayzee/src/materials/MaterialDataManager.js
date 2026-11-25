@@ -382,6 +382,27 @@ export class MaterialDataManager {
 
 	}
 
+	/**
+	 * What shadow rays meet besides sure blockers (BufferLayout shadowBlockerBits): 0 nothing; 1 alpha-tested surfaces
+	 * only, each of which may block; 2 surfaces light always passes (glass, less than opaque). They resolve no more.
+	 * @returns {number}
+	 */
+	seeThroughLevel() {
+
+		if ( ! this.materialStorageAttr?.array ) return 0;
+		let level = 0;
+		for ( let i = 0; i < this.materialCount; i ++ ) {
+
+			const bits = this._blockerBits( i );
+			if ( bits === 0 ) return 2;
+			if ( bits === 2 ) level = 1;
+
+		}
+
+		return level;
+
+	}
+
 	/** Whether some emitting material has an emission map: only then does light sampling read it. */
 	hasEmissionMaps() {
 
@@ -663,8 +684,8 @@ export class MaterialDataManager {
 
 		}
 
-		// A material layer, and glass in shadow rays, is compiled in only while some material uses it.
-		if ( MATERIAL_LAYERS.includes( property ) || property === 'transmission' || property === 'relativeIOR' ) this.callbacks.onMaterialFeaturesChanged?.();
+		// A material layer, and what shadow rays do at a surface light passes, is compiled in only while some material uses it.
+		if ( MATERIAL_LAYERS.includes( property ) || BLOCKER_PROPS.has( property ) || property === 'relativeIOR' ) this.callbacks.onMaterialFeaturesChanged?.();
 
 		this._notifyReset();
 
@@ -815,18 +836,22 @@ export class MaterialDataManager {
 	 */
 	_recomputeOpaqueBlockerForMaterial( materialIndex ) {
 
-		const matBuf = this.materialStorageAttr?.array;
-		if ( ! matBuf ) return;
+		if ( ! this.materialStorageAttr?.array ) return;
+		this._patchTriangleFlagForMaterial( materialIndex, TRI_BLOCKER_SHIFT, 2, this._blockerBits( materialIndex ) );
 
-		const matStride = materialIndex * M.FLOATS_PER_MATERIAL;
-		const bits = shadowBlockerBits( {
-			alphaMode: matBuf[ matStride + M.ALPHA_MODE ],
-			transparent: matBuf[ matStride + M.TRANSPARENT ],
-			transmission: matBuf[ matStride + M.TRANSMISSION ],
-			opacity: matBuf[ matStride + M.OPACITY ],
+	}
+
+	/** A material's shadow-blocker bits, from its packed values. @private */
+	_blockerBits( materialIndex ) {
+
+		const data = this.materialStorageAttr.array;
+		const base = materialIndex * M.FLOATS_PER_MATERIAL;
+		return shadowBlockerBits( {
+			alphaMode: data[ base + M.ALPHA_MODE ],
+			transparent: data[ base + M.TRANSPARENT ],
+			transmission: data[ base + M.TRANSMISSION ],
+			opacity: data[ base + M.OPACITY ],
 		} );
-
-		this._patchTriangleFlagForMaterial( materialIndex, TRI_BLOCKER_SHIFT, 2, bits );
 
 	}
 

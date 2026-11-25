@@ -200,7 +200,7 @@ async function trace( renderer, nodes, triangles, { origins, dirs } ) {
 		const ray = Ray( { origin: o.element( instanceIndex ).xyz, direction: d.element( instanceIndex ).xyz } );
 		const hit = traverseBVH( ray, bvh, tris ).toVar();
 		const shadow = traverseBVHShadow( ray, bvh, tris, float( 70 ) ).toVar();
-		out.element( instanceIndex ).assign( vec4( hit.get( 'dst' ), float( hit.get( 'triangleIndex' ) ), float( shadow.get( 'didHit' ) ), float( hit.get( 'didHit' ) ) ) );
+		out.element( instanceIndex ).assign( vec4( hit.get( 'dst' ), float( hit.get( 'triangleIndex' ) ), float( shadow ), float( hit.get( 'didHit' ) ) ) );
 
 	} )(), { alphaShadows: null } ).compute( RAYS );
 
@@ -221,7 +221,7 @@ async function traceAll( renderer, bvh, triangles, { origins, dirs } ) {
 		const hit = traverseBVH( ray, bvh, tris ).toVar();
 		const shadow = traverseBVHShadow( ray, bvh, tris, float( 70 ) ).toVar();
 		const culled = traverseBVHShadowCameraCulled( ray, bvh, tris, float( 70 ) ).toVar();
-		out.element( instanceIndex.mul( 2 ) ).assign( vec4( hit.get( 'dst' ), float( hit.get( 'triangleIndex' ) ), float( shadow.get( 'didHit' ) ), float( culled.get( 'didHit' ) ) ) );
+		out.element( instanceIndex.mul( 2 ) ).assign( vec4( hit.get( 'dst' ), float( hit.get( 'triangleIndex' ) ), float( shadow ), float( culled ) ) );
 		out.element( instanceIndex.mul( 2 ).add( 1 ) ).assign( vec4( hit.get( 'normal' ), float( hit.get( 'instanceLeaf' ) ) ) );
 
 	} )(), { alphaShadows: null } ).compute( RAYS );

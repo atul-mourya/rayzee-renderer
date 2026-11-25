@@ -93,7 +93,7 @@ exactly the unidirectional kernels: everything bidirectional is JS-gated on `par
   against the power heuristic from explicit densities — for an emitter, a point and a directional lamp, and
   the environment; a dropped exponent or a light at infinity's undone distance fails it.
 - ⚠️ **Light tracing obeys the camera's face culling.** Its segment to the pinhole stands in for the primary
-  ray, which sees through single-sided faces from behind, so it traces `traverseBVHShadowCameraCulled`, and
+  ray, which sees through single-sided faces from behind, so it traces `traceShadowRayCameraCulled`, and
   a light vertex on a face the camera would cull carries `extra` = 1 and is not splatted. Hitting both
   sides there blocked every light-traced point of a room seen from outside through its walls: light
   tracing read −21 % and the combined image −12 % on `BDPT.glb`'s default view.

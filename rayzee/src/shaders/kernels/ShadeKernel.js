@@ -29,7 +29,7 @@ import {
 import { traceShadowRay, traceShadowRayRefractiveOpaque, estimateLightImportance } from '../LightsDirect.js';
 import { shadowTerminatorOrigin } from '../ShadowTerminator.js';
 import { hitFacet, unpackHitFacet, windingNormal } from '../HitFacet.js';
-import { traverseBVHShadow, triangleSide, emitterSide, sideAccepts } from '../BVHTraversal.js';
+import { triangleSide, emitterSide, sideAccepts } from '../BVHTraversal.js';
 import { visibilityCell } from '../LightVisibility.js';
 import { handleMaterialTransparency, MaterialInteractionResult } from '../MaterialTransmission.js';
 import { sampleChromaticCollision, sampleHenyeyGreenstein, subsurfaceCoefficients, CollisionSample, MediumCoeffs } from '../Subsurface.js';
@@ -554,7 +554,7 @@ export function buildShadeKernel( params ) {
 				enabled: medium.equal( int( 2 ) ), p: scatterPoint, dir: direction, g: scatterG, color: scatterColor, lamps, emitters, sample1D, sample2D,
 			} ) );
 			const light = traceFogLight( slots,
-				( from, L, maxDist ) => traceShadowRay( from, L, maxDist, traverseBVHShadow, bvhBuffer, triangleBuffer, materialBuffer ),
+				( from, L, maxDist ) => traceShadowRay( from, L, maxDist, bvhBuffer, triangleBuffer, materialBuffer ),
 				picksLights ? shadowRays : null, picksLights ? sample1D( FOG_DIM.SHADOW_PICK ) : null );
 			currentRadiance.assign( vec4( currentRadiance.xyz.add( regularized( light.direct ) ).add( regularized( light.emitted ) ), currentRadiance.w ) );
 
@@ -912,7 +912,7 @@ export function buildShadeKernel( params ) {
 				const toLight = hitPoint.add( dir.mul( nearestT ) ).sub( from ).toVar();
 				const len = length( toLight ).toVar();
 				const visibility = traceShadowRayRefractiveOpaque(
-					from, toLight.div( len ), len.mul( SHADOW_END ), traverseBVHShadow, bvhBuffer, triangleBuffer, materialBuffer,
+					from, toLight.div( len ), len.mul( SHADOW_END ), bvhBuffer, triangleBuffer, materialBuffer,
 				).toVar();
 
 				If( visibility.greaterThan( 0.0 ).and( cosLight.greaterThan( 0.0 ) ), () => {
@@ -2096,7 +2096,7 @@ export function buildShadeKernel( params ) {
 				const shadowDist = length( toSample ).toVar();
 				const visibility = traceShadowRayRefractiveOpaque(
 					rayOrigin, toSample.div( shadowDist ), shadowDist.mul( SHADOW_END ),
-					traverseBVHShadow, bvhBuffer, triangleBuffer, materialBuffer,
+					bvhBuffer, triangleBuffer, materialBuffer,
 				).toVar();
 
 				If( visibility.greaterThan( 0.0 ), () => {
@@ -2140,7 +2140,7 @@ export function buildShadeKernel( params ) {
 
 				const visibility = traceShadowRayRefractiveOpaque(
 					originFor( lightDir, lightShadowOrigin( lightDir ) ), lightDir, float( 1e20 ),
-					traverseBVHShadow, bvhBuffer, triangleBuffer, materialBuffer,
+					bvhBuffer, triangleBuffer, materialBuffer,
 				).toVar();
 
 				If( visibility.greaterThan( 0.0 ), () => {
@@ -2189,7 +2189,7 @@ export function buildShadeKernel( params ) {
 			If( lightPdf.greaterThan( 0.0 ).and( radiance.x.add( radiance.y ).add( radiance.z ).greaterThan( 0.0 ) ).and( reaches( lightDir ) ), () => {
 
 				const visibility = traceShadowRayRefractiveOpaque(
-					originFor( lightDir, lightShadowOrigin( lightDir ) ), lightDir, float( 1e20 ), traverseBVHShadow, bvhBuffer, triangleBuffer, materialBuffer,
+					originFor( lightDir, lightShadowOrigin( lightDir ) ), lightDir, float( 1e20 ), bvhBuffer, triangleBuffer, materialBuffer,
 				).toVar();
 
 				If( visibility.greaterThan( 0.0 ), () => {
@@ -2292,7 +2292,7 @@ export function buildShadeKernel( params ) {
 				const shadowDist = length( toSample ).toVar();
 				const visibility = traceShadowRayRefractiveOpaque(
 					shadowOrigin, select( atInfinity, lightDir, toSample.div( shadowDist ) ), select( atInfinity, float( 1e20 ), shadowDist.mul( SHADOW_END ) ),
-					traverseBVHShadow, bvhBuffer, triangleBuffer, materialBuffer,
+					bvhBuffer, triangleBuffer, materialBuffer,
 				).toVar();
 
 				If( visibility.greaterThan( 0.0 ), () => {
@@ -2370,7 +2370,7 @@ export function buildShadeKernel( params ) {
 
 						return traceShadowRay(
 							origin, dir, maxDist,
-							traverseBVHShadow, bvhBuffer, triangleBuffer, materialBuffer,
+							bvhBuffer, triangleBuffer, materialBuffer,
 						);
 
 					} );

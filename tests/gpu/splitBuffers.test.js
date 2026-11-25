@@ -119,7 +119,7 @@ async function trace( renderer, bvh, tris, { origins, dirs }, last = 'uv' ) {
 		const ray = Ray( { origin: o.element( instanceIndex ).xyz, direction: d.element( instanceIndex ).xyz } );
 		const hit = traverseBVH( ray, bvh, tris ).toVar();
 		const shadow = traverseBVHShadow( ray, bvh, tris, float( 25 ) ).toVar();
-		out.element( instanceIndex ).assign( vec4( hit.get( 'dst' ), float( hit.get( 'triangleIndex' ) ), float( shadow.get( 'didHit' ) ), last === 'uv' ? hit.get( 'uv' ).x : float( hit.get( 'meshIndex' ) ) ) );
+		out.element( instanceIndex ).assign( vec4( hit.get( 'dst' ), float( hit.get( 'triangleIndex' ) ), float( shadow ), last === 'uv' ? hit.get( 'uv' ).x : float( hit.get( 'meshIndex' ) ) ) );
 
 	} )(), { alphaShadows: null } ).compute( RAYS );
 

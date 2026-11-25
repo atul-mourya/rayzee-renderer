@@ -11,7 +11,6 @@ import { getRandomSample1D, pcgHash, SAMPLER_DIMS_PER_BOUNCE } from '../../shade
 import { evaluateMaterialResponse } from '../../shaders/MaterialEvaluation.js';
 import { calculateMaterialPDF } from '../../shaders/LightsSampling.js';
 import { traceShadowRayRefractiveOpaque } from '../../shaders/LightsDirect.js';
-import { traverseBVHShadow } from '../../shaders/BVHTraversal.js';
 import { offsetRayOrigin, SHADOW_END, luminance } from '../../shaders/Common.js';
 import { regularizePathContribution } from '../../shaders/PathTracerCore.js';
 import {
@@ -149,7 +148,7 @@ export function buildConnectKernel( params ) {
 			const segmentLength = length( segment ).toVar();
 			const visibility = traceShadowRayRefractiveOpaque(
 				origin, segment.div( segmentLength ), segmentLength.mul( SHADOW_END ),
-				traverseBVHShadow, bvhBuffer, triangleBuffer, materialBuffer,
+				bvhBuffer, triangleBuffer, materialBuffer,
 			);
 
 			If( visibility.greaterThan( 0.0 ), () => {
