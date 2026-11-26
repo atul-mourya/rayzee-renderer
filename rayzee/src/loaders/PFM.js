@@ -24,7 +24,8 @@ export function decodePFM( bytes ) {
 	const width = parseInt( token(), 10 );
 	const height = parseInt( token(), 10 );
 	const scale = parseFloat( token() );
-	pos ++;
+	// One whitespace byte ends the header; a Windows writer's \r\n is two.
+	pos += bytes[ pos ] === 13 && bytes[ pos + 1 ] === 10 ? 2 : 1;
 
 	const channels = magic === 'PF' ? 3 : 1;
 	const count = width * height;

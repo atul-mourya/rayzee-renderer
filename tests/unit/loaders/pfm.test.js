@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll } from 'vitest';
-import { PerspectiveCamera, Scene, Vector3 } from 'three';
-import { decodePFM } from '@/core/loaders/PFM.js';
+import { PerspectiveCamera, Scene, Vector3, FloatType, LinearFilter } from 'three';
+import { decodePFM, pfmTexture } from '@/core/loaders/PFM.js';
 import { AssetLoader } from '@/core/loaders/AssetLoader.js';
 import { pfmFormat } from '@/core/addons/formats.js';
 
@@ -35,6 +35,23 @@ describe( 'PFM', () => {
 
 		const big = decodePFM( pfm( 'PF\n2 2\n2\n', rows, false ) );
 		expect( big.data[ 12 ] ).toBe( 20 );
+
+	} );
+
+	it( 'reads a header written with Windows line ends', () => {
+
+		const crlf = decodePFM( pfm( 'PF\r\n2 1\r\n-1.0\r\n', [ 1, 2, 3, 4, 5, 6 ], true ) );
+		expect( Array.from( crlf.data ) ).toEqual( [ 1, 2, 3, 1, 4, 5, 6, 1 ] );
+
+	} );
+
+	it( 'makes a filtered float texture, and refuses a header without a size or scale', () => {
+
+		const texture = pfmTexture( pfm( 'PF\n1 1\n-1\n', [ 0.25, 0.5, 0.75 ], true ) );
+		expect( [ texture.image.width, texture.image.height, texture.type, texture.minFilter, texture.magFilter ] ).toEqual( [ 1, 1, FloatType, LinearFilter, LinearFilter ] );
+		expect( Array.from( texture.image.data ) ).toEqual( [ 0.25, 0.5, 0.75, 1 ] );
+		expect( () => decodePFM( pfm( 'PF\n0 1\n-1\n', [], true ) ) ).toThrow( /bad PFM header/ );
+		expect( () => decodePFM( pfm( 'PF\n1 1\n0\n', [ 1, 1, 1 ], true ) ) ).toThrow( /bad PFM header/ );
 
 	} );
 
