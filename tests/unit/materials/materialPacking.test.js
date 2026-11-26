@@ -664,6 +664,12 @@ describe( 'MaterialDataManager', () => {
 		expect( manager.getMaterialPropertySource( 0, 'ior' ) ).toBe( MATERIAL_VALUE_SOURCE.DEFAULT );
 		expect( manager.getMaterialPropertySource( 0, 'metalness' ) ).toBe( MATERIAL_VALUE_SOURCE.MATERIAL );
 
+		// An animation's value is written but is not the host's edit, nor saved as one.
+		manager.updateMaterialProperty( 0, 'metalness', 0.5, false );
+		expect( manager.getMaterialProperty( 0, 'metalness' ) ).toBe( 0.5 );
+		expect( manager.getMaterialPropertySource( 0, 'metalness' ) ).toBe( MATERIAL_VALUE_SOURCE.MATERIAL );
+		expect( manager.serializeHostEdits() ).toEqual( [] );
+
 		manager.updateMaterialProperty( 0, 'ior', 1.33 );
 		expect( manager.getMaterialPropertySource( 0, 'ior' ) ).toBe( MATERIAL_VALUE_SOURCE.HOST );
 

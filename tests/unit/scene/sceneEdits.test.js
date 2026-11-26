@@ -239,7 +239,7 @@ describe( 'material edits', () => {
 		SceneEdits.setMaterialProperty( app, 3, 'emissiveIntensity', 5 );
 		expect( app._sdf.updateMaterialEmissive ).toHaveBeenCalledWith( 3, 'emissiveIntensity', 5 );
 		expect( app.calls ).toEqual( [
-			[ 'material', 3, 'emissiveIntensity', 5 ],
+			[ 'material', 3, 'emissiveIntensity', 5, true ],
 			[ 'emissive', 'rows', 4, 9, 'trail' ],
 			[ 'lightBVH', 'nodes', 7 ],
 			[ 'reset' ],
@@ -258,7 +258,7 @@ describe( 'material edits', () => {
 		SceneEdits.setMaterialProperty( app, 3, 'side', 2 );
 		expect( app._sdf.rebuildEmissiveColors ).toHaveBeenCalledTimes( 1 );
 		expect( app.calls ).toEqual( [
-			[ 'material', 3, 'side', 2 ],
+			[ 'material', 3, 'side', 2, true ],
 			[ 'emissive', 'rows', 2, 3, 'trail' ],
 			[ 'lightBVH', 'nodes', 1 ],
 			[ 'reset' ],
@@ -272,12 +272,36 @@ describe( 'material edits', () => {
 
 	} );
 
+	it( 'applies a batch as one change: one emitter rebuild, one restart, not the host\'s edits', () => {
+
+		const payload = { rawData: 'rows', emissiveCount: 4, totalPower: 9, bitTrailMap: 'trail', lightBVHNodeData: 'nodes', lightBVHNodeCount: 7 };
+		const app = makeApp( { sdf: { updateMaterialEmissive: vi.fn(), updateMaterialsEmissive: vi.fn( () => payload ) } } );
+
+		const edits = [
+			{ materialIndex: 3, property: 'emissive', value: 'red' },
+			{ materialIndex: 3, property: 'emissiveIntensity', value: 5 },
+			{ materialIndex: 4, property: 'roughness', value: 0.2 },
+		];
+		SceneEdits.setMaterialProperties( app, edits, { host: false } );
+		expect( app._sdf.updateMaterialEmissive ).not.toHaveBeenCalled();
+		expect( app._sdf.updateMaterialsEmissive ).toHaveBeenCalledWith( [ edits[ 0 ], edits[ 1 ] ] );
+		expect( app.calls ).toEqual( [
+			[ 'material', 3, 'emissive', 'red', false ],
+			[ 'material', 3, 'emissiveIntensity', 5, false ],
+			[ 'material', 4, 'roughness', 0.2, false ],
+			[ 'emissive', 'rows', 4, 9, 'trail' ],
+			[ 'lightBVH', 'nodes', 7 ],
+			[ 'reset' ],
+		] );
+
+	} );
+
 	it( 'leaves the emitters alone for any other property', () => {
 
 		const app = makeApp( { sdf: { updateMaterialEmissive: vi.fn() } } );
 		SceneEdits.setMaterialProperty( app, 3, 'roughness', 0.2 );
 		expect( app._sdf.updateMaterialEmissive ).not.toHaveBeenCalled();
-		expect( app.calls ).toEqual( [[ 'material', 3, 'roughness', 0.2 ], [ 'reset' ]] );
+		expect( app.calls ).toEqual( [[ 'material', 3, 'roughness', 0.2, true ], [ 'reset' ]] );
 
 	} );
 
@@ -293,10 +317,10 @@ describe( 'material edits', () => {
 		SceneEdits.setMaterialProperty( app, 1, 'side', 2 );
 		expect( app.stages.pathTracer.materialData.updateMaterialProperty ).not.toHaveBeenCalled();
 		await flush();
-		expect( app.stages.pathTracer.materialData.updateMaterialProperty ).toHaveBeenCalledWith( 1, 'side', 2 );
+		expect( app.stages.pathTracer.materialData.updateMaterialProperty ).toHaveBeenCalledWith( 1, 'side', 2, true );
 
 		SceneEdits.setMaterialProperty( app, 1, 'roughness', 0.4 );
-		expect( app.stages.pathTracer.materialData.updateMaterialProperty ).toHaveBeenLastCalledWith( 1, 'roughness', 0.4 );
+		expect( app.stages.pathTracer.materialData.updateMaterialProperty ).toHaveBeenLastCalledWith( 1, 'roughness', 0.4, true );
 
 	} );
 
@@ -321,7 +345,7 @@ describe( 'material edits', () => {
 		const app = makeApp( { sdf: { spilled: true } } );
 		SceneEdits.setMaterialProperty( app, 1, 'metalness', 1 );
 		expect( app.ensureSceneResident ).not.toHaveBeenCalled();
-		expect( app.stages.pathTracer.materialData.updateMaterialProperty ).toHaveBeenCalledWith( 1, 'metalness', 1 );
+		expect( app.stages.pathTracer.materialData.updateMaterialProperty ).toHaveBeenCalledWith( 1, 'metalness', 1, true );
 
 	} );
 

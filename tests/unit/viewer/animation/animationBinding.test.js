@@ -133,6 +133,31 @@ describe( 'lights a clip moves', () => {
 
 	} );
 
+	it( 'go back when a clip that does not key them is played after one that did', () => {
+
+		const root = new Group();
+		const mesh = new Mesh( new BoxGeometry(), new MeshBasicMaterial() );
+		mesh.name = 'box';
+		const lamp = new PointLight( 0xffffff, 1 );
+		lamp.name = 'lamp';
+		root.add( mesh, lamp );
+		const dim = new AnimationClip( 'dim', 1, [ new NumberKeyframeTrack( 'lamp.intensity', [ 0, 1 ], [ 1, 5 ] ) ] );
+		const slide = new AnimationClip( 'slide', 1, [ new VectorKeyframeTrack( 'box.position', [ 0, 1 ], [ 0, 0, 0, 1, 0, 0 ] ) ] );
+		const traced = new Scene();
+		const lights = new LightManager( traced, { visible: false }, { updateLights() {} } );
+		lights.transferSceneLights( root );
+		const [ copy ] = traced.getObjectsByProperty( 'isLight', true );
+		const manager = new AnimationManager();
+		manager.applyPoseCallback = ( pose ) => lights.followSources( pose.lights );
+		manager.init( root, root, [ mesh ], [ dim, slide ] );
+
+		manager.seekTo( 0.5, 0 );
+		expect( copy.intensity ).toBe( 3 );
+		manager.seekTo( 0.5, 1 );
+		expect( copy.intensity ).toBe( 1 );
+
+	} );
+
 	it( 'report a clip\'s end once its last pose has reached the lights', () => {
 
 		const root = new Group();

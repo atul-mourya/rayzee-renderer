@@ -188,8 +188,10 @@
 
 ### Animation
 
-- [ ] glTF KHR_animation_pointer beyond lights and node visibility (materials, cameras) is left out, warned once
+- [ ] glTF KHR_animation_pointer on a material's other properties (textures' transforms, transmission, alpha…) and a camera's clipping planes, aspect or orthographic size is left out, warned once
   (`loaders/GLTFAnimationPointer.js`)
+- [ ] A pose's animated emitter edits rebuild the light tree every frame (one batch a pose); defer while playing, as
+  moved emitters are, if it shows in frame time
 - [ ] Timeline scrubber for animation control
 - [ ] Multi-clip blending - cross-fade between animation clips with configurable transition duration
 - [ ] sequence caching for smooth playback / scrubbing

@@ -22,7 +22,17 @@ model replaced Zero-Day's 6,177 animated meshes. ⚠️ Never refit a mesh that 
 outer over both cones' keys, sampled 8 times between them as it is not linear in the cones, stepped where both step);
 a node's visibility (`/nodes/n/extensions/KHR_node_visibility/visible`) becomes three's `visible` track, which the rigid
 path already follows, and `nodeVisibilityPlugin` hides a node the file marks not visible (three.js reads neither); a
-pointer to anything else is warned and left out. A cubic spline plays as glTF defines it (the Hermite interpolant three's
+perspective camera's `yfov` becomes three's `fov` (degrees), which `_followAnimatedCamera` hands the view; a material's
+base colour (alpha dropped), metallic and roughness factors, emissive factor and `emissiveStrength` become
+`mesh.material.x` tracks on every mesh drawn with it — `_planClips` keeps them apart from the meshes it moves, each pose
+sends the ones whose value changed (once a material, a copy of a colour: `_changedMaterials`), and `_applyAnimationPose`
+makes them one batch of edits (`setMaterialProperties`: one rebuild of the emitters' list, which a light switched on is
+measured into at its placement; `host: false`, so they are not saved as the host's edits). Every clip's materials are
+compared, not the active one's: stop (deforming clips too) and a switch to another clip send the restored values. The
+first pose of a clip hands over every clip's lights for the same reason (`_lightsFor`), then only its own. A
+screen's strength keyed 1 → 9 lit its floor 5.000× at mid-clip in a Node render. A pointer to
+anything else is warned and left out, and so is a cubic spline whose values are not three a key (its interpolant's loops
+would never end). A cubic spline plays as glTF defines it (the Hermite interpolant three's
 GLTFLoader keeps to itself, rewritten there; the spot's penumbra samples the curve), held to the spec's formula in the
 tests. A clip-dimmed lamp renders byte for
 byte as one set by hand. A copy is shown only while its source and every parent are (`shown`), at load, per frame, and when the outliner hides a group (`followVisibility`, from `updateAllMeshVisibility`).

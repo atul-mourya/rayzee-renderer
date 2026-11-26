@@ -1,8 +1,9 @@
 /**
  * KHR_animation_pointer for a glTF's lights (KHR_lights_punctual: intensity, colour, range and the spot cones, as
- * Blender's exporter writes an animated light) and nodes' visibility (KHR_node_visibility). three.js skips every channel
- * that names no node, so these tracks are added to their animation's clip here, keyed as three.js keys its own: the
- * object's name, three's property. A pointer to anything else (a material, a camera) is reported and left out. Also
+ * Blender's exporter writes an animated light), nodes' visibility (KHR_node_visibility), a perspective camera's field
+ * of view and a material's base colour, metalness, roughness and emission. three.js skips every channel that names no
+ * node, so these tracks are added to their animation's clip here, keyed as three.js keys its own: the object's name,
+ * three's property (`mesh.material.x` for a material's). A pointer to anything else is reported and left out. Also
  * KHR_node_visibility itself, which three.js does not read: a node marked not visible is hidden, its descendants with it.
  */
 
@@ -13,6 +14,16 @@ const log = createLogger( 'gltf' );
 
 const LIGHT_POINTER = /^\/extensions\/KHR_lights_punctual\/lights\/(\d+)\/(intensity|color|range|spot\/innerConeAngle|spot\/outerConeAngle)$/;
 const VISIBILITY_POINTER = /^\/nodes\/(\d+)\/extensions\/KHR_node_visibility\/visible$/;
+const FOV_POINTER = /^\/cameras\/(\d+)\/perspective\/yfov$/;
+const MATERIAL_POINTER = /^\/materials\/(\d+)\/(pbrMetallicRoughness\/baseColorFactor|pbrMetallicRoughness\/metallicFactor|pbrMetallicRoughness\/roughnessFactor|emissiveFactor|extensions\/KHR_materials_emissive_strength\/emissiveStrength)$/;
+// glTF's material property → three's, and its components a key (a base colour's alpha left out).
+const MATERIAL_PROPERTIES = {
+	'pbrMetallicRoughness/baseColorFactor': { property: 'color', size: 4 },
+	'pbrMetallicRoughness/metallicFactor': { property: 'metalness', size: 1 },
+	'pbrMetallicRoughness/roughnessFactor': { property: 'roughness', size: 1 },
+	emissiveFactor: { property: 'emissive', size: 3 },
+	'extensions/KHR_materials_emissive_strength/emissiveStrength': { property: 'emissiveIntensity', size: 1 },
+};
 
 // The objects a glTF node became: one, or a group holding a mesh's primitives (each scene a copy of it).
 function nodeObjects( parser, scenes, index ) {
@@ -68,10 +79,35 @@ export function animationPointerPlugin( parser ) {
 
 					const pointer = pointerOf( channel );
 					if ( ! pointer ) continue;
+					const target = VISIBILITY_POINTER.exec( pointer ) ?? FOV_POINTER.exec( pointer ) ?? MATERIAL_POINTER.exec( pointer ) ?? LIGHT_POINTER.exec( pointer );
+					const keys = target && await keysOf( parser, def.samplers[ channel.sampler ] );
+					if ( target && ! keys ) {
+
+						log.warn( `KHR_animation_pointer: ${pointer} has a cubic spline whose values are not three a key — left out` );
+						continue;
+
+					}
+
 					const node = VISIBILITY_POINTER.exec( pointer );
 					if ( node ) {
 
-						channels.push( { node: Number( node[ 1 ] ), keys: await keysOf( parser, def.samplers[ channel.sampler ] ) } );
+						channels.push( { node: Number( node[ 1 ] ), keys } );
+						continue;
+
+					}
+
+					const material = MATERIAL_POINTER.exec( pointer );
+					if ( material ) {
+
+						channels.push( { material: Number( material[ 1 ] ), ...MATERIAL_PROPERTIES[ material[ 2 ] ], keys } );
+						continue;
+
+					}
+
+					const camera = FOV_POINTER.exec( pointer );
+					if ( camera ) {
+
+						channels.push( { camera: Number( camera[ 1 ] ), keys } );
 						continue;
 
 					}
@@ -84,14 +120,20 @@ export function animationPointerPlugin( parser ) {
 
 					}
 
-					channels.push( { light: Number( match[ 1 ] ), property: match[ 2 ], keys: await keysOf( parser, def.samplers[ channel.sampler ] ) } );
+					channels.push( { light: Number( match[ 1 ] ), property: match[ 2 ], keys } );
 
 				}
 
 				const scenes = result.scenes ?? [ result.scene ];
-				const tracks = channels.flatMap( ( channel ) => ( channel.node === undefined ? tracksFor( channel, channels, json, lights )
+				const tracks = channels.flatMap( ( channel ) => {
+
 					// A boolean a key, stepped (the only interpolation the extension allows).
-					: nodeObjects( parser, scenes, channel.node ).map( ( object ) => new BooleanKeyframeTrack( `${object.name || object.uuid}.visible`, channel.keys.times, Array.from( channel.keys.values, ( v ) => v !== 0 ) ) ) ) );
+					if ( channel.node !== undefined ) return nodeObjects( parser, scenes, channel.node ).map( ( object ) => new BooleanKeyframeTrack( `${object.name || object.uuid}.visible`, channel.keys.times, Array.from( keyValues( channel.keys ), ( v ) => v !== 0 ) ) );
+					if ( channel.camera !== undefined ) return fovTracks( parser, scenes, channel );
+					if ( channel.material !== undefined ) return materialTracks( parser, scenes, channel );
+					return tracksFor( channel, channels, json, lights );
+
+				} );
 				if ( tracks.length === 0 ) continue;
 				let clip = result.animations[ a ];
 				if ( ! clip ) result.animations[ a ] = clip = new AnimationClip( def.name || `animation_${a}`, - 1, [] );
@@ -100,7 +142,7 @@ export function animationPointerPlugin( parser ) {
 
 			}
 
-			if ( skipped.size ) log.warn( `KHR_animation_pointer: only lights and node visibility are animated; left out ${[ ...skipped ].join( ', ' )}` );
+			if ( skipped.size ) log.warn( `KHR_animation_pointer: only lights, node visibility, a camera's field of view and a material's colour, metalness, roughness and emission are animated; left out ${[ ...skipped ].join( ', ' )}` );
 
 		},
 	};
@@ -176,16 +218,19 @@ function cubicSpline( track ) {
 
 }
 
-// A sampler's keys: times, values and how they are joined; a cubic spline's values with their tangents.
+// A sampler's keys: times, values and how they are joined; a cubic spline's values with their tangents. Null for a
+// cubic spline without three values a key: its interpolant's value size would not be whole, and its loops never end.
 async function keysOf( parser, sampler ) {
 
 	const [ input, output ] = await Promise.all( [ parser.getDependency( 'accessor', sampler.input ), parser.getDependency( 'accessor', sampler.output ) ] );
-	const times = Float32Array.from( input.array );
-	const values = Float32Array.from( output.array );
 	const cubic = sampler.interpolation === 'CUBICSPLINE';
-	return { times, values, size: output.itemSize, cubic, interpolation: sampler.interpolation === 'STEP' ? InterpolateDiscrete : InterpolateLinear };
+	if ( cubic && output.count !== 3 * input.count ) return null;
+	return { times: Float32Array.from( input.array ), values: Float32Array.from( output.array ), cubic, interpolation: sampler.interpolation === 'STEP' ? InterpolateDiscrete : InterpolateLinear };
 
 }
+
+// A track's values without a cubic spline's tangents.
+const keyValues = ( { values, cubic, times } ) => ( cubic ? values.filter( ( _, i ) => Math.floor( i / ( values.length / times.length / 3 ) ) % 3 === 1 ) : values );
 
 // A channel's three.js tracks: one for each of its light's objects. A cone sets three's angle (outer) and penumbra
 // ( 1 − inner / outer ): either channel animates the penumbra, read with the other's keys or its loaded value.
@@ -230,6 +275,49 @@ function tracksFor( channel, channels, json, lights ) {
 	} );
 	const joined = stepped ? InterpolateDiscrete : InterpolateLinear;
 	return [ ...out, ...objects.map( ( light ) => new NumberKeyframeTrack( `${light.name || light.uuid}.penumbra`, Float32Array.from( keyTimes ), penumbra, joined ) ) ];
+
+}
+
+// A material's property on each mesh drawn with it (three.js gives a mesh of several primitives one mesh a primitive).
+function materialTracks( parser, scenes, { material, property, size, keys } ) {
+
+	const { times, interpolation, cubic } = keys;
+	const values = size === 4 ? keys.values.filter( ( _, i ) => i % 4 !== 3 ) : keys.values;
+	const Type = size === 1 ? NumberKeyframeTrack : ColorKeyframeTrack;
+	const meshes = [];
+	let lacking = false;
+	for ( const scene of scenes ) scene?.traverse( ( object ) => {
+
+		if ( ! object.isMesh || Array.isArray( object.material ) || parser.associations.get( object.material )?.materials !== material ) return;
+		// An unlit material (MeshBasicMaterial) has no metalness, roughness or emission.
+		if ( object.material[ property ] === undefined ) lacking = true;
+		else meshes.push( object );
+
+	} );
+	if ( lacking ) log.warn( `KHR_animation_pointer: material ${material} has no ${property} (unlit?) — left out there` );
+	return meshes.map( ( mesh ) => {
+
+		const track = new Type( `${mesh.name || mesh.uuid}.material.${property}`, times, values, interpolation );
+		return cubic ? cubicSpline( track ) : track;
+
+	} );
+
+}
+
+// A camera's vertical field of view, radians in glTF, degrees on three's camera: on each node that shows the camera.
+function fovTracks( parser, scenes, { camera, keys } ) {
+
+	const { times, values, interpolation, cubic } = keys;
+	const degrees = values.map( ( v ) => v * 180 / Math.PI );
+	return ( parser.json.nodes ?? [] ).flatMap( ( node, index ) => ( node.camera === camera ? nodeObjects( parser, scenes, index ) : [] ) )
+		.flatMap( ( object ) => {
+
+			const target = object.isCamera ? object : object.children.find( ( c ) => c.isCamera );
+			if ( ! target?.isPerspectiveCamera ) return [];
+			const track = new NumberKeyframeTrack( `${target.name || target.uuid}.fov`, times, degrees, interpolation );
+			return [ cubic ? cubicSpline( track ) : track ];
+
+		} );
 
 }
 

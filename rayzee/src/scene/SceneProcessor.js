@@ -2415,22 +2415,37 @@ export class SceneProcessor {
 	 */
 	updateMaterialEmissive( materialIndex, property, value ) {
 
+		return this.updateMaterialsEmissive( [ { materialIndex, property, value } ] );
+
+	}
+
+	/**
+	 * Several emissive edits, one rebuild (an animation keys emission every frame).
+	 * @param {Array<{ materialIndex: number, property: string, value: * }>} edits
+	 * @returns {object|null} GPU upload payload, or null when nothing changed
+	 */
+	updateMaterialsEmissive( edits ) {
+
 		if ( ! this.emissiveTriangleBuilder ) return null;
 
-		const mat = this.materials[ materialIndex ];
-		if ( ! mat ) return null;
+		let changed = false;
+		for ( const { materialIndex, property, value } of edits ) {
 
-		if ( property === 'emissive' ) mat.emissive = value;
-		else if ( property === 'emissiveIntensity' ) mat.emissiveIntensity = value;
+			const mat = this.materials[ materialIndex ];
+			if ( ! mat ) continue;
 
-		const changed = this.emissiveTriangleBuilder.updateMaterialEmissive(
-			materialIndex, mat,
-			this.triangles, this.materials, this.triangleCount, this.instanceTable ?? null,
-		);
+			if ( property === 'emissive' ) mat.emissive = value;
+			else if ( property === 'emissiveIntensity' ) mat.emissiveIntensity = value;
+			else continue;
 
-		if ( ! changed ) return null;
+			if ( this.emissiveTriangleBuilder.updateMaterialEmissive(
+				materialIndex, mat,
+				this.triangles, this.materials, this.triangleCount, this.instanceTable ?? null,
+			) ) changed = true;
 
-		return this._collectEmissivePayload();
+		}
+
+		return changed ? this._collectEmissivePayload() : null;
 
 	}
 

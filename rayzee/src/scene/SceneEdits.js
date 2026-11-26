@@ -112,37 +112,52 @@ export function getMaterialPropertySource( app, materialIndex, property ) {
 
 export function setMaterialProperty( app, materialIndex, property, value ) {
 
+	setMaterialProperties( app, [ { materialIndex, property, value } ] );
+
+}
+
+/**
+ * Material edits as one change: one emitter rebuild, one restart (none with `reset: false`, the caller's). `host: false`
+ * keeps them out of the host's edits (an animation's values, which stop restores).
+ * @param {Array<{ materialIndex: number, property: string, value: * }>} edits
+ */
+export function setMaterialProperties( app, edits, { host = true, reset = true } = {} ) {
+
 	// These rewrite triangle records, which a spilled scene has to read back first.
-	if ( app._sdf?.spilled && TRIANGLE_PATCH_PROPERTIES.has( property ) ) {
+	if ( app._sdf?.spilled && edits.some( e => TRIANGLE_PATCH_PROPERTIES.has( e.property ) ) ) {
 
 		app.ensureSceneResident()
-			.then( () => app.setMaterialProperty( materialIndex, property, value ) )
+			.then( () => setMaterialProperties( app, edits, { host } ) )
 			.catch( error => app._issues.warn( ISSUE_CODES.STORAGE_READ_FAILED, `reading the scene back for a material edit failed: ${error.message}` ) );
 		return;
 
 	}
 
-	app.stages.pathTracer?.materialData.updateMaterialProperty( materialIndex, property, value );
+	const materialData = app.stages.pathTracer?.materialData;
+	for ( const { materialIndex, property, value } of edits ) materialData?.updateMaterialProperty( materialIndex, property, value, host );
 
 	// Keep the emissive-NEE structure in sync unconditionally (not gated on the
 	// sampling toggle) so edits made while NEE is off aren't lost on re-enable.
-	const emissiveAffectingProps = [ 'emissive', 'emissiveIntensity' ];
-	if ( emissiveAffectingProps.includes( property ) && app._sdf ) {
+	const emissive = edits.filter( e => e.property === 'emissive' || e.property === 'emissiveIntensity' );
+	if ( emissive.length && app._sdf ) {
 
-		app._uploadEmissivePayload( app._sdf.updateMaterialEmissive( materialIndex, property, value ) );
+		app._uploadEmissivePayload( emissive.length === 1
+			? app._sdf.updateMaterialEmissive( emissive[ 0 ].materialIndex, emissive[ 0 ].property, emissive[ 0 ].value )
+			: app._sdf.updateMaterialsEmissive( emissive ) );
 
 	}
 
 	// A side edit moves the faces an emitter glows from (its triangles' flags, patched above), as a transmission edit
 	// can (it makes the material double-sided): the light list's one- or two-sided cones are rebuilt from them, or NEE
 	// would keep drawing the old side.
-	if ( ( property === 'side' || property === 'transmission' ) && app._sdf?.emissiveTriangleBuilder?.emissiveTriangles?.some( ( t ) => t.materialIndex === materialIndex ) ) {
+	const emitters = app._sdf?.emissiveTriangleBuilder?.emissiveTriangles;
+	if ( emitters && edits.some( e => ( e.property === 'side' || e.property === 'transmission' ) && emitters.some( ( t ) => t.materialIndex === e.materialIndex ) ) ) {
 
 		app._uploadEmissivePayload( app._sdf.rebuildEmissiveColors() );
 
 	}
 
-	app.reset();
+	if ( reset ) app.reset();
 
 }
 

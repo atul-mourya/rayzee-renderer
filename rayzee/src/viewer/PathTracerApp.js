@@ -23,6 +23,7 @@ import { AnimationManager } from './animation/AnimationManager.js';
 import { TransformManager } from './overlays/TransformManager.js';
 import { TransformGizmoHelper } from './overlays/TransformGizmoHelper.js';
 import { captureSceneState, applySceneState } from './SceneState.js';
+import { setMaterialProperties } from '../scene/SceneEdits.js';
 import { ARCHIVE_FORMATS } from '../loaders/ArchiveFormats.js';
 import { allFormats } from '../addons/formats.js';
 import { BidirectionalIntegrator } from '../addons/bidirectional/BidirectionalIntegrator.js';
@@ -771,11 +772,22 @@ export class PathTracerApp extends RayzeeRenderer {
 
 	}
 
-	/** Apply a pose from AnimationManager: placements, visibility, lights, and a followed camera. @private */
-	_applyAnimationPose( { meshIndices, visibilityChanged, cameras, lights = [] } ) {
+	/** Apply a pose from AnimationManager: placements, visibility, lights, keyed material properties, and a followed camera. @private */
+	_applyAnimationPose( { meshIndices, visibilityChanged, cameras, lights = [], materials = [] } ) {
 
 		if ( ! this._sdf?.instanceTable ) return;
 		let changed = false;
+
+		// Edits of their materials, as one (one emitter rebuild), and not the host's: stop restores them.
+		const edits = [];
+		for ( const { mesh, property, value } of materials ) {
+
+			const materialIndex = mesh.userData.materialIndex;
+			if ( materialIndex !== undefined ) edits.push( { materialIndex, property, value } );
+
+		}
+
+		if ( edits.length ) setMaterialProperties( this, edits, { host: false, reset: false } );
 
 		if ( meshIndices.length > 0 ) {
 
@@ -803,8 +815,8 @@ export class PathTracerApp extends RayzeeRenderer {
 
 		}
 
-		// A moved light changes every pixel's light: the denoisers' motion history cannot follow it.
-		const lit = lights.length > 0 && this.lightManager?.followSources( lights );
+		// A moved light or an edited material changes every pixel's light: the denoisers' motion history cannot follow it.
+		const lit = ( lights.length > 0 && this.lightManager?.followSources( lights ) ) || edits.length > 0;
 
 		if ( cameras.length > 0 && this._followAnimatedCamera( cameras ) ) changed = true;
 

@@ -126,7 +126,9 @@ export class AnimationManager extends EventDispatcher {
 		this._finished = false;
 
 		this._rigid = false;
-		this._plans = null; // per clip: { meshes: Int32Array, visibility: boolean, cameras: Camera[], lights: Light[] }
+		this._plans = null; // per clip: { meshes: Int32Array, visibility: boolean, cameras: Camera[], lights: Light[], materials: { mesh, property }[] }
+		this._sentMaterials = new Map(); // material → { property: value last handed to applyPoseCallback }
+		this._posedClip = null; // the clip the last pose was of
 		this._allPlan = null;
 		this._activeClip = 0;
 		this._slotOf = null; // meshIndex -> row in the two caches below, or -1
@@ -138,7 +140,7 @@ export class AnimationManager extends EventDispatcher {
 		/** Injected by PathTracerApp — wakes the render loop after play/resume. */
 		this.wakeCallback = null;
 
-		/** Injected by PathTracerApp — receives `{ meshIndices, visibilityChanged, cameras, lights }`. */
+		/** Injected by PathTracerApp — receives `{ meshIndices, visibilityChanged, cameras, lights, materials }`. */
 		this.applyPoseCallback = null;
 
 	}
@@ -237,18 +239,28 @@ export class AnimationManager extends EventDispatcher {
 		const lights = [];
 		root.traverse( o => o.isLight && lights.push( o ) );
 
+		this._sentMaterials = new Map();
 		this._plans = animations.map( clip => {
 
 			const animated = new Set();
+			const materials = [];
 			let visibility = false;
 			let unresolved = false;
 			for ( const track of clip.tracks ) {
 
-				const { nodeName, propertyName } = PropertyBinding.parseTrackName( track.name );
+				const { nodeName, objectName, propertyName } = PropertyBinding.parseTrackName( track.name );
 				const node = find( nodeName );
 				if ( ! node ) {
 
 					unresolved = true;
+					continue;
+
+				}
+
+				// A material's property (`mesh.material.emissiveIntensity`): sent as an edit, the mesh left where it is.
+				if ( objectName === 'material' ) {
+
+					if ( node.isMesh && ! Array.isArray( node.material ) ) materials.push( { mesh: node, property: propertyName } );
 					continue;
 
 				}
@@ -285,7 +297,7 @@ export class AnimationManager extends EventDispatcher {
 
 			};
 
-			return { meshes: Int32Array.from( meshes ), visibility, cameras: [ ...cameras ], lights: lights.filter( l => moves( l ) || moves( l.target ) ), nodes: unresolved ? null : animated, roots: unresolved ? null : subtreeRoots( animated, root ) };
+			return { meshes: Int32Array.from( meshes ), visibility, cameras: [ ...cameras ], lights: lights.filter( l => moves( l ) || moves( l.target ) ), materials, nodes: unresolved ? null : animated, roots: unresolved ? null : subtreeRoots( animated, root ) };
 
 		} );
 
@@ -310,7 +322,7 @@ export class AnimationManager extends EventDispatcher {
 
 		if ( ! this._allPlan ) {
 
-			const meshes = new Set(), cameras = new Set(), lights = new Set();
+			const meshes = new Set(), cameras = new Set(), lights = new Set(), materials = [];
 			let visibility = false;
 			let nodes = new Set();
 			for ( const plan of this._plans ) {
@@ -318,13 +330,14 @@ export class AnimationManager extends EventDispatcher {
 				plan.meshes.forEach( m => meshes.add( m ) );
 				plan.cameras.forEach( c => cameras.add( c ) );
 				plan.lights.forEach( l => lights.add( l ) );
+				materials.push( ...plan.materials );
 				visibility ||= plan.visibility;
 				if ( nodes && plan.nodes ) plan.nodes.forEach( n => nodes.add( n ) );
 				else nodes = null;
 
 			}
 
-			this._allPlan = { meshes: Int32Array.from( meshes ), visibility, cameras: [ ...cameras ], lights: [ ...lights ], nodes, roots: nodes ? subtreeRoots( nodes, this._mixerRoot ) : null };
+			this._allPlan = { meshes: Int32Array.from( meshes ), visibility, cameras: [ ...cameras ], lights: [ ...lights ], materials, nodes, roots: nodes ? subtreeRoots( nodes, this._mixerRoot ) : null };
 
 		}
 
@@ -382,11 +395,49 @@ export class AnimationManager extends EventDispatcher {
 
 		}
 
-		if ( moved.length || visibilityChanged || plan.cameras.length || plan.lights.length ) {
+		const materials = this._changedMaterials();
+		const lights = this._lightsFor( plan, clipIndex );
+		if ( moved.length || visibilityChanged || plan.cameras.length || lights.length || materials.length ) {
 
-			this.applyPoseCallback?.( { meshIndices: moved, visibilityChanged, cameras: plan.cameras, lights: plan.lights } );
+			this.applyPoseCallback?.( { meshIndices: moved, visibilityChanged, cameras: plan.cameras, lights, materials } );
 
 		}
+
+	}
+
+	/** The clip's lights; every clip's on its first pose, as starting it put the others' back. @private */
+	_lightsFor( plan, clipIndex ) {
+
+		if ( clipIndex === this._posedClip ) return plan.lights;
+		this._posedClip = clipIndex;
+		return this._planFor( - 1 )?.lights ?? plan.lights;
+
+	}
+
+	/**
+	 * The keyed material properties whose value moved since it was last sent, `{ mesh, property, value }` each, the value
+	 * a copy (a colour's). Each material once a property, however many meshes share it. Every clip's, not the active
+	 * one's: stopping or switching clips puts the others' back.
+	 * @private
+	 */
+	_changedMaterials() {
+
+		const out = [];
+		for ( const { mesh, property } of this._planFor( - 1 )?.materials ?? [] ) {
+
+			const material = mesh.material;
+			const value = material?.[ property ];
+			if ( value === undefined ) continue;
+			const key = value?.isColor ? value.getHexString() + value.toArray().join() : value;
+			let sent = this._sentMaterials.get( material );
+			if ( ! sent ) this._sentMaterials.set( material, sent = {} );
+			if ( sent[ property ] === key ) continue;
+			sent[ property ] = key;
+			out.push( { mesh, property, value: value?.isColor ? value.clone() : value } );
+
+		}
+
+		return out;
 
 	}
 
@@ -460,11 +511,16 @@ export class AnimationManager extends EventDispatcher {
 		this.timer.reset();
 		this.isPlaying = false;
 
-		// A deforming pose stays, lights and cameras with it, until its next play or seek refits it.
+		// A deforming pose stays, lights and cameras with it, until its next play or seek refits it; materials go back now.
 		if ( this._rigid ) {
 
 			this._mixerRoot.updateMatrixWorld( true );
 			this._applyRigidPose( - 1 );
+
+		} else {
+
+			const materials = this._changedMaterials();
+			if ( materials.length ) this.applyPoseCallback?.( { meshIndices: [], visibilityChanged: false, cameras: [], lights: [], materials } );
 
 		}
 
@@ -618,7 +674,9 @@ export class AnimationManager extends EventDispatcher {
 		}
 
 		const plan = this._planFor( this._activeClip );
-		if ( plan?.cameras.length || plan?.lights.length ) this.applyPoseCallback?.( { meshIndices: [], visibilityChanged: false, cameras: plan.cameras, lights: plan.lights } );
+		const materials = this._changedMaterials();
+		const lights = plan ? this._lightsFor( plan, this._activeClip ) : [];
+		if ( plan?.cameras.length || lights.length || materials.length ) this.applyPoseCallback?.( { meshIndices: [], visibilityChanged: false, cameras: plan?.cameras ?? [], lights, materials } );
 
 		// Decided once per reader: an expanded instanced emitter asks for one mesh several times.
 		const moved = new Int8Array( this._meshes.length );
@@ -821,6 +879,8 @@ export class AnimationManager extends EventDispatcher {
 		this._rigid = false;
 		this._plans = null;
 		this._allPlan = null;
+		this._sentMaterials = new Map();
+		this._posedClip = null;
 		this._activeClip = 0;
 		this._slotOf = null;
 		this._lastWorld = null;

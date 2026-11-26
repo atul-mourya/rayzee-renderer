@@ -490,8 +490,9 @@ export class MaterialDataManager {
 	 * @param {number} materialIndex
 	 * @param {string} property
 	 * @param {*} value
+	 * @param {boolean} [host=true] - record it as the host's edit (an animation's value is not)
 	 */
-	updateMaterialProperty( materialIndex, property, value ) {
+	updateMaterialProperty( materialIndex, property, value, host = true ) {
 
 		if ( ! this.materialStorageAttr ) {
 
@@ -675,7 +676,7 @@ export class MaterialDataManager {
 		}
 
 		this._uploadMaterials();
-		( this._hostSet[ materialIndex ] ??= new Map() ).set( property, toPortable( value ) );
+		if ( host ) ( this._hostSet[ materialIndex ] ??= new Map() ).set( property, toPortable( value ) );
 
 		// Recompute triangle-data opaque-blocker flag when any input to it changes.
 		if ( BLOCKER_PROPS.has( property ) ) {
