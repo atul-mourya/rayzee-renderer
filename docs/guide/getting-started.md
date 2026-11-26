@@ -19,7 +19,7 @@ A single HTML file — no Node.js, no build step. Uses [ES module import maps](h
       "three/tsl": "https://cdn.jsdelivr.net/npm/three@0.187.0/build/three.tsl.js",
       "three/webgpu": "https://cdn.jsdelivr.net/npm/three@0.187.0/build/three.webgpu.js",
       "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.187.0/examples/jsm/",
-      "oidn-webgpu/": "https://cdn.jsdelivr.net/npm/oidn-webgpu@0.6.0/",
+      "oidn-webgpu/": "https://cdn.jsdelivr.net/npm/oidn-webgpu@0.6.1/",
       "rayzee": "https://cdn.jsdelivr.net/npm/rayzee/dist/rayzee.es.js"
     }
   }
@@ -433,7 +433,7 @@ Then load it via a script tag or import map instead:
 <script type="importmap">
 {
   "imports": {
-    "oidn-webgpu/dist/oidn.js": "https://cdn.jsdelivr.net/npm/oidn-webgpu@0.6.0/dist/oidn.js"
+    "oidn-webgpu/dist/oidn.js": "https://cdn.jsdelivr.net/npm/oidn-webgpu@0.6.1/dist/oidn.js"
   }
 }
 </script>
