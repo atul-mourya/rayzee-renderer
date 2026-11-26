@@ -272,8 +272,9 @@ it during playback and in a video export, over any move of the copy (an edit of 
 visibility, range, falloff and cone tracks reach the copy too, each where the clip changes it: an edit of the copy stays
 until the clip next changes that one (stopping puts back the light's loaded values, except for a skinned or morphing
 clip, whose pose stays until its next play; a session saved mid-clip keeps the values it showed). A glTF's light tracks
-are read from KHR_animation_pointer, as Blender's exporter writes them (intensity, colour, range and the spot cones;
-pointers to anything else are left out, with a warning). Intensity keys are read
+are read from KHR_animation_pointer, as Blender's exporter writes them (intensity, colour, range and the spot cones,
+linear, stepped or cubic), and so is a node's visibility (KHR_node_visibility; a node marked not visible loads hidden,
+what it holds with it); pointers to anything else are left out, with a warning. Intensity keys are read
 in three.js units (candela, lux, and nits at the light's loaded size), as the light was. A light whose parent is hidden
 gives no light, as three.js draws it: at load, while a clip hides the parent, and after `updateAllMeshVisibility()`.
 

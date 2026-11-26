@@ -188,7 +188,7 @@
 
 ### Animation
 
-- [ ] glTF KHR_animation_pointer beyond lights (materials, cameras, node visibility) is left out, warned once
+- [ ] glTF KHR_animation_pointer beyond lights and node visibility (materials, cameras) is left out, warned once
   (`loaders/GLTFAnimationPointer.js`)
 - [ ] Timeline scrubber for animation control
 - [ ] Multi-clip blending - cross-fade between animation clips with configurable transition duration

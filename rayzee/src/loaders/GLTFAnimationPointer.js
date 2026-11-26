@@ -1,16 +1,50 @@
 /**
- * KHR_animation_pointer for a glTF's lights (KHR_lights_punctual): intensity, colour, range and the spot cones, as
- * Blender's exporter writes an animated light. three.js skips every channel that names no node, so these tracks are
- * added to their animation's clip here, keyed as three.js keys its own: the light's name, three's property. A pointer
- * to anything else (a material, a camera, a node's visibility) is reported and left out.
+ * KHR_animation_pointer for a glTF's lights (KHR_lights_punctual: intensity, colour, range and the spot cones, as
+ * Blender's exporter writes an animated light) and nodes' visibility (KHR_node_visibility). three.js skips every channel
+ * that names no node, so these tracks are added to their animation's clip here, keyed as three.js keys its own: the
+ * object's name, three's property. A pointer to anything else (a material, a camera) is reported and left out. Also
+ * KHR_node_visibility itself, which three.js does not read: a node marked not visible is hidden, its descendants with it.
  */
 
-import { AnimationClip, ColorKeyframeTrack, InterpolateDiscrete, InterpolateLinear, Interpolant, NumberKeyframeTrack } from 'three';
+import { AnimationClip, BooleanKeyframeTrack, ColorKeyframeTrack, InterpolateDiscrete, InterpolateLinear, Interpolant, NumberKeyframeTrack } from 'three';
 import { createLogger } from '../Logger.js';
 
 const log = createLogger( 'gltf' );
 
 const LIGHT_POINTER = /^\/extensions\/KHR_lights_punctual\/lights\/(\d+)\/(intensity|color|range|spot\/innerConeAngle|spot\/outerConeAngle)$/;
+const VISIBILITY_POINTER = /^\/nodes\/(\d+)\/extensions\/KHR_node_visibility\/visible$/;
+
+// The objects a glTF node became: one, or a group holding a mesh's primitives (each scene a copy of it).
+function nodeObjects( parser, scenes, index ) {
+
+	const out = [];
+	for ( const scene of scenes ) scene?.traverse( ( object ) => {
+
+		if ( parser.associations.get( object )?.nodes === index ) out.push( object );
+
+	} );
+	return out;
+
+}
+
+/** @param {object} parser - three's GLTFParser */
+export function nodeVisibilityPlugin( parser ) {
+
+	return {
+		name: 'KHR_node_visibility',
+		afterRoot( result ) {
+
+			( parser.json.nodes ?? [] ).forEach( ( node, index ) => {
+
+				if ( node.extensions?.KHR_node_visibility?.visible !== false ) return;
+				for ( const object of nodeObjects( parser, result.scenes ?? [ result.scene ], index ) ) object.visible = false;
+
+			} );
+
+		},
+	};
+
+}
 
 /** @param {object} parser - three's GLTFParser */
 export function animationPointerPlugin( parser ) {
@@ -34,6 +68,14 @@ export function animationPointerPlugin( parser ) {
 
 					const pointer = pointerOf( channel );
 					if ( ! pointer ) continue;
+					const node = VISIBILITY_POINTER.exec( pointer );
+					if ( node ) {
+
+						channels.push( { node: Number( node[ 1 ] ), keys: await keysOf( parser, def.samplers[ channel.sampler ] ) } );
+						continue;
+
+					}
+
 					const match = LIGHT_POINTER.exec( pointer );
 					if ( ! match ) {
 
@@ -46,7 +88,10 @@ export function animationPointerPlugin( parser ) {
 
 				}
 
-				const tracks = channels.flatMap( ( channel ) => tracksFor( channel, channels, json, lights ) );
+				const scenes = result.scenes ?? [ result.scene ];
+				const tracks = channels.flatMap( ( channel ) => ( channel.node === undefined ? tracksFor( channel, channels, json, lights )
+					// A boolean a key, stepped (the only interpolation the extension allows).
+					: nodeObjects( parser, scenes, channel.node ).map( ( object ) => new BooleanKeyframeTrack( `${object.name || object.uuid}.visible`, channel.keys.times, Array.from( channel.keys.values, ( v ) => v !== 0 ) ) ) ) );
 				if ( tracks.length === 0 ) continue;
 				let clip = result.animations[ a ];
 				if ( ! clip ) result.animations[ a ] = clip = new AnimationClip( def.name || `animation_${a}`, - 1, [] );
@@ -55,7 +100,7 @@ export function animationPointerPlugin( parser ) {
 
 			}
 
-			if ( skipped.size ) log.warn( `KHR_animation_pointer: only lights are animated; left out ${[ ...skipped ].join( ', ' )}` );
+			if ( skipped.size ) log.warn( `KHR_animation_pointer: only lights and node visibility are animated; left out ${[ ...skipped ].join( ', ' )}` );
 
 		},
 	};

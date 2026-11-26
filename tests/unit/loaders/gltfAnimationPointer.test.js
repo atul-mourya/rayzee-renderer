@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { AnimationMixer, InterpolateDiscrete, PerspectiveCamera, Scene, Vector3 } from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import { animationPointerPlugin } from '@/core/loaders/GLTFAnimationPointer.js';
+import { animationPointerPlugin, nodeVisibilityPlugin } from '@/core/loaders/GLTFAnimationPointer.js';
 import { AssetLoader } from '@/core/loaders/AssetLoader.js';
 import { AnimationManager } from '@/core/viewer/animation/AnimationManager.js';
 
@@ -257,7 +257,7 @@ describe( 'glTF KHR_animation_pointer on lights', () => {
 		const warn = vi.spyOn( console, 'warn' ).mockImplementation( () => {} );
 		const { animations: [ clip ] } = await load( lightsGLTF( { extraChannels: [ '/materials/0/emissiveFactor', '/materials/3/emissiveFactor' ] } ) );
 		expect( clip.tracks.some( ( t ) => /emissive/.test( t.name ) ) ).toBe( false );
-		expect( warn.mock.calls.flat().join( ' ' ) ).toMatch( /only lights are animated; left out \/materials\/n\/emissiveFactor(?!,)/ );
+		expect( warn.mock.calls.flat().join( ' ' ) ).toMatch( /only lights and node visibility are animated; left out \/materials\/n\/emissiveFactor(?!,)/ );
 		warn.mockRestore();
 
 	} );
@@ -268,6 +268,109 @@ describe( 'glTF KHR_animation_pointer on lights', () => {
 		const loader = await assets.createGLTFLoader();
 		const { animations: [ clip ] } = await loader.parseAsync( lightsGLTF(), '' );
 		expect( clip.tracks.length ).toBeGreaterThan( 0 );
+
+	} );
+
+} );
+
+// Three nodes, two meshes: `Shell` (marked not visible, with the mesh `Core` beneath it) and `Lid`, whose visibility is
+// keyed as KHR_animation_pointer writes a boolean: unsigned bytes, stepped.
+function visibilityGLTF( { shellVisible = false } = {} ) {
+
+	const positions = new Float32Array( [ 0, 0, 0, 1, 0, 0, 0, 1, 0 ] );
+	const times = new Float32Array( [ 0, 1, 2 ] );
+	const flags = new Uint8Array( [ 1, 0, 1, 0 ] );
+	const bytes = Buffer.concat( [ Buffer.from( positions.buffer ), Buffer.from( times.buffer ), Buffer.from( flags ) ] );
+	return JSON.stringify( {
+		asset: { version: '2.0' },
+		extensionsUsed: [ 'KHR_node_visibility', 'KHR_animation_pointer' ],
+		nodes: [
+			{ name: 'Shell', children: [ 1 ], extensions: { KHR_node_visibility: { visible: shellVisible } } },
+			{ name: 'Core', mesh: 0 },
+			{ name: 'Lid', mesh: 0, extensions: { KHR_node_visibility: { visible: true } } },
+		],
+		meshes: [ { primitives: [ { attributes: { POSITION: 0 } } ] } ],
+		scenes: [ { nodes: [ 0, 2 ] } ],
+		scene: 0,
+		buffers: [ { byteLength: bytes.length, uri: `data:application/octet-stream;base64,${bytes.toString( 'base64' )}` } ],
+		bufferViews: [ { buffer: 0, byteOffset: 0, byteLength: 36 }, { buffer: 0, byteOffset: 36, byteLength: 12 }, { buffer: 0, byteOffset: 48, byteLength: 3 } ],
+		accessors: [
+			{ bufferView: 0, componentType: 5126, count: 3, type: 'VEC3', min: [ 0, 0, 0 ], max: [ 1, 1, 0 ] },
+			{ bufferView: 1, componentType: 5126, count: 3, type: 'SCALAR', min: [ 0 ], max: [ 2 ] },
+			{ bufferView: 2, componentType: 5121, count: 3, type: 'SCALAR' },
+		],
+		animations: [ {
+			name: 'Blink',
+			samplers: [ { input: 1, output: 2, interpolation: 'STEP' } ],
+			channels: [ { sampler: 0, target: { path: 'pointer', extensions: { KHR_animation_pointer: { pointer: '/nodes/2/extensions/KHR_node_visibility/visible' } } } } ],
+		} ],
+	} );
+
+}
+
+describe( 'glTF KHR_node_visibility', () => {
+
+	beforeAll( () => {
+
+		if ( typeof ProgressEvent === 'undefined' ) vi.stubGlobal( 'ProgressEvent', class extends Event {} );
+
+	} );
+	afterAll( () => vi.unstubAllGlobals() );
+
+	const load = ( gltf ) => new GLTFLoader().register( animationPointerPlugin ).register( nodeVisibilityPlugin ).parseAsync( gltf, '' );
+	const byName = ( scene, name ) => scene.getObjectByName( name );
+
+	it( 'hides a node marked not visible, and what it holds with it; three.js alone shows it', async () => {
+
+		const { scene } = await load( visibilityGLTF() );
+		expect( byName( scene, 'Shell' ).visible ).toBe( false );
+		// Hidden through its parent, as the engine reads a mesh's visibility.
+		expect( byName( scene, 'Core' ).visible ).toBe( true );
+		expect( byName( scene, 'Lid' ).visible ).toBe( true );
+		expect( ( await load( visibilityGLTF( { shellVisible: true } ) ) ).scene.getObjectByName( 'Shell' ).visible ).toBe( true );
+		const plain = await new GLTFLoader().parseAsync( visibilityGLTF(), '' );
+		expect( plain.scene.getObjectByName( 'Shell' ).visible ).toBe( true );
+
+	} );
+
+	it( 'keys an animated visibility on the node it points at, stepped, and the engine sees it change', async () => {
+
+		const result = await load( visibilityGLTF() );
+		const [ clip ] = result.animations;
+		const track = clip.tracks.find( ( t ) => t.name === 'Lid.visible' );
+		expect( Array.from( track.values ) ).toEqual( [ true, false, true ] );
+		expect( track.getInterpolation() ).toBe( InterpolateDiscrete );
+
+		const lid = byName( result.scene, 'Lid' );
+		const mixer = new AnimationMixer( result.scene );
+		mixer.clipAction( clip ).play();
+		const at = ( time ) => {
+
+			mixer.setTime( time );
+			return lid.visible;
+
+		};
+
+		expect( [ 0.5, 1.5, 1.99 ].map( at ) ).toEqual( [ true, false, false ] );
+
+		const meshes = [];
+		result.scene.traverse( ( o ) => o.isMesh && meshes.push( o ) );
+		const manager = new AnimationManager();
+		const poses = [];
+		manager.applyPoseCallback = ( pose ) => poses.push( pose );
+		manager.init( result.scene, result.scene, meshes, result.animations );
+		manager.seekTo( 1.5 );
+		expect( lid.visible ).toBe( false );
+		expect( poses.some( ( p ) => p.visibilityChanged ) ).toBe( true );
+
+	} );
+
+	it( 'is part of every glTF load', async () => {
+
+		const assets = new AssetLoader( new Scene(), new PerspectiveCamera(), { target: new Vector3(), maxDistance: 0, saveState() {}, update() {} } );
+		const loader = await assets.createGLTFLoader();
+		const { scene } = await loader.parseAsync( visibilityGLTF(), '' );
+		expect( scene.getObjectByName( 'Shell' ).visible ).toBe( false );
 
 	} );
 
