@@ -189,7 +189,7 @@
 ### Animation
 
 - [ ] glTF KHR_animation_pointer beyond lights (materials, cameras, node visibility) is left out, warned once
-  (`loaders/GLTFAnimationPointer.js`); a cubic-spline light track plays linearly
+  (`loaders/GLTFAnimationPointer.js`)
 - [ ] Timeline scrubber for animation control
 - [ ] Multi-clip blending - cross-fade between animation clips with configurable transition duration
 - [ ] sequence caching for smooth playback / scrubbing

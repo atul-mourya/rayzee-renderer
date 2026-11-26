@@ -3,6 +3,7 @@ import { AnimationMixer, InterpolateDiscrete, PerspectiveCamera, Scene, Vector3 
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { animationPointerPlugin } from '@/core/loaders/GLTFAnimationPointer.js';
 import { AssetLoader } from '@/core/loaders/AssetLoader.js';
+import { AnimationManager } from '@/core/viewer/animation/AnimationManager.js';
 
 // A point light on two nodes (three.js clones it, each copy named after its node) and a spot, animated as Blender's exporter writes a light: through
 // KHR_animation_pointer, with no node in the channel. Each accessor a float array in one buffer.
@@ -12,7 +13,7 @@ function lightsGLTF( { extraChannels = [] } = {} ) {
 		t3: [ 0, 1, 2 ], intensity: [ 0, 10, 5 ], color: [ 1, 0, 0, 0, 1, 0, 0, 0, 1 ],
 		t2: [ 0, 2 ], outer: [ 0.5, 0.8 ], range: [ 1, 3 ],
 		// Cubic spline: ( in-tangent, value, out-tangent ) a key.
-		cubic: [ 9, 2, 9, 9, 4, 9 ],
+		cubic: [ 7, 2, 9, - 5, 4, 3 ],
 		emissive: [ 1, 2 ],
 	};
 	const names = Object.keys( arrays );
@@ -177,10 +178,77 @@ describe( 'glTF KHR_animation_pointer on lights', () => {
 
 	} );
 
-	it( 'plays a cubic spline\'s values linearly, without its tangents', async () => {
+	// glTF 2.0 Appendix C: v(t) = (2t³ − 3t² + 1) v_k + t_d (t³ − 2t² + t) b_k + (−2t³ + 3t²) v_k+1 + t_d (t³ − t²) a_k+1.
+	const hermite = ( vk, bk, vk1, ak1, td, t ) => ( 2 * t ** 3 - 3 * t ** 2 + 1 ) * vk + td * ( t ** 3 - 2 * t ** 2 + t ) * bk
+		+ ( - 2 * t ** 3 + 3 * t ** 2 ) * vk1 + td * ( t ** 3 - t ** 2 ) * ak1;
 
-		const { animations: [ clip ] } = await load( lightsGLTF() );
-		expect( Array.from( clip.tracks.find( ( t ) => t.name === 'FlickerNode.intensity' ).values ) ).toEqual( [ 2, 4 ] );
+	it( 'plays a cubic spline as glTF defines it, tangents and all', async () => {
+
+		const result = await load( lightsGLTF() );
+		const mixer = new AnimationMixer( result.scene );
+		mixer.clipAction( result.animations[ 0 ] ).play();
+		// Keys 2 then 4 over 0–2 s; out of the first 9, into the second −5: the curve overshoots the line (2.5 at 0.5 s).
+		const flicker = lightsIn( result.scene ).FlickerNode[ 0 ];
+		for ( const time of [ 0.25, 0.5, 1, 1.5, 1.9 ] ) {
+
+			mixer.setTime( time );
+			expect( flicker.intensity ).toBeCloseTo( hermite( 2, 9, 4, - 5, 2, time / 2 ), 5 );
+
+		}
+
+		mixer.setTime( 0.5 );
+		expect( flicker.intensity ).toBeGreaterThan( 3.5 );
+
+		// Scaled into the engine's units per load (tangents too), the track stays a cubic spline.
+		flicker.userData.__intensityScale = 0.5;
+		const manager = new AnimationManager();
+		manager.init( result.scene, result.scene, [], result.animations );
+		manager.seekTo( 0.5 );
+		expect( flicker.intensity ).toBeCloseTo( 0.5 * hermite( 2, 9, 4, - 5, 2, 0.25 ), 5 );
+
+	} );
+
+	it( 'plays a cubic colour and derives a cubic cone\'s penumbra from the curve', async () => {
+
+		const gltf = JSON.parse( lightsGLTF() );
+		const add = ( array, type ) => {
+
+			const bytes = Buffer.from( gltf.buffers[ 0 ].uri.split( ',' )[ 1 ], 'base64' );
+			const extra = Buffer.from( new Float32Array( array ).buffer );
+			gltf.buffers[ 0 ] = { byteLength: bytes.length + extra.length, uri: `data:application/octet-stream;base64,${Buffer.concat( [ bytes, extra ] ).toString( 'base64' )}` };
+			gltf.bufferViews.push( { buffer: 0, byteOffset: bytes.length, byteLength: extra.length } );
+			gltf.accessors.push( { bufferView: gltf.bufferViews.length - 1, componentType: 5126, count: type === 'VEC3' ? array.length / 9 * 3 : array.length / 3 * 3, type } );
+			return gltf.accessors.length - 1;
+
+		};
+
+		// Red to blue from 0.5 s to 2.5 s, every tangent 0; the outer cone 0.5 to 0.8 over 0–2 s (accessor 3), tangents 0.6.
+		const colour = add( [ 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0 ], 'VEC3' );
+		const cone = add( [ 0.6, 0.5, 0.6, 0.6, 0.8, 0.6 ], 'SCALAR' );
+		const later = add( [ 0.5, 2.5, 0 ], 'SCALAR' );
+		gltf.accessors[ colour ].count = 6;
+		gltf.accessors[ cone ].count = 6;
+		Object.assign( gltf.accessors[ later ], { count: 2, min: [ 0.5 ], max: [ 2.5 ] } );
+		const samplers = gltf.animations[ 0 ].samplers;
+		samplers.push( { input: later, output: colour, interpolation: 'CUBICSPLINE' }, { input: 3, output: cone, interpolation: 'CUBICSPLINE' } );
+		gltf.animations[ 0 ].channels = [
+			{ sampler: samplers.length - 2, target: { path: 'pointer', extensions: { KHR_animation_pointer: { pointer: '/extensions/KHR_lights_punctual/lights/0/color' } } } },
+			{ sampler: samplers.length - 1, target: { path: 'pointer', extensions: { KHR_animation_pointer: { pointer: '/extensions/KHR_lights_punctual/lights/1/spot/outerConeAngle' } } } },
+		];
+		const result = await load( JSON.stringify( gltf ) );
+		const mixer = new AnimationMixer( result.scene );
+		mixer.clipAction( result.animations[ 0 ] ).play();
+		const { BulbA, SpotNode } = lightsIn( result.scene );
+		// Before its first key, the first key's value (not its tangent).
+		mixer.update( 0.25 );
+		expect( BulbA[ 0 ].color.toArray() ).toEqual( [ 1, 0, 0 ] );
+		mixer.update( 1.25 );
+		const w = hermite( 0, 0, 1, 0, 2, 0.5 );
+		expect( BulbA[ 0 ].color.toArray().map( v => Number( v.toFixed( 5 ) ) ) ).toEqual( [ 1 - w, 0, w ].map( v => Number( v.toFixed( 5 ) ) ) );
+		const outer = hermite( 0.5, 0.6, 0.8, 0.6, 2, 0.75 );
+		expect( SpotNode[ 0 ].angle ).toBeCloseTo( outer, 5 );
+		// The penumbra track samples the curve 8 times a key span: at 1.5 s it is on a sample.
+		expect( SpotNode[ 0 ].penumbra ).toBeCloseTo( 1 - 0.25 / outer, 5 );
 
 	} );
 

@@ -20,7 +20,9 @@ model replaced Zero-Day's 6,177 animated meshes. ⚠️ Never refit a mesh that 
 (`loaders/GLTFAnimationPointer.js`) adds them to the clip as three keys its own — the light's (node's) name with
 `intensity`, `color`, `distance` (range; none on a directional light), `angle` (outer cone) and `penumbra` ( 1 − inner /
 outer over both cones' keys, sampled 8 times between them as it is not linear in the cones, stepped where both step);
-a pointer to anything else is warned and left out, a cubic spline played linearly. A clip-dimmed lamp renders byte for
+a pointer to anything else is warned and left out. A cubic spline plays as glTF defines it (the Hermite interpolant three's
+GLTFLoader keeps to itself, rewritten there; the spot's penumbra samples the curve), held to the spec's formula in the
+tests. A clip-dimmed lamp renders byte for
 byte as one set by hand. A copy is shown only while its source and every parent are (`shown`), at load, per frame, and when the outliner hides a group (`followVisibility`, from `updateAllMeshVisibility`).
 4. Deforming: `PathTracer.updateTriangleData()` / `updateBVHData()` — fast GPU buffer writes (no reallocation). Moved emitters' light BVH is rebuilt once motion stops (pause/stop/finish/seek), not per playback frame.
 

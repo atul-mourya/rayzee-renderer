@@ -5,7 +5,7 @@
  * to anything else (a material, a camera, a node's visibility) is reported and left out.
  */
 
-import { AnimationClip, ColorKeyframeTrack, InterpolateDiscrete, InterpolateLinear, NumberKeyframeTrack } from 'three';
+import { AnimationClip, ColorKeyframeTrack, InterpolateDiscrete, InterpolateLinear, Interpolant, NumberKeyframeTrack } from 'three';
 import { createLogger } from '../Logger.js';
 
 const log = createLogger( 'gltf' );
@@ -83,21 +83,62 @@ function lightObjects( parser, scenes ) {
 
 }
 
-// A sampler's keys: times, values and how they are joined. A cubic spline keeps its values, not its tangents.
+/**
+ * glTF's CUBICSPLINE (a Hermite spline, keys laid out in-tangent, value, out-tangent), as three's GLTFLoader plays it
+ * for nodes: that class is not exported.
+ */
+class CubicSplineInterpolant extends Interpolant {
+
+	copySampleValue_( index ) {
+
+		const result = this.resultBuffer, size = this.valueSize, offset = index * size * 3 + size;
+		for ( let i = 0; i !== size; i ++ ) result[ i ] = this.sampleValues[ offset + i ];
+		return result;
+
+	}
+
+	interpolate_( i1, t0, t, t1 ) {
+
+		const result = this.resultBuffer, values = this.sampleValues, size = this.valueSize;
+		const td = t1 - t0, p = ( t - t0 ) / td, pp = p * p, ppp = pp * p;
+		const s2 = - 2 * ppp + 3 * pp, s3 = ppp - pp, s0 = 1 - s2, s1 = s3 - pp + p;
+		const offset1 = i1 * size * 3, offset0 = offset1 - size * 3;
+		for ( let i = 0; i !== size; i ++ ) {
+
+			result[ i ] = s0 * values[ offset0 + size + i ] + s1 * values[ offset0 + 2 * size + i ] * td
+				+ s2 * values[ offset1 + size + i ] + s3 * values[ offset1 + i ] * td;
+
+		}
+
+		return result;
+
+	}
+
+}
+
+/** `track`, played as glTF's cubic spline over its tangent-laid values. */
+function cubicSpline( track ) {
+
+	track.createInterpolant = function createCubicSpline( result ) {
+
+		return new CubicSplineInterpolant( this.times, this.values, this.getValueSize() / 3, result );
+
+	};
+
+	// As three's GLTFLoader marks one: getInterpolation() knows no custom interpolant.
+	track.createInterpolant.isInterpolantFactoryMethodGLTFCubicSpline = true;
+	return track;
+
+}
+
+// A sampler's keys: times, values and how they are joined; a cubic spline's values with their tangents.
 async function keysOf( parser, sampler ) {
 
 	const [ input, output ] = await Promise.all( [ parser.getDependency( 'accessor', sampler.input ), parser.getDependency( 'accessor', sampler.output ) ] );
 	const times = Float32Array.from( input.array );
-	let values = Float32Array.from( output.array );
-	const size = output.itemSize;
-	if ( sampler.interpolation === 'CUBICSPLINE' ) {
-
-		values = Float32Array.from( { length: times.length * size }, ( _, i ) => output.array[ ( Math.floor( i / size ) * 3 + 1 ) * size + ( i % size ) ] );
-		log.warn( 'KHR_animation_pointer: a cubic-spline light track is played linearly' );
-
-	}
-
-	return { times, values, size, interpolation: sampler.interpolation === 'STEP' ? InterpolateDiscrete : InterpolateLinear };
+	const values = Float32Array.from( output.array );
+	const cubic = sampler.interpolation === 'CUBICSPLINE';
+	return { times, values, size: output.itemSize, cubic, interpolation: sampler.interpolation === 'STEP' ? InterpolateDiscrete : InterpolateLinear };
 
 }
 
@@ -107,8 +148,13 @@ function tracksFor( channel, channels, json, lights ) {
 
 	const objects = lights.get( channel.light ) ?? [];
 	const def = json.extensions?.KHR_lights_punctual?.lights?.[ channel.light ];
-	const { times, values, interpolation } = channel.keys;
-	const track = ( Type, property, t, v ) => objects.map( ( light ) => new Type( `${light.name || light.uuid}.${property}`, t, v, interpolation ) );
+	const { times, values, interpolation, cubic } = channel.keys;
+	const track = ( Type, property, t, v ) => objects.map( ( light ) => {
+
+		const out = new Type( `${light.name || light.uuid}.${property}`, t, v, interpolation );
+		return cubic ? cubicSpline( out ) : out;
+
+	} );
 
 	switch ( channel.property ) {
 
@@ -125,7 +171,7 @@ function tracksFor( channel, channels, json, lights ) {
 	const out = channel === outer ? track( NumberKeyframeTrack, 'angle', times, values ) : [];
 	// The penumbra once, from whichever cone channel comes first.
 	if ( channel !== ( outer && inner ? ( channels.indexOf( outer ) < channels.indexOf( inner ) ? outer : inner ) : channel ) ) return out;
-	const at = ( c, dflt, t ) => ( c ? sampleLinear( c.keys, t ) : dflt );
+	const at = ( c, dflt, t ) => ( c ? sampleKeys( c.keys, t ) : dflt );
 	// 1 − inner / outer is not linear in the cones: between keys of a joined cone it is sampled 8 times, and stepped where
 	// both cones step.
 	const stepped = [ outer, inner ].every( ( c ) => ! c || c.keys.interpolation === InterpolateDiscrete );
@@ -142,9 +188,10 @@ function tracksFor( channel, channels, json, lights ) {
 
 }
 
-// A one-value track's value at t: linear between keys (held between a step track's), clamped to its ends.
-function sampleLinear( { times, values, interpolation }, t ) {
+// A one-value track's value at t, as it plays (linear, stepped or cubic between keys), clamped to its ends.
+function sampleKeys( { times, values, interpolation, cubic }, t ) {
 
+	if ( cubic ) return new CubicSplineInterpolant( times, values, 1, new Float32Array( 1 ) ).evaluate( t )[ 0 ];
 	if ( t <= times[ 0 ] ) return values[ 0 ];
 	const last = times.length - 1;
 	if ( t >= times[ last ] ) return values[ last ];
