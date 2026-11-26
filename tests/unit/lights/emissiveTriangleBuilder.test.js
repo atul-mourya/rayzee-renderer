@@ -492,6 +492,24 @@ describe( 'EmissiveTriangleBuilder', () => {
 
 		} );
 
+		it( 'measures a material that starts emitting at its placement', () => {
+
+			// Shared geometry is stored in object space: a rescan without the table lit from the origin.
+			const triangleData = makeTriangleData( [ { ...UNIT_TRI, materialIndex: 0, meshIndex: 0 } ] );
+			const materials = [ { emissive: { r: 1, g: 1, b: 1 }, emissiveIntensity: 0 } ];
+			const table = makeTable( [ { matrixWorld: [ 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 7, 0, 1 ], tlasLeafIndex: 5 } ] );
+
+			const b = new ( builder.constructor )();
+			b.extractEmissiveTriangles( triangleData, materials, 1, table );
+			expect( b.emissiveCount ).toBe( 0 );
+
+			materials[ 0 ] = { emissive: { r: 1, g: 1, b: 1 }, emissiveIntensity: 2 };
+			expect( b.updateMaterialEmissive( 0, materials[ 0 ], triangleData, materials, 1, table ) ).toBe( true );
+			expect( b.emissiveTriangles[ 0 ].instanceLeaf ).toBe( 5 );
+			expect( b.emissiveTriangles[ 0 ].cy ).toBeCloseTo( 7 + UNIT_TRI_CY, 5 );
+
+		} );
+
 		it( 're-measures an emitter at its placement after it moves', () => {
 
 			const triangleData = makeTriangleData( [ { ...UNIT_TRI, materialIndex: 0, meshIndex: 0 } ] );

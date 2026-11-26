@@ -809,9 +809,10 @@ export class EmissiveTriangleBuilder {
 	 * @param {Array} triangleData - Full triangle data (only needed for full rescan)
 	 * @param {Array} materials - Materials array (only needed for full rescan)
 	 * @param {number} triangleCount - Total triangles (only needed for full rescan)
+	 * @param {import('../scene/InstanceTable.js').InstanceTable} [table] - placements (full rescan): shared geometry is in object space
 	 * @returns {boolean} true if data changed and needs GPU re-upload
 	 */
-	updateMaterialEmissive( materialIndex, material, triangleData, materials, triangleCount ) {
+	updateMaterialEmissive( materialIndex, material, triangleData, materials, triangleCount, table = null ) {
 
 		const emissive = workingEmissive( material.emissive );
 		const emissiveIntensity = material.emissiveIntensity || 0;
@@ -823,7 +824,7 @@ export class EmissiveTriangleBuilder {
 		// If the emissive set changed (gained or lost emissive status), full rescan needed
 		if ( isNowEmissive !== hadEmissive ) {
 
-			this.extractEmissiveTriangles( triangleData, materials, triangleCount );
+			this.extractEmissiveTriangles( triangleData, materials, triangleCount, table );
 			return true;
 
 		}

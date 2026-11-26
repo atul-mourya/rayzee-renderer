@@ -2425,7 +2425,7 @@ export class SceneProcessor {
 
 		const changed = this.emissiveTriangleBuilder.updateMaterialEmissive(
 			materialIndex, mat,
-			this.triangles, this.materials, this.triangleCount,
+			this.triangles, this.materials, this.triangleCount, this.instanceTable ?? null,
 		);
 
 		if ( ! changed ) return null;
