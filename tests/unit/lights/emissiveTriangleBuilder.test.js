@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-// Mock Three.js imports that EmissiveTriangleBuilder needs
-vi.mock( 'three', () => ( {
+// Mock Three.js's DataTexture, which EmissiveTriangleBuilder makes
+vi.mock( 'three', async ( importOriginal ) => ( {
+	...( await importOriginal() ),
 	DataTexture: class {
 
 		constructor( data, w, h ) {
@@ -11,9 +12,6 @@ vi.mock( 'three', () => ( {
 		}
 
 	},
-	RGBAFormat: 1023,
-	FloatType: 1015,
-	NearestFilter: 1003,
 } ) );
 
 // Mock LightBVHBuilder to avoid its dependencies — minimal functional stand-in:
@@ -36,8 +34,9 @@ vi.mock( '@/core/lights/LightBVHBuilder.js', () => ( {
 	}
 } ) );
 
-import { EmissiveTriangleBuilder } from '@/core/lights/EmissiveTriangleBuilder.js';
+import { EmissiveTriangleBuilder, emissionMapPyramid, emissionMapMean } from '@/core/lights/EmissiveTriangleBuilder.js';
 import { TRI_EMIT_SIDE_SHIFT } from '@/core/scene/BufferLayout.js';
+import { Texture, SRGBColorSpace, NoColorSpace, RepeatWrapping, MirroredRepeatWrapping, ClampToEdgeWrapping } from 'three';
 
 // TRIANGLE_DATA_LAYOUT: 20 uint lanes per tri; material flags at 18, meshIndex at 19
 const FLOATS_PER_TRI = 20;
@@ -813,6 +812,161 @@ describe( 'EmissiveTriangleBuilder', () => {
 			expect( builder.lightBVHNodeCount ).toBe( 0 );
 
 		} );
+
+	} );
+
+} );
+
+describe( 'emission maps', () => {
+
+	// 8×8 RGBA8, its first rows (texture row 0) black, the rest white.
+	function halfMap( { flipY = false, colorSpace = NoColorSpace, firstRows = 4, rgb = [ 255, 255, 255 ] } = {} ) {
+
+		const data = new Uint8Array( 8 * 8 * 4 );
+		for ( let y = 0; y < 8; y ++ ) for ( let x = 0; x < 8; x ++ ) {
+
+			const o = ( y * 8 + x ) * 4;
+			if ( y >= firstRows ) data.set( rgb, o );
+			data[ o + 3 ] = 255;
+
+		}
+
+		const texture = new Texture();
+		texture.image = { data, width: 8, height: 8 };
+		texture.flipY = flipY;
+		texture.colorSpace = colorSpace;
+		return texture;
+
+	}
+
+	const WHITE = [ 0.2126, 0.7152, 0.0722 ];
+	// Triangles in the lower (v < 0.5) and upper halves of the unit square.
+	const LOW = [ 0, 0, 1, 0, 0, 0.45 ], HIGH = [ 0, 0.55, 1, 0.55, 0, 1 ];
+
+	it( 'reads a map\'s rows as the packed layer holds them: a flipY map turned over', () => {
+
+		const plain = emissionMapPyramid( halfMap() );
+		expect( emissionMapMean( plain, LOW, WHITE ) ).toBeCloseTo( 0 );
+		expect( emissionMapMean( plain, HIGH, WHITE ) ).toBeCloseTo( 1 );
+		const flipped = emissionMapPyramid( halfMap( { flipY: true } ) );
+		expect( emissionMapMean( flipped, LOW, WHITE ) ).toBeCloseTo( 1 );
+		expect( emissionMapMean( flipped, HIGH, WHITE ) ).toBeCloseTo( 0 );
+
+	} );
+
+	it( 'averages a large triangle from a coarser level, and decodes sRGB', () => {
+
+		const tiled = halfMap();
+		tiled.wrapS = tiled.wrapT = RepeatWrapping;
+		const map = emissionMapPyramid( tiled );
+		expect( map.levels.map( l => l.width ) ).toEqual( [ 8, 4, 2, 1 ] );
+		// Four tiles a side: half its texels lit, read from the 1×1 level.
+		expect( emissionMapMean( map, [ 0, 0, 4, 0, 0, 4 ], WHITE ) ).toBeCloseTo( 0.5 );
+		const srgb = emissionMapPyramid( halfMap( { colorSpace: SRGBColorSpace, rgb: [ 128, 128, 128 ] } ) );
+		expect( emissionMapMean( srgb, HIGH, WHITE ) ).toBeCloseTo( 0.2158, 3 );
+		// Decoded before it is averaged: a 512² map, one texel in four white, kept at 256² reads a quarter, not sRGB 64's 0.05.
+		const sparse = new Texture();
+		const bytes = new Uint8Array( 512 * 512 * 4 );
+		for ( let y = 0; y < 512; y += 2 ) for ( let x = 0; x < 512; x += 2 ) bytes.set( [ 255, 255, 255, 255 ], ( y * 512 + x ) * 4 );
+		sparse.image = { data: bytes, width: 512, height: 512 };
+		sparse.colorSpace = SRGBColorSpace;
+		const kept = emissionMapPyramid( sparse );
+		expect( kept.levels[ 0 ].width ).toBe( 256 );
+		expect( emissionMapMean( kept, [ 0, 0, 1, 0, 0, 1 ], WHITE ) ).toBeCloseTo( 0.25 );
+
+	} );
+
+	it( 'weighs by the material\'s colour and follows the texture\'s transform and wrap', () => {
+
+		const red = halfMap( { rgb: [ 255, 0, 0 ] } );
+		const pyramid = emissionMapPyramid( red );
+		// A red map under a green emitter emits nothing.
+		expect( emissionMapMean( pyramid, HIGH, [ 0, 1, 0 ] ) ).toBe( 0 );
+		expect( emissionMapMean( pyramid, HIGH, [ 1, 0, 0 ] ) ).toBeCloseTo( 1 );
+
+		const shifted = halfMap();
+		shifted.offset.set( 0, 0.5 );
+		shifted.updateMatrix();
+		shifted.wrapT = RepeatWrapping;
+		expect( emissionMapMean( emissionMapPyramid( shifted ), LOW, WHITE, shifted.matrix.elements ) ).toBeCloseTo( 1 );
+		shifted.wrapT = MirroredRepeatWrapping;
+		expect( emissionMapMean( emissionMapPyramid( shifted ), LOW, WHITE, shifted.matrix.elements ) ).toBeCloseTo( 1 );
+		const clamped = halfMap();
+		clamped.wrapT = ClampToEdgeWrapping;
+		expect( emissionMapMean( emissionMapPyramid( clamped ), [ 0, 1.5, 1, 1.5, 0, 2 ], WHITE ) ).toBeCloseTo( 1 );
+		expect( emissionMapMean( emissionMapPyramid( clamped ), [ 0, - 2, 1, - 2, 0, - 1 ], WHITE ) ).toBeCloseTo( 0 );
+
+	} );
+
+	it( 'gives the light tree the map\'s weight and keeps colour alone for the totals and the CDF', async () => {
+
+		const map = halfMap();
+		// Extracted materials name their map by its index in the processor's list.
+		const materials = [ { emissive: { r: 1, g: 1, b: 1 }, emissiveIntensity: 2, emissiveMap: 0 } ];
+		const triangles = [ { ...UNIT_TRI, materialIndex: 0, uv: LOW }, { ...UNIT_TRI, materialIndex: 0, uv: HIGH } ];
+		const data = makeTriangleData( triangles );
+		const f = new Float32Array( data.buffer );
+		triangles.forEach( ( t, i ) => {
+
+			f.set( t.uv.slice( 0, 4 ), i * FLOATS_PER_TRI + 12 );
+			f.set( t.uv.slice( 4 ), i * FLOATS_PER_TRI + 16 );
+
+		} );
+
+		const builder = new EmissiveTriangleBuilder();
+		await builder.prepareEmissionMaps( materials, [ map ] );
+		builder.extractEmissiveTriangles( data, materials, 2 );
+		const [ dark, lit ] = builder.emissiveTriangles;
+		expect( dark.flatPower ).toBeCloseTo( 1 );
+		expect( dark.power ).toBeCloseTo( 1e-4, 6 );
+		expect( lit.power ).toBeCloseTo( 1 );
+		expect( builder.totalEmissivePower ).toBeCloseTo( 2 );
+		builder.buildLightBVH();
+		expect( Array.from( builder.emissivePowerArray ) ).toEqual( [ 1, 1 ] );
+		// The tree's leaf reads the stored power; the CDF stays even.
+		expect( builder.emissiveTriangleData[ 1 ] ).toBeCloseTo( 1e-4, 6 );
+		expect( builder.emissiveTriangleData[ 9 ] ).toBeCloseTo( 1 );
+		expect( builder.emissiveTriangleData[ 2 ] ).toBeCloseTo( 0.5 );
+
+		// The material's uv transform places the map: shifted half a tile, the halves of a repeating map trade places.
+		map.wrapT = RepeatWrapping;
+		const moved = new EmissiveTriangleBuilder();
+		const shifted = [ { ...materials[ 0 ], emissiveMapMatrices: [ 1, 0, 0, 0, 1, 0, 0, 0.5, 1 ] } ];
+		await moved.prepareEmissionMaps( shifted, [ map ] );
+		// Packing renumbers the material's map after it was looked up.
+		shifted[ 0 ].emissiveMap = 7;
+		moved.extractEmissiveTriangles( data, shifted, 2 );
+		expect( moved.emissiveTriangles.map( t => t.mapScale ) ).toEqual( [ 1, 1e-4 ] );
+
+		// A colour edit keeps the map's weight.
+		materials[ 0 ].emissiveIntensity = 4;
+		builder.updateMaterialEmissive( 0, materials[ 0 ], data, materials, 2 );
+		expect( dark.power ).toBeCloseTo( 2e-4, 6 );
+		expect( lit.power ).toBeCloseTo( 2 );
+
+	} );
+
+	it( 'weighs a triangle whose uvs are not numbers by colour alone', async () => {
+
+		const materials = [ { emissive: { r: 1, g: 1, b: 1 }, emissiveIntensity: 1, emissiveMap: 0 } ];
+		const data = makeTriangleData( [ { ...UNIT_TRI, materialIndex: 0 } ] );
+		new Float32Array( data.buffer )[ 12 ] = NaN;
+		const builder = new EmissiveTriangleBuilder();
+		await builder.prepareEmissionMaps( materials, [ halfMap() ] );
+		builder.extractEmissiveTriangles( data, materials, 1 );
+		expect( builder.emissiveTriangles[ 0 ].power ).toBeCloseTo( 0.5 );
+
+	} );
+
+	it( 'weighs by colour alone where a map cannot be read', async () => {
+
+		const unreadable = new Texture();
+		unreadable.image = { width: 8, height: 8, data: null, thumbnail: null };
+		const materials = [ { emissive: { r: 1, g: 1, b: 1 }, emissiveIntensity: 1, emissiveMap: 0 } ];
+		const builder = new EmissiveTriangleBuilder();
+		await builder.prepareEmissionMaps( materials, [ unreadable ] );
+		builder.extractEmissiveTriangles( makeTriangleData( [ { ...UNIT_TRI, materialIndex: 0 } ] ), materials, 1 );
+		expect( builder.emissiveTriangles[ 0 ].power ).toBeCloseTo( 0.5 );
 
 	} );
 

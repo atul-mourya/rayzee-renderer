@@ -6,13 +6,182 @@
  * only the emissive ones, giving 100% sampling success rate.
  */
 
-import { DataTexture, RGBAFormat, FloatType, NearestFilter } from 'three';
+import { DataTexture, RGBAFormat, FloatType, NearestFilter, SRGBColorSpace, RepeatWrapping, MirroredRepeatWrapping } from 'three';
 import { TRIANGLE_DATA_LAYOUT, TRI_MATERIAL_MASK, TRI_EMIT_SIDE_SHIFT } from '../scene/BufferLayout.js';
 import { LightBVHBuilder } from './LightBVHBuilder.js';
 import { createLogger, fmt } from '../Logger.js';
 import { convertLinearTriple, getWorkingMatrix } from '../color/WorkingMatrix.js';
+import { holdImages, releaseImages, rgba8Pixels } from '../materials/TextureCreator.js';
 
 const NO_EMISSION = Object.freeze( { r: 0, g: 0, b: 0 } );
+
+// ── Emission maps ────────────────────────────────────────────────
+// A triangle under an emission map is weighed by the map's mean over it, so next-event estimation stops drawing
+// triangles whose texels are dark. The light tree reads the same stored weight back for its pdf.
+
+const MAP_SIDE = 256; // largest side a map is read at
+// Weight a dark triangle keeps, of its flat weight: above zero, so every emitter stays drawable. Unbiased at any value
+// (a triangle next-event estimation rarely draws is found by its BSDF hits, weighed so); 1 % sent 97 % of
+// buster_drone.glb's samples to the 83 % of its emitting area that is black.
+const MAP_FLOOR = 1e-4;
+// 16 points of the R2 sequence over the unit square, folded into the triangle: a lattice aliases with tiled maps.
+const MAP_POINTS = Array.from( { length: 16 }, ( _, i ) => {
+
+	const a = ( 0.5 + ( i + 1 ) * 0.7548776662466927 ) % 1, b = ( 0.5 + ( i + 1 ) * 0.5698402909980532 ) % 1;
+	return a + b > 1 ? [ 1 - a, 1 - b ] : [ a, b ];
+
+} );
+
+const srgbToLinear = c => ( c <= 0.04045 ? c / 12.92 : ( ( c + 0.055 ) / 1.055 ) ** 2.4 );
+
+/**
+ * A texture's linear colour at most MAP_SIDE a side, as RGB rows in the order its GPU layer holds them (v = 0 first); or
+ * null. Averaged after decoding: an average of sRGB bytes read a sparse bright map up to 2.5× dark.
+ */
+function mapLevel( texture ) {
+
+	const image = texture?.image;
+	if ( ! ( image?.width > 0 && image?.height > 0 ) ) return null;
+	let source = null, sourceWidth = image.width, sourceHeight = image.height;
+	if ( ArrayBuffer.isView( image.data ) ) source = rgba8Pixels( texture );
+	else {
+
+		// An image let go after packing keeps a thumbnail. Drawn at most 4× the size kept, the canvas's own (encoded)
+		// filtering stays within each texel kept.
+		const drawable = image.data === null ? image.thumbnail : image;
+		if ( ! drawable?.width || typeof OffscreenCanvas === 'undefined' ) return null;
+		const scale = Math.min( 1, 4 * MAP_SIDE / Math.max( drawable.width, drawable.height ) );
+		sourceWidth = Math.max( 1, Math.round( drawable.width * scale ) );
+		sourceHeight = Math.max( 1, Math.round( drawable.height * scale ) );
+		try {
+
+			const context = new OffscreenCanvas( sourceWidth, sourceHeight ).getContext( '2d', { willReadFrequently: true } );
+			context.drawImage( drawable, 0, 0, sourceWidth, sourceHeight );
+			source = context.getImageData( 0, 0, sourceWidth, sourceHeight ).data;
+
+		} catch {
+
+			return null;
+
+		}
+
+	}
+
+	if ( ! source ) return null;
+	const decode = texture.colorSpace === SRGBColorSpace ? v => srgbToLinear( v / 255 ) : v => v / 255;
+	const scale = Math.min( 1, MAP_SIDE / Math.max( sourceWidth, sourceHeight ) );
+	const width = Math.max( 1, Math.round( sourceWidth * scale ) ), height = Math.max( 1, Math.round( sourceHeight * scale ) );
+	// The packer turns a flipY image over: its first row is the image's last.
+	const flip = texture.flipY !== false;
+	const out = new Float32Array( width * height * 3 );
+	for ( let y = 0; y < height; y ++ ) for ( let x = 0; x < width; x ++ ) {
+
+		// Box average of the source texels this one covers.
+		const y0 = Math.floor( y * sourceHeight / height ), y1 = Math.max( y0 + 1, Math.floor( ( y + 1 ) * sourceHeight / height ) );
+		const x0 = Math.floor( x * sourceWidth / width ), x1 = Math.max( x0 + 1, Math.floor( ( x + 1 ) * sourceWidth / width ) );
+		const o = ( ( flip ? height - 1 - y : y ) * width + x ) * 3;
+		for ( let sy = y0; sy < y1; sy ++ ) for ( let sx = x0; sx < x1; sx ++ ) {
+
+			const i = ( sy * sourceWidth + sx ) * 4;
+			out[ o ] += decode( source[ i ] ); out[ o + 1 ] += decode( source[ i + 1 ] ); out[ o + 2 ] += decode( source[ i + 2 ] );
+
+		}
+
+		const n = ( y1 - y0 ) * ( x1 - x0 );
+		out[ o ] /= n; out[ o + 1 ] /= n; out[ o + 2 ] /= n;
+
+	}
+
+	return { data: out, width, height };
+
+}
+
+/** A map's linear colour as a pyramid of RGB levels (level 0 = mapLevel's size); null where it cannot be read. */
+export function emissionMapPyramid( texture ) {
+
+	const first = mapLevel( texture );
+	if ( ! first ) return null;
+	let { data: level, width, height } = first;
+	const levels = [ { data: level, width, height } ];
+	while ( width > 1 || height > 1 ) {
+
+		const w = Math.max( 1, width >> 1 ), h = Math.max( 1, height >> 1 );
+		const next = new Float32Array( w * h * 3 );
+		for ( let y = 0; y < h; y ++ ) for ( let x = 0; x < w; x ++ ) for ( let c = 0; c < 3; c ++ ) {
+
+			let sum = 0;
+			for ( let dy = 0; dy < 2; dy ++ ) for ( let dx = 0; dx < 2; dx ++ ) {
+
+				sum += level[ ( Math.min( height - 1, y * 2 + dy ) * width + Math.min( width - 1, x * 2 + dx ) ) * 3 + c ];
+
+			}
+
+			next[ ( y * w + x ) * 3 + c ] = sum / 4;
+
+		}
+
+		levels.push( { data: next, width: w, height: h } );
+		level = next;
+		width = w;
+		height = h;
+
+	}
+
+	return { levels, wrapS: texture.wrapS, wrapT: texture.wrapT };
+
+}
+
+const wrap = ( i, n, mode ) => {
+
+	if ( mode === RepeatWrapping ) return ( ( i % n ) + n ) % n;
+	if ( mode === MirroredRepeatWrapping ) {
+
+		const m = ( ( i % ( 2 * n ) ) + 2 * n ) % ( 2 * n );
+		return m < n ? m : 2 * n - 1 - m;
+
+	}
+
+	return Math.min( n - 1, Math.max( 0, i ) );
+
+};
+
+const IDENTITY = [ 1, 0, 0, 0, 1, 0, 0, 0, 1 ];
+
+/**
+ * The mean of `weights · map` over a triangle given by its three uvs, placed by `m` (three's uv transform, column
+ * major), read one pyramid level above the one where each of the 16 points covers its share of the triangle's texels:
+ * a little blurred, a triangle half under a bright texel is not read as dark.
+ */
+export function emissionMapMean( pyramid, uvs, weights, m = IDENTITY ) {
+
+	const u = [], v = [];
+	for ( let k = 0; k < 3; k ++ ) {
+
+		const x = uvs[ k * 2 ], y = uvs[ k * 2 + 1 ];
+		u.push( m[ 0 ] * x + m[ 3 ] * y + m[ 6 ] );
+		v.push( m[ 1 ] * x + m[ 4 ] * y + m[ 7 ] );
+
+	}
+
+	const base = pyramid.levels[ 0 ];
+	const texels = Math.abs( ( u[ 1 ] - u[ 0 ] ) * ( v[ 2 ] - v[ 0 ] ) - ( u[ 2 ] - u[ 0 ] ) * ( v[ 1 ] - v[ 0 ] ) ) / 2 * base.width * base.height;
+	if ( ! Number.isFinite( texels ) ) return NaN;
+	const index = Math.min( pyramid.levels.length - 1, Math.max( 0, Math.floor( 0.5 * Math.log2( Math.max( texels / MAP_POINTS.length, 1 ) ) ) ) + 1 );
+	const { data, width, height } = pyramid.levels[ index ];
+	let sum = 0;
+	for ( const [ a, b ] of MAP_POINTS ) {
+
+		const pu = u[ 0 ] + a * ( u[ 1 ] - u[ 0 ] ) + b * ( u[ 2 ] - u[ 0 ] );
+		const pv = v[ 0 ] + a * ( v[ 1 ] - v[ 0 ] ) + b * ( v[ 2 ] - v[ 0 ] );
+		const x = wrap( Math.floor( pu * width ), width, pyramid.wrapS ), y = wrap( Math.floor( pv * height ), height, pyramid.wrapT );
+		const o = ( y * width + x ) * 3;
+		sum += weights[ 0 ] * data[ o ] + weights[ 1 ] * data[ o + 1 ] + weights[ 2 ] * data[ o + 2 ];
+
+	}
+
+	return sum / MAP_POINTS.length;
+
+}
 
 /**
  * A material's emission in the working space.
@@ -55,6 +224,44 @@ export class EmissiveTriangleBuilder {
 		// (per-mesh visibility). Canonical `emissiveTriangles` is never filtered —
 		// the GPU-facing arrays are rebuilt from the visible subset in buildLightBVH().
 		this._hiddenMeshes = new Set();
+		// Emission map → emissionMapPyramid(), and extracted material → its emission map, from prepareEmissionMaps().
+		this._emissionMaps = new WeakMap();
+		this._materialMaps = new WeakMap();
+
+	}
+
+	/**
+	 * Reads the emission maps of `materials`' emitters, so extraction can weigh their triangles by them. Decodes an image
+	 * the packer has let go, and lets it go again. Call before the material textures are packed: packing renumbers the
+	 * materials' maps, so each material's map is looked up here, at once.
+	 * @param {Array} materials - extracted materials, which name their emission map by its index in `emissiveMaps`
+	 * @param {Array<import('three').Texture>} emissiveMaps
+	 */
+	async prepareEmissionMaps( materials, emissiveMaps = [] ) {
+
+		for ( const material of materials ) {
+
+			const map = material?.emissiveMap >= 0 && material.emissiveIntensity > 0 ? emissiveMaps[ material.emissiveMap ] : null;
+			if ( map ) this._materialMaps.set( material, map );
+
+		}
+
+		const maps = [ ...new Set( materials.map( m => m && this._materialMaps.get( m ) ) ) ].filter( map => map && ! this._emissionMaps.has( map ) );
+		if ( maps.length === 0 ) return;
+		try {
+
+			await holdImages( maps );
+			for ( const map of maps ) this._emissionMaps.set( map, emissionMapPyramid( map ) );
+
+		} catch ( error ) {
+
+			log.warn( `emission maps could not be read; their emitters are weighed by colour alone: ${error?.message ?? error}` );
+
+		} finally {
+
+			releaseImages( maps );
+
+		}
 
 	}
 
@@ -79,6 +286,7 @@ export class EmissiveTriangleBuilder {
 		const FLOATS_PER_TRIANGLE = TRIANGLE_DATA_LAYOUT.FLOATS_PER_TRIANGLE;
 		const MATERIAL_FLAGS_OFFSET = TRIANGLE_DATA_LAYOUT.MATERIAL_FLAGS_OFFSET;
 		const MESH_INDEX_OFFSET = TRIANGLE_DATA_LAYOUT.MESH_INDEX_OFFSET;
+		const { UV_AB_OFFSET, UV_C_OFFSET } = TRIANGLE_DATA_LAYOUT;
 		// Flat array or ChunkedRecords; the chunk is resolved once per triangle.
 		const chunked = triangleData && triangleData.chunks ? triangleData : null;
 		const chunkedF = chunked ? chunked.viewAs( Float32Array ) : null;
@@ -87,6 +295,8 @@ export class EmissiveTriangleBuilder {
 
 		// Once per material, not once per triangle: this loop runs over every triangle in the scene.
 		const emissiveOf = new Map();
+		const mapOf = new Map();
+		const uvs = new Float32Array( 6 );
 
 		for ( let i = 0; i < triangleCount; i ++ ) {
 
@@ -151,7 +361,35 @@ export class EmissiveTriangleBuilder {
 				// Calculate emissive power (Rec.709 luminance * intensity * area) — must match the
 				// shader's calculateEmissiveLightPdf luma weighting for MIS consistency.
 				const luma = 0.2126 * emissive.r + 0.7152 * emissive.g + 0.0722 * emissive.b;
-				const power = luma * emissiveIntensity * area;
+				const flatPower = luma * emissiveIntensity * area;
+
+				// The light tree's weight: times the emission map's mean over the triangle, as luma of colour × map.
+				let map = mapOf.get( material );
+				if ( map === undefined ) {
+
+					const texture = this._materialMaps.get( material );
+					const pyramid = texture ? this._emissionMaps.get( texture ) : null;
+					map = pyramid ? {
+						pyramid, matrix: material.emissiveMapMatrices?.length === 9 ? material.emissiveMapMatrices : IDENTITY,
+						weights: [ 0.2126 * emissive.r / luma, 0.7152 * emissive.g / luma, 0.0722 * emissive.b / luma ],
+					} : null;
+					mapOf.set( material, map );
+
+				}
+
+				let mapScale = 1;
+				if ( map ) {
+
+					uvs[ 0 ] = triFloats[ baseOffset + UV_AB_OFFSET ]; uvs[ 1 ] = triFloats[ baseOffset + UV_AB_OFFSET + 1 ];
+					uvs[ 2 ] = triFloats[ baseOffset + UV_AB_OFFSET + 2 ]; uvs[ 3 ] = triFloats[ baseOffset + UV_AB_OFFSET + 3 ];
+					uvs[ 4 ] = triFloats[ baseOffset + UV_C_OFFSET ]; uvs[ 5 ] = triFloats[ baseOffset + UV_C_OFFSET + 1 ];
+					const mean = emissionMapMean( map.pyramid, uvs, map.weights, map.matrix );
+					// A uv or transform that is not a number reads as colour alone: NaN would poison the whole tree.
+					mapScale = Number.isFinite( mean ) ? Math.max( MAP_FLOOR, mean ) : 1;
+
+				}
+
+				const power = flatPower * mapScale;
 
 				// Geometric normal (emission cone axis). BackSide flips it; DoubleSide → two-sided. The sides are the
 				// triangle's emitting ones, as the shaders read them.
@@ -185,7 +423,10 @@ export class EmissiveTriangleBuilder {
 					meshIndex: meshIndex,
 					sideSign,
 					instanceLeaf: hasInstance ? table.tlasLeafIndex[ placement ] : - 1,
-					power: power,
+					power,
+					// Colour alone: the bidirectional integrator draws its light paths' starts by it.
+					flatPower,
+					mapScale,
 					area: area,
 					emissive: { r: emissive.r, g: emissive.g, b: emissive.b },
 					emissiveIntensity: emissiveIntensity,
@@ -194,7 +435,7 @@ export class EmissiveTriangleBuilder {
 					nx, ny, nz, twoSided,
 				} );
 
-				this.totalEmissivePower += power;
+				this.totalEmissivePower += flatPower;
 
 			}
 
@@ -260,7 +501,8 @@ export class EmissiveTriangleBuilder {
 			const [ v0x, v0y, v0z, v1x, v1y, v1z, v2x, v2y, v2z ] = v;
 			const area = this._calculateTriangleArea( v0x, v0y, v0z, v1x, v1y, v1z, v2x, v2y, v2z );
 			const e = tri.emissive;
-			tri.power = ( 0.2126 * e.r + 0.7152 * e.g + 0.0722 * e.b ) * tri.emissiveIntensity * area;
+			tri.flatPower = ( 0.2126 * e.r + 0.7152 * e.g + 0.0722 * e.b ) * tri.emissiveIntensity * area;
+			tri.power = tri.flatPower * tri.mapScale;
 			tri.area = area;
 
 			const nx = ( v1y - v0y ) * ( v2z - v0z ) - ( v1z - v0z ) * ( v2y - v0y );
@@ -273,7 +515,7 @@ export class EmissiveTriangleBuilder {
 			tri.bMinX = Math.min( v0x, v1x, v2x ); tri.bMinY = Math.min( v0y, v1y, v2y ); tri.bMinZ = Math.min( v0z, v1z, v2z );
 			tri.bMaxX = Math.max( v0x, v1x, v2x ); tri.bMaxY = Math.max( v0y, v1y, v2y ); tri.bMaxZ = Math.max( v0z, v1z, v2z );
 
-			this.totalEmissivePower += tri.power;
+			this.totalEmissivePower += tri.flatPower;
 
 		}
 
@@ -318,7 +560,7 @@ export class EmissiveTriangleBuilder {
 		for ( let i = 0; i < this.emissiveCount; i ++ ) {
 
 			this.emissiveIndicesArray[ i ] = this.emissiveTriangles[ i ].triangleIndex;
-			this.emissivePowerArray[ i ] = this.emissiveTriangles[ i ].power;
+			this.emissivePowerArray[ i ] = this.emissiveTriangles[ i ].flatPower;
 
 		}
 
@@ -598,7 +840,8 @@ export class EmissiveTriangleBuilder {
 
 			if ( tri.materialIndex === materialIndex ) {
 
-				tri.power = luma * emissiveIntensity * tri.area;
+				tri.flatPower = luma * emissiveIntensity * tri.area;
+				tri.power = tri.flatPower * tri.mapScale;
 				tri.emissive = { r: emissive.r, g: emissive.g, b: emissive.b };
 				tri.emissiveIntensity = emissiveIntensity;
 
@@ -661,7 +904,7 @@ export class EmissiveTriangleBuilder {
 
 		this.emissiveCount = active.length;
 		this.totalEmissivePower = 0;
-		for ( const tri of active ) this.totalEmissivePower += tri.power;
+		for ( const tri of active ) this.totalEmissivePower += tri.flatPower;
 
 		if ( active.length === 0 ) {
 
@@ -721,7 +964,7 @@ export class EmissiveTriangleBuilder {
 
 			const origIdx = sortedPerm[ i ];
 			this.emissiveIndicesArray[ i ] = tris[ origIdx ].triangleIndex;
-			this.emissivePowerArray[ i ] = tris[ origIdx ].power;
+			this.emissivePowerArray[ i ] = tris[ origIdx ].flatPower;
 
 		}
 

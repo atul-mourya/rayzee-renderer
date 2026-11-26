@@ -560,6 +560,8 @@ export class SceneProcessor {
 			timer.start( 'Material textures (parallel)' );
 
 			let texturesDone = false;
+			// Emitters are weighed by their emission maps, read beside the BVH build (and before packing renumbers them).
+			const emissionMaps = this.emissiveTriangleBuilder.prepareEmissionMaps( this.materials, this.emissiveMaps );
 			const bvhPromise = this._buildBVH().then( () => timer.end( 'BVH construction (worker)' ) );
 			const texturePromise = this._createMaterialTextures().then( () => {
 
@@ -572,6 +574,7 @@ export class SceneProcessor {
 			// Emissive extraction needs the final reordered triangle indices,
 			// so it runs here — overlapping with any remaining texture work.
 			await bvhPromise;
+			await emissionMaps;
 
 			updateLoading( { status: "Building light data...", progress: 77 } );
 			// A task of its own: it walks every triangle, and would otherwise follow the BVH's last slice.

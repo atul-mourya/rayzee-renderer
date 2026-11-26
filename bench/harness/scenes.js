@@ -1695,6 +1695,54 @@ async function buildTranslucentPanel( app ) {
 
 }
 
+// A ceiling light whose emission map is black but for three small spots, over 512 triangles: next-event estimation draws
+// the triangles by the map's mean over each (EmissiveTriangleBuilder). Drawn by colour alone, 97 % of the samples land
+// on black and the noise gate moves.
+SCENES.push( {
+	id: 'emission-map-light',
+	covers: 'emitters weighed by their emission map in the light tree: a mostly black map lighting a room, noise and energy',
+	spp: 64,
+	truthSpp: 4096,
+	settings: { maxBounces: 4, enableEmissiveTriangleSampling: true, enableEnvironment: false },
+	build: buildEmissionMapLight,
+} );
+
+async function buildEmissionMapLight( app ) {
+
+	await app.stages.pathTracer.environment.setMode( 'color' );
+
+	const scene = makeRoom( { size: 4 } );
+	for ( const wall of scene.children ) wall.material.color.setHex( 0xbbbbbb );
+	const N = 64, data = new Uint8Array( N * N * 4 );
+	const spots = [[ 12, 14, 255, 235, 200 ], [ 46, 20, 200, 220, 255 ], [ 28, 48, 255, 210, 140 ]];
+	for ( let y = 0; y < N; y ++ ) for ( let x = 0; x < N; x ++ ) {
+
+		const o = ( y * N + x ) * 4;
+		data[ o + 3 ] = 255;
+		for ( const [ sx, sy, r, g, b ] of spots ) if ( Math.abs( x - sx ) < 3 && Math.abs( y - sy ) < 3 ) data.set( [ r, g, b ], o );
+
+	}
+
+	const map = new DataTexture( data, N, N );
+	map.colorSpace = SRGBColorSpace;
+	map.needsUpdate = true;
+	const light = new Mesh( new PlaneGeometry( 1.6, 1.6, 16, 16 ), new MeshPhysicalMaterial( {
+		color: 0x000000, emissive: 0xffffff, emissiveIntensity: 60, emissiveMap: map, roughness: 1,
+	} ) );
+	light.position.set( 0, 1.99, 0 );
+	light.rotation.x = Math.PI / 2;
+	scene.add( light );
+
+	const box = new Mesh( new BoxGeometry( 0.8, 1.2, 0.8 ), new MeshPhysicalMaterial( { color: 0x8899cc, roughness: 0.7, metalness: 0 } ) );
+	box.position.set( 0.5, - 1.4, - 0.3 );
+	box.rotation.y = 0.5;
+	scene.add( box );
+
+	await app.loadObject3D( scene, 'emission-map-light' );
+	setCamera( app, [ 0, 0.2, 1.95 ], [ 0, - 0.9, - 0.6 ] );
+
+}
+
 // The panel in the bidirectional integrator, held to the path tracer drawing the sheet's light by BSDF sampling alone:
 // light paths from the emitter cross the sheet, and NEE, connections and light tracing reach it from behind.
 SCENES.push( {

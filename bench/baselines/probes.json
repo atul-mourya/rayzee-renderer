@@ -1263,5 +1263,26 @@
 			"samples": 64
 		},
 		"rmseVsTruth": 0.002396180302898793
+	},
+	"emission-map-light": {
+		"truth": {
+			"meanR": 0.020850857162901804,
+			"meanG": 0.018287949727209707,
+			"meanB": 0.01686326348544398,
+			"meanLuminance": 0.01872996150138221,
+			"maxLuminance": 0.03876237218230963,
+			"nonFinite": 0,
+			"samples": 4096
+		},
+		"golden": {
+			"meanR": 0.020792889836751094,
+			"meanG": 0.018243231041496166,
+			"meanB": 0.016834431198548216,
+			"meanLuminance": 0.01868357315270626,
+			"maxLuminance": 0.4801019173979759,
+			"nonFinite": 0,
+			"samples": 64
+		},
+		"rmseVsTruth": 0.007111022644723605
 	}
 }

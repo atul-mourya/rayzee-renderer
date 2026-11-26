@@ -230,9 +230,16 @@ the shadow terminator, shadow-ray picking, sized lights and fog. CLAUDE.md keeps
   relief hit its own triangle again, or a neighbour past the edge, and each extra crossing stacked the glass's IOR
   (`furnace-displaced-glass` read 1.72). The relief traps light by total internal reflection, whose chance stays 1:
   clamped to 0.95 like a Fresnel pick, each one gained 5 % (the furnace read 1.0015).
-- **Emission maps in light sampling** (`emissionMapAt`, `shaders/EmissiveSampling.js`) — the light tree and the flat
-  list keep each emitting triangle's emission flat (emissive × intensity, its power for the draw); the point a sample
-  lands on reads the material's emission map there (barycentrics → UV → its transform → the sRGB bucket), as a ray that
+- **Emission maps in light sampling** (`emissionMapAt`, `shaders/EmissiveSampling.js`) — each emitting triangle's
+  emission stays flat (emissive × intensity); the light tree draws it by that times the map's mean over the triangle
+  (`EmissiveTriangleBuilder`: `prepareEmissionMaps` reads the map at most 256² before packing renumbers the materials'
+  maps, `emissionMapMean` 16 R2 points one pyramid level coarser than their footprint, the material's uv transform, a
+  floor of 1e-4 of the flat power). The flat list (its CDF, `emissiveTotalPower`) stays by colour alone: the
+  bidirectional light paths start by it and are weighed by `emitterAreaPdf` of the flat emission. Equal samples against
+  a 8192–16384-spp reference: `buster_drone.glb` lit by its own lights (83 % of its emitting area black) relative MSE
+  0.597 → 0.207 at 16 spp, 0.042 → 0.019 at 256; a ceiling of 2048 triangles with four bright spots 0.33 → 0.021,
+  0.0135 → 0.0016; bidirectional 4× lower RMSE; means equal. ⚠️ A floor of 1 % sent 97 % of the drone's samples to its
+  black area. The point a sample lands on reads the material's emission map there (barycentrics → UV → its transform → the sRGB bucket), as a ray that
   hits the emitter does. Before, a map's black half lit the floor beneath it like its white half: `tests/gpu/
   emissionMapLight.test.js` holds a mapped light to the same light built as two plain halves (within 1.4 %; flat, the
   black half's floor read 2.8×; `buster_drone.glb` lit by its own emitters read 23.5× with NEE on against off, now

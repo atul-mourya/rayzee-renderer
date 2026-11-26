@@ -24,7 +24,7 @@ import {
 import { areaLightRadiance, areaLightSpreadAttenuation } from '../../shaders/LightsSampling.js';
 import { spotConeSolidAngle, directionalConeSolidAngle } from './BidirectionalLamps.js';
 import {
-	lightPathPixel, mis, sunEmissionPdf, sourcePick, sourceLampType, sourceLampIndex, SOURCE, DIM_EMIT,
+	lightPathPixel, mis, sunEmissionPdf, sourcePick, sourceLampType, sourceLampIndex, SOURCE, DIM_EMIT, emitterAreaPdf,
 } from './Bidirectional.js';
 import { sampleGuidedDisc, guidedDiscPdf } from './LightGuide.js';
 import { RAY_FLAG, COUNTER } from '../../pathtracer/QueueManager.js';
@@ -150,8 +150,10 @@ export function buildLightGenerateKernel( params ) {
 			direction.assign( cosineWeightedSample( n, getRandomSample2D( pixel, int( 0 ), int( DIM_EMIT + 2 ), rng, resolution, frame ) ) );
 			const cosLight = dot( direction, n ).toVar();
 
-			const areaPdf = max( entry.y, 0.0 ).div( max( emissiveTotalPower, 1e-10 ) ).div( max( emission.w, 1e-20 ) ).mul(
-				select( side.equal( int( 2 ) ), float( 0.5 ), float( 1.0 ) ) ).mul( bidirectional.emitterPick ).toVar();
+			// The pick is by colour alone (its CDF); an emission map weighs only the light tree's stored power.
+			const picked = usesEmissionMaps( builder ) ? emitterAreaPdf( emission.xyz, emissiveTotalPower )
+				: max( entry.y, 0.0 ).div( max( emissiveTotalPower, 1e-10 ) ).div( max( emission.w, 1e-20 ) );
+			const areaPdf = picked.mul( select( side.equal( int( 2 ) ), float( 0.5 ), float( 1.0 ) ) ).mul( bidirectional.emitterPick ).toVar();
 			const emissionPdf = areaPdf.mul( cosLight ).div( Math.PI ).toVar();
 
 			If( cosLight.greaterThan( 1e-6 ).and( emissionPdf.greaterThan( 0.0 ) ), () => {

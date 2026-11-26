@@ -31,7 +31,7 @@ import { sampleBucket, getTransformedUV } from './TextureSampling.js';
 import {
 	MIN_PDF, getDatafromStorageBuffer, powerHeuristic, MATERIAL_SLOTS, MATERIAL_SLOT, arrayToMat3,
 	computeDotProductsAniso, instanceRows, instanceNormalToWorld, instancePointToWorld,
-	unpackTriangleNormal, triangleRow, triangleGeoRows, SHADOW_END, passesLight, offPlane,
+	unpackTriangleNormal, triangleRow, triangleGeoRows, SHADOW_END, passesLight, offPlane, REC709_LUMINANCE_COEFFICIENTS,
 } from './Common.js';
 import { TRI_MATERIAL_MASK } from '../scene/BufferLayout.js';
 import { getRandomSample1D, getRandomSample2D } from './Random.js';
@@ -548,9 +548,12 @@ const makeSampleEmissiveTriangle = ( indexed, anySide = false ) => Fn( ( [
 		const emissiveData0 = emissiveTriangleBuffer.element( baseIdx );
 		const emissiveData1 = emissiveTriangleBuffer.element( baseIdx.add( 1 ) );
 		const triangleIndex = int( emissiveData0.r );
-		const samplePower = max( emissiveData0.g, float( 1e-10 ) );
 		const emission = emissiveData1.xyz;
 		const area = emissiveData1.w;
+		// The CDF is by colour alone; the stored power is the light tree's, weighed by an emission map.
+		const samplePower = usesEmissionMaps( builder )
+			? max( dot( emission, REC709_LUMINANCE_COEFFICIENTS ).mul( area ), float( 1e-10 ) )
+			: max( emissiveData0.g, float( 1e-10 ) );
 		// Slot 3 carries the emitter's TLAS leaf; the selection pdf it used to hold is
 		// recomputed from power and the total, so the word was free.
 		const emissiveInstance = int( emissiveData0.a );

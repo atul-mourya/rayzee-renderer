@@ -512,7 +512,7 @@ The light BVH organizes emissive triangles into a power-weighted tree so NEE pic
 1. Start at the root.
 2. At each inner node, weigh each child by its power, its distance² to the shading point and its emission orientation cone (`lbvhNodeImportance`).
 3. Pick one child in proportion; track the selection probability.
-4. At a leaf, pick a triangle in proportion to its power.
+4. At a leaf, pick a triangle in proportion to its power (under an emission map, times the map's mean over it: see SHADING.md, "Emission maps in light sampling").
 5. Sample a point on it — spherical-triangle sampling when the triangle is near or large (`useSphericalSampling`), area sampling otherwise — and return an `EmissiveSample` with its solid-angle pdf.
 
 ### Integration
