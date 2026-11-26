@@ -43,7 +43,7 @@ The **Assets** tab (Preview) has ready-made models, materials and skies. Click *
 | Tab | What is in it |
 |---|---|
 | **Models** | **Featured**: ready-to-render scenes, most of them classic rendering test scenes (kitchens, bathrooms, a Cornell box, cars). **Sketchfab**: search Sketchfab's free models. **Amazon**: product models from Amazon Berkeley Objects. |
-| **Materials** | **Physically Based**: measured real materials, plus translucent ones such as **Candle wax**, **Jade** and **Soap**. **PolyHaven**: textured materials, at **1K** to **8K**. |
+| **Materials** | **Physically Based**: measured real materials, plus translucent ones such as **Candle wax**, **Jade** and **Soap**. **PolyHaven**: textured materials, at **1K** to **8K**. **MaterialX**: AMD's MaterialX Library (454 materials). |
 | **Env** | **Featured**: skies (HDRIs) ready to use. **PolyHaven**: Poly Haven's whole HDRI library, at **1K** to **4K**. |
 | **Tests** | Khronos's glTF sample models, for checking how a file feature renders. |
 

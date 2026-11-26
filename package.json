@@ -51,7 +51,8 @@
     "example:browser": "vite --config rayzee/examples/vite.config.js",
     "example:viewer": "vite rayzee/examples/viewer-browser --config rayzee/examples/vite.config.js",
     "color:bake": "node app/scripts/bake-default-view.mjs",
-    "abo:index": "node app/scripts/build-abo-index.mjs"
+    "abo:index": "node app/scripts/build-abo-index.mjs",
+    "materialx:mirror": "node app/scripts/mirror-materialx-library.mjs"
   },
   "devDependencies": {
     "@babel/core": "^7.29.13",

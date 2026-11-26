@@ -79,11 +79,24 @@ export const isMaterialFile = ( file ) => /\.(mtlx|zip)$/i.test( file?.name ?? '
  */
 export async function dropMaterialFileAt( file, clientX, clientY ) {
 
-	const mesh = await meshAt( clientX, clientY );
+	return applyMaterialFile( file, await meshAt( clientX, clientY ) );
+
+}
+
+export const SEVERAL_MATERIALS = 'This part uses several materials; a MaterialX material replaces one.';
+
+/**
+ * The first MaterialX material of `file` (a document, or a zip of documents and textures) on `mesh` and every part
+ * sharing its material. Resolves to the file's materials, or null when the file holds none (or there is no mesh);
+ * throws SEVERAL_MATERIALS for a part with several, so the file is not opened in its place.
+ */
+export async function applyMaterialFile( file, mesh ) {
+
 	const app = getApp();
-	if ( ! mesh?.material || Array.isArray( mesh.material ) || ! app?.readMaterials ) return null;
+	if ( ! mesh?.material || ! app?.readMaterials ) return null;
 	const materials = await app.readMaterials( file );
 	if ( ! materials?.length ) return null;
+	if ( Array.isArray( mesh.material ) ) throw new Error( SEVERAL_MATERIALS );
 	const { material } = materials[ 0 ];
 	MaterialService.replaceMaterial( app.meshScene, mesh.material, material );
 	mesh.material = material;

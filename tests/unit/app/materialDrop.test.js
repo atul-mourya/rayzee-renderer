@@ -13,7 +13,7 @@ vi.hoisted( () => {
 let app;
 vi.mock( '@/lib/appProxy', () => ( { getApp: () => app } ) );
 
-const { startMaterialDrag, endMaterialDrag, isMaterialDrag, meshAt, highlightMesh, dropMaterialAt, isMaterialFile, dropMaterialFileAt } = await import( '@/lib/materialDrop' );
+const { startMaterialDrag, endMaterialDrag, isMaterialDrag, meshAt, highlightMesh, dropMaterialAt, isMaterialFile, dropMaterialFileAt, SEVERAL_MATERIALS } = await import( '@/lib/materialDrop' );
 
 const dragEvent = () => {
 
@@ -132,6 +132,17 @@ describe( 'dropping a MaterialX file on an object', () => {
 	it( 'takes .mtlx documents and zips, nothing else', () => {
 
 		expect( [ 'a.mtlx', 'B.MTLX', 'kit.zip', 'model.glb', 'scene.usda', null ].map( name => isMaterialFile( name && { name } ) ) ).toEqual( [ true, true, true, false, false, false ] );
+
+	} );
+
+	it( 'refuses a part with several materials rather than open the file in its place', async () => {
+
+		cup.material = [ oldMaterial, named( 'glaze' ) ];
+		await expect( dropMaterialFileAt( { name: 'kit.zip' }, 50, 50 ) ).rejects.toThrow( SEVERAL_MATERIALS );
+		expect( app.rebuildMaterials ).not.toHaveBeenCalled();
+		// A zip of a model over that part still opens as a file.
+		app.readMaterials.mockResolvedValueOnce( null );
+		expect( await dropMaterialFileAt( { name: 'chair.zip' }, 50, 50 ) ).toBeNull();
 
 	} );
 

@@ -1116,31 +1116,50 @@ export class ArchiveImporter {
 	 */
 	async readMaterials( input, filename = input?.name ?? 'materials.mtlx' ) {
 
-		let entries;
-		if ( Array.isArray( input?.files ) ) entries = Object.fromEntries( input.files.map( ( { path, file } ) => [ path, file ] ) );
-		else if ( MATERIALX.test( filename ) ) entries = { [ filename ]: input };
-		else if ( detectArchiveKind( await this._readHead( input ) ) === 'zip' ) {
+		// Each file read only when the reader asks for it: a model zip dropped here is turned away by its listing alone.
+		let paths, entry;
+		if ( Array.isArray( input?.files ) ) {
+
+			const files = new Map( input.files.map( ( { path, file } ) => [ path, file ] ) );
+			paths = [ ...files.keys() ];
+			entry = async path => files.get( path ) ?? null;
+
+		} else if ( MATERIALX.test( filename ) ) {
+
+			paths = [ filename ];
+			entry = async path => ( path === filename ? input : null );
+
+		} else if ( detectArchiveKind( await this._readHead( input ) ) === 'zip' ) {
 
 			const source = await openZip( input );
-			entries = {};
-			for ( const e of source.listing ) if ( e.offset !== undefined ) entries[ e.path ] = source.entries?.[ e.path ] ?? await source.slice( e.path );
+			paths = source.listing.filter( e => e.offset !== undefined ).map( e => e.path );
+			const listed = new Set( paths );
+			entry = async path => ( listed.has( path ) ? source.entries?.[ path ] ?? await source.slice( path ) : null );
 
 		} else return null;
 
-		const paths = Object.keys( entries );
 		const model = p => USD_LAYER.test( p ) || ( ! MATERIALX.test( p ) && this.loader.getFileFormat( p )?.type === 'model' );
-		if ( paths.some( model ) ) return null;
-		const preview = await materialXPreview( paths, async path => ( entries[ path ] ? bytesOf( entries[ path ] ) : null ), message => log.warn( message ) );
+		if ( ! paths.some( p => MATERIALX.test( p ) ) || paths.some( model ) ) return null;
+		const written = new Map();
+		const read = async path => written.get( path ) ?? await entry( path );
+		const bytes = async path => {
+
+			const found = await read( path );
+			return found ? bytesOf( found ) : null;
+
+		};
+
+		const preview = await materialXPreview( paths, bytes, message => log.warn( message ) );
 		if ( ! preview ) return null;
-		entries[ preview.path ] = new TextEncoder().encode( preview.text );
-		const files = new USDFiles( Object.keys( entries ), async path => ( entries[ path ] ? bytesOf( entries[ path ] ) : null ) );
+		written.set( preview.path, new TextEncoder().encode( preview.text ) );
+		const files = new USDFiles( [ ...paths, preview.path ], bytes );
 		this._imageFailures = [];
 		const { group, warnings } = await loadUSDScene( {
 			files, entryPath: preview.path,
 			resolveImage: async path => {
 
-				const entry = entries[ path ];
-				return entry ? this._archiveImage( entry instanceof Blob ? entry : await bytesOf( entry ), path, null ) : null;
+				const found = await read( path );
+				return found ? this._archiveImage( found instanceof Blob ? found : await bytesOf( found ), path, null ) : null;
 
 			},
 			resolveEnvironment: async () => null,

@@ -136,14 +136,15 @@ Colour images have a **Color Space** menu: leave it on **Auto** unless the colou
 
 ### Materials from the catalogue
 
-**Assets → Materials** has two libraries: **Physically Based** (measured real materials, plus the app's translucent ones
-such as **Candle wax**, **Jade** and **Soap**) and **PolyHaven** (textured materials, at 1K to 8K). Either:
+**Assets → Materials** has three libraries: **Physically Based** (measured real materials, plus the app's translucent ones
+such as **Candle wax**, **Jade** and **Soap**), **PolyHaven** (textured materials, at 1K to 8K) and **MaterialX** (AMD's
+MaterialX Library: 454 materials written in MaterialX, with their textures). Either:
 
 - select an object, then click a material card; or
 - drag a card onto an object in the view. The object under the cursor is outlined, and the material lands on it.
 
-A PolyHaven material replaces the material on every part that shares it. With nothing selected, a click on a PolyHaven
-card does nothing.
+A PolyHaven or MaterialX material replaces the material on every part that shares it. With nothing selected, a click on
+a PolyHaven card does nothing, and a MaterialX card says to select an object first.
 
 ## Animation
 

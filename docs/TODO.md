@@ -52,6 +52,8 @@
 ### MaterialX documents (`.mtlx`)
 - [ ] App: dropping a `.mtlx` with several materials on an object takes the first; a way to choose
 - [ ] Looks (`materialassign` by geometry path)
+- [ ] A roughness or metalness texture packed in another channel than glTF's (roughness G, metalness B) is dropped to a
+  constant: 19 of AMD's 454 library materials (`USDScene`, "channel is not supported")
 
 ### pbrt: read but not used (audit of the 26 catalog scenes, 2026-11-01)
 - [ ] PixelFilter: box, triangle and Gaussian are drawn (`pixelFilter`, 2026-11-10; a file naming none gets pbrt's

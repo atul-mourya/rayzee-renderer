@@ -670,6 +670,34 @@ describe( 'MaterialX documents on their own', () => {
 
 	} );
 
+	it( 'turns a model zip away by its listing, reading none of its files', async () => {
+
+		const { archives } = importer();
+		// Bytes no compressor shrinks, stored as they are: reading the model would read all 2 MB.
+		const noise = new Uint8Array( 2 << 20 ).map( ( _, i ) => ( i * 2654435761 ) >>> 24 );
+		class Counted extends File {
+
+			read = 0;
+			slice( ...args ) {
+
+				const part = super.slice( ...args );
+				this.read += part.size;
+				return part;
+
+			}
+
+		}
+
+		const zip = new Counted( [ zipSync( { 'a.mtlx': strToU8( fixture( 'mixed.mtlx' ) ), 'chair.obj': [ noise, { level: 0 } ] } ) ], 'chair.zip' );
+		expect( await archives.readMaterials( zip ) ).toBe( null );
+		expect( zip.read ).toBeLessThan( 256 << 10 );
+
+		const plain = new Counted( [ zipSync( { 'notes.txt': [ noise, { level: 0 } ] } ) ], 'notes.zip' );
+		expect( await archives.readMaterials( plain ) ).toBe( null );
+		expect( plain.read ).toBeLessThan( 256 << 10 );
+
+	} );
+
 	it( 'fails plainly when nothing in it is a material', async () => {
 
 		const { archives } = importer();
