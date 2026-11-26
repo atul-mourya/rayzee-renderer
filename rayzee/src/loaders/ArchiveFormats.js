@@ -4,6 +4,8 @@ export const ARCHIVE_FORMATS = Object.freeze( {
 	'gz': { type: 'archive', name: 'Gzipped TAR Archive' },
 	'tgz': { type: 'archive', name: 'Gzipped TAR Archive' },
 	'tar': { type: 'archive', name: 'TAR Archive' },
+	// Not an archive: a MaterialX document, read by the add-on's USD importer (each material shown on a sphere).
+	'mtlx': { type: 'model', name: 'MaterialX' },
 } );
 
 const isBlob = value => typeof Blob !== 'undefined' && value instanceof Blob;

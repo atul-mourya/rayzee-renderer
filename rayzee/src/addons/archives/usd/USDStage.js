@@ -7,9 +7,12 @@
 
 import { composeListOps, parseUSDC } from './USDLayer.js';
 import { parseUSDA } from './USDText.js';
+import { materialXToUSDA, materialXIncludes } from './MaterialX.js';
 
 const RANK = { local: 0, inherit: 1, variant: 2, reference: 3, payload: 4, specialize: 5 };
 const MAX_CONNECTION_HOPS = 32;
+
+const MATERIALX_INCLUDE_DEPTH = 8;
 
 function parseLayer( bytes, path ) {
 
@@ -445,6 +448,14 @@ export class USDStage {
 				if ( ! bytes ) return null;
 				try {
 
+					if ( /\.mtlx$/i.test( path ) ) {
+
+						const text = new TextDecoder().decode( bytes );
+						const warn = ( key, message ) => this.warnOnce( key, message );
+						return parseUSDA( materialXToUSDA( text, { warn, includes: await this.materialXIncludes( text, path ) } ), path );
+
+					}
+
 					return parseLayer( bytes, path );
 
 				} catch ( error ) {
@@ -460,6 +471,40 @@ export class USDStage {
 		}
 
 		return pending;
+
+	}
+
+	/** The documents a MaterialX document includes, nested ones too, each once: `{ href, text }`, `href` relative to it. */
+	async materialXIncludes( text, path ) {
+
+		const out = [], seen = new Set( [ path ] );
+		const visit = async ( source, from, prefix, depth ) => {
+
+			for ( const href of materialXIncludes( source ) ) {
+
+				const file = this.files.resolve( href, from );
+				if ( ! file ) {
+
+					this.warnOnce( `missing:${href}`, `MaterialX include "${href}" (from "${from}") not found — skipped` );
+					continue;
+
+				}
+
+				if ( seen.has( file ) || depth >= MATERIALX_INCLUDE_DEPTH ) continue;
+				seen.add( file );
+				const bytes = await this.files.read( file );
+				if ( ! bytes ) continue;
+				const inner = new TextDecoder().decode( bytes );
+				const relative = normalize( prefix + href );
+				out.push( { href: relative, text: inner } );
+				await visit( inner, file, dirOf( relative ) ? `${dirOf( relative )}/` : '', depth + 1 );
+
+			}
+
+		};
+
+		await visit( text, path, '', 0 );
+		return out;
 
 	}
 

@@ -1,0 +1,34 @@
+<?xml version="1.0"?>
+<materialx version="1.38" fileprefix="./">
+  <standard_surface name="Wood_SS" type="surfaceshader">
+    <input name="base" type="float" value="1" />
+    <input name="base_color" type="color3" nodegraph="NG_Wood" output="base_color_out" />
+    <input name="specular_roughness" type="float" nodegraph="NG_Wood" output="roughness_out" />
+    <input name="normal" type="vector3" nodegraph="NG_Wood" output="normal_out" />
+    <input name="coat" type="float" value="0.25" />
+  </standard_surface>
+  <surfacematerial name="Wood" type="material">
+    <input name="surfaceshader" type="surfaceshader" nodename="Wood_SS" />
+  </surfacematerial>
+  <nodegraph name="NG_Wood">
+    <tiledimage name="color_img" type="color3">
+      <input name="file" type="filename" value="textures/wood_color.png" colorspace="srgb_texture" />
+      <input name="uvtiling" type="vector2" value="2.0, 3.0" />
+    </tiledimage>
+    <tiledimage name="rough_img" type="float">
+      <input name="file" type="filename" value="textures/wood_roughness.png" />
+      <input name="uvtiling" type="vector2" value="2.0, 3.0" />
+    </tiledimage>
+    <tiledimage name="normal_img" type="vector3">
+      <input name="file" type="filename" value="textures/wood_normal.png" />
+      <input name="uvtiling" type="vector2" value="2.0, 3.0" />
+    </tiledimage>
+    <normalmap name="nmap" type="vector3">
+      <input name="in" type="vector3" nodename="normal_img" />
+      <input name="scale" type="float" value="0.8" />
+    </normalmap>
+    <output name="base_color_out" type="color3" nodename="color_img" />
+    <output name="roughness_out" type="float" nodename="rough_img" />
+    <output name="normal_out" type="vector3" nodename="nmap" />
+  </nodegraph>
+</materialx>

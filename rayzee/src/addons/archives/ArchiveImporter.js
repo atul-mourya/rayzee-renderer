@@ -20,7 +20,7 @@ import { ENGINE_AREAS, worthStoring } from '../../storage/StorageAreas.js';
 import { encodeSceneGraph, writeSceneGraph, decodeSceneGraph, SceneGraphUnsupported, SCENE_GRAPH_FORMAT, ARCHIVE_PATH, ARCHIVE_LOADER } from './SceneGraphCodec.js';
 import { VERSION } from '../../Version.js';
 import { loadPBRTScene, pickEntryPath, VirtualFS, PBRT_BUILD_REVISION, texturePixels } from './pbrt/index.js';
-import { loadUSDScene, listUSDRootLayers, listUSDParts, USDFiles, USDStage, USD_LAYER, USD_BUILD_REVISION } from './usd/index.js';
+import { loadUSDScene, listUSDRootLayers, listUSDParts, USDFiles, USDStage, USD_LAYER, USD_BUILD_REVISION, MATERIALX, materialXPreview } from './usd/index.js';
 import { exrColorSpace, rec709From } from './pbrt/PBRTMaterials.js';
 import { extractSceneMetadata } from '../../loaders/SceneMetadata.js';
 import { convertLinearPixels } from '../../loaders/AssetLoader.js';
@@ -1107,6 +1107,58 @@ export class ArchiveImporter {
 	}
 
 	/**
+	 * The materials of the MaterialX documents in a `.mtlx` file, a zip or a folder (`localFolder`), with their textures
+	 * from beside them: `{ name, material }` each, in document order. Null where it holds no material, or holds a model
+	 * or a USD layer too. The scene is left as it is.
+	 * @param {File|Blob|{name: string, files: Array<{path: string, file: Blob}>}} input
+	 * @param {string} [filename]
+	 * @returns {Promise<Array<{name: string, material: import('three').Material}>|null>}
+	 */
+	async readMaterials( input, filename = input?.name ?? 'materials.mtlx' ) {
+
+		let entries;
+		if ( Array.isArray( input?.files ) ) entries = Object.fromEntries( input.files.map( ( { path, file } ) => [ path, file ] ) );
+		else if ( MATERIALX.test( filename ) ) entries = { [ filename ]: input };
+		else if ( detectArchiveKind( await this._readHead( input ) ) === 'zip' ) {
+
+			const source = await openZip( input );
+			entries = {};
+			for ( const e of source.listing ) if ( e.offset !== undefined ) entries[ e.path ] = source.entries?.[ e.path ] ?? await source.slice( e.path );
+
+		} else return null;
+
+		const paths = Object.keys( entries );
+		const model = p => USD_LAYER.test( p ) || ( ! MATERIALX.test( p ) && this.loader.getFileFormat( p )?.type === 'model' );
+		if ( paths.some( model ) ) return null;
+		const preview = await materialXPreview( paths, async path => ( entries[ path ] ? bytesOf( entries[ path ] ) : null ), message => log.warn( message ) );
+		if ( ! preview ) return null;
+		entries[ preview.path ] = new TextEncoder().encode( preview.text );
+		const files = new USDFiles( Object.keys( entries ), async path => ( entries[ path ] ? bytesOf( entries[ path ] ) : null ) );
+		this._imageFailures = [];
+		const { group, warnings } = await loadUSDScene( {
+			files, entryPath: preview.path,
+			resolveImage: async path => {
+
+				const entry = entries[ path ];
+				return entry ? this._archiveImage( entry instanceof Blob ? entry : await bytesOf( entry ), path, null ) : null;
+
+			},
+			resolveEnvironment: async () => null,
+		} );
+		warnings.forEach( w => log.warn( `${filename}: ${w}` ) );
+		const out = [];
+		group.traverse( mesh => {
+
+			if ( ! mesh.isMesh ) return;
+			if ( ! out.some( m => m.material === mesh.material ) ) out.push( { name: mesh.material.name, material: mesh.material } );
+			mesh.geometry.dispose();
+
+		} );
+		return out;
+
+	}
+
+	/**
 	 * A USD scene from a folder's or archive's files (path → bytes or Blob), each layer read as composition reaches it.
 	 * @param {object} [options] - `element`, `promptBytes`, `listing` (every file, loaded or not), `transient` (entries
 	 *   that cannot be read after the load), and loadArchiveFromFile's budgets
@@ -1114,11 +1166,21 @@ export class ArchiveImporter {
 	async loadUSDScene( entries, filename, options = {} ) {
 
 		updateLoading( { isLoading: true, status: 'Reading USD scene...', progress: 5 } );
+		let candidates = listUSDRootLayers( Object.keys( entries ) );
+		// MaterialX documents alone: each material shown on a sphere.
+		const preview = candidates.length === 0 ? await materialXPreview( Object.keys( entries ), path => bytesOf( entries[ path ] ), message => log.warn( message ) ) : null;
+		if ( preview ) {
+
+			entries = { ...entries, [ preview.path ]: new TextEncoder().encode( preview.text ) };
+			candidates = [ preview.path ];
+			log.info( `${filename}: ${preview.materials} MaterialX material(s) from ${preview.documents.join( ', ' )}, each on a sphere` );
+
+		}
+
 		const paths = Object.keys( entries );
 		const omitted = ( options.listing ?? [] ).filter( e => ! ( e.path in entries ) ).map( e => e.path );
 		const files = new USDFiles( paths, async path => ( entries[ path ] ? bytesOf( entries[ path ] ) : null ), { omitted } );
-		const candidates = listUSDRootLayers( paths );
-		if ( candidates.length === 0 ) throw new Error( `No USD layer found in ${filename}` );
+		if ( candidates.length === 0 ) throw new Error( `No USD layer or MaterialX material found in ${filename}` );
 		const entryPath = candidates[ 0 ];
 		if ( candidates.length > 1 ) {
 
@@ -1192,6 +1254,12 @@ export class ArchiveImporter {
 		this.loader._throwDeferred();
 
 		const { group, environment, render, warnings, triangleCount, placementCount, skippedForBudget, meshCount, parseMs, buildMs, fitNote } = built;
+		// A preview's spheres go by their materials' names.
+		if ( preview ) group.traverse( o => {
+
+			if ( o.isMesh && o.material?.name ) o.name = o.material.name;
+
+		} );
 		this.lastUSDStats = { parseMs, ...built.readTimings, buildMs, loaderMs: performance.now() - start, triangleCount, placementCount, skippedForBudget, meshCount, fitNote, ptex: built.ptex ?? null, fromStorage: !! stored };
 		if ( stored ) log.info( `USD scene "${entryPath}" opened from storage in ${( buildMs / 1000 ).toFixed( 1 )} s, skipping the read` );
 		if ( fitNote || skippedForBudget > 0 ) this.loader._issues?.record(
@@ -1214,7 +1282,7 @@ export class ArchiveImporter {
 
 		}
 
-		group.name = entryPath.split( '/' ).pop();
+		group.name = ( preview ? preview.documents[ 0 ] : entryPath ).split( '/' ).pop();
 		this.loader.releaseTargetModel();
 		// Before onModelLoad and the build touch the new group; a task after the build's last step.
 		if ( graphKey && ! stored ) {
@@ -1443,7 +1511,7 @@ export class ArchiveImporter {
 	/** The numbered run that is every model among `paths`, of a format reading sequences, with that format; or null. @private */
 	_sequenceRun( paths ) {
 
-		const models = paths.filter( p => this.loader.getFileFormat( p )?.type === 'model' );
+		const models = paths.filter( p => this.loader.getFileFormat( p )?.type === 'model' && ! MATERIALX.test( p ) );
 		const [ run ] = frameRuns( models );
 		const format = run && this.loader.getFileFormat( run.paths[ 0 ] );
 		return format?.parseSequence && run.paths.length === models.length ? { run, format } : null;
@@ -1457,11 +1525,12 @@ export class ArchiveImporter {
 		const root = top !== undefined && paths.every( p => p.startsWith( top + '/' ) ) ? top + '/' : '';
 		const models = paths.filter( p => p.split( '.' ).pop().toLowerCase() === 'obj' || this.loader.getFileFormat( p )?.type === 'model' );
 		if ( models.length === 0 ) return null;
-		const rank = p => p.split( '/' ).length * 2 + ( /\.(gltf|glb)$/i.test( p ) ? 0 : 1 );
+		// A MaterialX document is a scene only where nothing else is: beside a model it is that model's materials.
+		const rank = p => p.split( '/' ).length * 2 + ( /\.(gltf|glb)$/i.test( p ) ? 0 : 1 ) + ( MATERIALX.test( p ) ? 1e6 : 0 );
 		const have = new Set( paths );
 		const main = MAIN_MODEL_FILES.map( name => root + name ).find( p => have.has( p ) );
 		const path = main ?? models.reduce( ( best, p ) => ( rank( p ) < rank( best ) ? p : best ) );
-		return { path, models, main: !! main, usd: ! main && USD_LAYER.test( path ) };
+		return { path, models: models.filter( p => p === path || ! MATERIALX.test( p ) ), main: !! main, usd: ! main && ( USD_LAYER.test( path ) || MATERIALX.test( path ) ) };
 
 	}
 

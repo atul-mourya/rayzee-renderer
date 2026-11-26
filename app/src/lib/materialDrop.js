@@ -1,4 +1,5 @@
 import { getApp } from '@/lib/appProxy';
+import { MaterialService } from '@/services/MaterialService';
 
 /**
  * A catalogue material dragged onto the view: it lands on the object under the cursor, which is outlined meanwhile, and
@@ -65,5 +66,29 @@ export async function dropMaterialAt( clientX, clientY ) {
 	if ( ! mesh ) return false;
 	await drag.apply( drag.item, mesh );
 	return true;
+
+}
+
+/** A file that may hold MaterialX materials: a document, or a zip of documents and their textures. */
+export const isMaterialFile = ( file ) => /\.(mtlx|zip)$/i.test( file?.name ?? '' );
+
+/**
+ * A MaterialX file dropped from the desktop onto an object: its first material goes on the object, and on every part
+ * sharing the object's material. Resolves to the materials the file holds, or null when no object is under the point or
+ * the file holds no MaterialX material (a zip of a model): then it opens as any file does.
+ */
+export async function dropMaterialFileAt( file, clientX, clientY ) {
+
+	const mesh = await meshAt( clientX, clientY );
+	const app = getApp();
+	if ( ! mesh?.material || Array.isArray( mesh.material ) || ! app?.readMaterials ) return null;
+	const materials = await app.readMaterials( file );
+	if ( ! materials?.length ) return null;
+	const { material } = materials[ 0 ];
+	MaterialService.replaceMaterial( app.meshScene, mesh.material, material );
+	mesh.material = material;
+	await app.rebuildMaterials();
+	window.dispatchEvent( new CustomEvent( 'MaterialUpdate', { detail: { object: mesh, material, source: 'materialx' } } ) );
+	return materials;
 
 }

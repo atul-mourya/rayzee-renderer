@@ -49,6 +49,10 @@
 - [ ] https://github.com/DennisSmolek/Fsr3 (no FSR3 branch here any more)
 - [ ] tiled output for lower vram — Blender Cycles-style render-region tiling; VRAM-bounded 4K/8K final render + video. See docs/internal/specs/wavefront-tiled-output.md; unmerged branches `feat/tiled-output` and `feat/tiled-output-v2`
 
+### MaterialX documents (`.mtlx`)
+- [ ] App: dropping a `.mtlx` with several materials on an object takes the first; a way to choose
+- [ ] Looks (`materialassign` by geometry path)
+
 ### pbrt: read but not used (audit of the 26 catalog scenes, 2026-11-01)
 - [ ] PixelFilter: box, triangle and Gaussian are drawn (`pixelFilter`, 2026-11-10; a file naming none gets pbrt's
   Gaussian); Mitchell and Lanczos are not (negative lobes: a weight of ±1 a sample, which a plain average cannot carry),

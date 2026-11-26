@@ -1373,7 +1373,13 @@ export class USDSceneReader {
 	async surface( path ) {
 
 		if ( this._surfaces.has( path ) ) return this._surfaces.get( path );
-		const pending = this.buildSurface( path );
+		const pending = this.buildSurface( path ).then( surface => {
+
+			// Named for its Material prim, as other importers name theirs.
+			if ( surface?.material && ! surface.material.name ) surface.material.name = path.slice( path.lastIndexOf( '/' ) + 1 );
+			return surface;
+
+		} );
 		this._surfaces.set( path, pending );
 		return pending;
 

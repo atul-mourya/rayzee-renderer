@@ -9,7 +9,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { useStore, useAssetsStore, usePathTracerStore } from '@/store';
 import { getApp } from '@/lib/appProxy';
 import { readDrop, loadFolder } from '@/lib/folders';
-import { isMaterialDrag, meshAt, highlightMesh, dropMaterialAt } from '@/lib/materialDrop';
+import { isMaterialDrag, meshAt, highlightMesh, dropMaterialAt, isMaterialFile, dropMaterialFileAt } from '@/lib/materialDrop';
 
 // No material drag over the view: a pick landing after this is dropped.
 const idlePick = ( seq ) => ( { x: NaN, y: NaN, time: 0, mesh: null, seq, shown: seq } );
@@ -265,76 +265,100 @@ const MainViewport = ( { mode = "preview" } ) => {
 
 		}
 
-		// Check if the file format is supported
-		const format = app.assetLoader.getFileFormat( file.name );
-		if ( ! format ) {
+		// A MaterialX file, or a zip of one and its textures, dropped on an object dresses it; elsewhere it opens.
+		if ( isMaterialFile( file ) ) {
 
-			toast( {
-				title: "Unsupported File Type",
-				description: "Please drop a supported 3D model or environment map.",
-				variant: "destructive",
-			} );
+			dropMaterialFileAt( file, e.clientX, e.clientY )
+				.then( ( materials ) => {
+
+					if ( ! materials ) return loadDropped( file );
+					toast( {
+						title: `${materials[ 0 ].name || 'Material'} applied`,
+						description: materials.length > 1 ? `${file.name} holds ${materials.length} materials; drop it on empty space to see them all.` : undefined,
+					} );
+
+				} )
+				.catch( error => toast( { title: "Could not apply the material", description: error?.message || String( error ), variant: "destructive" } ) );
 			return;
 
 		}
 
-		// Show loading indicator
-		setLoading( {
-			isLoading: true,
-			title: "Loading",
-			status: `Processing ${format.name}...`,
-			progress: 0
-		} );
+		loadDropped( file );
 
-		// For environment maps, create and store the URL
-		if ( format.type === 'environment' || format.type === 'image' ) {
+		function loadDropped( file ) {
 
-			// const url = URL.createObjectURL( file );
+			// Check if the file format is supported
+			const format = app.assetLoader.getFileFormat( file.name );
+			if ( ! format ) {
 
-			// Store file info on asset loader for extension detection
-			app.assetLoader.uploadedFileInfo = {
-				name: file.name,
-				type: file.type,
-				size: file.size
-			};
+				toast( {
+					title: "Unsupported File Type",
+					description: "Please drop a supported 3D model or environment map.",
+					variant: "destructive",
+				} );
+				return;
+
+			}
+
+			// Show loading indicator
+			setLoading( {
+				isLoading: true,
+				title: "Loading",
+				status: `Processing ${format.name}...`,
+				progress: 0
+			} );
+
+			// For environment maps, create and store the URL
+			if ( format.type === 'environment' || format.type === 'image' ) {
+
+				// const url = URL.createObjectURL( file );
+
+				// Store file info on asset loader for extension detection
+				app.assetLoader.uploadedFileInfo = {
+					name: file.name,
+					type: file.type,
+					size: file.size
+				};
+
+			}
+
+			// Set pause state before loading
+			app.pauseRendering = true;
+
+			// loadFile() routes through the same guarded seam as URL loads, so a drop gets the
+			// full replace-load sequence (appended models cleared, cameras reset, authored
+			// environment applied) instead of the AssetLoader's bare rebuild.
+			app.loadFile( file )
+				.catch( error => {
+
+					if ( error?.code === 'LOAD_IN_PROGRESS' ) {
+
+						toast( { title: "Still Loading", description: "Wait for the current load to finish, then drop the file again." } );
+
+					} else if ( error?.code === 'ARCHIVE_NEEDS_ELEMENT' ) {
+
+						useStore.getState().setArchivePrompt( {
+							file, elements: error.elements, totalBytes: error.totalBytes
+						} );
+
+					} else {
+
+						console.error( "Error in asset loading:", error );
+						// Other error reporting is done through the AssetLoader event listeners.
+
+					}
+
+				} )
+				.finally( () => {
+
+					// The engine's `load` handler used to clear these, but it now defers to
+					// loadFile() and bails while a load is in progress.
+					app.pauseRendering = false;
+					useStore.getState().resetLoading();
+
+				} );
 
 		}
-
-		// Set pause state before loading
-		app.pauseRendering = true;
-
-		// loadFile() routes through the same guarded seam as URL loads, so a drop gets the
-		// full replace-load sequence (appended models cleared, cameras reset, authored
-		// environment applied) instead of the AssetLoader's bare rebuild.
-		app.loadFile( file )
-			.catch( error => {
-
-				if ( error?.code === 'LOAD_IN_PROGRESS' ) {
-
-					toast( { title: "Still Loading", description: "Wait for the current load to finish, then drop the file again." } );
-
-				} else if ( error?.code === 'ARCHIVE_NEEDS_ELEMENT' ) {
-
-					useStore.getState().setArchivePrompt( {
-						file, elements: error.elements, totalBytes: error.totalBytes
-					} );
-
-				} else {
-
-					console.error( "Error in asset loading:", error );
-					// Other error reporting is done through the AssetLoader event listeners.
-
-				}
-
-			} )
-			.finally( () => {
-
-				// The engine's `load` handler used to clear these, but it now defers to
-				// loadFile() and bails while a load is in progress.
-				app.pauseRendering = false;
-				useStore.getState().resetLoading();
-
-			} );
 
 	}, [ toast, setLoading ] );
 

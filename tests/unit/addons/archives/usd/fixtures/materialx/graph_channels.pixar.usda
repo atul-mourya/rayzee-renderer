@@ -1,0 +1,191 @@
+#usda 1.0
+
+def "MaterialX"
+{
+    def "Materials"
+    {
+        def Material "Rust" (
+            prepend apiSchemas = ["MaterialXConfigAPI"]
+        )
+        {
+            string config:mtlx:version = "1.39"
+            float inputs:base
+            color3f inputs:base_color
+            float inputs:coat
+            float inputs:coat_affect_color
+            float inputs:coat_affect_roughness
+            float inputs:coat_anisotropy
+            color3f inputs:coat_color
+            float inputs:coat_IOR
+            float3 inputs:coat_normal
+            float inputs:coat_rotation
+            float inputs:coat_roughness
+            float inputs:diffuse_roughness
+            float inputs:emission = 0.5
+            color3f inputs:emission_color = (0.1, 0.2, 0.9)
+            float inputs:metalness
+            float3 inputs:normal
+            color3f inputs:opacity = (0.5, 0.5, 0.5)
+            float inputs:sheen = 0.2
+            color3f inputs:sheen_color = (1, 0.9, 0.8)
+            float inputs:sheen_roughness
+            float inputs:specular
+            float inputs:specular_anisotropy
+            color3f inputs:specular_color
+            float inputs:specular_IOR = 1.6
+            float inputs:specular_rotation
+            float inputs:specular_roughness
+            float inputs:subsurface
+            float inputs:subsurface_anisotropy
+            color3f inputs:subsurface_color
+            color3f inputs:subsurface_radius
+            float inputs:subsurface_scale
+            float3 inputs:tangent
+            float inputs:thin_film_IOR
+            float inputs:thin_film_thickness = 300
+            bool inputs:thin_walled
+            float inputs:transmission
+            color3f inputs:transmission_color
+            float inputs:transmission_depth
+            float inputs:transmission_dispersion
+            float inputs:transmission_extra_roughness
+            color3f inputs:transmission_scatter
+            float inputs:transmission_scatter_anisotropy
+            token outputs:mtlx:surface.connect = </MaterialX/Materials/Rust/Rust_SS.outputs:surface>
+
+            def Shader "Rust_SS" (
+                prepend references = </MaterialX/Shaders/Rust_SS>
+            )
+            {
+                float inputs:base.connect = </MaterialX/Materials/Rust.inputs:base>
+                color3f inputs:base_color.connect = </MaterialX/Materials/Rust/NG_Rust.outputs:base>
+                float inputs:coat.connect = </MaterialX/Materials/Rust.inputs:coat>
+                float inputs:coat_affect_color.connect = </MaterialX/Materials/Rust.inputs:coat_affect_color>
+                float inputs:coat_affect_roughness.connect = </MaterialX/Materials/Rust.inputs:coat_affect_roughness>
+                float inputs:coat_anisotropy.connect = </MaterialX/Materials/Rust.inputs:coat_anisotropy>
+                color3f inputs:coat_color.connect = </MaterialX/Materials/Rust.inputs:coat_color>
+                float inputs:coat_IOR.connect = </MaterialX/Materials/Rust.inputs:coat_IOR>
+                float3 inputs:coat_normal.connect = </MaterialX/Materials/Rust.inputs:coat_normal>
+                float inputs:coat_rotation.connect = </MaterialX/Materials/Rust.inputs:coat_rotation>
+                float inputs:coat_roughness.connect = </MaterialX/Materials/Rust.inputs:coat_roughness>
+                float inputs:diffuse_roughness.connect = </MaterialX/Materials/Rust.inputs:diffuse_roughness>
+                float inputs:emission.connect = </MaterialX/Materials/Rust.inputs:emission>
+                color3f inputs:emission_color.connect = </MaterialX/Materials/Rust.inputs:emission_color>
+                float inputs:metalness.connect = </MaterialX/Materials/Rust/NG_Rust.outputs:metal>
+                float3 inputs:normal.connect = </MaterialX/Materials/Rust/NG_Rust.outputs:nrm>
+                color3f inputs:opacity.connect = </MaterialX/Materials/Rust.inputs:opacity>
+                float inputs:sheen.connect = </MaterialX/Materials/Rust.inputs:sheen>
+                color3f inputs:sheen_color.connect = </MaterialX/Materials/Rust.inputs:sheen_color>
+                float inputs:sheen_roughness.connect = </MaterialX/Materials/Rust.inputs:sheen_roughness>
+                float inputs:specular.connect = </MaterialX/Materials/Rust.inputs:specular>
+                float inputs:specular_anisotropy.connect = </MaterialX/Materials/Rust.inputs:specular_anisotropy>
+                color3f inputs:specular_color.connect = </MaterialX/Materials/Rust.inputs:specular_color>
+                float inputs:specular_IOR.connect = </MaterialX/Materials/Rust.inputs:specular_IOR>
+                float inputs:specular_rotation.connect = </MaterialX/Materials/Rust.inputs:specular_rotation>
+                float inputs:specular_roughness.connect = </MaterialX/Materials/Rust/NG_Rust.outputs:rough>
+                float inputs:subsurface.connect = </MaterialX/Materials/Rust.inputs:subsurface>
+                float inputs:subsurface_anisotropy.connect = </MaterialX/Materials/Rust.inputs:subsurface_anisotropy>
+                color3f inputs:subsurface_color.connect = </MaterialX/Materials/Rust.inputs:subsurface_color>
+                color3f inputs:subsurface_radius.connect = </MaterialX/Materials/Rust.inputs:subsurface_radius>
+                float inputs:subsurface_scale.connect = </MaterialX/Materials/Rust.inputs:subsurface_scale>
+                float3 inputs:tangent.connect = </MaterialX/Materials/Rust.inputs:tangent>
+                float inputs:thin_film_IOR.connect = </MaterialX/Materials/Rust.inputs:thin_film_IOR>
+                float inputs:thin_film_thickness.connect = </MaterialX/Materials/Rust.inputs:thin_film_thickness>
+                bool inputs:thin_walled.connect = </MaterialX/Materials/Rust.inputs:thin_walled>
+                float inputs:transmission.connect = </MaterialX/Materials/Rust.inputs:transmission>
+                color3f inputs:transmission_color.connect = </MaterialX/Materials/Rust.inputs:transmission_color>
+                float inputs:transmission_depth.connect = </MaterialX/Materials/Rust.inputs:transmission_depth>
+                float inputs:transmission_dispersion.connect = </MaterialX/Materials/Rust.inputs:transmission_dispersion>
+                float inputs:transmission_extra_roughness.connect = </MaterialX/Materials/Rust.inputs:transmission_extra_roughness>
+                color3f inputs:transmission_scatter.connect = </MaterialX/Materials/Rust.inputs:transmission_scatter>
+                float inputs:transmission_scatter_anisotropy.connect = </MaterialX/Materials/Rust.inputs:transmission_scatter_anisotropy>
+            }
+
+            def "NG_Rust" (
+                prepend references = </MaterialX/NodeGraphs/NG_Rust>
+            )
+            {
+            }
+        }
+    }
+
+    def "Shaders"
+    {
+        def Shader "Rust_SS"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            token outputs:surface
+        }
+    }
+
+    def "NodeGraphs"
+    {
+        def NodeGraph "NG_Rust"
+        {
+            color3f inputs:tint = (0.9, 0.6, 0.4)
+            color3f outputs:base.connect = </MaterialX/NodeGraphs/NG_Rust/tinted.outputs:out>
+            float outputs:metal.connect = </MaterialX/NodeGraphs/NG_Rust/k.outputs:out>
+            float3 outputs:nrm.connect = </MaterialX/NodeGraphs/NG_Rust/h2n.outputs:out>
+            float outputs:rough.connect = </MaterialX/NodeGraphs/NG_Rust/swizzle2.outputs:out>
+
+            def Shader "mask"
+            {
+                uniform token info:id = "ND_tiledimage_color4"
+                asset inputs:file = @rust_mask.png@
+                float2 inputs:uvoffset = (0.5, 0)
+                float2 inputs:uvtiling = (4, 4)
+                color4f outputs:out
+            }
+
+            def Shader "col"
+            {
+                uniform token info:id = "ND_tiledimage_color3"
+                asset inputs:file = @rust_color.jpg@ (
+                    colorSpace = "srgb_texture"
+                )
+                float2 inputs:uvtiling = (4, 4)
+                color3f outputs:out
+            }
+
+            def Shader "tinted"
+            {
+                uniform token info:id = "ND_multiply_color3"
+                color3f inputs:in1.connect = </MaterialX/NodeGraphs/NG_Rust/col.outputs:out>
+                color3f inputs:in2.connect = </MaterialX/NodeGraphs/NG_Rust.inputs:tint>
+                color3f outputs:out
+            }
+
+            def Shader "k"
+            {
+                uniform token info:id = "ND_constant_float"
+                float inputs:value = 0.35
+                float outputs:out
+            }
+
+            def Shader "swizzle"
+            {
+                uniform token info:id = "ND_extract_color4"
+                color4f inputs:in.connect = </MaterialX/NodeGraphs/NG_Rust/mask.outputs:out>
+                int inputs:index = 3
+                float outputs:out
+            }
+
+            def Shader "h2n"
+            {
+                uniform token info:id = "ND_heighttonormal_vector3"
+                float inputs:in.connect = </MaterialX/NodeGraphs/NG_Rust/swizzle.outputs:out>
+                float inputs:scale = 0.5
+                float3 outputs:out
+            }
+
+            def Shader "swizzle2"
+            {
+                uniform token info:id = "ND_extract_color4"
+                color4f inputs:in.connect = </MaterialX/NodeGraphs/NG_Rust/mask.outputs:out>
+                int inputs:index = 1
+                float outputs:out
+            }
+        }
+    }
+}
+

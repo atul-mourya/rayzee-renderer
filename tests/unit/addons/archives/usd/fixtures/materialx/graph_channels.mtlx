@@ -1,0 +1,46 @@
+<?xml version="1.0"?>
+<materialx version="1.38">
+  <nodegraph name="NG_Rust">
+    <input name="tint" type="color3" value="0.9, 0.6, 0.4" />
+    <tiledimage name="mask" type="color4">
+      <input name="file" type="filename" value="rust_mask.png" />
+      <input name="uvtiling" type="vector2" value="4, 4" />
+      <input name="uvoffset" type="vector2" value="0.5, 0" />
+    </tiledimage>
+    <tiledimage name="col" type="color3">
+      <input name="file" type="filename" value="rust_color.jpg" colorspace="srgb_texture" />
+      <input name="uvtiling" type="vector2" value="4, 4" />
+    </tiledimage>
+    <multiply name="tinted" type="color3">
+      <input name="in1" type="color3" nodename="col" />
+      <input name="in2" type="color3" interfacename="tint" />
+    </multiply>
+    <constant name="k" type="float">
+      <input name="value" type="float" value="0.35" />
+    </constant>
+    <heighttonormal name="h2n" type="vector3">
+      <input name="in" type="float" nodename="mask" channels="a" />
+      <input name="scale" type="float" value="0.5" />
+    </heighttonormal>
+    <output name="base" type="color3" nodename="tinted" />
+    <output name="rough" type="float" nodename="mask" channels="g" />
+    <output name="metal" type="float" nodename="k" />
+    <output name="nrm" type="vector3" nodename="h2n" />
+  </nodegraph>
+  <standard_surface name="Rust_SS" type="surfaceshader">
+    <input name="base_color" type="color3" nodegraph="NG_Rust" output="base" />
+    <input name="specular_roughness" type="float" nodegraph="NG_Rust" output="rough" />
+    <input name="metalness" type="float" nodegraph="NG_Rust" output="metal" />
+    <input name="normal" type="vector3" nodegraph="NG_Rust" output="nrm" />
+    <input name="sheen" type="float" value="0.2" />
+    <input name="sheen_color" type="color3" value="1, 0.9, 0.8" />
+    <input name="specular_IOR" type="float" value="1.6" />
+    <input name="thin_film_thickness" type="float" value="300" />
+    <input name="emission" type="float" value="0.5" />
+    <input name="emission_color" type="color3" value="0.1, 0.2, 0.9" />
+    <input name="opacity" type="color3" value="0.5, 0.5, 0.5" />
+  </standard_surface>
+  <surfacematerial name="Rust" type="material">
+    <input name="surfaceshader" type="surfaceshader" nodename="Rust_SS" />
+  </surfacematerial>
+</materialx>

@@ -1,0 +1,16 @@
+<?xml version="1.0"?>
+<materialx version="1.37" colorspace="lin_rec709">
+  <nodegraph name="NG_Old">
+    <image name="img" type="color3">
+      <parameter name="file" type="filename" value="tex/old.png" />
+    </image>
+    <output name="out" type="color3" nodename="img" />
+  </nodegraph>
+  <material name="OldMat">
+    <shaderref name="SR_old" node="standard_surface">
+      <bindinput name="base_color" type="color3" nodegraph="NG_Old" output="out" />
+      <bindinput name="specular_roughness" type="float" value="0.35" />
+      <bindinput name="metalness" type="float" value="0.5" />
+    </shaderref>
+  </material>
+</materialx>

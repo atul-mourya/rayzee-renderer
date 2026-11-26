@@ -441,7 +441,27 @@ USDLoader. Each layer is read only when composition reaches it (`USDFiles` over 
   Blender writes under each lobe, gives r²): the engine's roughness is √α. `hsvadjust` on a constant is MaterialX's, in HSV, saturation
   kept within [0, 1] (it was three's HSL: (1, 0.5, 0.5) at half saturation is (1, 0.75, 0.75), not (0.875, 0.625, 0.625));
   hue shifts of a texture and procedural nodes (noise, ramps) are dropped — each said once. three's MaterialXLoader is not used: it reads `.mtlx` documents, translates only
-  standard_surface / gltf_pbr / open_pbr (not Blender's BSDF graphs), and builds TSL materials the path tracer cannot run. Ptex
+  standard_surface / gltf_pbr / open_pbr (not Blender's BSDF graphs), and builds TSL materials the path tracer cannot run.
+  **MaterialX documents** (`.mtlx`, `MaterialX.js`) are USD layers: `USDStage` turns one into USDA text laid out as
+  OpenUSD's usdMtlx lays it out (`/MaterialX/Materials/<name>`, the surface shader beneath it, each node graph it reads
+  beneath it too, document-level nodes in a `NodeGraphs` graph, every node a Shader of `ND_*` id) and parses that, so the
+  reader above takes it unchanged and a USD scene can reference it. Its own XML reader (no DOMParser in Node or a
+  worker). 1.37's shaderref / bindinput / parameter and 1.38's `channels` and swizzle are rewritten as MaterialX's
+  upgrade rewrites them (extract, convert, combine); `fileprefix`, `colorspace` and tokens come from the nearest element
+  that sets them. Includes (`xi:include`) are read by `USDStage.materialXIncludes` before the translation (nested, each
+  file once, 8 deep at most) and their elements join the document's, an element it names itself kept, each with its
+  include's folder before its file prefix. A node the document defines itself (a `nodedef` implemented by a node graph,
+  through its `nodedef` or an `<implementation>`) is written as that graph's nodes in its own scope, named after it, the
+  graph's inputs bound to the node's own or the definition's defaults (`expand`; a definition reached through itself is
+  left out) — usdMtlx writes such a node as a Shader of its own id, which no reader here knows. As usdMtlx, the material's shader takes its values from the Material's own inputs (a USD scene
+  overrides them there). An image's file and placement given through its graph's inputs are written as values: the
+  reader reads those as values, not connections. ⚠️ A document-level `colorspace` is written onto each file input: usdMtlx keeps it only as layer data,
+  which left a colour map in a `lin_rec709` document read as sRGB. Held to usdMtlx (OpenUSD 25.08, Blender 5.1's `pxr`,
+  MaterialX 1.39.4) by `materialX.test.js`: six documents, every property of every material equal. usdMtlx crashes on
+  a surface built inside a node graph; this reads it. A document on its own loads as `materialXPreview`'s root layer
+  (`usd/index.js`): each material on a sphere, in a grid; `_mainModelPath` ranks a document below any model, so a
+  model's MaterialX looks beside it never become the scene. `readMaterials` builds the same root layer and keeps only
+  the spheres' materials, the scene untouched. USD materials are named for their Material prim. Ptex
   (`PxrPtexture`, `HwPtexTexture_1`; a `UsdUVTexture` naming a `.ptx`) becomes a named pbrt `ptex` texture with the
   exponent of the `PxrColorCorrect` it passes through (Moana: gamma 0.4545, so value^2.2), laid onto the pages as pbrt's
   are; a mesh bound to it is triangulated a Ptex face at a time (`ptexTriangulate`: a quad one face, any other polygon

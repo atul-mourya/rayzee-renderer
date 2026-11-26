@@ -1,0 +1,377 @@
+#usda 1.0
+
+def "MaterialX"
+{
+    def "Materials"
+    {
+        def Material "Tiles" (
+            prepend apiSchemas = ["MaterialXConfigAPI"]
+        )
+        {
+            string config:mtlx:version = "1.39"
+            color3f inputs:base_color
+            float inputs:base_diffuse_roughness
+            float inputs:base_metalness
+            float inputs:base_weight
+            color3f inputs:coat_color
+            float inputs:coat_darkening
+            float inputs:coat_ior = 1.45
+            float inputs:coat_roughness = 0.15
+            float inputs:coat_roughness_anisotropy
+            float inputs:coat_weight = 0.6
+            color3f inputs:emission_color = (1, 0.5, 0.25)
+            float inputs:emission_luminance = 2
+            color3f inputs:fuzz_color = (0.9, 0.8, 0.7)
+            float inputs:fuzz_roughness
+            float inputs:fuzz_weight = 0.3
+            float3 inputs:geometry_coat_normal
+            float3 inputs:geometry_coat_tangent
+            float3 inputs:geometry_normal
+            float inputs:geometry_opacity = 0.8
+            float3 inputs:geometry_tangent
+            bool inputs:geometry_thin_walled
+            color3f inputs:specular_color
+            float inputs:specular_ior
+            float inputs:specular_roughness
+            float inputs:specular_roughness_anisotropy = 0.4
+            float inputs:specular_weight
+            color3f inputs:subsurface_color
+            float inputs:subsurface_radius
+            color3f inputs:subsurface_radius_scale
+            float inputs:subsurface_scatter_anisotropy
+            float inputs:subsurface_weight
+            float inputs:thin_film_ior
+            float inputs:thin_film_thickness = 0.45
+            float inputs:thin_film_weight = 0.5
+            color3f inputs:transmission_color
+            float inputs:transmission_depth
+            float inputs:transmission_dispersion_abbe_number
+            float inputs:transmission_dispersion_scale
+            color3f inputs:transmission_scatter
+            float inputs:transmission_scatter_anisotropy
+            float inputs:transmission_weight
+            token outputs:mtlx:surface.connect = </MaterialX/Materials/Tiles/Tiles_OP.outputs:surface>
+
+            def Shader "Tiles_OP" (
+                prepend references = </MaterialX/Shaders/Tiles_OP>
+            )
+            {
+                color3f inputs:base_color.connect = </MaterialX/Materials/Tiles/NG_Tiles.outputs:color_out>
+                float inputs:base_diffuse_roughness.connect = </MaterialX/Materials/Tiles.inputs:base_diffuse_roughness>
+                float inputs:base_metalness.connect = </MaterialX/Materials/Tiles/NG_Tiles.outputs:metal_out>
+                float inputs:base_weight.connect = </MaterialX/Materials/Tiles.inputs:base_weight>
+                color3f inputs:coat_color.connect = </MaterialX/Materials/Tiles.inputs:coat_color>
+                float inputs:coat_darkening.connect = </MaterialX/Materials/Tiles.inputs:coat_darkening>
+                float inputs:coat_ior.connect = </MaterialX/Materials/Tiles.inputs:coat_ior>
+                float inputs:coat_roughness.connect = </MaterialX/Materials/Tiles.inputs:coat_roughness>
+                float inputs:coat_roughness_anisotropy.connect = </MaterialX/Materials/Tiles.inputs:coat_roughness_anisotropy>
+                float inputs:coat_weight.connect = </MaterialX/Materials/Tiles.inputs:coat_weight>
+                color3f inputs:emission_color.connect = </MaterialX/Materials/Tiles.inputs:emission_color>
+                float inputs:emission_luminance.connect = </MaterialX/Materials/Tiles.inputs:emission_luminance>
+                color3f inputs:fuzz_color.connect = </MaterialX/Materials/Tiles.inputs:fuzz_color>
+                float inputs:fuzz_roughness.connect = </MaterialX/Materials/Tiles.inputs:fuzz_roughness>
+                float inputs:fuzz_weight.connect = </MaterialX/Materials/Tiles.inputs:fuzz_weight>
+                float3 inputs:geometry_coat_normal.connect = </MaterialX/Materials/Tiles.inputs:geometry_coat_normal>
+                float3 inputs:geometry_coat_tangent.connect = </MaterialX/Materials/Tiles.inputs:geometry_coat_tangent>
+                float3 inputs:geometry_normal.connect = </MaterialX/Materials/Tiles.inputs:geometry_normal>
+                float inputs:geometry_opacity.connect = </MaterialX/Materials/Tiles.inputs:geometry_opacity>
+                float3 inputs:geometry_tangent.connect = </MaterialX/Materials/Tiles.inputs:geometry_tangent>
+                bool inputs:geometry_thin_walled.connect = </MaterialX/Materials/Tiles.inputs:geometry_thin_walled>
+                color3f inputs:specular_color.connect = </MaterialX/Materials/Tiles.inputs:specular_color>
+                float inputs:specular_ior.connect = </MaterialX/Materials/Tiles.inputs:specular_ior>
+                float inputs:specular_roughness.connect = </MaterialX/Materials/Tiles/NG_Tiles.outputs:rough_out>
+                float inputs:specular_roughness_anisotropy.connect = </MaterialX/Materials/Tiles.inputs:specular_roughness_anisotropy>
+                float inputs:specular_weight.connect = </MaterialX/Materials/Tiles.inputs:specular_weight>
+                color3f inputs:subsurface_color.connect = </MaterialX/Materials/Tiles.inputs:subsurface_color>
+                float inputs:subsurface_radius.connect = </MaterialX/Materials/Tiles.inputs:subsurface_radius>
+                color3f inputs:subsurface_radius_scale.connect = </MaterialX/Materials/Tiles.inputs:subsurface_radius_scale>
+                float inputs:subsurface_scatter_anisotropy.connect = </MaterialX/Materials/Tiles.inputs:subsurface_scatter_anisotropy>
+                float inputs:subsurface_weight.connect = </MaterialX/Materials/Tiles.inputs:subsurface_weight>
+                float inputs:thin_film_ior.connect = </MaterialX/Materials/Tiles.inputs:thin_film_ior>
+                float inputs:thin_film_thickness.connect = </MaterialX/Materials/Tiles.inputs:thin_film_thickness>
+                float inputs:thin_film_weight.connect = </MaterialX/Materials/Tiles.inputs:thin_film_weight>
+                color3f inputs:transmission_color.connect = </MaterialX/Materials/Tiles.inputs:transmission_color>
+                float inputs:transmission_depth.connect = </MaterialX/Materials/Tiles.inputs:transmission_depth>
+                float inputs:transmission_dispersion_abbe_number.connect = </MaterialX/Materials/Tiles.inputs:transmission_dispersion_abbe_number>
+                float inputs:transmission_dispersion_scale.connect = </MaterialX/Materials/Tiles.inputs:transmission_dispersion_scale>
+                color3f inputs:transmission_scatter.connect = </MaterialX/Materials/Tiles.inputs:transmission_scatter>
+                float inputs:transmission_scatter_anisotropy.connect = </MaterialX/Materials/Tiles.inputs:transmission_scatter_anisotropy>
+                float inputs:transmission_weight.connect = </MaterialX/Materials/Tiles.inputs:transmission_weight>
+            }
+
+            def "NG_Tiles" (
+                prepend references = </MaterialX/NodeGraphs/NG_Tiles>
+            )
+            {
+            }
+        }
+
+        def Material "Glass" (
+            prepend apiSchemas = ["MaterialXConfigAPI"]
+        )
+        {
+            string config:mtlx:version = "1.39"
+            color3f inputs:base_color
+            float inputs:base_diffuse_roughness
+            float inputs:base_metalness
+            float inputs:base_weight
+            color3f inputs:coat_color
+            float inputs:coat_darkening
+            float inputs:coat_ior
+            float inputs:coat_roughness
+            float inputs:coat_roughness_anisotropy
+            float inputs:coat_weight
+            color3f inputs:emission_color
+            float inputs:emission_luminance
+            color3f inputs:fuzz_color
+            float inputs:fuzz_roughness
+            float inputs:fuzz_weight
+            float3 inputs:geometry_coat_normal
+            float3 inputs:geometry_coat_tangent
+            float3 inputs:geometry_normal
+            float inputs:geometry_opacity
+            float3 inputs:geometry_tangent
+            bool inputs:geometry_thin_walled
+            color3f inputs:specular_color
+            float inputs:specular_ior = 1.52
+            float inputs:specular_roughness = 0.05
+            float inputs:specular_roughness_anisotropy
+            float inputs:specular_weight
+            color3f inputs:subsurface_color
+            float inputs:subsurface_radius
+            color3f inputs:subsurface_radius_scale
+            float inputs:subsurface_scatter_anisotropy
+            float inputs:subsurface_weight
+            float inputs:thin_film_ior
+            float inputs:thin_film_thickness
+            float inputs:thin_film_weight
+            color3f inputs:transmission_color = (0.8, 0.9, 1)
+            float inputs:transmission_depth = 0.5
+            float inputs:transmission_dispersion_abbe_number = 40
+            float inputs:transmission_dispersion_scale = 1
+            color3f inputs:transmission_scatter
+            float inputs:transmission_scatter_anisotropy
+            float inputs:transmission_weight = 1
+            token outputs:mtlx:surface.connect = </MaterialX/Materials/Glass/Glass_OP.outputs:surface>
+
+            def Shader "Glass_OP" (
+                prepend references = </MaterialX/Shaders/Glass_OP>
+            )
+            {
+                color3f inputs:base_color.connect = </MaterialX/Materials/Glass.inputs:base_color>
+                float inputs:base_diffuse_roughness.connect = </MaterialX/Materials/Glass.inputs:base_diffuse_roughness>
+                float inputs:base_metalness.connect = </MaterialX/Materials/Glass.inputs:base_metalness>
+                float inputs:base_weight.connect = </MaterialX/Materials/Glass.inputs:base_weight>
+                color3f inputs:coat_color.connect = </MaterialX/Materials/Glass.inputs:coat_color>
+                float inputs:coat_darkening.connect = </MaterialX/Materials/Glass.inputs:coat_darkening>
+                float inputs:coat_ior.connect = </MaterialX/Materials/Glass.inputs:coat_ior>
+                float inputs:coat_roughness.connect = </MaterialX/Materials/Glass.inputs:coat_roughness>
+                float inputs:coat_roughness_anisotropy.connect = </MaterialX/Materials/Glass.inputs:coat_roughness_anisotropy>
+                float inputs:coat_weight.connect = </MaterialX/Materials/Glass.inputs:coat_weight>
+                color3f inputs:emission_color.connect = </MaterialX/Materials/Glass.inputs:emission_color>
+                float inputs:emission_luminance.connect = </MaterialX/Materials/Glass.inputs:emission_luminance>
+                color3f inputs:fuzz_color.connect = </MaterialX/Materials/Glass.inputs:fuzz_color>
+                float inputs:fuzz_roughness.connect = </MaterialX/Materials/Glass.inputs:fuzz_roughness>
+                float inputs:fuzz_weight.connect = </MaterialX/Materials/Glass.inputs:fuzz_weight>
+                float3 inputs:geometry_coat_normal.connect = </MaterialX/Materials/Glass.inputs:geometry_coat_normal>
+                float3 inputs:geometry_coat_tangent.connect = </MaterialX/Materials/Glass.inputs:geometry_coat_tangent>
+                float3 inputs:geometry_normal.connect = </MaterialX/Materials/Glass.inputs:geometry_normal>
+                float inputs:geometry_opacity.connect = </MaterialX/Materials/Glass.inputs:geometry_opacity>
+                float3 inputs:geometry_tangent.connect = </MaterialX/Materials/Glass.inputs:geometry_tangent>
+                bool inputs:geometry_thin_walled.connect = </MaterialX/Materials/Glass.inputs:geometry_thin_walled>
+                color3f inputs:specular_color.connect = </MaterialX/Materials/Glass.inputs:specular_color>
+                float inputs:specular_ior.connect = </MaterialX/Materials/Glass.inputs:specular_ior>
+                float inputs:specular_roughness.connect = </MaterialX/Materials/Glass.inputs:specular_roughness>
+                float inputs:specular_roughness_anisotropy.connect = </MaterialX/Materials/Glass.inputs:specular_roughness_anisotropy>
+                float inputs:specular_weight.connect = </MaterialX/Materials/Glass.inputs:specular_weight>
+                color3f inputs:subsurface_color.connect = </MaterialX/Materials/Glass.inputs:subsurface_color>
+                float inputs:subsurface_radius.connect = </MaterialX/Materials/Glass.inputs:subsurface_radius>
+                color3f inputs:subsurface_radius_scale.connect = </MaterialX/Materials/Glass.inputs:subsurface_radius_scale>
+                float inputs:subsurface_scatter_anisotropy.connect = </MaterialX/Materials/Glass.inputs:subsurface_scatter_anisotropy>
+                float inputs:subsurface_weight.connect = </MaterialX/Materials/Glass.inputs:subsurface_weight>
+                float inputs:thin_film_ior.connect = </MaterialX/Materials/Glass.inputs:thin_film_ior>
+                float inputs:thin_film_thickness.connect = </MaterialX/Materials/Glass.inputs:thin_film_thickness>
+                float inputs:thin_film_weight.connect = </MaterialX/Materials/Glass.inputs:thin_film_weight>
+                color3f inputs:transmission_color.connect = </MaterialX/Materials/Glass.inputs:transmission_color>
+                float inputs:transmission_depth.connect = </MaterialX/Materials/Glass.inputs:transmission_depth>
+                float inputs:transmission_dispersion_abbe_number.connect = </MaterialX/Materials/Glass.inputs:transmission_dispersion_abbe_number>
+                float inputs:transmission_dispersion_scale.connect = </MaterialX/Materials/Glass.inputs:transmission_dispersion_scale>
+                color3f inputs:transmission_scatter.connect = </MaterialX/Materials/Glass.inputs:transmission_scatter>
+                float inputs:transmission_scatter_anisotropy.connect = </MaterialX/Materials/Glass.inputs:transmission_scatter_anisotropy>
+                float inputs:transmission_weight.connect = </MaterialX/Materials/Glass.inputs:transmission_weight>
+            }
+        }
+
+        def Material "Skin" (
+            prepend apiSchemas = ["MaterialXConfigAPI"]
+        )
+        {
+            string config:mtlx:version = "1.39"
+            color3f inputs:base_color = (0.8, 0.55, 0.45)
+            float inputs:base_diffuse_roughness
+            float inputs:base_metalness
+            float inputs:base_weight
+            color3f inputs:coat_color
+            float inputs:coat_darkening
+            float inputs:coat_ior
+            float inputs:coat_roughness
+            float inputs:coat_roughness_anisotropy
+            float inputs:coat_weight
+            color3f inputs:emission_color
+            float inputs:emission_luminance
+            color3f inputs:fuzz_color
+            float inputs:fuzz_roughness
+            float inputs:fuzz_weight
+            float3 inputs:geometry_coat_normal
+            float3 inputs:geometry_coat_tangent
+            float3 inputs:geometry_normal
+            float inputs:geometry_opacity
+            float3 inputs:geometry_tangent
+            bool inputs:geometry_thin_walled
+            color3f inputs:specular_color
+            float inputs:specular_ior
+            float inputs:specular_roughness
+            float inputs:specular_roughness_anisotropy
+            float inputs:specular_weight
+            color3f inputs:subsurface_color = (0.9, 0.5, 0.4)
+            float inputs:subsurface_radius = 0.3
+            color3f inputs:subsurface_radius_scale = (1, 0.4, 0.2)
+            float inputs:subsurface_scatter_anisotropy = 0.2
+            float inputs:subsurface_weight = 1
+            float inputs:thin_film_ior
+            float inputs:thin_film_thickness
+            float inputs:thin_film_weight
+            color3f inputs:transmission_color
+            float inputs:transmission_depth
+            float inputs:transmission_dispersion_abbe_number
+            float inputs:transmission_dispersion_scale
+            color3f inputs:transmission_scatter
+            float inputs:transmission_scatter_anisotropy
+            float inputs:transmission_weight
+            token outputs:mtlx:surface.connect = </MaterialX/Materials/Skin/Skin_OP.outputs:surface>
+
+            def Shader "Skin_OP" (
+                prepend references = </MaterialX/Shaders/Skin_OP>
+            )
+            {
+                color3f inputs:base_color.connect = </MaterialX/Materials/Skin.inputs:base_color>
+                float inputs:base_diffuse_roughness.connect = </MaterialX/Materials/Skin.inputs:base_diffuse_roughness>
+                float inputs:base_metalness.connect = </MaterialX/Materials/Skin.inputs:base_metalness>
+                float inputs:base_weight.connect = </MaterialX/Materials/Skin.inputs:base_weight>
+                color3f inputs:coat_color.connect = </MaterialX/Materials/Skin.inputs:coat_color>
+                float inputs:coat_darkening.connect = </MaterialX/Materials/Skin.inputs:coat_darkening>
+                float inputs:coat_ior.connect = </MaterialX/Materials/Skin.inputs:coat_ior>
+                float inputs:coat_roughness.connect = </MaterialX/Materials/Skin.inputs:coat_roughness>
+                float inputs:coat_roughness_anisotropy.connect = </MaterialX/Materials/Skin.inputs:coat_roughness_anisotropy>
+                float inputs:coat_weight.connect = </MaterialX/Materials/Skin.inputs:coat_weight>
+                color3f inputs:emission_color.connect = </MaterialX/Materials/Skin.inputs:emission_color>
+                float inputs:emission_luminance.connect = </MaterialX/Materials/Skin.inputs:emission_luminance>
+                color3f inputs:fuzz_color.connect = </MaterialX/Materials/Skin.inputs:fuzz_color>
+                float inputs:fuzz_roughness.connect = </MaterialX/Materials/Skin.inputs:fuzz_roughness>
+                float inputs:fuzz_weight.connect = </MaterialX/Materials/Skin.inputs:fuzz_weight>
+                float3 inputs:geometry_coat_normal.connect = </MaterialX/Materials/Skin.inputs:geometry_coat_normal>
+                float3 inputs:geometry_coat_tangent.connect = </MaterialX/Materials/Skin.inputs:geometry_coat_tangent>
+                float3 inputs:geometry_normal.connect = </MaterialX/Materials/Skin.inputs:geometry_normal>
+                float inputs:geometry_opacity.connect = </MaterialX/Materials/Skin.inputs:geometry_opacity>
+                float3 inputs:geometry_tangent.connect = </MaterialX/Materials/Skin.inputs:geometry_tangent>
+                bool inputs:geometry_thin_walled.connect = </MaterialX/Materials/Skin.inputs:geometry_thin_walled>
+                color3f inputs:specular_color.connect = </MaterialX/Materials/Skin.inputs:specular_color>
+                float inputs:specular_ior.connect = </MaterialX/Materials/Skin.inputs:specular_ior>
+                float inputs:specular_roughness.connect = </MaterialX/Materials/Skin.inputs:specular_roughness>
+                float inputs:specular_roughness_anisotropy.connect = </MaterialX/Materials/Skin.inputs:specular_roughness_anisotropy>
+                float inputs:specular_weight.connect = </MaterialX/Materials/Skin.inputs:specular_weight>
+                color3f inputs:subsurface_color.connect = </MaterialX/Materials/Skin.inputs:subsurface_color>
+                float inputs:subsurface_radius.connect = </MaterialX/Materials/Skin.inputs:subsurface_radius>
+                color3f inputs:subsurface_radius_scale.connect = </MaterialX/Materials/Skin.inputs:subsurface_radius_scale>
+                float inputs:subsurface_scatter_anisotropy.connect = </MaterialX/Materials/Skin.inputs:subsurface_scatter_anisotropy>
+                float inputs:subsurface_weight.connect = </MaterialX/Materials/Skin.inputs:subsurface_weight>
+                float inputs:thin_film_ior.connect = </MaterialX/Materials/Skin.inputs:thin_film_ior>
+                float inputs:thin_film_thickness.connect = </MaterialX/Materials/Skin.inputs:thin_film_thickness>
+                float inputs:thin_film_weight.connect = </MaterialX/Materials/Skin.inputs:thin_film_weight>
+                color3f inputs:transmission_color.connect = </MaterialX/Materials/Skin.inputs:transmission_color>
+                float inputs:transmission_depth.connect = </MaterialX/Materials/Skin.inputs:transmission_depth>
+                float inputs:transmission_dispersion_abbe_number.connect = </MaterialX/Materials/Skin.inputs:transmission_dispersion_abbe_number>
+                float inputs:transmission_dispersion_scale.connect = </MaterialX/Materials/Skin.inputs:transmission_dispersion_scale>
+                color3f inputs:transmission_scatter.connect = </MaterialX/Materials/Skin.inputs:transmission_scatter>
+                float inputs:transmission_scatter_anisotropy.connect = </MaterialX/Materials/Skin.inputs:transmission_scatter_anisotropy>
+                float inputs:transmission_weight.connect = </MaterialX/Materials/Skin.inputs:transmission_weight>
+            }
+        }
+    }
+
+    def "Shaders"
+    {
+        def Shader "Tiles_OP"
+        {
+            uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+            token outputs:surface
+        }
+
+        def Shader "Glass_OP"
+        {
+            uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+            token outputs:surface
+        }
+
+        def Shader "Skin_OP"
+        {
+            uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+            token outputs:surface
+        }
+    }
+
+    def "NodeGraphs"
+    {
+        def NodeGraph "NG_Tiles"
+        {
+            color3f outputs:color_out.connect = </MaterialX/NodeGraphs/NG_Tiles/albedo.outputs:out>
+            float outputs:metal_out.connect = </MaterialX/NodeGraphs/NG_Tiles/sep.outputs:outz>
+            float outputs:rough_out.connect = </MaterialX/NodeGraphs/NG_Tiles/sep.outputs:outy>
+
+            def Shader "uv"
+            {
+                uniform token info:id = "ND_texcoord_vector2"
+                float2 outputs:out
+            }
+
+            def Shader "place"
+            {
+                uniform token info:id = "ND_place2d_vector2"
+                float2 inputs:offset = (0.1, 0.2)
+                float inputs:rotate = 30
+                float2 inputs:scale = (0.5, 0.25)
+                float2 inputs:texcoord.connect = </MaterialX/NodeGraphs/NG_Tiles/uv.outputs:out>
+                float2 outputs:out
+            }
+
+            def Shader "albedo"
+            {
+                uniform token info:id = "ND_image_color3"
+                asset inputs:file = @tex/tiles_2k_albedo.png@ (
+                    colorSpace = "srgb_texture"
+                )
+                float2 inputs:texcoord.connect = </MaterialX/NodeGraphs/NG_Tiles/place.outputs:out>
+                string inputs:uaddressmode = "mirror"
+                color3f outputs:out
+            }
+
+            def Shader "orm"
+            {
+                uniform token info:id = "ND_image_vector3"
+                asset inputs:file = @tex/tiles_orm.png@
+                float2 inputs:texcoord.connect = </MaterialX/NodeGraphs/NG_Tiles/place.outputs:out>
+                float3 outputs:out
+            }
+
+            def Shader "sep"
+            {
+                uniform token info:id = "ND_separate3_vector3"
+                float3 inputs:in.connect = </MaterialX/NodeGraphs/NG_Tiles/orm.outputs:out>
+                float outputs:outx
+                float outputs:outy
+                float outputs:outz
+            }
+        }
+    }
+}
+

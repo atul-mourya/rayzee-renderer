@@ -1,0 +1,73 @@
+<?xml version="1.0"?>
+<materialx version="1.39">
+  <nodegraph name="NG_Tiles" fileprefix="tex/" colorspace="srgb_texture">
+    <token name="RES" type="string" value="2k" />
+    <texcoord name="uv" type="vector2" />
+    <place2d name="place" type="vector2">
+      <input name="texcoord" type="vector2" nodename="uv" />
+      <input name="scale" type="vector2" value="0.5, 0.25" />
+      <input name="rotate" type="float" value="30" />
+      <input name="offset" type="vector2" value="0.1, 0.2" />
+    </place2d>
+    <image name="albedo" type="color3">
+      <input name="file" type="filename" value="tiles_[RES]_albedo.png" />
+      <input name="texcoord" type="vector2" nodename="place" />
+      <input name="uaddressmode" type="string" value="mirror" />
+    </image>
+    <image name="orm" type="vector3">
+      <input name="file" type="filename" value="tiles_orm.png" colorspace="lin_rec709" />
+      <input name="texcoord" type="vector2" nodename="place" />
+    </image>
+    <separate3 name="sep" type="multioutput">
+      <input name="in" type="vector3" nodename="orm" />
+      <output name="outx" type="float" />
+      <output name="outy" type="float" />
+      <output name="outz" type="float" />
+    </separate3>
+    <output name="color_out" type="color3" nodename="albedo" />
+    <output name="rough_out" type="float" nodename="sep" output="outy" />
+    <output name="metal_out" type="float" nodename="sep" output="outz" />
+  </nodegraph>
+  <open_pbr_surface name="Tiles_OP" type="surfaceshader">
+    <input name="base_color" type="color3" nodegraph="NG_Tiles" output="color_out" />
+    <input name="specular_roughness" type="float" nodegraph="NG_Tiles" output="rough_out" />
+    <input name="base_metalness" type="float" nodegraph="NG_Tiles" output="metal_out" />
+    <input name="coat_weight" type="float" value="0.6" />
+    <input name="coat_roughness" type="float" value="0.15" />
+    <input name="coat_ior" type="float" value="1.45" />
+    <input name="fuzz_weight" type="float" value="0.3" />
+    <input name="fuzz_color" type="color3" value="0.9, 0.8, 0.7" />
+    <input name="specular_roughness_anisotropy" type="float" value="0.4" />
+    <input name="thin_film_weight" type="float" value="0.5" />
+    <input name="thin_film_thickness" type="float" value="0.45" />
+    <input name="emission_luminance" type="float" value="2" />
+    <input name="emission_color" type="color3" value="1, 0.5, 0.25" />
+    <input name="geometry_opacity" type="float" value="0.8" />
+  </open_pbr_surface>
+  <surfacematerial name="Tiles" type="material">
+    <input name="surfaceshader" type="surfaceshader" nodename="Tiles_OP" />
+  </surfacematerial>
+  <open_pbr_surface name="Glass_OP" type="surfaceshader">
+    <input name="transmission_weight" type="float" value="1" />
+    <input name="transmission_color" type="color3" value="0.8, 0.9, 1" />
+    <input name="transmission_depth" type="float" value="0.5" />
+    <input name="transmission_dispersion_abbe_number" type="float" value="40" />
+    <input name="transmission_dispersion_scale" type="float" value="1" />
+    <input name="specular_ior" type="float" value="1.52" />
+    <input name="specular_roughness" type="float" value="0.05" />
+  </open_pbr_surface>
+  <surfacematerial name="Glass" type="material">
+    <input name="surfaceshader" type="surfaceshader" nodename="Glass_OP" />
+  </surfacematerial>
+  <open_pbr_surface name="Skin_OP" type="surfaceshader">
+    <input name="base_color" type="color3" value="0.8, 0.55, 0.45" />
+    <input name="subsurface_weight" type="float" value="1" />
+    <input name="subsurface_color" type="color3" value="0.9, 0.5, 0.4" />
+    <input name="subsurface_radius" type="float" value="0.3" />
+    <input name="subsurface_radius_scale" type="color3" value="1, 0.4, 0.2" />
+    <input name="subsurface_scatter_anisotropy" type="float" value="0.2" />
+  </open_pbr_surface>
+  <surfacematerial name="Skin" type="material">
+    <input name="surfaceshader" type="surfaceshader" nodename="Skin_OP" />
+  </surfacematerial>
+</materialx>

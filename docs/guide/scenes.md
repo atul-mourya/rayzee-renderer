@@ -6,7 +6,7 @@ Loading models and environments, and the camera, lights, materials and animation
 
 ```js
 await engine.loadModel(url)                  // Load a GLB/GLTF by URL
-await engine.loadFile(fileOrUrl)              // Any supported file: GLB/GLTF/FBX/OBJ/STL/PLY/DAE/3MF/USD/USDZ, VDB/NVDB, archives, HDR/EXR/PFM
+await engine.loadFile(fileOrUrl)              // Any supported file: GLB/GLTF/FBX/OBJ/STL/PLY/DAE/3MF/USD/USDZ, MTLX, VDB/NVDB, archives, HDR/EXR/PFM
 await engine.loadFile({ files })              // A folder of files — see Loading a folder
 await engine.loadObject3D(object3d, name?)    // Load a Three.js Object3D directly (name is optional, defaults to 'object3d')
 await engine.loadEnvironment(url)             // Load HDR/EXR/PFM environment map
@@ -100,6 +100,27 @@ read when their `.ptx` files are in the folder or archive, within `ptexMemory` (
 Ptex input takes the mesh's mean `displayColor`. `sceneSource` is `{ kind: 'local-folder', folder: { name, size, lastModified, sample, files }, key }`
 — `sample` hashes every file's path, size and date, so any change inside the folder changes it — and
 `sceneSourceFolder` hands the files back, as `{ name, files: [{ path, file }] }`.
+
+A MaterialX document (`.mtlx`, versions 1.37 to 1.39) is read as a USD layer, as OpenUSD's usdMtlx reads it: a USD
+scene can reference its materials (`@looks.mtlx@</MaterialX/Materials/Wood>`), and a document loaded on its own — a
+loose `.mtlx`, or a folder or archive of documents and their textures with no other model — shows each material on a
+sphere 1 m across, in a grid, named for the material. Beside a model or a USD layer, a document is left to them. Read:
+Standard Surface, OpenPBR, glTF PBR, UsdPreviewSurface and `surface` over BSDF nodes, with the nodes the USD importer
+reads (images and their placement, channel picks, arithmetic on constants, normal and height maps); `fileprefix`,
+`colorspace` and `[token]` file names as MaterialX resolves them, and `xi:include` (followed from where each include
+sits, nested ones too), and nodes a document defines itself (a nodedef implemented by a node graph). Not read: looks
+(material assignments).
+
+```js
+// A document's materials, textures included, without touching the scene: put one on a mesh, then rebuild.
+const materials = await engine.readMaterials( fileOrZipOrFolder ); // [{ name, material }] or null
+mesh.material = materials[ 0 ].material;
+await engine.rebuildMaterials();
+```
+
+`readMaterials` takes a `.mtlx`, a zip, or a folder as `loadFile` does, and returns null where it holds no MaterialX
+material or holds a model or USD layer. The app does this when a `.mtlx` or a zip of one is dropped on an object: the
+first material goes on it and on every part sharing its material.
 
 ### Loading part of a scene archive
 

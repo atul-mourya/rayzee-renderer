@@ -1,0 +1,208 @@
+#usda 1.0
+
+def "MaterialX"
+{
+    def "Materials"
+    {
+        def Material "Lacquer" (
+            prepend apiSchemas = ["MaterialXConfigAPI"]
+        )
+        {
+            string config:mtlx:version = "1.39"
+            token inputs:bsdf (
+                renderType = "BSDF"
+            )
+            token inputs:edf (
+                renderType = "EDF"
+            )
+            float inputs:opacity = 1
+            bool inputs:thin_walled
+            token outputs:mtlx:surface.connect = </MaterialX/Materials/Lacquer/Lacquer_S.outputs:surface>
+
+            def Shader "Lacquer_S" (
+                prepend references = </MaterialX/Shaders/Lacquer_S>
+            )
+            {
+                token inputs:bsdf (
+                    renderType = "BSDF"
+                )
+                token inputs:bsdf.connect = </MaterialX/Materials/Lacquer/NodeGraphs/stack.outputs:out>
+                token inputs:edf (
+                    renderType = "EDF"
+                )
+                token inputs:edf.connect = </MaterialX/Materials/Lacquer/NodeGraphs/glow.outputs:out>
+                float inputs:opacity.connect = </MaterialX/Materials/Lacquer.inputs:opacity>
+                bool inputs:thin_walled.connect = </MaterialX/Materials/Lacquer.inputs:thin_walled>
+            }
+
+            def "NodeGraphs" (
+                prepend references = </MaterialX/NodeGraphs>
+            )
+            {
+            }
+        }
+
+        def Material "Copper" (
+            prepend apiSchemas = ["MaterialXConfigAPI"]
+        )
+        {
+            string config:mtlx:version = "1.39"
+            token inputs:bsdf (
+                renderType = "BSDF"
+            )
+            token inputs:edf (
+                renderType = "EDF"
+            )
+            float inputs:opacity
+            bool inputs:thin_walled
+            token outputs:mtlx:surface.connect = </MaterialX/Materials/Copper/Copper_S.outputs:surface>
+
+            def Shader "Copper_S" (
+                prepend references = </MaterialX/Shaders/Copper_S>
+            )
+            {
+                token inputs:bsdf (
+                    renderType = "BSDF"
+                )
+                token inputs:bsdf.connect = </MaterialX/Materials/Copper/NodeGraphs/metal.outputs:out>
+                token inputs:edf (
+                    renderType = "EDF"
+                )
+                token inputs:edf.connect = </MaterialX/Materials/Copper.inputs:edf>
+                float inputs:opacity.connect = </MaterialX/Materials/Copper.inputs:opacity>
+                bool inputs:thin_walled.connect = </MaterialX/Materials/Copper.inputs:thin_walled>
+            }
+
+            def "NodeGraphs" (
+                prepend references = </MaterialX/NodeGraphs>
+            )
+            {
+            }
+        }
+
+        def Material "Preview" (
+            prepend apiSchemas = ["MaterialXConfigAPI"]
+        )
+        {
+            string config:mtlx:version = "1.39"
+            float inputs:clearcoat = 0.5
+            float inputs:clearcoatRoughness
+            color3f inputs:diffuseColor = (0.1, 0.5, 0.2)
+            float inputs:displacement
+            color3f inputs:emissiveColor
+            float inputs:ior
+            float inputs:metallic = 0.1
+            float3 inputs:normal
+            float inputs:occlusion
+            float inputs:opacity = 0.9
+            int inputs:opacityMode
+            float inputs:opacityThreshold
+            float inputs:roughness = 0.7
+            color3f inputs:specularColor
+            int inputs:useSpecularWorkflow
+            token outputs:mtlx:surface.connect = </MaterialX/Materials/Preview/Preview_S.outputs:surface>
+
+            def Shader "Preview_S" (
+                prepend references = </MaterialX/Shaders/Preview_S>
+            )
+            {
+                float inputs:clearcoat.connect = </MaterialX/Materials/Preview.inputs:clearcoat>
+                float inputs:clearcoatRoughness.connect = </MaterialX/Materials/Preview.inputs:clearcoatRoughness>
+                color3f inputs:diffuseColor.connect = </MaterialX/Materials/Preview.inputs:diffuseColor>
+                float inputs:displacement.connect = </MaterialX/Materials/Preview.inputs:displacement>
+                color3f inputs:emissiveColor.connect = </MaterialX/Materials/Preview.inputs:emissiveColor>
+                float inputs:ior.connect = </MaterialX/Materials/Preview.inputs:ior>
+                float inputs:metallic.connect = </MaterialX/Materials/Preview.inputs:metallic>
+                float3 inputs:normal.connect = </MaterialX/Materials/Preview.inputs:normal>
+                float inputs:occlusion.connect = </MaterialX/Materials/Preview.inputs:occlusion>
+                float inputs:opacity.connect = </MaterialX/Materials/Preview.inputs:opacity>
+                int inputs:opacityMode.connect = </MaterialX/Materials/Preview.inputs:opacityMode>
+                float inputs:opacityThreshold.connect = </MaterialX/Materials/Preview.inputs:opacityThreshold>
+                float inputs:roughness.connect = </MaterialX/Materials/Preview.inputs:roughness>
+                color3f inputs:specularColor.connect = </MaterialX/Materials/Preview.inputs:specularColor>
+                int inputs:useSpecularWorkflow.connect = </MaterialX/Materials/Preview.inputs:useSpecularWorkflow>
+            }
+        }
+    }
+
+    def "Shaders"
+    {
+        def Shader "Lacquer_S"
+        {
+            uniform token info:id = "ND_surface"
+            token outputs:surface
+        }
+
+        def Shader "Copper_S"
+        {
+            uniform token info:id = "ND_surface"
+            token outputs:surface
+        }
+
+        def Shader "Preview_S"
+        {
+            uniform token info:id = "ND_UsdPreviewSurface_surfaceshader"
+            token outputs:surface
+        }
+    }
+
+    def NodeGraph "NodeGraphs"
+    {
+        def Shader "diffuse"
+        {
+            uniform token info:id = "ND_oren_nayar_diffuse_bsdf"
+            color3f inputs:color = (0.6, 0.1, 0.1)
+            float inputs:roughness = 0.5
+            token outputs:out (
+                renderType = "BSDF"
+            )
+        }
+
+        def Shader "coat"
+        {
+            uniform token info:id = "ND_dielectric_bsdf"
+            float inputs:ior = 1.5
+            float2 inputs:roughness = (0.04, 0.04)
+            token outputs:out (
+                renderType = "BSDF"
+            )
+        }
+
+        def Shader "stack"
+        {
+            uniform token info:id = "ND_layer_bsdf"
+            token inputs:base (
+                renderType = "BSDF"
+            )
+            token inputs:base.connect = </MaterialX/NodeGraphs/diffuse.outputs:out>
+            token inputs:top (
+                renderType = "BSDF"
+            )
+            token inputs:top.connect = </MaterialX/NodeGraphs/coat.outputs:out>
+            token outputs:out (
+                renderType = "BSDF"
+            )
+        }
+
+        def Shader "glow"
+        {
+            uniform token info:id = "ND_uniform_edf"
+            color3f inputs:color = (0.2, 0.3, 0.1)
+            token outputs:out (
+                renderType = "EDF"
+            )
+        }
+
+        def Shader "metal"
+        {
+            uniform token info:id = "ND_conductor_bsdf"
+            color3f inputs:extinction = (3.42, 2.35, 1.77)
+            color3f inputs:ior = (0.18, 0.42, 1.37)
+            float2 inputs:roughness = (0.2, 0.2)
+            token outputs:out (
+                renderType = "BSDF"
+            )
+        }
+    }
+}
+

@@ -1,0 +1,47 @@
+<?xml version="1.0"?>
+<materialx version="1.38">
+  <image name="top_img" type="color3" fileprefix="maps/">
+    <input name="file" type="filename" value="brick.jpg" colorspace="srgb_texture" />
+  </image>
+  <image name="top_rough" type="color3">
+    <input name="file" type="filename" value="maps/brick_orm.png" />
+  </image>
+  <swizzle name="sw" type="float">
+    <input name="in" type="color3" nodename="top_rough" />
+    <input name="channels" type="string" value="g" />
+  </swizzle>
+  <open_pbr_surface name="Brick_OP" type="surfaceshader">
+    <input name="base_color" type="color3" nodename="top_img" />
+    <input name="specular_roughness" type="float" nodename="sw" />
+    <input name="base_metalness" type="float" nodename="top_rough" channels="b" />
+  </open_pbr_surface>
+  <surfacematerial name="Brick" type="material">
+    <input name="surfaceshader" type="surfaceshader" nodename="Brick_OP" />
+  </surfacematerial>
+  <gltf_pbr name="Gold_G" type="surfaceshader">
+    <input name="base_color" type="color3" value="1, 0.766, 0.336" />
+    <input name="metallic" type="float" value="1" />
+    <input name="roughness" type="float" interfacename="rough" />
+  </gltf_pbr>
+  <nodegraph name="NG_Tint">
+    <input name="tint" type="color3" value="0.2, 0.4, 0.8" />
+    <multiply name="m" type="color3">
+      <input name="in1" type="color3" interfacename="tint" />
+      <input name="in2" type="float" value="0.5" />
+    </multiply>
+    <output name="out" type="color3" nodename="m" />
+  </nodegraph>
+  <standard_surface name="Tint_SS" type="surfaceshader">
+    <input name="base_color" type="color3" nodegraph="NG_Tint" output="out" />
+    <input name="transmission" type="float" value="0.9" />
+  </standard_surface>
+  <surfacematerial name="Tinted" type="material">
+    <input name="surfaceshader" type="surfaceshader" nodename="Tint_SS" />
+  </surfacematerial>
+  <surfacematerial name="Gold" type="material">
+    <input name="surfaceshader" type="surfaceshader" nodename="Gold_G" />
+  </surfacematerial>
+  <look name="default">
+    <materialassign name="ma1" material="Brick" geom="/World/wall" />
+  </look>
+</materialx>

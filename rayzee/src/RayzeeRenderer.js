@@ -1072,6 +1072,20 @@ export class RayzeeRenderer extends EventDispatcher {
 	}
 
 	/**
+	 * The materials of the MaterialX documents in a `.mtlx` file, a zip, or a folder (as `loadFile` takes one), with their
+	 * textures, read without changing the scene: `{ name, material }` each, in document order — ready to put on a mesh
+	 * (then `rebuildMaterials()`). Null where it holds no MaterialX material, or holds a model or a USD layer. Needs the
+	 * archives add-on (`rayzee/addons/archives`).
+	 * @param {File|{name?: string, files: Iterable<File|{path: string, file: Blob}>}} input
+	 * @returns {Promise<Array<{name: string, material: import('three').MeshPhysicalMaterial}>|null>}
+	 */
+	readMaterials( input ) {
+
+		return this.assetLoader.readMaterials( input );
+
+	}
+
+	/**
 	 * Loads example models by index.
 	 * @param {number} index
 	 * @param {Array} modelFiles

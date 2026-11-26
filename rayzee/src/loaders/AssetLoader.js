@@ -18,6 +18,7 @@ import { diffuseTransmissionPlugin } from './GLTFDiffuseTransmission.js';
 import { animationPointerPlugin } from './GLTFAnimationPointer.js';
 import { decodersOnDemand, glbInPlace } from './GLTFDecoders.js';
 import { extractSceneMetadata, withSceneAspect } from './SceneMetadata.js';
+import { isFolderInput, localFolder } from './ArchiveFormats.js';
 import { ISSUE_CODES } from '../EngineIssues.js';
 import { ENGINE_DEFAULTS } from '../EngineDefaults.js';
 import { createLogger } from '../Logger.js';
@@ -148,7 +149,7 @@ const GLTF_METADATA = new Set( [ 'KHR_xmp_json_ld', 'KHR_xmp' ] );
 const ARCHIVES = { addOn: 'rayzee/addons/archives', install: 'assetLoader.setArchiveImporter()' };
 const FORMATS = { addOn: 'rayzee/addons/formats', install: 'assetLoader.registerFormat()' };
 const ADDON_FORMATS = {
-	zip: ARCHIVES, gz: ARCHIVES, tgz: ARCHIVES, tar: ARCHIVES,
+	zip: ARCHIVES, gz: ARCHIVES, tgz: ARCHIVES, tar: ARCHIVES, mtlx: ARCHIVES,
 	fbx: FORMATS, obj: FORMATS, stl: FORMATS, ply: FORMATS, dae: FORMATS, '3mf': FORMATS,
 	usd: FORMATS, usda: FORMATS, usdc: FORMATS, usdz: FORMATS, exr: FORMATS, pfm: FORMATS,
 };
@@ -574,6 +575,15 @@ export class AssetLoader extends EventDispatcher {
 
 	}
 
+	/** @see ArchiveImporter#readMaterials — a folder as `loadFile` takes one (`{ files }`). */
+	async readMaterials( input ) {
+
+		const archives = await this._archiveImporter();
+		if ( ! archives ) throw this.formatError( input?.name ?? 'materials.mtlx' );
+		return await archives.readMaterials( isFolderInput( input ) ? localFolder( input ) : input );
+
+	}
+
 	/** @see ArchiveImporter#inspectArchive */
 	async inspectArchive( file ) {
 
@@ -730,7 +740,7 @@ export class AssetLoader extends EventDispatcher {
 
 		const key = this.storage ? this._keyed( 'file', identityKey( await fileIdentity( file ) ) ) : null;
 		// three's USDLoader misreads crate files from 0.8.0 on; a .usdz package stays with it.
-		const usd = /\.(usd|usda|usdc)$/i.test( filename ) ? await this._archiveImporter() : null;
+		const usd = /\.(usd|usda|usdc|mtlx)$/i.test( filename ) ? await this._archiveImporter() : null;
 		const result = usd ? await usd.loadUSDScene( { [ filename ]: file }, filename ) : await this._loadModelFileByExtension( file, filename );
 		this._sourceKey = key;
 		return result;

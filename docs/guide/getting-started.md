@@ -329,7 +329,8 @@ the moment it is chosen (a lazy one would trace plain frames meanwhile and break
 **File formats.** The core reads glTF/GLB (Draco, KTX2 and meshopt decoders are fetched only for a file that uses
 them), `.hdr` and LDR images. FBX, OBJ, STL, PLY, Collada, 3MF, USDZ, EXR and PFM are formats to register — import only
 those you read and a bundler leaves the rest out; each three.js loader is downloaded the first time its format is read
-(a `.usd` / `.usda` / `.usdc` layer is read by the engine's own USD importer, in the archives add-on below):
+(a `.usd` / `.usda` / `.usdc` layer, or a `.mtlx` MaterialX document, is read by the engine's own USD importer, in the
+archives add-on below):
 
 ```js
 import { objFormat, usdFormat, exrFormat } from 'rayzee/addons/formats';
